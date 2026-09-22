@@ -1,0 +1,7 @@
+{
+  "streams": [
+    {"index": 0, "codec_type": "video", "width": 500, "height": 500, "sample_aspect_ratio": "1:1", "disposition": {"default": 1, "attached_pic": 1}},
+    {"index": 1, "codec_type": "video", "width": 1280, "height": 720, "duration": "90.0", "sample_aspect_ratio": "1:1", "disposition": {"default": 0, "attached_pic": 0}}
+  ],
+  "format": {"duration": "90.0", "size": "2000"}
+}

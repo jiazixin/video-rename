@@ -1,0 +1,7 @@
+{
+  "streams": [
+    {"index": 1, "codec_type": "audio", "disposition": {"default": 1}},
+    {"index": 0, "codec_type": "video", "width": 1920, "height": 1080, "duration": "120.500000", "sample_aspect_ratio": "1:1", "pix_fmt": "yuv420p", "disposition": {"default": 1, "attached_pic": 0}}
+  ],
+  "format": {"duration": "120.500000", "size": "1000"}
+}

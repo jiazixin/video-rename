@@ -1,0 +1,445 @@
+package library
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"video-rename/internal/domain"
+	"video-rename/internal/rename"
+	"video-rename/internal/storage"
+)
+
+func fixture(t *testing.T) (*Library, string, string) {
+	t.Helper()
+	base := t.TempDir()
+	root := filepath.Join(base, "videos")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	dbpath := filepath.Join(base, "state", "library.sqlite")
+	db, err := storage.Open(dbpath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := New(db, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return l, root, dbpath
+}
+func refresh(t *testing.T, l *Library, id int64) {
+	t.Helper()
+	if err := l.Refresh(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+}
+func entry(t *testing.T, l *Library, parent int64, name string) Entry {
+	t.Helper()
+	var id int64
+	if err := l.DB.QueryRow("SELECT id FROM entries WHERE parent=? AND name=? AND present=1", parent, name).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	e, err := l.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
+func put(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("video fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestRenameRestoreParentAndRestart(t *testing.T) {
+	l, root, dbpath := fixture(t)
+	if err := os.Mkdir(filepath.Join(root, "folder"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	put(t, filepath.Join(root, "folder", "a.mp4"))
+	refresh(t, l, 1)
+	dir := entry(t, l, 1, "folder")
+	refresh(t, l, dir.ID)
+	file := entry(t, l, dir.ID, "a.mp4")
+	first, err := l.Rename(file.ID, file.Version, "b.mp4", "manual-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, _ = l.Get(file.ID)
+	second, err := l.Rename(file.ID, file.Version, "c.mp4", "manual-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, _ = l.Get(dir.ID)
+	if _, err = l.Rename(dir.ID, dir.Version, "new folder", "manual-dir"); err != nil {
+		t.Fatal(err)
+	}
+	l.DB.Close()
+	db, err := storage.Open(dbpath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	l, err = New(db, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = l.Restore(second.ID, "restore-b"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = l.Restore(first.ID, "restore-a"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(filepath.Join(root, "new folder", "a.mp4")); err != nil {
+		t.Fatal(err)
+	}
+	file, _ = l.Get(file.ID)
+	if file.Processed != "" || file.RestoreID != 0 {
+		t.Fatalf("bad restore chain %+v", file)
+	}
+	snap, _ := domain.StatSnapshot(filepath.Join(root, "new folder", "a.mp4"))
+	if _, err = l.AutoCommit(file.ID, snap, "again", "auto-test", 1); err != nil {
+		t.Fatal("restored file must allow automatic rename", err)
+	}
+}
+func TestConflictTraversalReplacementAndIdempotency(t *testing.T) {
+	l, root, _ := fixture(t)
+	put(t, filepath.Join(root, "a.mp4"))
+	put(t, filepath.Join(root, "occupied.mp4"))
+	refresh(t, l, 1)
+	e := entry(t, l, 1, "a.mp4")
+	for _, name := range []string{"../escape.mp4", "bad/name.mp4", "occupied.mp4", "bad.mkv"} {
+		if _, err := l.Rename(e.ID, e.Version, name, "bad:"+name); err == nil {
+			t.Fatalf("accepted %q", name)
+		}
+	}
+	o, err := l.Rename(e.ID, e.Version, "b.mp4", "same-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _ = l.Get(e.ID)
+	o2, err := l.Rename(e.ID, e.Version, "b.mp4", "same-key")
+	if err != nil || o2.ID != o.ID {
+		t.Fatalf("idempotency %v %+v", err, o2)
+	}
+	put(t, filepath.Join(root, "a.mp4"))
+	if _, err = l.Restore(o.ID, "restore-conflict"); err == nil {
+		t.Fatal("restore must not overwrite")
+	}
+	if err = os.Remove(filepath.Join(root, "b.mp4")); err != nil {
+		t.Fatal(err)
+	}
+	put(t, filepath.Join(root, "b.mp4"))
+	refresh(t, l, 1)
+	replacement := entry(t, l, 1, "b.mp4")
+	if replacement.Processed != "" {
+		t.Fatal("replacement inherited protection")
+	}
+}
+func TestSymlinkBlocked(t *testing.T) {
+	l, root, _ := fixture(t)
+	outside := t.TempDir()
+	put(t, filepath.Join(outside, "secret.mp4"))
+	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	refresh(t, l, 1)
+	e := entry(t, l, 1, "link")
+	if _, err := l.Path(e.ID); err == nil {
+		t.Fatal("symlink followed")
+	}
+}
+func TestPreparedRecovery(t *testing.T) {
+	l, root, dbpath := fixture(t)
+	put(t, filepath.Join(root, "a.mp4"))
+	refresh(t, l, 1)
+	e := entry(t, l, 1, "a.mp4")
+	res, err := l.DB.Exec("INSERT INTO operations(entry,parent,old_name,new_name,identity,size,mtime,kind,source,status,request_key,created) VALUES(?,1,'a.mp4','b.mp4',?,?,?,'file','automatic','prepared','crash',?)", e.ID, e.Identity, e.Size, e.Mtime, storage.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := res.LastInsertId()
+	if er := rename.NoReplace(filepath.Join(root, "a.mp4"), filepath.Join(root, "b.mp4")); er != nil {
+		t.Fatal(er)
+	}
+	l.DB.Close()
+	db, err := storage.Open(dbpath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	l, err = New(db, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, _ := l.Operation(id)
+	if o.Status != "committed" {
+		t.Fatal(o.Status)
+	}
+	e, _ = l.Get(e.ID)
+	if e.Name != "b.mp4" || e.Processed != "automatic" {
+		t.Fatalf("bad recovery %+v", e)
+	}
+}
+func TestPagedDirectoryDoesNotRecurse(t *testing.T) {
+	l, root, _ := fixture(t)
+	for i := 0; i < 260; i++ {
+		put(t, filepath.Join(root, fmt.Sprintf("%03d.mp4", i)))
+	}
+	if err := os.Mkdir(filepath.Join(root, "nested"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	put(t, filepath.Join(root, "nested", "hidden.mp4"))
+	refresh(t, l, 1)
+	p, err := l.List(context.Background(), 1, 0, 100, 0, "", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Items) != 100 || p.Next == 0 || p.Items[0].Kind != "directory" {
+		t.Fatalf("pagination %+v", p)
+	}
+	var count int
+	if err = l.DB.QueryRow("SELECT count(*) FROM entries").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 262 {
+		t.Fatalf("unexpected recursive index %d", count)
+	}
+	next, err := l.List(context.Background(), 1, p.Next, 100, p.Generation, "", "", false)
+	if err != nil || len(next.Items) != 100 {
+		t.Fatalf("next %v", err)
+	}
+}
+
+func TestDatabaseFailureStopsUnrecordedRename(t *testing.T) {
+	l, root, _ := fixture(t)
+	put(t, filepath.Join(root, "a.mp4"))
+	refresh(t, l, 1)
+	e := entry(t, l, 1, "a.mp4")
+	if _, err := l.DB.Exec("PRAGMA query_only=ON"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Rename(e.ID, e.Version, "b.mp4", "read-only-db"); err == nil {
+		t.Fatal("write unexpectedly succeeded")
+	}
+	if _, err := os.Stat(filepath.Join(root, "a.mp4")); err != nil {
+		t.Fatal("file moved before prepared persisted")
+	}
+	l.DB.Exec("PRAGMA query_only=OFF")
+}
+func TestPostRenameDatabaseFailureRecovers(t *testing.T) {
+	l, root, _ := fixture(t)
+	put(t, filepath.Join(root, "a.mp4"))
+	refresh(t, l, 1)
+	e := entry(t, l, 1, "a.mp4")
+	_, err := l.DB.Exec("CREATE TRIGGER reject_commit BEFORE UPDATE OF status ON operations WHEN NEW.status='committed' BEGIN SELECT RAISE(ABORT,'injected final commit failure'); END;")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = l.Rename(e.ID, e.Version, "b.mp4", "failed-final-record"); err == nil {
+		t.Fatal("missing injected error")
+	}
+	if !l.Halted() {
+		t.Fatal("new commits not halted")
+	}
+	if _, err = os.Stat(filepath.Join(root, "b.mp4")); err != nil {
+		t.Fatal("expected actual rename")
+	}
+	if _, err = l.DB.Exec("DROP TRIGGER reject_commit"); err != nil {
+		t.Fatal(err)
+	}
+	if err = l.Recover(); err != nil {
+		t.Fatal(err)
+	}
+	e, err = l.Get(e.ID)
+	if err != nil || e.Processed != "manual" || e.Name != "b.mp4" {
+		t.Fatalf("recovery %+v %v", e, err)
+	}
+}
+func TestAmbiguousRecoveryBlocksRelatedDirectory(t *testing.T) {
+	l, root, _ := fixture(t)
+	os.Mkdir(filepath.Join(root, "dir"), 0700)
+	put(t, filepath.Join(root, "dir", "a.mp4"))
+	put(t, filepath.Join(root, "dir", "b.mp4"))
+	refresh(t, l, 1)
+	d := entry(t, l, 1, "dir")
+	refresh(t, l, d.ID)
+	e := entry(t, l, d.ID, "a.mp4")
+	_, err := l.DB.Exec("INSERT INTO operations(entry,parent,old_name,new_name,identity,size,mtime,kind,source,status,request_key,created) VALUES(?,?,'a.mp4','b.mp4',?,?,?,'file','automatic','prepared','ambiguous',?)", e.ID, d.ID, e.Identity, e.Size, e.Mtime, storage.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = l.Recover(); err != nil {
+		t.Fatal(err)
+	}
+	if err = l.CheckAvailable(e.ID); err == nil {
+		t.Fatal("ambiguous file allowed")
+	}
+	if _, err = l.Rename(d.ID, d.Version, "other", "blocked-parent"); err == nil {
+		t.Fatal("related directory allowed")
+	}
+}
+
+func TestRestoreUnchangedAutomaticNameClearsProtection(t *testing.T) {
+	l, root, _ := fixture(t)
+	path := filepath.Join(root, "same.mp4")
+	if err := os.WriteFile(path, []byte("video"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Refresh(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	if err := l.DB.QueryRow("SELECT id FROM entries WHERE name='same.mp4'").Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := domain.StatSnapshot(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := l.AutoCommit(id, snap, "same", "unchanged-auto", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = l.Restore(op.ID, "undo-unchanged-auto"); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := l.Get(id)
+	if err != nil || entry.Processed != "" {
+		t.Fatal(entry, err)
+	}
+	if _, err = l.AutoCommit(id, snap, "different", "retry-auto", 0); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUpgradeClearsLegacyRestoreMarks(t *testing.T) {
+	l, root, path := fixture(t)
+	for _, name := range []string{"restored.mp4", "protected.mp4"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("video"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	refresh(t, l, 1)
+	for _, name := range []string{"restored.mp4", "protected.mp4"} {
+		e := entry(t, l, 1, name)
+		op, err := l.Rename(e.ID, e.Version, "renamed-"+name, "rename-"+name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name == "restored.mp4" {
+			restored, err := l.Restore(op.ID, "restore-legacy")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = l.DB.Exec("INSERT INTO marks VALUES(?,?,?,?,?)", op.Identity, op.Size, op.Mtime, "restore", restored.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := l.DB.Exec("ALTER TABLE operations DROP COLUMN raw_request; ALTER TABLE operations DROP COLUMN raw_response; ALTER TABLE run_items DROP COLUMN original_path; ALTER TABLE runs DROP COLUMN started; DROP TABLE notification_deliveries; DROP TABLE notification_channels; ALTER TABLE events DROP COLUMN raw_request; ALTER TABLE events DROP COLUMN raw_response; DROP INDEX prompt_single_default; ALTER TABLE model_configs RENAME TO prompts; ALTER TABLE prompts DROP COLUMN settings; ALTER TABLE prompts DROP COLUMN api_key; ALTER TABLE prompts DROP COLUMN is_default; ALTER TABLE runs RENAME COLUMN model_config_id TO prompt_id; ALTER TABLE runs RENAME COLUMN model_config_title TO prompt_title; ALTER TABLE runs DROP COLUMN model_snapshot; ALTER TABLE schedules RENAME COLUMN model_config_id TO prompt_id; DELETE FROM schema_migrations WHERE version>=3"); err != nil {
+		t.Fatal(err)
+	}
+	l.DB.Close()
+	db, err := storage.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var count int
+	if err = db.QueryRow("SELECT count(*) FROM marks WHERE source='restore'").Scan(&count); err != nil || count != 0 {
+		t.Fatal(count, err)
+	}
+	if err = db.QueryRow("SELECT count(*) FROM marks WHERE source='manual'").Scan(&count); err != nil || count != 1 {
+		t.Fatal("unrestored protection removed", count, err)
+	}
+}
+
+func TestLowercaseExtensions(t *testing.T) {
+	for _, automatic := range []bool{false, true} {
+		for _, title := range []string{"Original", "NewTitle"} {
+			t.Run(fmt.Sprintf("automatic=%t/title=%s", automatic, title), func(t *testing.T) {
+				l, root, _ := fixture(t)
+				put(t, filepath.Join(root, "Original.MP4"))
+				refresh(t, l, 1)
+				e := entry(t, l, 1, "Original.MP4")
+				var op Operation
+				var err error
+				if automatic {
+					snap, er := domain.StatSnapshot(filepath.Join(root, e.Name))
+					if er != nil {
+						t.Fatal(er)
+					}
+					op, err = l.AutoCommit(e.ID, snap, title, "lower-auto", 0)
+				} else {
+					op, err = l.Rename(e.ID, e.Version, title+".Mp4", "lower-manual")
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if op.New != title+".mp4" {
+					t.Fatalf("unexpected target: %s", op.New)
+				}
+				files, err := os.ReadDir(root)
+				if err != nil || len(files) != 1 || files[0].Name() != op.New {
+					t.Fatalf("target not renamed: %v, %v", files, err)
+				}
+				if !automatic {
+					retry, err := l.Rename(e.ID, e.Version, title+".Mp4", "lower-manual")
+					if err != nil || retry.ID != op.ID {
+						t.Fatalf("retry: %+v, %v", retry, err)
+					}
+				}
+				if _, err = l.Restore(op.ID, "restore-case"); err != nil {
+					t.Fatal(err)
+				}
+				files, err = os.ReadDir(root)
+				if err != nil || len(files) != 1 || files[0].Name() != "Original.MP4" {
+					t.Fatalf("original not restored: %v, %v", files, err)
+				}
+			})
+		}
+	}
+}
+
+func TestAutomaticSuccessResolvesOnlyMatchingFailures(t *testing.T) {
+	l, root, _ := fixture(t)
+	path := filepath.Join(root, "retry.mp4")
+	put(t, path)
+	refresh(t, l, 1)
+	e := entry(t, l, 1, "retry.mp4")
+	for _, record := range []struct {
+		action string
+		entry  int64
+	}{{"automatic", e.ID}, {"automatic", e.ID}, {"scan", e.ID}, {"automatic", 999}} {
+		if err := l.Event("failure", record.action, record.entry, 0, 0, "retry.mp4", "", "failed"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snap, err := domain.StatSnapshot(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := snap
+	bad.Size++
+	if _, err = l.AutoCommit(e.ID, bad, "new", "retry-failed", 0); err == nil {
+		t.Fatal("changed source accepted")
+	}
+	var count int
+	if err = l.DB.QueryRow("SELECT count(*) FROM events WHERE category='failure'").Scan(&count); err != nil || count != 4 {
+		t.Fatal(count, err)
+	}
+	if _, err = l.AutoCommit(e.ID, snap, "new", "retry-success", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err = l.DB.QueryRow("SELECT count(*) FROM events WHERE category='failure'").Scan(&count); err != nil || count != 2 {
+		t.Fatal(count, err)
+	}
+	if err = l.DB.QueryRow("SELECT count(*) FROM events WHERE category='success' AND entry=?", e.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatal(count, err)
+	}
+}

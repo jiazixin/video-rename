@@ -1,0 +1,80 @@
+package app
+
+import (
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"video-rename/internal/config"
+)
+
+func TestStaticSPAAndProtectedAPI(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "media")
+	os.Mkdir(root, 0700)
+	cfg := &config.Config{Path: root, Storage: t.TempDir(), Workers: 1, Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}
+	a, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	h := a.Handler()
+	for _, p := range []string{"/", "/login", "/library"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", p, nil))
+		if w.Code != 200 || w.Header().Get("Content-Type") != "text/html; charset=utf-8" {
+			t.Fatalf("%s: %d %s", p, w.Code, w.Body.String())
+		}
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/api/system", nil))
+	if w.Code != 401 {
+		t.Fatal("unprotected", w.Code)
+	}
+}
+
+func TestDataDirectoryPersistenceAndShortPasswordLogin(t *testing.T) {
+	cfg := &config.Config{Path: t.TempDir(), Storage: filepath.Join(t.TempDir(), "state", "nested"), Workers: 1, Auth: config.AuthConfig{Username: "admin", Password: "x"}}
+	a, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"data.sqlite", "data.sqlite.key"} {
+		if _, err := os.Stat(filepath.Join(cfg.Storage, name)); err != nil {
+			a.Close()
+			t.Fatal(err)
+		}
+	}
+	if _, err = a.DB.Exec("INSERT INTO events(category,action,message,created) VALUES('success','manual','retained','now')"); err != nil {
+		a.Close()
+		t.Fatal(err)
+	}
+	secret, err := a.DB.Seal("retained-key")
+	if err != nil {
+		a.Close()
+		t.Fatal(err)
+	}
+	if err = a.Close(); err != nil {
+		t.Fatal(err)
+	}
+	a, err = New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	plain, err := a.DB.Unseal(secret)
+	if err != nil || plain != "retained-key" {
+		t.Fatal("key not preserved", err)
+	}
+	var count int
+	if err = a.DB.QueryRow("SELECT count(*) FROM events WHERE message='retained'").Scan(&count); err != nil || count != 1 {
+		t.Fatal("data not preserved", err)
+	}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"x"}`))
+	r.Header.Set("Content-Type", "application/json")
+	a.Handler().ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("short password login: %d %s", w.Code, w.Body.String())
+	}
+}

@@ -1,0 +1,15 @@
+<script setup lang="ts">
+import { ref,onMounted,onUnmounted } from 'vue'
+import { Folder,ChevronRight,Home,ChevronLeft,RefreshCw } from 'lucide-vue-next'
+import DirectoryStatus from './DirectoryStatus.vue'
+import './directory-picker.css'
+import {api,type Page} from '../../app/api'
+const props=defineProps<{modelValue:number[]}>();const emit=defineEmits<{'update:modelValue':[ids:number[]]}>()
+const cursors=ref<number[]>([])
+const dir=ref(1),page=ref<Page>(),error=ref(''),busy=ref(false),offset=ref(0);let timer:ReturnType<typeof setTimeout>|undefined;let serial=0
+async function load(){const seq=++serial;busy.value=true;error.value='';clearTimeout(timer);try{const result=await api<Page>(`/directories/${dir.value}/entries?kind=directory&offset=${offset.value}&limit=50`);if(seq!==serial)return;page.value=result;if(result.refreshing)timer=setTimeout(load,1200)}catch(e){error.value=(e as Error).message}finally{if(seq===serial)busy.value=false}}
+function enter(id:number){dir.value=id;offset.value=0;cursors.value=[];load()}
+function toggle(id:number){emit('update:modelValue',props.modelValue.includes(id)?props.modelValue.filter(x=>x!==id):[...props.modelValue,id])}
+onMounted(load);onUnmounted(()=>{serial++;clearTimeout(timer)})
+</script>
+<template><div class="directory-picker"><div class="picker-breadcrumb"><button type="button" @click="enter(1)"><Home :size="15"/>媒体库</button><template v-for="crumb in page?.breadcrumbs.filter(x=>x.id!==1)" :key="crumb.id"><ChevronRight :size="13"/><button type="button" @click="enter(crumb.id)">{{crumb.name}}</button></template></div><label class="picker-current"><input type="checkbox" :checked="modelValue.includes(dir)" @change="toggle(dir)"/>选择当前目录 <strong>{{page?.directory.name||'整个媒体库'}}</strong><DirectoryStatus v-if="page" :entry="page.directory"/></label><div v-if="error" class="notice error">{{error}}<button type="button" @click="offset=0;cursors=[];load()">重试</button></div><div class="picker-list"><div v-if="!page?.items.length" class="empty compact">{{busy||page?.refreshing?'正在读取目录…':'没有子目录'}}</div><div v-for="entry in page?.items" :key="entry.id" class="picker-row"><input type="checkbox" :aria-label="`选择 ${entry.name}`" :checked="modelValue.includes(entry.id)" @change="toggle(entry.id)"/><button type="button" :aria-label="entry.name" @click="enter(entry.id)"><Folder :size="18"/><span class="picker-entry-name">{{entry.name}}</span><DirectoryStatus :entry="entry"/><ChevronRight :size="15"/></button></div></div><div class="picker-bottom"><span>已选 {{modelValue.length}} 个目录</span><button type="button" :disabled="offset===0" aria-label="上页目录" @click="offset=cursors.pop()||0;load()"><ChevronLeft :size="16"/></button><button type="button" :disabled="!page?.next" aria-label="下页目录" @click="cursors.push(offset);offset=page!.next;load()"><ChevronRight :size="16"/></button></div></div></template>

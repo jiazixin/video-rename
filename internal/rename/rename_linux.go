@@ -1,0 +1,50 @@
+//go:build linux
+
+// Package rename 封装平台专用的原子 no-replace 重命名。
+// 禁止用"检查目标不存在 → 普通 rename"替代:两步间存在竞争。
+// Linux 使用 renameat2 的 RENAME_NOREPLACE;内核或文件系统不支持时
+// 报 RENAME_UNSUPPORTED 并保留原文件,绝不退化为可能覆盖的操作。
+package rename
+
+import (
+	"errors"
+	"syscall"
+
+	"golang.org/x/sys/unix"
+
+	"video-rename/internal/domain"
+)
+
+// NoReplace 以 RENAME_NOREPLACE 语义重命名;目标已存在时不覆盖。
+func NoReplace(oldpath, newpath string) *domain.JobError {
+	return mapErrno(
+		unix.Renameat2(unix.AT_FDCWD, oldpath, unix.AT_FDCWD, newpath, unix.RENAME_NOREPLACE),
+		oldpath, newpath,
+	)
+}
+
+func mapErrno(err error, oldpath, newpath string) *domain.JobError {
+	if err == nil {
+		return nil
+	}
+	var errno syscall.Errno
+	if !errors.As(err, &errno) {
+		return &domain.JobError{Code: domain.CodeRenameFailed, Message: err.Error()}
+	}
+	switch {
+	case errno == syscall.EEXIST:
+		return &domain.JobError{Code: domain.CodeRenameConflict, Message: "目标已存在"}
+	case errno == syscall.ENOSYS || errno == syscall.EINVAL || errno == syscall.ENOTSUP || errno == syscall.EOPNOTSUPP:
+		return &domain.JobError{
+			Code:    domain.CodeRenameUnsupported,
+			Message: "内核或文件系统不支持 RENAME_NOREPLACE,保留原文件",
+		}
+	case errno == syscall.EACCES || errno == syscall.EPERM:
+		return &domain.JobError{Code: domain.CodeRenamePermissionDenied, Message: errno.Error()}
+	default:
+		return &domain.JobError{
+			Code:    domain.CodeRenameFailed,
+			Message: errno.Error() + " (" + oldpath + " → " + newpath + ")",
+		}
+	}
+}

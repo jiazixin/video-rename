@@ -1,0 +1,183 @@
+package models
+
+import (
+	"encoding/json"
+	"path/filepath"
+	"strings"
+	"testing"
+	"video-rename/internal/config"
+	"video-rename/internal/storage"
+)
+
+func TestDefaultSaveConflictAndRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.sqlite")
+	db, err := storage.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := Store{db}
+	if err = s.Seed(); err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.Get(1)
+	if err != nil || p.Body != DefaultBody {
+		t.Fatal(p, err)
+	}
+	p.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}
+	old := p
+	p.Body = "页面更新要求"
+	p, err = s.Save(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Save(old); err == nil {
+		t.Fatal("stale edit accepted")
+	}
+	if _, err = s.Save(Profile{ServerConfig: config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}, Title: " ", Body: "x"}); err == nil {
+		t.Fatal("blank title accepted")
+	}
+	if _, err = s.Save(Profile{ServerConfig: config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}, Title: "x", Body: " "}); err == nil {
+		t.Fatal("blank body accepted")
+	}
+	second, err := s.Save(Profile{ServerConfig: config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}, Title: "旅行", Body: "描述风景"})
+	if err != nil || second.ID == 1 {
+		t.Fatal(second, err)
+	}
+	if err = s.SetDefault(second.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetDefault(99999); err == nil {
+		t.Fatal("missing default accepted")
+	}
+	db.Close()
+	db, err = storage.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s = Store{db}
+	if err = s.Seed(); err != nil {
+		t.Fatal(err)
+	}
+	p, err = s.Get(1)
+	if err != nil || p.Body != "页面更新要求" {
+		t.Fatal(p, err)
+	}
+	if id, err := s.DefaultID(); err != nil || id != second.ID {
+		t.Fatal("default did not survive restart", id, err)
+	}
+	rows, err := s.List()
+	if err != nil || len(rows) != 2 {
+		t.Fatal(rows, err)
+	}
+}
+
+func TestCredentialsHiddenEncryptedAndSnapshotIndependent(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := Store{db}
+	settings := DefaultSettings()
+	settings.BaseURL = "http://localhost:8080/v1"
+	settings.Model = "vision-a"
+	settings.APIKey = "private-key-only-for-test"
+	p, err := s.Save(Profile{ServerConfig: settings, Title: "测试", Body: "旧提示词"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(p)
+	if strings.Contains(string(raw), settings.APIKey) || strings.Contains(string(raw), `"api_key"`) {
+		t.Fatal("key leaked in JSON")
+	}
+	var stored string
+	db.QueryRow("SELECT api_key FROM model_configs WHERE id=?", p.ID).Scan(&stored)
+	if stored == settings.APIKey || stored == "" {
+		t.Fatal("plaintext key stored")
+	}
+	snapshot, err := s.Snapshot(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := p
+	changed.BaseURL = "http://localhost:9999/v1"
+	changed.APIKey = ""
+	if s.ResolveKey(&changed, nil) == nil {
+		t.Fatal("stored key forwarded to another URL")
+	}
+	empty := ""
+	if err = s.ResolveKey(&changed, &empty); err != nil || changed.APIKey != "" {
+		t.Fatal("explicit key clear failed")
+	}
+	p.Body = "新提示词"
+	p.Model = "vision-b"
+	p.APIKey = "updated-key"
+	if _, err = s.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	var cfg config.Config
+	if err = s.ApplySnapshot(snapshot, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Server.Model != "vision-a" || cfg.Server.APIKey != settings.APIKey || cfg.Prompt != "旧提示词" {
+		t.Fatal("snapshot mutated")
+	}
+	rows, err := s.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = json.Marshal(rows)
+	if strings.Contains(string(raw), "updated-key") {
+		t.Fatal("list leaked key")
+	}
+}
+
+func TestCopyAndDelete(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := Store{db}
+	if err = s.Seed(); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := s.Get(1)
+	p.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://localhost/v1", APIKey: "secret", Model: "test", Timeout: "2s", MaxTokens: 1024, Workers: 4, Thinking: "disabled", ThinkingAdapter: "template"}
+	p, err = s.Save(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copy, err := s.Duplicate(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if copy.ID == p.ID || copy.Default || copy.APIKey != "secret" || copy.Workers != 4 || copy.Thinking != "disabled" || copy.Body != p.Body {
+		t.Fatal("copy mismatch", copy.ID)
+	}
+	raw, _ := json.Marshal(copy)
+	if strings.Contains(string(raw), "secret") {
+		t.Fatal("key leaked")
+	}
+	if err = s.Delete(p.ID, p.Version); err == nil {
+		t.Fatal("deleted default")
+	}
+	if err = s.Delete(copy.ID, copy.Version+1); err == nil {
+		t.Fatal("stale delete")
+	}
+	_, err = db.Exec("INSERT INTO schedules(name,targets,recursive,kind,expression,timezone,enabled,next,model_config_id) VALUES('test','[1]',0,'daily','0 1 * * *','UTC',0,'',?)", copy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Delete(copy.ID, copy.Version); err == nil {
+		t.Fatal("deleted bound profile")
+	}
+	db.Exec("DELETE FROM schedules")
+	if err = s.Delete(copy.ID, copy.Version); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Get(copy.ID); err == nil {
+		t.Fatal("still exists")
+	}
+}

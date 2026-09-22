@@ -1,0 +1,6 @@
+{
+  "streams": [
+    {"index": 0, "codec_type": "audio", "disposition": {"default": 1}}
+  ],
+  "format": {"duration": "60.0", "size": "5000"}
+}

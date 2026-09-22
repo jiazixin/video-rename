@@ -1,0 +1,32 @@
+# 复制为 configs/config.local.yaml 后编辑。路径相对于配置文件目录。
+listen: "127.0.0.1"                    # 局域网访问可改为 0.0.0.0
+port: 8790
+path: "/srv/videos"                   # 已存在的真实媒体根目录
+storage: "../data"                    # 数据目录，内部固定 data.sqlite；不要放在媒体目录内
+
+auth:
+  username: "admin"
+  password: "请替换为你的密码"
+
+
+sampling:
+  strategy: "hybrid"                  # hybrid:时长为主、大小辅助;也可选 size / duration
+  max_frames: 12                      # 每个视频最多发送多少帧
+  skip_start_ratio: 0.05              # 跳过开头 5%;设为 0 表示不跳过
+  skip_end_ratio: 0.05                # 跳过末尾 5%
+  duration_rules:                     # 按时长上限取首个命中项
+    - {max_duration: "30s", frames: 3}
+    - {max_duration: "2m", frames: 5}
+    - {max_duration: "10m", frames: 8}
+    - {max_duration: "30m", frames: 10}
+    - {max_duration: null, frames: 12} # null 表示超过以上所有档位
+  size_rules:                         # MiB = 1024 × 1024 字节
+    - {max_mib: 50, frames: 3}
+    - {max_mib: 200, frames: 5}
+    - {max_mib: 1024, frames: 8}
+    - {max_mib: null, frames: 12}
+
+images:
+  max_dimension: 768                  # 截图最长边像素,保持比例,不放大小图
+  jpeg_quality: 4                     # JPEG 质量档位,2–15,越小通常越清晰、体积越大
+

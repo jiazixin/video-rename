@@ -1,0 +1,6 @@
+{
+  "streams": [
+    {"index": 0, "codec_type": "video", "width": 1280, "height": 720, "duration": "60.0", "sample_aspect_ratio": "1:1", "color_transfer": "smpte2084", "disposition": {"default": 1, "attached_pic": 0}}
+  ],
+  "format": {"duration": "60.0", "size": "6000"}
+}
