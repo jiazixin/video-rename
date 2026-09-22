@@ -450,13 +450,7 @@ func Serve(ctx context.Context, cfg *config.Config) error {
 	}
 	defer listener.Close()
 	a.Start()
-	host := cfg.Listen
-	if host == "0.0.0.0" {
-		host = "127.0.0.1"
-	} else if host == "::" {
-		host = "::1"
-	}
-	slog.Info("http server started", "listen", cfg.Listen, "port", cfg.Port, "url", "http://"+net.JoinHostPort(host, strconv.Itoa(cfg.Port)))
+	slog.Info("http server started", "listen", cfg.Listen, "port", cfg.Port)
 	slog.Info("scheduler started")
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(listener) }()

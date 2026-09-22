@@ -38,7 +38,7 @@ func main() {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	slog.Info("starting video-rename", "version", version)
+	slog.Info("starting video-rename")
 	if err = app.Serve(ctx, cfg); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
