@@ -120,5 +120,10 @@ INSERT INTO schema_migrations VALUES(13,datetime('now'));`); err != nil {
 			return err
 		}
 	}
+	if version < 14 {
+		if _, err = tx.Exec("ALTER TABLE events ADD COLUMN processing_log TEXT NOT NULL DEFAULT ''; INSERT INTO schema_migrations VALUES(14,datetime('now'));"); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }

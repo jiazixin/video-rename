@@ -85,14 +85,15 @@ const (
 // Global 为 true 表示全局依赖故障(鉴权失效、日志不可写、外部工具消失),
 // 会停止调度新任务;普通视频级错误不终止批次。
 type JobError struct {
-	RawRequest  string `json:"-"`
-	RawResponse string `json:"-"`
-	Code        ErrorCode
-	Message     string
-	ExitCode    int    // 媒体进程退出码;未运行或未知为 0
-	HTTPStatus  int    // HTTP 状态码;非 HTTP 错误为 0
-	StderrTail  string // 裁剪后的 stderr 或脱敏响应摘要
-	Global      bool
+	ProcessingLog string `json:"-"`
+	RawRequest    string `json:"-"`
+	RawResponse   string `json:"-"`
+	Code          ErrorCode
+	Message       string
+	ExitCode      int    // 媒体进程退出码;未运行或未知为 0
+	HTTPStatus    int    // HTTP 状态码;非 HTTP 错误为 0
+	StderrTail    string // 裁剪后的 stderr 或脱敏响应摘要
+	Global        bool
 }
 
 func (e *JobError) Error() string {

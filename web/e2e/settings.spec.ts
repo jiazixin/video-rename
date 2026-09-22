@@ -20,9 +20,11 @@ test('系统设置聚合、处理参数持久化与窄屏',async({page})=>{
  await expect(page.getByLabel('稳定性等待时长（秒）',{exact:true})).toHaveValue('0')
  for(const name of ['模型配置','抽帧设置','通知设置']){
   await page.getByRole('button',{name,exact:true}).click()
-  await expect(page.getByRole('heading',{name:name+'.'})).toBeVisible()
+  await expect(page.getByRole('heading',{name:name+'.'})).toHaveCount(0)
+  await expect(page.getByRole('button',{name,exact:true})).toHaveAttribute('aria-pressed','true')
   await page.reload()
-  await expect(page.getByRole('heading',{name:name+'.'})).toBeVisible()
+  await expect(page.getByRole('heading',{name:name+'.'})).toHaveCount(0)
+  await expect(page.getByRole('button',{name,exact:true})).toHaveAttribute('aria-pressed','true')
  }
  await page.getByRole('button',{name:'处理与缓存',exact:true}).click()
  await page.setViewportSize({width:390,height:844})

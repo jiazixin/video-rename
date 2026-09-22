@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {computed,onMounted,ref,watch} from 'vue'
-import {Film,Plus,Save,Trash2} from 'lucide-vue-next'
+import {Plus,Save,Trash2} from 'lucide-vue-next'
 import {api} from '../../app/api'
 import SelectField from '../../components/SelectField.vue'
 import './sampling.css'
@@ -18,7 +18,7 @@ onMounted(load)
 </script>
 <template>
 <section class="sampling-page">
- <div class="page-heading"><div><h1>抽帧设置<span class="title-dot">.</span></h1><p>控制模型看到的画面数量、采样范围与图片清晰度。</p></div><Film :size="25"/></div>
+
  <div v-if="error" class="notice error" role="alert">{{error}}<button v-if="!form" @click="load">重新加载</button></div>
  <p v-if="loading" role="status">正在加载设置…</p>
  <form v-else-if="form" @submit.prevent="save">

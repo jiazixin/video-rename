@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"video-rename/internal/config"
@@ -76,8 +77,21 @@ func evenFloor(v float64) int {
 //     否则 EXTRACT_INSUFFICIENT_FRAMES)。
 //
 // 即使返回错误,set 中也携带已完成的帧与 warnings 供日志使用。
-func (e *Extractor) Extract(ctx context.Context, job domain.VideoJob, meta domain.VideoMeta, plan domain.FramePlan) (domain.FrameSet, *domain.JobError) {
-	set := domain.FrameSet{Plan: plan}
+func (e *Extractor) Extract(ctx context.Context, job domain.VideoJob, meta domain.VideoMeta, plan domain.FramePlan) (set domain.FrameSet, jobErr *domain.JobError) {
+	set = domain.FrameSet{Plan: plan}
+	var diagnostics strings.Builder
+	fmt.Fprintf(&diagnostics, "FFmpeg: %s\n视频: %s\n视频流: %d · 尺寸: %dx%d · 计划帧数: %d · 总预算: %s\n", e.FFmpegPath, job.Path, meta.StreamIndex, meta.DisplayWidth, meta.DisplayHeight, len(plan.Times), e.budget())
+	record := func(at time.Duration, attempt string, err error) {
+		if err != nil && diagnostics.Len() < 120*1024 {
+			fmt.Fprintf(&diagnostics, "\n采样时间 %s · %s\n%s\n", at, attempt, err)
+		}
+	}
+	defer func() {
+		if jobErr != nil {
+			fmt.Fprintf(&diagnostics, "\n结果: %s\n成功帧: %d\n警告: %s\n", jobErr.Error(), len(set.Frames), strings.Join(set.Warn, "\n"))
+			jobErr.ProcessingLog = diagnostics.String()
+		}
+	}()
 	tw, th, err := targetDims(meta.DisplayWidth, meta.DisplayHeight, e.Images.MaxDimension)
 	if err != nil {
 		set.Warn = append(set.Warn, err.Error())
@@ -119,6 +133,7 @@ func (e *Extractor) Extract(ctx context.Context, job domain.VideoJob, meta domai
 		out := filepath.Join(tmp, fmt.Sprintf("frame-%02d.jpg", i))
 
 		frame, ferr := e.extractPoint(ctx, job, meta, planned, out, tw, th)
+		record(planned, "首次抽帧", ferr)
 		if ferr != nil && errors.Is(ferr, errToolVanished) {
 			return set, &domain.JobError{
 				Code: domain.CodeToolNotFound, Message: errToolVanished.Error(), Global: true,
@@ -128,6 +143,7 @@ func (e *Extractor) Extract(ctx context.Context, job domain.VideoJob, meta domai
 			// 首次失败:从分段中点移至 1/3 处补试一次
 			out2 := filepath.Join(tmp, fmt.Sprintf("frame-%02d-r.jpg", i))
 			frame, ferr = e.extractPoint(ctx, job, meta, retry, out2, tw, th)
+			record(retry, "补试抽帧", ferr)
 			if ferr == nil {
 				frame.Planned, frame.Actual = planned, retry
 			}

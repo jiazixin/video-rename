@@ -377,7 +377,7 @@ test('自动计划和手动运行分区、目录选择显示处理状态',async(
 test('通知设置保存密钥、测试发送和批次结束通知',async({page})=>{
  await login(page)
  await page.getByRole('button',{name:'系统设置',exact:true}).click();await page.getByRole('button',{name:'通知设置',exact:true}).click()
- await expect(page.getByRole('heading',{name:'通知设置.'})).toBeVisible()
+ await expect(page.getByRole('heading',{name:'系统设置.'})).toBeVisible()
  const webhook=page.getByRole('form',{name:'通用 Webhook',exact:true})
  await webhook.getByLabel('启用通用 Webhook',{exact:true}).check()
  await webhook.getByLabel('通用 Webhook推送地址',{exact:true}).fill(modelURL().replace('/v1','/notify'))
@@ -464,7 +464,7 @@ test('通知配置问号支持悬停和手机点击',async({page})=>{
   await page.getByRole('button',{name:`${name}配置说明`,exact:true}).hover()
   await expect(page.getByRole('tooltip')).toBeVisible()
   await expect(page.getByRole('tooltip')).toContainText('保存设置')
-  await page.getByRole('heading',{name:'通知设置.'}).hover()
+  await page.getByRole('heading',{name:'系统设置.'}).hover()
   await expect(page.getByRole('tooltip')).toBeHidden()
  }
  await page.setViewportSize({width:390,height:844})

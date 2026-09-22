@@ -522,7 +522,7 @@ func (m *Manager) scan(ctx context.Context, run, id int64, recursive bool) error
 		}
 	}
 }
-func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.Config) {
+func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.Config, extracted func()) {
 	run := batch.ID
 	if ctx.Err() != nil {
 		return
@@ -571,7 +571,7 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.C
 			var title string
 			var exchange domain.ModelDiagnostics
 			var lease *framecache.Lease
-			title, lease, err = m.analyze(domain.WithModelDiagnostics(ctx, &exchange), batch, cfg, domain.VideoJob{Path: p, Snapshot: snap, JobID: fmt.Sprint(it.ID)}, probe, ffmpeg)
+			title, lease, err = m.analyze(domain.WithModelDiagnostics(ctx, &exchange), batch, cfg, domain.VideoJob{Path: p, Snapshot: snap, JobID: fmt.Sprint(it.ID)}, probe, ffmpeg, extracted)
 			if lease != nil {
 				defer func() { lease.Release(committed) }()
 			}
@@ -588,8 +588,8 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.C
 	if err != nil {
 		rel, _ := filepath.Rel(m.Library.Root, p)
 		var diagnostic *domain.JobError
-		if errors.As(err, &diagnostic) && (diagnostic.RawRequest != "" || diagnostic.RawResponse != "") {
-			_, _ = m.DB.Exec("INSERT INTO events(category,action,entry,run,old_path,message,created,raw_request,raw_response) VALUES('failure','automatic',?,?,?,?,?,?,?)", it.Entry, run, rel, err.Error(), storage.Now(), diagnostic.RawRequest, diagnostic.RawResponse)
+		if errors.As(err, &diagnostic) && (diagnostic.RawRequest != "" || diagnostic.RawResponse != "" || diagnostic.ProcessingLog != "" || diagnostic.StderrTail != "") {
+			_, _ = m.DB.Exec("INSERT INTO events(category,action,entry,run,old_path,message,created,raw_request,raw_response,processing_log) VALUES('failure','automatic',?,?,?,?,?,?,?,?)", it.Entry, run, rel, err.Error(), storage.Now(), diagnostic.RawRequest, diagnostic.RawResponse, diagnostic.ProcessingLog+diagnostic.StderrTail)
 		} else {
 			_ = m.Library.Event("failure", "automatic", it.Entry, 0, run, rel, "", err.Error())
 		}

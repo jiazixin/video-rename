@@ -286,3 +286,131 @@ func TestCancelStopsExtractionAndLeavesOtherBatchRunning(t *testing.T) {
 		t.Fatal(s)
 	}
 }
+
+func TestBatchPrefetchUsesCapacityInsteadOfVideoCount(t *testing.T) {
+	for _, limited := range []bool{false, true} {
+		t.Run(fmt.Sprintf("capacity-limited=%v", limited), func(t *testing.T) {
+			m, root := setup(t)
+			const count = 140 // Cross both the old 64-item cap and the 128-item SQL page.
+			for i := 0; i < count; i++ {
+				if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("%03d.mp4", i)), []byte("video"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			profile, err := (models.Store{DB: m.DB}).Get(1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			profile.Workers = 1
+			if _, err = (models.Store{DB: m.DB}).Save(profile); err != nil {
+				t.Fatal(err)
+			}
+			settings := systemsettings.Default()
+			settings.StabilitySeconds = 0
+			settings.ExtractWorkers = 1
+			if err = (systemsettings.Store{DB: m.DB}).Save(settings); err != nil {
+				t.Fatal(err)
+			}
+			if limited {
+				reserve := int64(config.DefaultFrameSettings().Sampling.MaxFrames)*(1<<20) + (32 << 20) + 65536
+				// fakeFrames uses 5 bytes plus 64 KiB metadata: permit exactly three
+				// pinned entries before the next peak extraction reservation must wait.
+				if err = m.Cache.SetLimit(reserve + 2*(65536+5)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			extracted := make(chan struct{}, count)
+			permits := make(chan struct{}, count)
+			m.Prepare = func(_ context.Context, _ *config.Config, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
+				frames, err := fakeFrames(work)
+				extracted <- struct{}{}
+				return frames, err
+			}
+			m.Infer = func(ctx context.Context, _ *config.Config, frames []domain.Frame) (string, error) {
+				select {
+				case <-ctx.Done():
+					return "", ctx.Err()
+				case <-permits:
+				}
+				if _, err := os.Stat(frames[0].Path); err != nil {
+					return "", err
+				}
+				return "renamed", nil
+			}
+			id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "capacity-prefetch"}, "manual", 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan struct{})
+			go func() { defer close(done); m.Execute(ctx, id) }()
+			defer func() {
+				cancel()
+				select {
+				case <-done:
+				case <-time.After(10 * time.Second):
+					t.Error("cancellation did not drain pending work")
+				}
+			}()
+			awaitFrame := func() {
+				t.Helper()
+				select {
+				case <-extracted:
+				case <-time.After(10 * time.Second):
+					t.Fatal("prefetch stopped before expected capacity")
+				}
+			}
+			expected := count
+			if limited {
+				expected = 3
+			}
+			for i := 0; i < expected; i++ {
+				awaitFrame()
+			}
+			if limited {
+				select {
+				case <-extracted:
+					t.Fatal("extracted beyond cache capacity")
+				case <-time.After(150 * time.Millisecond):
+				}
+				if stats := m.Cache.Stats(); stats.Entries != 3 {
+					t.Fatalf("waiting frames evicted: %+v", stats)
+				}
+				permits <- struct{}{} // A successful commit frees capacity for the next video.
+				awaitFrame()
+				select {
+				case <-extracted:
+					t.Fatal("capacity not enforced after refill")
+				case <-time.After(150 * time.Millisecond):
+				}
+				if err = m.Cancel(id); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				r, err := m.Get(id)
+				if err != nil || r.Done != 0 {
+					t.Fatalf("expected prefetch while model blocked: %+v %v", r, err)
+				}
+				for i := 0; i < count; i++ {
+					permits <- struct{}{}
+				}
+			}
+			select {
+			case <-done:
+			case <-time.After(15 * time.Second):
+				t.Fatal("run did not finish")
+			}
+			r, err := m.Get(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if limited {
+				if r.Status != "cancelled" || r.Done != 1 {
+					t.Fatalf("cancelled run %+v", r)
+				}
+			} else if r.Done != count || r.Failed != 0 || m.Cache.Stats().Entries != 0 {
+				t.Fatalf("completed run %+v cache %+v", r, m.Cache.Stats())
+			}
+		})
+	}
+}

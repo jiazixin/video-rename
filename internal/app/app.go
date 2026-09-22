@@ -246,6 +246,14 @@ func (a *App) Handler() http.Handler {
 		send(w, 200, v)
 	})
 	api.HandleFunc("GET /api/runs/{id}/items", a.items)
+	api.HandleFunc("POST /api/runs/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
+		result, err := a.Library.RestoreBatch(r.Context(), number(r.PathValue("id")))
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		send(w, 200, result)
+	})
 	api.HandleFunc("POST /api/runs/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
 		if err := a.Jobs.Cancel(number(r.PathValue("id"))); err != nil {
 			failure(w, err)

@@ -361,3 +361,22 @@ func TestFormatSeconds(t *testing.T) {
 }
 
 var _ = fmt.Sprintf
+
+func TestExtractKeepsBothAttemptDiagnostics(t *testing.T) {
+	dir := t.TempDir()
+	ff := filepath.Join(dir, "ffmpeg-fail")
+	if err := os.WriteFile(ff, []byte("#!/bin/sh\necho 'decoder unavailable' >&2\nexit 7\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	job, _ := fakeJob(t, 100)
+	ex := testExtractor(ff, 768, 4)
+	_, err := ex.Extract(context.Background(), job, domain.VideoMeta{StreamIndex: 0, DisplayWidth: 320, DisplayHeight: 180}, testPlan(2))
+	if err == nil {
+		t.Fatal("expected extraction failure")
+	}
+	for _, want := range []string{"首次抽帧", "补试抽帧", "decoder unavailable", "退出码 7", "计划帧数: 2"} {
+		if !strings.Contains(err.ProcessingLog, want) {
+			t.Fatalf("missing %s: %s", want, err.ProcessingLog)
+		}
+	}
+}

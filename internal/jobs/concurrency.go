@@ -4,12 +4,13 @@ import (
 	"context"
 	"sync"
 	"video-rename/internal/config"
+	"video-rename/internal/systemsettings"
 )
 
-// Each run keeps a bounded lookahead. Actual extraction and inference slots are
-// global and independent; a blocked model does not occupy an extraction slot.
+// Dispatch only when an extraction slot is available. Release that slot once
+// frames are cached; waiting for inference is bounded by pinned cache capacity,
+// not by a fixed number of videos in the run.
 func (m *Manager) processPending(ctx context.Context, run Run, cfg config.Config) error {
-	slots := make(chan struct{}, 64)
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	var after int64
@@ -37,22 +38,26 @@ func (m *Manager) processPending(ctx context.Context, run Run, cfg config.Config
 			return nil
 		}
 		for _, it := range batch {
-			select {
-			case <-ctx.Done():
-				return nil
-			case slots <- struct{}{}:
+			release, _, err := m.extractSlots.acquire(ctx, 0, 8, func() (int, error) {
+				settings, err := (systemsettings.Store{DB: m.DB}).Get()
+				return settings.ExtractWorkers, err
+			})
+			if err != nil {
+				return err
 			}
+			// Early validation failures and cancellation must also release the slot.
+			extracted := sync.OnceFunc(release)
 			if ctx.Err() != nil {
-				<-slots
+				extracted()
 				return nil
 			}
 			wg.Add(1)
-			go func(it item) {
+			go func(it item, extracted func()) {
 				defer wg.Done()
-				defer func() { <-slots }()
+				defer extracted()
 				copy := cfg
-				m.process(ctx, run, it, &copy)
-			}(it)
+				m.process(ctx, run, it, &copy, extracted)
+			}(it, extracted)
 			after = it.ID
 		}
 	}
