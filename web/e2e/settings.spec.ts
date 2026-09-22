@@ -22,6 +22,18 @@ test('系统设置聚合、处理参数持久化与窄屏',async({page})=>{
   await page.getByRole('button',{name,exact:true}).click()
   await expect(page.getByRole('heading',{name:name+'.'})).toHaveCount(0)
   await expect(page.getByRole('button',{name,exact:true})).toHaveAttribute('aria-pressed','true')
+  await page.setViewportSize({width:1920,height:1080})
+  await expect(page.locator('.system-settings .panel').first()).toBeVisible()
+  if(name==='抽帧设置'){
+   const tabs=await page.locator('.settings-tabs').boundingBox()
+   const content=await page.locator('.sampling-page').boundingBox()
+   expect(Math.abs(tabs!.width-content!.width)).toBeLessThan(2)
+  }
+  await page.screenshot({path:`test-results/settings-${name}-desktop.png`,fullPage:true})
+  await page.setViewportSize({width:390,height:844})
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true)
+  await page.screenshot({path:`test-results/settings-${name}-mobile.png`,fullPage:true})
+  await page.setViewportSize({width:1440,height:1000})
   await page.reload()
   await expect(page.getByRole('heading',{name:name+'.'})).toHaveCount(0)
   await expect(page.getByRole('button',{name,exact:true})).toHaveAttribute('aria-pressed','true')

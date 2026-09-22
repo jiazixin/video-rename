@@ -5,4 +5,4 @@
 
 @media(max-width:600px){.run-tabs{gap:16px}.run-tabs button{flex:1;min-width:0;font-size:12px;line-height:1.6}.run-tabs button svg{flex-shrink:0}}
 
-.row-actions.run-actions{gap:6px;white-space:nowrap}.row-actions.run-actions button{border:1px solid var(--line);border-radius:6px;background:white;padding:5px 8px;font-size:11px;gap:4px;color:var(--steel)}.row-actions.run-actions .restore-run{color:#477563}.row-actions.run-actions .cancel-run{color:#996b5f;background:white;border-color:var(--line)}.row-actions.run-actions button:hover:not(:disabled){background:#f3f7f5;border-color:#baccc2}.row-actions.run-actions button:disabled{opacity:.4}
+.row-actions.run-actions{gap:8px;white-space:nowrap}
