@@ -13,6 +13,7 @@ import (
 	"video-rename/internal/library"
 	"video-rename/internal/models"
 	"video-rename/internal/storage"
+	"video-rename/internal/systemsettings"
 )
 
 func setup(t *testing.T) (*Manager, string) {
@@ -49,7 +50,12 @@ func setup(t *testing.T) (*Manager, string) {
 	if _, e = (models.Store{DB: db}).Save(profile); e != nil {
 		t.Fatal(e)
 	}
-	m.StableDelay = 0
+	t.Cleanup(func() { m.Cache.Close() })
+	settings := systemsettings.Default()
+	settings.StabilitySeconds = 0
+	if err := (systemsettings.Store{DB: db}).Save(settings); err != nil {
+		t.Fatal(err)
+	}
 	return m, root
 }
 func TestAutomaticRenameSkipRestoreAndOverlap(t *testing.T) {

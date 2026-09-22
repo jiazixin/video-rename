@@ -76,6 +76,7 @@ type Config struct {
 	Listen        string         `yaml:"listen"`
 	Port          int            `yaml:"port"`
 	Path          string         `yaml:"path"`
+	TempStorage   string         `yaml:"tmp-storage"`
 	Storage       string         `yaml:"storage"`
 	Auth          AuthConfig     `yaml:"auth"`
 	Server        ServerConfig   `yaml:"-"`
@@ -128,7 +129,7 @@ func defaultSizeRules() []SizeRule {
 // defaults 返回内置默认值(省略字段取这些值)。
 func defaults() *Config {
 	return &Config{
-		Listen: "127.0.0.1", Port: 8790, Storage: "../data",
+		Listen: "127.0.0.1", Port: 8790, Storage: "../data", TempStorage: "../.cache",
 		Workers: 2,
 		Sampling: SamplingConfig{
 			Strategy:      string(StrategyHybrid),

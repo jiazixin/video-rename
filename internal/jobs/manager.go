@@ -16,11 +16,13 @@ import (
 	"video-rename/internal/config"
 	"video-rename/internal/discovery"
 	"video-rename/internal/domain"
+	"video-rename/internal/framecache"
 	"video-rename/internal/library"
 	"video-rename/internal/models"
 	"video-rename/internal/pipeline"
 	"video-rename/internal/sampling"
 	"video-rename/internal/storage"
+	"video-rename/internal/systemsettings"
 )
 
 type Run struct {
@@ -51,16 +53,23 @@ type Request struct {
 	Key           string  `json:"key"`
 }
 type Manager struct {
-	DB          *storage.Store
-	Library     *library.Library
-	Config      *config.Config
-	createMu    sync.Mutex
-	mu          sync.Mutex
-	active      int64
-	targets     []int64
-	cancel      context.CancelFunc
-	StableDelay time.Duration
-	Analyze     func(context.Context, *config.Config, domain.VideoJob, string, string) (string, error)
+	DB           *storage.Store
+	Library      *library.Library
+	Config       *config.Config
+	createMu     sync.Mutex
+	mu           sync.Mutex
+	active       map[int64]activeRun
+	Cache        *framecache.Cache
+	extractSlots limiter
+	modelSlots   limiter
+	Prepare      func(context.Context, *config.Config, domain.VideoJob, string, string, string) (domain.FrameSet, error)
+	Infer        func(context.Context, *config.Config, []domain.Frame) (string, error)
+	Analyze      func(context.Context, *config.Config, domain.VideoJob, string, string) (string, error)
+}
+
+type activeRun struct {
+	targets []int64
+	cancel  context.CancelFunc
 }
 
 func New(db *storage.Store, l *library.Library, cfg *config.Config) (*Manager, error) {
@@ -70,13 +79,33 @@ func New(db *storage.Store, l *library.Library, cfg *config.Config) (*Manager, e
 	if _, err := db.Exec("UPDATE runs SET status='interrupted',finished=?,error='服务重启，前次运行已中断' WHERE status IN ('queued','scanning','running','cancelling')", storage.Now()); err != nil {
 		return nil, err
 	}
-	m := &Manager{DB: db, Library: l, Config: cfg, StableDelay: 30 * time.Second, Analyze: pipeline.Analyze}
+	settings, err := (systemsettings.Store{DB: db}).Get()
+	if err != nil {
+		return nil, err
+	}
+	temp := cfg.TempStorage
+	if temp == "" {
+		var seq int
+		var name, path string
+		if err = db.QueryRow("PRAGMA database_list").Scan(&seq, &name, &path); err != nil {
+			return nil, err
+		}
+		temp = filepath.Join(filepath.Dir(path), ".cache")
+	}
+	cache, err := framecache.New(temp, settings.Bytes())
+	if err != nil {
+		return nil, err
+	}
+	m := &Manager{DB: db, Library: l, Config: cfg, active: map[int64]activeRun{}, Cache: cache, Prepare: pipeline.Prepare, Infer: pipeline.Infer}
 	l.Busy = m.Busy
 	return m, nil
 }
 func (m *Manager) Busy(id int64) bool {
 	m.mu.Lock()
-	targets := append([]int64(nil), m.targets...)
+	var targets []int64
+	for _, r := range m.active {
+		targets = append(targets, r.targets...)
+	}
 	m.mu.Unlock()
 	for _, t := range targets {
 		if m.Library.IsWithin(id, t) || m.Library.IsWithin(t, id) {
@@ -200,7 +229,7 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	}
 	defer tx.Rollback()
 	var count int
-	if err = tx.QueryRow("SELECT count(*) FROM runs WHERE status='queued'").Scan(&count); err != nil {
+	if err = tx.QueryRow("SELECT count(*) FROM runs WHERE status IN ('queued','scanning','running','cancelling')").Scan(&count); err != nil {
 		return 0, err
 	}
 	if count >= 20 {
@@ -258,8 +287,8 @@ func (m *Manager) List(before int64) ([]Run, error) {
 func (m *Manager) Cancel(id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.active == id && m.cancel != nil {
-		m.cancel()
+	if r, ok := m.active[id]; ok {
+		r.cancel()
 	}
 	_, err := m.DB.Exec("UPDATE runs SET status=CASE WHEN status='queued' THEN 'cancelled' ELSE 'cancelling' END,finished=CASE WHEN status='queued' THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE finished END WHERE id=? AND status IN ('queued','scanning','running')", id)
 	return err
@@ -267,14 +296,38 @@ func (m *Manager) Cancel(id int64) error {
 func (m *Manager) Loop(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	wg.Add(1)
+	go func() { defer wg.Done(); m.Cache.Loop(ctx) }()
+	launched := map[int64]bool{}
+	finished := make(chan int64, 20)
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case id := <-finished:
+			delete(launched, id)
 		case <-ticker.C:
-			var id int64
-			if err := m.DB.QueryRow("SELECT id FROM runs WHERE status='queued' ORDER BY id LIMIT 1").Scan(&id); err == nil {
-				m.Execute(ctx, id)
+			rows, err := m.DB.QueryContext(ctx, "SELECT id FROM runs WHERE status='queued' ORDER BY id LIMIT 20")
+			if err != nil {
+				continue
+			}
+			var ids []int64
+			for rows.Next() {
+				var id int64
+				if rows.Scan(&id) == nil {
+					ids = append(ids, id)
+				}
+			}
+			rows.Close()
+			for _, id := range ids {
+				if launched[id] || len(launched) >= 20 {
+					continue
+				}
+				launched[id] = true
+				wg.Add(1)
+				go func(id int64) { defer wg.Done(); m.Execute(ctx, id); finished <- id }(id)
 			}
 		}
 	}
@@ -287,11 +340,13 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	m.mu.Lock()
-	m.active = id
-	m.targets = r.Targets
-	m.cancel = cancel
+	if _, ok := m.active[id]; ok {
+		m.mu.Unlock()
+		return
+	}
+	m.active[id] = activeRun{targets: r.Targets, cancel: cancel}
 	m.mu.Unlock()
-	defer func() { m.mu.Lock(); m.active = 0; m.targets = nil; m.cancel = nil; m.mu.Unlock() }()
+	defer func() { m.mu.Lock(); delete(m.active, id); m.mu.Unlock() }()
 	claim, err := m.DB.Exec("UPDATE runs SET status='scanning',started=? WHERE id=? AND status='queued'", storage.Now(), id)
 	if err != nil {
 		return
@@ -329,6 +384,12 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 		fail(err)
 		return
 	}
+	settings, err := (systemsettings.Store{DB: m.DB}).Get()
+	if err != nil {
+		fail(err)
+		return
+	}
+	stableDelay := time.Duration(settings.StabilitySeconds) * time.Second
 	for _, target := range r.Targets {
 		if err = m.scan(ctx, id, target, r.Recursive); err != nil {
 			if ctx.Err() != nil {
@@ -343,8 +404,8 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 		fail(e)
 		return
 	}
-	if ctx.Err() == nil && m.StableDelay > 0 && pending > 0 {
-		timer := time.NewTimer(m.StableDelay)
+	if ctx.Err() == nil && stableDelay > 0 && pending > 0 {
+		timer := time.NewTimer(stableDelay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -357,7 +418,7 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 			return
 		}
 		err = m.processPending(ctx, r, runConfig)
-		if err != nil {
+		if err != nil && ctx.Err() == nil {
 			fail(err)
 			return
 		}
@@ -461,7 +522,11 @@ func (m *Manager) scan(ctx context.Context, run, id int64, recursive bool) error
 		}
 	}
 }
-func (m *Manager) process(ctx context.Context, run int64, it item, cfg *config.Config) {
+func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.Config) {
+	run := batch.ID
+	if ctx.Err() != nil {
+		return
+	}
 	committed := false
 	finish := func(status, msg string) {
 		_, _ = m.DB.Exec("UPDATE run_items SET status=?,message=? WHERE id=?", status, msg, it.ID)
@@ -505,7 +570,11 @@ func (m *Manager) process(ctx context.Context, run int64, it item, cfg *config.C
 		if err == nil {
 			var title string
 			var exchange domain.ModelDiagnostics
-			title, err = m.Analyze(domain.WithModelDiagnostics(ctx, &exchange), cfg, domain.VideoJob{Path: p, Snapshot: snap, JobID: fmt.Sprint(it.ID)}, probe, ffmpeg)
+			var lease *framecache.Lease
+			title, lease, err = m.analyze(domain.WithModelDiagnostics(ctx, &exchange), batch, cfg, domain.VideoJob{Path: p, Snapshot: snap, JobID: fmt.Sprint(it.ID)}, probe, ffmpeg)
+			if lease != nil {
+				defer func() { lease.Release(committed) }()
+			}
 			if err == nil && ctx.Err() == nil {
 				_, err = m.Library.AutoCommit(e.ID, snap, title, fmt.Sprintf("run:%d:item:%d", run, it.ID), run, exchange)
 				committed = err == nil
@@ -528,8 +597,8 @@ func (m *Manager) process(ctx context.Context, run int64, it item, cfg *config.C
 		var je *domain.JobError
 		if (errors.As(err, &je) && je.Global) || m.Library.Halted() {
 			m.mu.Lock()
-			if m.cancel != nil {
-				m.cancel()
+			if r, ok := m.active[run]; ok {
+				r.cancel()
 			}
 			m.mu.Unlock()
 			_, _ = m.DB.Exec("UPDATE runs SET error=? WHERE id=?", err.Error(), run)

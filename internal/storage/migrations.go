@@ -108,5 +108,17 @@ INSERT INTO schema_migrations VALUES(11,datetime('now'));`); err != nil {
 			return err
 		}
 	}
+	if version < 12 {
+		if _, err = tx.Exec(`CREATE TABLE system_settings(id INTEGER PRIMARY KEY CHECK(id=1),extract_workers INTEGER NOT NULL,cache_gb INTEGER NOT NULL);
+INSERT INTO schema_migrations VALUES(12,datetime('now'));`); err != nil {
+			return err
+		}
+	}
+	if version < 13 {
+		if _, err = tx.Exec(`ALTER TABLE system_settings ADD COLUMN stability_seconds INTEGER NOT NULL DEFAULT 30 CHECK(stability_seconds BETWEEN 0 AND 3600);
+INSERT INTO schema_migrations VALUES(13,datetime('now'));`); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }

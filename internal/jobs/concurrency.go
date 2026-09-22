@@ -2,37 +2,23 @@ package jobs
 
 import (
 	"context"
-	"database/sql"
-	"errors"
-	"time"
-
+	"sync"
 	"video-rename/internal/config"
-	"video-rename/internal/models"
 )
 
-// processPending dispatches only when the model's latest concurrency permits it.
-// Each item gets its own config copy; in-flight requests keep their original settings.
+// Each run keeps a bounded lookahead. Actual extraction and inference slots are
+// global and independent; a blocked model does not occupy an extraction slot.
 func (m *Manager) processPending(ctx context.Context, run Run, cfg config.Config) error {
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-	finished := make(chan struct{}, 32)
-	active, limit := 0, cfg.Workers
-	defer func() {
-		for active > 0 {
-			<-finished
-			active--
-		}
-	}()
+	slots := make(chan struct{}, 64)
+	var wg sync.WaitGroup
+	defer wg.Wait()
 	var after int64
 	for ctx.Err() == nil {
 		rows, err := m.DB.QueryContext(ctx, "SELECT id,entry,identity,size,mtime FROM run_items WHERE run=? AND status='queued' AND id>? ORDER BY id LIMIT 128", run.ID, after)
 		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
 			return err
 		}
-		batch := []item{}
+		var batch []item
 		for rows.Next() {
 			var it item
 			if err = rows.Scan(&it.ID, &it.Entry, &it.Identity, &it.Size, &it.Mtime); err != nil {
@@ -45,52 +31,28 @@ func (m *Manager) processPending(ctx context.Context, run Run, cfg config.Config
 		}
 		rows.Close()
 		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
 			return err
 		}
 		if len(batch) == 0 {
 			return nil
 		}
 		for _, it := range batch {
-			for {
-				if ctx.Err() != nil {
-					return nil
-				}
-				latest, err := (models.Store{DB: m.DB}).Workers(ctx, run.ModelConfigID)
-				if err == nil {
-					limit = latest
-				} else if !errors.Is(err, sql.ErrNoRows) {
-					if ctx.Err() != nil {
-						return nil
-					}
-					return err
-				}
-				// A deleted profile keeps the last known limit (or the creation snapshot).
-				if active < limit {
-					break
-				}
-				select {
-				case <-ctx.Done():
-					return nil
-				case <-finished:
-					active--
-				case <-ticker.C:
-				}
+			select {
+			case <-ctx.Done():
+				return nil
+			case slots <- struct{}{}:
 			}
 			if ctx.Err() != nil {
+				<-slots
 				return nil
 			}
-			itemConfig := cfg
-			itemConfig.Workers, itemConfig.Server.Workers = limit, limit
-			active++
-			go func(it item, itemConfig config.Config) {
-				defer func() { finished <- struct{}{} }()
-				if ctx.Err() == nil {
-					m.process(ctx, run.ID, it, &itemConfig)
-				}
-			}(it, itemConfig)
+			wg.Add(1)
+			go func(it item) {
+				defer wg.Done()
+				defer func() { <-slots }()
+				copy := cfg
+				m.process(ctx, run, it, &copy)
+			}(it)
 			after = it.ID
 		}
 	}

@@ -109,3 +109,39 @@ func TestStorageDirectoryRejectsFilesAndMediaSymlinks(t *testing.T) {
 		t.Fatal("modified old database", err)
 	}
 }
+
+func TestTempStorageResolutionAndIsolation(t *testing.T) {
+	base := t.TempDir()
+	media := filepath.Join(base, "media")
+	if err := os.Mkdir(media, 0700); err != nil {
+		t.Fatal(err)
+	}
+	yaml := "path: " + media + "\nstorage: ../state\nauth:\n  username: admin\n  password: test\n"
+	cfg, err := loadTemp(t, yaml+"tmp-storage: ./frames\n", "config.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = cfg.ValidateService(); err != nil {
+		t.Fatal(err)
+	}
+	realDir, err := filepath.EvalSymlinks(cfg.ConfigDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TempStorage != filepath.Join(realDir, "frames") {
+		t.Fatal(cfg.TempStorage)
+	}
+	link := filepath.Join(base, "media-link")
+	if err = os.Symlink(media, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"\"\"", media, filepath.Join(link, "new-cache")} {
+		c, e := loadTemp(t, yaml+"tmp-storage: "+value+"\n", "config.yaml")
+		if e == nil {
+			e = c.ValidateService()
+		}
+		if e == nil {
+			t.Fatal("accepted temp path", value)
+		}
+	}
+}

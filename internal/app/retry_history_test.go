@@ -11,6 +11,7 @@ import (
 	"video-rename/internal/config"
 	"video-rename/internal/domain"
 	"video-rename/internal/models"
+	"video-rename/internal/systemsettings"
 )
 
 func TestRetryHistoryRejectsUnsupportedAndKeepsFailures(t *testing.T) {
@@ -102,7 +103,11 @@ exit 0
 	if err = a.DB.QueryRow("SELECT count(*) FROM events WHERE category='failure'").Scan(&count); err != nil || count != 3 {
 		t.Fatal(count, err)
 	}
-	a.Jobs.StableDelay = 0
+	settings := systemsettings.Default()
+	settings.StabilitySeconds = 0
+	if err = (systemsettings.Store{DB: a.DB}).Save(settings); err != nil {
+		t.Fatal(err)
+	}
 	a.Jobs.Analyze = func(context.Context, *config.Config, domain.VideoJob, string, string) (string, error) {
 		return "new-title", nil
 	}

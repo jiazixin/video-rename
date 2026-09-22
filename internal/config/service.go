@@ -33,6 +33,15 @@ func (c *Config) ValidateService() error {
 	}
 	c.Path = resolve(c.Path)
 	c.Storage = resolve(c.Storage)
+	if strings.TrimSpace(c.TempStorage) == "" {
+		return fmt.Errorf("tmp-storage 不能为空")
+	}
+	c.TempStorage = resolve(c.TempStorage)
+	temp, tempErr := resolveDirectory(c.TempStorage)
+	if tempErr != nil {
+		return fmt.Errorf("tmp-storage: %w", tempErr)
+	}
+	c.TempStorage = temp
 	root, err := filepath.EvalSymlinks(c.Path)
 	if err != nil {
 		return fmt.Errorf("媒体根目录不可访问: %w", err)
@@ -84,10 +93,10 @@ func (c *Config) ValidateService() error {
 	if err != nil {
 		return err
 	}
-	for _, p := range []string{c.Storage, database, configDir} {
+	for _, p := range []string{c.Storage, database, configDir, c.TempStorage} {
 		rel, e := filepath.Rel(c.Path, p)
 		if e == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-			return fmt.Errorf("配置与 storage 不得位于媒体根目录内")
+			return fmt.Errorf("配置、storage 与 tmp-storage 不得位于媒体根目录内")
 		}
 	}
 	return nil
@@ -96,4 +105,36 @@ func (c *Config) ValidateService() error {
 // DatabasePath keeps the on-disk filename internal; Storage always denotes a directory.
 func (c *Config) DatabasePath() string {
 	return filepath.Join(c.Storage, "data.sqlite")
+}
+
+// resolveDirectory resolves existing ancestors, including symlinks, without creating data.
+func resolveDirectory(path string) (string, error) {
+	parent, suffix := path, ""
+	for {
+		_, err := os.Lstat(parent)
+		if err == nil {
+			break
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		next := filepath.Dir(parent)
+		if next == parent {
+			return "", fmt.Errorf("目录路径无效")
+		}
+		suffix = filepath.Join(filepath.Base(parent), suffix)
+		parent = next
+	}
+	real, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return "", err
+	}
+	st, err := os.Stat(real)
+	if err != nil {
+		return "", err
+	}
+	if !st.IsDir() {
+		return "", fmt.Errorf("必须指定目录")
+	}
+	return filepath.Join(real, suffix), nil
 }

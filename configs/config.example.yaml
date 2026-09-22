@@ -4,6 +4,9 @@ port: 8790
 path: "/srv/videos"                   # 已存在的真实媒体根目录
 storage: "../data"                    # 数据目录，内部固定 data.sqlite；不要放在媒体目录内
 
+# 可复用截图缓存，相对于本配置文件；容量与抽帧并发在系统设置中调整。
+tmp-storage: "../.cache"              # 不得位于媒体目录内
+
 auth:
   username: "admin"
   password: "请替换为你的密码"

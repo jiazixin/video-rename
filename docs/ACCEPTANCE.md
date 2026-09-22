@@ -186,3 +186,38 @@
 - 成功与失败历史分别支持本页勾选清除及当前分类全部清除，确认说明全部包含其他页且不受筛选限制。只删除 events，不删除操作、保护标记或任务快照；请求受认证和 CSRF 保护。
 - 前端类型检查与构建、2 项新增浏览器测试通过，覆盖 Coding Plan 地址、图片结果失效、选中清除、分类清空、取消确认及清除后仍可还原文件。真实云端模型与 Coding Plan 套餐未调用。
 - 已重新生成 Linux amd64 静态二进制。
+
+## 2026-09-22 系统设置、独立抽帧与可复用缓存
+
+范围：当前工作区的系统设置聚合、tmp-storage 配置、schema v12、跨批次调度、独立抽帧/模型限额、缓存映射/校验/容量/清理与相关测试。
+
+- `npm --prefix web run build`：通过，包含 Vue 类型检查。
+- `go test -race ./...`：通过全部包；后续取消隔离、共享租约和设置保存收尾分别重跑 `go test -race ./internal/jobs ./internal/framecache`、`go test -race ./internal/app ./internal/scheduler`，通过。
+- `go vet ./...`：通过。
+- `go test -tags=integration ./internal/media/`：通过，真实 FFmpeg 合成视频。
+- `go build -o bin/video-rename ./cmd/video-rename`：通过。
+- `npm run test:e2e -- settings.spec.ts sampling.spec.ts`（web 目录）：2 项通过；已查看桌面和 390px 窄屏截图，设置保存/刷新与四个页签正常。
+- 完整浏览器首轮：前 18 项通过，包括真实 FFmpeg、假模型请求、改名和再次跳过；随后连续登录触发现有每 IP 每分钟 10 次限流，造成登录失败和 worker 初始化失败。未放宽生产限流，剩余用例改用独立服务分组验证。
+
+所有验证使用临时媒体、临时数据库和本地模拟模型，未连接真实模型服务、未改名用户媒体，未重启用户运行中的服务。程序默认参数为抽帧并发 8、临时缓存 10 GB、闲置保留 72 小时。
+
+浏览器分组最终结果：37 个不同用例均取得通过结果。首轮前 18 项通过；第二轮补充图片切换、模型复制/识别、历史清除、标记、自动命名原位更新、计划分区、通知保存和运行详情等 9 项通过（该轮第 10 次用例登录再次触发每分钟限流）；其余 10 项分成两组各 5 项，均通过。两组命令为：
+
+```bash
+cd web
+npm run test:e2e -- workspace.spec.ts --grep '目录大小和时间|通知配置问号|历史批次自绘|历史统计分页|通知同步浏览器'
+npm run test:e2e -- workspace.spec.ts --grep '返回目录恢复|批次记录按|大播放器|首次进入目录|模型检测在'
+```
+
+这表示全部用例分批验证通过，不表示单次 `npm run test:e2e` 全绿；连续登录的测试组织限制仍存在。最终服务二进制已重建，用户服务未自动重启。
+
+### 2026-09-22 稳定性等待设置
+
+在前述工作区改动基础上增加“文件稳定性检查”卡片，默认 30 秒，允许 0–3600 秒，0 禁用等待；schema v13 升级保留旧并发与缓存设置。批次开始时读取等待时长，已开始批次不随保存而改变。
+
+- 前端构建、类型检查和 Go 服务构建通过。
+- `go test -race ./internal/jobs ./internal/systemsettings ./internal/storage ./internal/app ./internal/library` 中 jobs、systemsettings、storage、library 通过；首次 app 因旧测试引用移除的 StableDelay 编译失败，改为保存真实系统设置后单独重跑 `go test -race ./internal/app` 通过。
+- `go vet ./internal/jobs ./internal/systemsettings ./internal/storage ./internal/app` 通过。
+- `npm run test:e2e -- settings.spec.ts`（web 目录）通过；覆盖默认 30、保存 0、刷新恢复和设置页移动布局，已查看桌面截图。
+- 新增后端用例验证等待中取消、源文件变化跳过、已有等待不被新设置缩短，以及升级默认值与重启保留 0。
+- 未重启用户服务，未使用真实媒体或真实模型。

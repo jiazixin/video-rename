@@ -4,7 +4,7 @@ test('抽帧设置保存、档位校验、刷新与窄屏',async({page})=>{
  await page.getByLabel('用户名',{exact:true}).fill('admin')
  await page.getByLabel('密码',{exact:true}).fill('test-password-123')
  await page.getByRole('button',{name:'登录',exact:true}).click()
- await page.getByRole('button',{name:'抽帧设置',exact:true}).click()
+ await page.getByRole('button',{name:'系统设置',exact:true}).click();await page.getByRole('button',{name:'抽帧设置',exact:true}).click()
  await expect(page.getByLabel('每个视频最大帧数')).toHaveValue('12')
  await page.getByLabel('每个视频最大帧数').fill('32')
  await page.getByLabel('截图最长边（像素）').fill('1024')

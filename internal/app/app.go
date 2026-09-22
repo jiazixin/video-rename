@@ -38,6 +38,7 @@ type App struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	wg            sync.WaitGroup
+	settingsMu    sync.Mutex
 }
 
 func New(cfg *config.Config) (*App, error) {
@@ -57,6 +58,7 @@ func New(cfg *config.Config) (*App, error) {
 	}
 	s := &scheduler.Scheduler{DB: db, Jobs: j}
 	if err = s.ResetNext(time.Now()); err != nil {
+		j.Cache.Close()
 		db.Close()
 		return nil, err
 	}
@@ -69,7 +71,13 @@ func (a *App) Start() {
 	go func() { defer a.wg.Done(); a.Jobs.Loop(a.ctx) }()
 	go func() { defer a.wg.Done(); a.Scheduler.Loop(a.ctx) }()
 }
-func (a *App) Close() error { a.cancel(); a.wg.Wait(); a.Library.Close(); return a.DB.Close() }
+func (a *App) Close() error {
+	a.cancel()
+	a.wg.Wait()
+	a.Library.Close()
+	a.Jobs.Cache.Close()
+	return a.DB.Close()
+}
 func send(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -104,6 +112,7 @@ func (a *App) Handler() http.Handler {
 	a.modelRoutes(api)
 	a.notificationRoutes(api)
 	a.samplingRoutes(api)
+	a.systemSettingsRoutes(api)
 	a.numberingRoutes(api)
 	api.HandleFunc("GET /api/logs/{id}/diagnostics", a.logDiagnostics)
 	api.HandleFunc("POST /api/logs/clear", a.clearHistory)

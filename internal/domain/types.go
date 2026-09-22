@@ -184,7 +184,7 @@ type FailedPoint struct {
 }
 
 // FrameSet 一个视频的抽帧结果。TempDir 指向私有临时目录,
-// 调用方在视频完成(含失败与取消)后负责清理。
+// 调用方负责生命周期；Web 交给可重用缓存，旧流水线在任务结束时清理。
 type FrameSet struct {
 	Plan    FramePlan
 	Frames  []Frame

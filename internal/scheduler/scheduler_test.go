@@ -67,6 +67,7 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer m.Cache.Close()
 	s := &Scheduler{DB: db, Jobs: m}
 	prompt, err := (models.Store{DB: db}).Save(models.Profile{ServerConfig: config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}, Title: "计划提示词", Body: "计划专属要求"})
 	if err != nil {

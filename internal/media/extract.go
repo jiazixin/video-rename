@@ -17,8 +17,9 @@ import (
 )
 
 // Extractor 用 FFmpeg 按计划提取 JPEG 截图。
-// 每个 Extract 调用创建私有临时目录并在结束时清理(含失败与取消)。
+// 每个 Extract 创建私有临时目录；失败/取消时清理，成功后由调用方接管。
 type Extractor struct {
+	TempRoot   string // Optional managed workspace; caller owns the parent.
 	FFmpegPath string
 	Images     config.ImagesConfig
 	Budget     time.Duration // 抽帧总预算,默认 120s
@@ -83,7 +84,7 @@ func (e *Extractor) Extract(ctx context.Context, job domain.VideoJob, meta domai
 		return set, &domain.JobError{Code: domain.CodeExtractFailed, Message: err.Error()}
 	}
 
-	tmp, merr := os.MkdirTemp("", "video-rename-"+e.RunID+"-")
+	tmp, merr := os.MkdirTemp(e.TempRoot, "video-rename-"+e.RunID+"-")
 	if merr != nil {
 		return set, &domain.JobError{Code: domain.CodeExtractFailed, Message: fmt.Sprintf("创建临时目录失败: %v", merr)}
 	}
@@ -164,7 +165,14 @@ func (e *Extractor) Extract(ctx context.Context, job domain.VideoJob, meta domai
 }
 
 // extractPoint 在单个时间点执行一次 FFmpeg 抽帧并校验输出。
-func (e *Extractor) extractPoint(ctx context.Context, job domain.VideoJob, meta domain.VideoMeta, at time.Duration, out string, tw, th int) (domain.Frame, error) {
+func (e *Extractor) extractPoint(ctx context.Context, job domain.VideoJob, meta domain.VideoMeta, at time.Duration, out string, tw, th int) (result domain.Frame, resultErr error) {
+	defer func() {
+		for _, p := range []string{out, out + ".re.jpg"} {
+			if p != result.Path {
+				_ = os.Remove(p)
+			}
+		}
+	}()
 	scale := fmt.Sprintf("scale=%d:%d:flags=lanczos,setsar=1", tw, th)
 	args := []string{
 		"-nostdin", "-hide_banner", "-loglevel", "error",

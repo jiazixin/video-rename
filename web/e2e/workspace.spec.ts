@@ -19,7 +19,7 @@ test('登录、目录、手动改名、冲突保护和还原',async({page})=>{
 test('惰性子目录、分页、筛选与窄屏',async({page})=>{await login(page);await page.getByRole('button',{name:'分页测试',exact:true}).click();await expect(page.getByText('片段_0000.mp4',{exact:true})).toBeVisible({timeout:10000});await page.reload();await expect(page.getByText('片段_0000.mp4',{exact:true})).toBeVisible();await page.goBack();await expect(page.getByText('VID_20260920_001.mp4',{exact:true})).toBeVisible();await page.goForward();await expect(page.getByText('片段_0000.mp4',{exact:true})).toBeVisible();await expect(page.locator('tbody tr')).toHaveCount(100);await expect(page.getByText('共 230 项 · 100 项 / 当前页',{exact:true})).toBeVisible();await page.getByRole('button',{name:'下一页',exact:true}).click();await expect(page.getByText('片段_0100.mp4',{exact:true})).toBeVisible();await page.getByRole('button',{name:'上一页',exact:true}).click();await expect(page.getByText('片段_0000.mp4',{exact:true})).toBeVisible();await page.getByRole('button',{name:'切换名称排序'}).click();await expect(page.getByText('片段_0229.mp4',{exact:true})).toBeVisible();await page.getByLabel('搜索当前目录').fill('0229');await expect(page.locator('tbody tr')).toHaveCount(1);await expect(page.getByText('共 1 项 · 1 项 / 当前页',{exact:true})).toBeVisible();await page.setViewportSize({width:390,height:844});await page.screenshot({path:'test-results/library-mobile.png',fullPage:true});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy()})
 test('计划创建、Cron 预览、暂停、编辑和删除',async({page})=>{await login(page);await page.getByRole('button',{name:'运行计划',exact:true}).click();await page.getByRole('button',{name:'自动计划和运行记录',exact:true}).click();await page.getByRole('button',{name:'新建计划',exact:true}).click();await page.getByLabel('计划名称',{exact:true}).fill('每日旅行整理');await page.getByRole('button',{name:'预览执行时间'}).click();await expect(page.locator('.schedule-preview li')).toHaveCount(5);await page.getByLabel('选择 2026 · 旅行记录',{exact:true}).check();await page.getByRole('button',{name:'保存计划',exact:true}).click();await expect(page.getByRole('heading',{name:'每日旅行整理',exact:true})).toBeVisible();await page.getByRole('switch',{name:'暂停 每日旅行整理'}).click();await expect(page.getByText('已暂停',{exact:true})).toBeVisible();await page.getByRole('button',{name:'编辑 每日旅行整理'}).click();await page.getByRole('combobox',{name:'执行频率'}).click();await page.getByRole('option',{name:'Cron 表达式',exact:true}).click();await page.getByLabel('Cron 表达式',{exact:true}).fill('0 */6 * * *');await page.getByRole('button',{name:'保存计划',exact:true}).click();await page.screenshot({path:'test-results/runs-desktop.png',fullPage:true});await page.getByRole('button',{name:'删除 每日旅行整理'}).click();await page.getByRole('button',{name:'删除计划',exact:true}).click();await expect(page.getByRole('heading',{name:'每日旅行整理',exact:true})).toHaveCount(0)})
 test('提示词新增、持久化、编辑和计划选择',async({page})=>{
- await login(page);await page.getByRole('button',{name:'模型配置',exact:true}).click();await page.getByRole('button',{name:'新增配置',exact:true}).click();await page.getByLabel('配置名称',{exact:true}).fill('旅行专用提示词');await page.getByLabel('服务 URL',{exact:true}).fill(modelURL());await page.getByLabel('模型名称',{exact:true}).fill('视觉模型 · 本地测试');await page.getByLabel('命名提示词',{exact:true}).fill('用于测试的独立提示词：准确描述旅行风景，只输出中文标题。');await page.getByRole('button',{name:'保存配置',exact:true}).click();await expect(page.getByRole('heading',{name:'旅行专用提示词',exact:true})).toBeVisible();await page.reload();await expect(page.getByRole('heading',{name:'旅行专用提示词',exact:true})).toBeVisible();await page.getByRole('button',{name:'编辑模型配置 旅行专用提示词',exact:true}).click();await page.getByLabel('命名提示词',{exact:true}).fill('用于测试的独立提示词：准确描述旅行风景，不编造内容，只输出中文标题。');await page.getByRole('button',{name:'保存配置',exact:true}).click();await page.locator('.model-card').filter({hasText:'旅行专用提示词'}).getByText('命名提示词',{exact:true}).click();await expect(page.getByText('用于测试的独立提示词：准确描述旅行风景，不编造内容，只输出中文标题。',{exact:true})).toBeVisible();await page.getByRole('radio',{name:'设为全局默认 旅行专用提示词',exact:true}).check();await page.reload();await expect(page.getByRole('radio',{name:'设为全局默认 旅行专用提示词',exact:true})).toBeChecked();await page.screenshot({path:'test-results/prompts-desktop.png',fullPage:true})
+ await login(page);await page.getByRole('button',{name:'系统设置',exact:true}).click();await page.getByRole('button',{name:'模型配置',exact:true}).click();await page.getByRole('button',{name:'新增配置',exact:true}).click();await page.getByLabel('配置名称',{exact:true}).fill('旅行专用提示词');await page.getByLabel('服务 URL',{exact:true}).fill(modelURL());await page.getByLabel('模型名称',{exact:true}).fill('视觉模型 · 本地测试');await page.getByLabel('命名提示词',{exact:true}).fill('用于测试的独立提示词：准确描述旅行风景，只输出中文标题。');await page.getByRole('button',{name:'保存配置',exact:true}).click();await expect(page.getByRole('heading',{name:'旅行专用提示词',exact:true})).toBeVisible();await page.reload();await expect(page.getByRole('heading',{name:'旅行专用提示词',exact:true})).toBeVisible();await page.getByRole('button',{name:'编辑模型配置 旅行专用提示词',exact:true}).click();await page.getByLabel('命名提示词',{exact:true}).fill('用于测试的独立提示词：准确描述旅行风景，不编造内容，只输出中文标题。');await page.getByRole('button',{name:'保存配置',exact:true}).click();await page.locator('.model-card').filter({hasText:'旅行专用提示词'}).getByText('命名提示词',{exact:true}).click();await expect(page.getByText('用于测试的独立提示词：准确描述旅行风景，不编造内容，只输出中文标题。',{exact:true})).toBeVisible();await page.getByRole('radio',{name:'设为全局默认 旅行专用提示词',exact:true}).check();await page.reload();await expect(page.getByRole('radio',{name:'设为全局默认 旅行专用提示词',exact:true})).toBeChecked();await page.screenshot({path:'test-results/prompts-desktop.png',fullPage:true})
  await page.getByRole('button',{name:'运行计划',exact:true}).click();await page.getByRole('button',{name:'自动计划和运行记录',exact:true}).click();await page.getByRole('button',{name:'新建计划',exact:true}).click();await page.getByLabel('计划名称',{exact:true}).fill('提示词绑定测试');await expect(page.getByRole('combobox',{name:'模型配置'})).toHaveText('旅行专用提示词');await page.getByLabel('选择 2026 · 旅行记录',{exact:true}).check();await page.getByLabel('保存后启用计划',{exact:true}).uncheck();await page.getByRole('button',{name:'保存计划',exact:true}).click();await expect(page.getByRole('heading',{name:'提示词绑定测试',exact:true})).toBeVisible();await page.getByRole('button',{name:'编辑 提示词绑定测试'}).click();await expect(page.getByRole('combobox',{name:'模型配置'})).toHaveText('旅行专用提示词');await page.getByRole('dialog').getByRole('button',{name:'取消',exact:true}).click()
 })
 test('真实 FFmpeg 抽帧、测试模型、自动命名与再次跳过',async({page})=>{test.setTimeout(120000);await login(page);await page.getByRole('button',{name:'自动命名测试',exact:true}).click();await expect(page.getByText('clip.mp4',{exact:true})).toBeVisible({timeout:10000});await page.getByRole('button',{name:'运行此目录',exact:true}).click();await expect(page.getByRole('combobox',{name:'模型配置'})).toHaveText('旅行专用提示词');await page.getByRole('button',{name:'开始运行',exact:true}).click();await page.getByRole('button',{name:'运行计划',exact:true}).click();await expect(page.locator('tbody tr').first().getByText('已完成',{exact:true})).toBeVisible({timeout:65000});const successes=await(await page.request.get('/api/logs?category=success&action=automatic')).json();const diagnostics=await(await page.request.get(`/api/logs/${successes[0].id}/diagnostics`)).json();expect(diagnostics.request).toContain('messages');expect(diagnostics.response).toContain('choices');expect(diagnostics.request).not.toContain('base64,');await page.getByRole('button',{name:'文件目录',exact:true}).click();await expect(page.getByText('山间晨雾与日出.mp4',{exact:true})).toBeVisible({timeout:10000});await page.getByRole('button',{name:'运行此目录',exact:true}).click();await page.getByRole('button',{name:'开始运行',exact:true}).click();await page.getByRole('button',{name:'运行计划',exact:true}).click();await expect(page.locator('tbody tr').first()).toContainText('已完成',{timeout:10000});await expect(page.locator('tbody tr').first().locator('td').nth(3)).toHaveText('1');await page.getByRole('button',{name:'文件目录',exact:true}).click();await page.getByRole('button',{name:'还原 山间晨雾与日出.mp4',exact:true}).click();await page.getByRole('button',{name:'确认还原',exact:true}).click();await expect(page.getByRole('button',{name:'自动命名 clip.mp4',exact:true})).toBeEnabled();await page.getByRole('button',{name:'运行此目录',exact:true}).click();await expect(page.getByRole('combobox',{name:'模型配置'})).toHaveText('旅行专用提示词');await page.getByRole('button',{name:'开始运行',exact:true}).click();await page.getByRole('button',{name:'运行计划',exact:true}).click();await expect(page.locator('tbody tr').first().getByText('已完成',{exact:true})).toBeVisible({timeout:65000});await expect(page.locator('tbody tr').first().locator('td').nth(2)).toHaveText('1 / 1');await expect(page.locator('tbody tr').first().locator('td').nth(3)).toHaveText('0')})
@@ -128,7 +128,7 @@ test('弹窗锁滚动、多选反选、批量还原和视频播放',async({page}
 })
 
 test('模型 URL 预设、检测模型、密钥保留与编辑参数',async({page})=>{
- await login(page);await page.getByRole('button',{name:'模型配置',exact:true}).click();await page.getByRole('button',{name:'新增配置',exact:true}).click()
+ await login(page);await page.getByRole('button',{name:'系统设置',exact:true}).click();await page.getByRole('button',{name:'模型配置',exact:true}).click();await page.getByRole('button',{name:'新增配置',exact:true}).click()
  const presets=[['智谱','https://open.bigmodel.cn/api/paas/v4'],['DeepSeek','https://api.deepseek.com/v1'],['OpenAI','https://api.openai.com/v1'],['Claude','https://api.anthropic.com/v1'],['Ollama','http://127.0.0.1:11434/v1'],['自定义','']]
  for(const [name,url]of presets){await page.getByRole('combobox',{name:'服务类型',exact:true}).click();await page.getByRole('option',{name,exact:true}).click();await expect(page.getByLabel('服务 URL',{exact:true})).toHaveValue(url)}
  await page.getByLabel('配置名称',{exact:true}).fill('检测与密钥测试');await page.getByLabel('服务 URL',{exact:true}).fill(modelURL());await page.getByLabel('API 密钥',{exact:true}).fill('ui-secret-not-in-response')
@@ -209,7 +209,7 @@ test('失败记录诊断展开、收起与复制',async({page})=>{
 })
 
 test('思考模式参数选择、保存与预算校验',async({page})=>{
- await login(page);await page.getByRole('button',{name:'模型配置',exact:true}).click();await page.getByRole('button',{name:'新增配置',exact:true}).click()
+ await login(page);await page.getByRole('button',{name:'系统设置',exact:true}).click();await page.getByRole('button',{name:'模型配置',exact:true}).click();await page.getByRole('button',{name:'新增配置',exact:true}).click()
  const select=async(label:string,name:string)=>{await page.getByRole('combobox',{name:label,exact:true}).click();await page.getByRole('option',{name,exact:true}).click()}
  await page.getByLabel('并发任务数',{exact:true}).fill('4');await page.getByLabel('配置名称',{exact:true}).fill('思考控制测试');await page.getByLabel('服务 URL',{exact:true}).fill(modelURL());await page.getByLabel('模型名称',{exact:true}).fill('local-vision');await page.getByLabel('命名提示词',{exact:true}).fill('只输出标题')
  await select('思考模式','关闭思考');await select('思考参数类型','本地模板 · enable_thinking')
@@ -233,7 +233,7 @@ test('图片按钮和方向键循环仅遍历图片',async({page})=>{
 })
 
 test('模型复制与删除确认',async({page})=>{
- await login(page);await page.getByRole('button',{name:'模型配置',exact:true}).click()
+ await login(page);await page.getByRole('button',{name:'系统设置',exact:true}).click();await page.getByRole('button',{name:'模型配置',exact:true}).click()
  await page.getByRole('button',{name:'复制模型配置 默认视频命名',exact:true}).click()
  await expect(page.getByRole('dialog')).toBeVisible();await expect(page.getByLabel('配置名称',{exact:true})).toHaveValue('默认视频命名 副本')
  await page.getByRole('button',{name:'取消',exact:true}).click()
@@ -245,7 +245,7 @@ test('模型复制与删除确认',async({page})=>{
 })
 
 test('图片识别测试与智谱 Coding Plan 预设',async({page})=>{
- await login(page);await page.getByRole('button',{name:'模型配置',exact:true}).click();await page.getByRole('button',{name:'新增配置',exact:true}).click()
+ await login(page);await page.getByRole('button',{name:'系统设置',exact:true}).click();await page.getByRole('button',{name:'模型配置',exact:true}).click();await page.getByRole('button',{name:'新增配置',exact:true}).click()
  await page.getByRole('combobox',{name:'服务类型',exact:true}).click();await page.getByRole('option',{name:'智谱 Coding Plan',exact:true}).click();await expect(page.getByLabel('服务 URL',{exact:true})).toHaveValue('https://open.bigmodel.cn/api/coding/paas/v4')
  await page.getByLabel('模型名称',{exact:true}).fill('glm-4.6v');await page.getByLabel('API 密钥',{exact:true}).fill('fake-key')
  let calls=0;await page.route('**/api/model-configs/test-vision',r=>{calls++;expect(r.request().postDataJSON().provider).toBe('zhipu-coding');return r.fulfill({json:{status:'passed',message:'测试图片识别正确',answer:'red,green,blue,yellow',expected:'red,green,blue,yellow',elapsed_ms:123,http_status:200}})})
@@ -376,7 +376,7 @@ test('自动计划和手动运行分区、目录选择显示处理状态',async(
 
 test('通知设置保存密钥、测试发送和批次结束通知',async({page})=>{
  await login(page)
- await page.getByRole('button',{name:'通知设置',exact:true}).click()
+ await page.getByRole('button',{name:'系统设置',exact:true}).click();await page.getByRole('button',{name:'通知设置',exact:true}).click()
  await expect(page.getByRole('heading',{name:'通知设置.'})).toBeVisible()
  const webhook=page.getByRole('form',{name:'通用 Webhook',exact:true})
  await webhook.getByLabel('启用通用 Webhook',{exact:true}).check()
@@ -459,7 +459,7 @@ test('目录大小和时间排序按钮、重命名时间展示',async({page})=>
 
 test('通知配置问号支持悬停和手机点击',async({page})=>{
  await login(page)
- await page.getByRole('button',{name:'通知设置',exact:true}).click()
+ await page.getByRole('button',{name:'系统设置',exact:true}).click();await page.getByRole('button',{name:'通知设置',exact:true}).click()
  for(const name of ['企业微信','Telegram','钉钉','Bark','通用 Webhook']){
   await page.getByRole('button',{name:`${name}配置说明`,exact:true}).hover()
   await expect(page.getByRole('tooltip')).toBeVisible()
@@ -643,7 +643,7 @@ test('首次进入目录后后台刷新不把阅读位置拉回顶部',async({pa
 })
 
 test('模型检测在所选时限结束等待并允许重试',async({page})=>{
- await login(page);await page.getByRole('button',{name:'模型配置',exact:true}).click();await page.getByRole('button',{name:'新增配置',exact:true}).click()
+ await login(page);await page.getByRole('button',{name:'系统设置',exact:true}).click();await page.getByRole('button',{name:'模型配置',exact:true}).click();await page.getByRole('button',{name:'新增配置',exact:true}).click()
  await page.getByLabel('服务 URL',{exact:true}).fill(modelURL())
  await page.route('**/api/model-configs/detect',()=>{})
  await page.getByRole('button',{name:'检测可用模型',exact:true}).click()
