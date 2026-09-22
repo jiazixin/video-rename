@@ -103,6 +103,8 @@ func (a *App) Handler() http.Handler {
 	api := http.NewServeMux()
 	a.modelRoutes(api)
 	a.notificationRoutes(api)
+	a.samplingRoutes(api)
+	a.numberingRoutes(api)
 	api.HandleFunc("GET /api/logs/{id}/diagnostics", a.logDiagnostics)
 	api.HandleFunc("POST /api/logs/clear", a.clearHistory)
 	api.HandleFunc("POST /api/logs/retry", a.retryHistory)

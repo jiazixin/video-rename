@@ -185,6 +185,9 @@ func (l *Library) AutoCommit(id int64, snap domain.Snapshot, title, key string, 
 	return Operation{}, fmt.Errorf("名称冲突过多")
 }
 func (l *Library) commit(e Entry, name, source, key string, undo, run int64, diagnostics ...domain.ModelDiagnostics) (Operation, error) {
+	if err := l.checkNumberingAvailable(e.ID); err != nil {
+		return Operation{}, err
+	}
 	if l.broken != nil {
 		return Operation{}, fmt.Errorf("提交已停止，需要重启恢复: %w", l.broken)
 	}
@@ -279,6 +282,14 @@ func (l *Library) finish(o Operation, oldrel, newrel string) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err = l.finishTx(tx, o, oldrel, newrel); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (l *Library) finishTx(tx *sql.Tx, o Operation, oldrel, newrel string) error {
+	var err error
 	if _, err = tx.Exec("UPDATE entries SET name=?,version=version+1,size=?,mtime=? WHERE id=?", o.New, o.Size, o.Mtime, o.Entry); err != nil {
 		return err
 	}
@@ -313,7 +324,7 @@ func (l *Library) finish(o Operation, oldrel, newrel string) error {
 	if _, err = tx.Exec("UPDATE directory_items SET name=? WHERE dir=? AND entry=?", o.New, o.Parent, o.Entry); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 func (l *Library) Event(category, action string, entry, operation, run int64, old, new, message string) error {
 	_, err := l.DB.Exec("INSERT INTO events(category,action,entry,operation,run,old_path,new_path,message,created) VALUES(?,?,?,?,?,?,?,?,?)", category, action, entry, operation, run, old, new, message, storage.Now())
@@ -377,6 +388,9 @@ func (l *Library) Recover() error {
 
 // CheckAvailable blocks uncertain filesystem operations on the entry and related directories.
 func (l *Library) CheckAvailable(id int64) error {
+	if err := l.checkNumberingAvailable(id); err != nil {
+		return err
+	}
 	var n int
 	err := l.DB.QueryRow(`WITH RECURSIVE descendants(id) AS (SELECT ? UNION ALL SELECT e.id FROM entries e JOIN descendants d ON e.parent=d.id WHERE e.present=1), ancestors(id,parent) AS (SELECT id,parent FROM entries WHERE id=? UNION ALL SELECT e.id,e.parent FROM entries e JOIN ancestors a ON e.id=a.parent) SELECT count(*) FROM operations WHERE status IN ('prepared','review') AND (entry IN (SELECT id FROM descendants) OR entry IN (SELECT id FROM ancestors))`, id, id).Scan(&n)
 	if err != nil {

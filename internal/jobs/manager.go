@@ -19,6 +19,7 @@ import (
 	"video-rename/internal/library"
 	"video-rename/internal/models"
 	"video-rename/internal/pipeline"
+	"video-rename/internal/sampling"
 	"video-rename/internal/storage"
 )
 
@@ -161,7 +162,16 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("请选择有效的模型配置: %w", err)
 	}
+	frames, err := (sampling.Store{DB: m.DB}).Get()
+	if err != nil {
+		return 0, err
+	}
+	frameSnapshot, err := json.Marshal(frames)
+	if err != nil {
+		return 0, err
+	}
 	cfg := *m.Config
+	cfg.Sampling, cfg.Images = frames.Sampling, frames.Images
 	if err = cfg.ApplyModel(prompt.ServerConfig, prompt.Body); err != nil {
 		return 0, fmt.Errorf("请完善模型配置: %w", err)
 	}
@@ -183,7 +193,7 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	if cfg.Server.Provider == "openai" {
 		tokenParameter = "max_completion_tokens"
 	}
-	summary, _ := json.Marshal(map[string]any{"model": cfg.Server.Model, "provider": cfg.Server.Provider, "base_url": cfg.Server.BaseURL, "protocol": cfg.Server.Protocol, "omit_temperature": cfg.Server.OmitTemperature, "thinking": cfg.Server.Thinking, "thinking_adapter": cfg.Server.ThinkingAdapter, "thinking_effort": cfg.Server.ThinkingEffort, "thinking_budget": cfg.Server.ThinkingBudget, "prompt_hash": cfg.PromptHash(), "sampling": m.Config.Sampling, "workers": cfg.Workers, "temperature": cfg.Server.Temperature, "max_tokens": cfg.Server.MaxTokens, "token_parameter": tokenParameter, "stream": false, "message_roles": roles, "system_location": systemLocation})
+	summary, _ := json.Marshal(map[string]any{"model": cfg.Server.Model, "provider": cfg.Server.Provider, "base_url": cfg.Server.BaseURL, "protocol": cfg.Server.Protocol, "omit_temperature": cfg.Server.OmitTemperature, "thinking": cfg.Server.Thinking, "thinking_adapter": cfg.Server.ThinkingAdapter, "thinking_effort": cfg.Server.ThinkingEffort, "thinking_budget": cfg.Server.ThinkingBudget, "prompt_hash": cfg.PromptHash(), "sampling": cfg.Sampling, "images": cfg.Images, "workers": cfg.Workers, "temperature": cfg.Server.Temperature, "max_tokens": cfg.Server.MaxTokens, "token_parameter": tokenParameter, "stream": false, "message_roles": roles, "system_location": systemLocation})
 	tx, err := m.DB.Begin()
 	if err != nil {
 		return 0, err
@@ -196,7 +206,7 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	if count >= 20 {
 		return 0, fmt.Errorf("任务队列已满，请稍后重试")
 	}
-	res, err := tx.Exec("INSERT INTO runs(source,targets,recursive,status,created,request_key,plan,config_summary,model_config_id,model_config_title,prompt_body,model_snapshot) VALUES(?,?,?,'queued',?,?,?,?,?,?,?,?)", source, string(raw), r.Recursive, storage.Now(), r.Key, plan, string(summary), prompt.ID, prompt.Title, prompt.Body, snapshot)
+	res, err := tx.Exec("INSERT INTO runs(source,targets,recursive,status,created,request_key,plan,config_summary,model_config_id,model_config_title,prompt_body,model_snapshot,sampling_snapshot) VALUES(?,?,?,'queued',?,?,?,?,?,?,?,?,?)", source, string(raw), r.Recursive, storage.Now(), r.Key, plan, string(summary), prompt.ID, prompt.Title, prompt.Body, snapshot, string(frameSnapshot))
 	if err != nil {
 		return 0, err
 	}
@@ -299,6 +309,17 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 		return
 	}
 	runConfig := *m.Config
+	var frameSnapshot string
+	if err = m.DB.QueryRow("SELECT sampling_snapshot FROM runs WHERE id=?", id).Scan(&frameSnapshot); err != nil {
+		fail(err)
+		return
+	}
+	frames, frameErr := sampling.Parse(frameSnapshot)
+	if frameErr != nil {
+		fail(fmt.Errorf("抽帧快照无效: %w", frameErr))
+		return
+	}
+	runConfig.Sampling, runConfig.Images = frames.Sampling, frames.Images
 	var snapshot string
 	if err = m.DB.QueryRow("SELECT model_snapshot FROM runs WHERE id=?", id).Scan(&snapshot); err != nil {
 		fail(err)

@@ -155,19 +155,9 @@ auth:
 # SQLite 数据库文件路径，固定使用 SQLite，不增加 type 选择。
 storage: "/var/lib/video-rename"
 
-
-sampling:
-  strategy: "hybrid"
-  max_frames: 12
-  skip_start_ratio: 0.05
-  skip_end_ratio: 0.05
-
-images:
-  max_dimension: 768
-  jpeg_quality: 4
 ```
 
-示例省略的采样分档沿用当前内置默认表；现有 `duration_rules`、`size_rules` 仍可显式配置。`listen` 和 `port` 为两个顶层字段，`storage` 是数据目录路径字符串。
+抽帧规则和图片参数在 Web「抽帧设置」中管理，保存到 SQLite，创建任务时记录快照。`listen` 和 `port` 为两个顶层字段，`storage` 是数据目录路径字符串。
 
 ### 4.2 配置规则
 
@@ -183,7 +173,7 @@ images:
 
 所有 YAML 内的相对文件路径以配置文件所在目录为基准。数据库、配置文件不能处于可浏览媒体根目录内，避免管理操作改到自身状态或凭证。
 
-建议保留 `--config/-f`、`--help`、`--version`，默认配置位置调整为 `configs/config.local.yaml`。不再接受 `--path/-p`、`--recursive`、`--workers`、`--dry-run` 等处理参数；并发归 YAML，处理范围归页面。旧参数应明确报错并说明新的配置入口，不静默忽略。
+建议保留 `--config/-f`、`--help`、`--version`，默认配置位置调整为 `configs/config.local.yaml`。不再接受 `--path/-p`、`--recursive`、`--workers`、`--dry-run` 等处理参数；并发归模型配置页面，抽帧与图片参数归抽帧设置页面，处理范围归页面。旧参数应明确报错并说明新的配置入口，不静默忽略。
 
 ```bash
 ./bin/video-rename --config configs/config.local.yaml

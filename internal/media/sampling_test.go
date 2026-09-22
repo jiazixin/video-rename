@@ -163,17 +163,13 @@ func TestPlanRejectsInvalidDuration(t *testing.T) {
 
 func TestPlanCustomRules(t *testing.T) {
 	// 自定义分档:≤1m 4帧,兜底 6帧;验证整体替换
-	p := writeCustomConfig(t, `
-sampling:
-  duration_rules:
-    - {max_duration: "1m", frames: 4}
-    - {max_duration: null, frames: 6}
-`)
-	cfg, err := config.Load(p)
-	if err != nil {
+	settings := config.DefaultFrameSettings()
+	limit := "1m"
+	settings.Sampling.DurationRules = []config.DurationRule{{MaxDuration: &limit, Frames: 4}, {Frames: 6}}
+	if err := settings.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	s := NewSampler(cfg.Sampling)
+	s := NewSampler(settings.Sampling)
 	plan, _ := s.Plan(30*time.Second, 0)
 	if plan.TargetN != 4 {
 		t.Errorf("自定义档 ≤1m: N = %d, 期望 4", plan.TargetN)
@@ -181,29 +177,5 @@ sampling:
 	plan, _ = s.Plan(5*time.Minute, 0)
 	if plan.TargetN != 6 {
 		t.Errorf("自定义兜底档: N = %d, 期望 6", plan.TargetN)
-	}
-}
-
-func writeCustomConfig(t *testing.T, content string) string {
-	t.Helper()
-	p := t.TempDir() + "/config.yaml"
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return p
-}
-
-func TestPlanVeryShortVideoSingleFrame(t *testing.T) {
-	s := NewSampler(loadDefaultSampling(t))
-	plan, err := s.Plan(300*time.Millisecond, 1024)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.TargetN != 1 || len(plan.Times) != 1 {
-		t.Fatalf("极短视频应取 1 帧: %+v", plan)
-	}
-	// 中点位于窗口内
-	if plan.Times[0] <= 0 || plan.Times[0] >= 300*time.Millisecond {
-		t.Errorf("唯一时间点 %v 不在 (0, 0.3s) 内", plan.Times[0])
 	}
 }

@@ -2,3 +2,5 @@
 .run-targets{padding:14px 16px;background:#f7f9f8;border:1px solid var(--line);border-radius:8px;margin:14px 0}.run-targets h3{font-size:13px}.run-targets ul{font-size:12px;line-height:1.8;padding-left:18px;overflow-wrap:anywhere}.run-file-paths{display:flex;flex:1;min-width:0;flex-direction:column;gap:5px;overflow-wrap:anywhere}.run-file-paths strong{font-size:12px;font-weight:500}.run-file-paths small{color:var(--ash)}
 
 .run-duration{white-space:nowrap}
+
+@media(max-width:600px){.run-tabs{gap:16px}.run-tabs button{flex:1;min-width:0;font-size:12px;line-height:1.6}.run-tabs button svg{flex-shrink:0}}

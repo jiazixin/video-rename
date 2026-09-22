@@ -67,6 +67,9 @@ func New(db *storage.Store, root string) (*Library, error) {
 		return nil, err
 	}
 	l := &Library{DB: db, Root: root, refreshing: map[int64]bool{}, scanSlots: make(chan struct{}, 2)}
+	if err = l.recoverNumberings(); err != nil {
+		return nil, err
+	}
 	if err = l.Recover(); err != nil {
 		return nil, err
 	}
@@ -174,6 +177,9 @@ func kindOf(st os.FileInfo) string {
 func (l *Library) Refresh(ctx context.Context, id int64) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if err := l.checkNumberingAvailable(id); err != nil {
+		return err
+	}
 	p, err := l.Path(id)
 	if err != nil {
 		return err
@@ -352,18 +358,7 @@ func (l *Library) ListOrdered(ctx context.Context, id int64, offset, limit int, 
 	var anchorName string
 	var anchorValue any
 	var anchorID int64
-	value := "name COLLATE NATURAL_NAME"
-	switch sortBy {
-	case "size_asc", "size_desc":
-		value = "CASE WHEN kind='directory' THEN 0 ELSE size END"
-	case "mtime_asc", "mtime_desc":
-		value = "julianday(mtime)"
-	case "renamed_asc", "renamed_desc":
-		value = "COALESCE((SELECT created FROM operations o WHERE o.entry=directory_items.entry AND o.status='committed' ORDER BY id DESC LIMIT 1),'')"
-	case "name_asc", "name_desc":
-	default:
-		sortBy = "name_asc"
-	}
+	value, sortBy := directoryOrder(sortBy)
 	if offset > 0 {
 		if err = l.DB.QueryRow("SELECT CASE WHEN kind='directory' THEN 0 ELSE 1 END,name,entry,"+value+" FROM directory_items WHERE dir=? AND generation=? AND entry=?", id, p.Generation, offset).Scan(&anchorKind, &anchorName, &anchorID, &anchorValue); err != nil {
 			return p, fmt.Errorf("分页位置已失效，请返回第一页")
@@ -453,4 +448,20 @@ func (l *Library) DisplayPath(id int64) string {
 		return "整个媒体库"
 	}
 	return strings.Join(parts, " / ")
+}
+
+func directoryOrder(sortBy string) (string, string) {
+	value := "name COLLATE NATURAL_NAME"
+	switch sortBy {
+	case "size_asc", "size_desc":
+		value = "CASE WHEN kind='directory' THEN 0 ELSE size END"
+	case "mtime_asc", "mtime_desc":
+		value = "julianday(mtime)"
+	case "renamed_asc", "renamed_desc":
+		value = "COALESCE((SELECT created FROM operations o WHERE o.entry=directory_items.entry AND o.status='committed' ORDER BY id DESC LIMIT 1),'')"
+	case "name_asc", "name_desc":
+	default:
+		sortBy = "name_asc"
+	}
+	return value, sortBy
 }

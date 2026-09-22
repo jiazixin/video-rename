@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {onMounted,ref,reactive,watch,computed} from 'vue'
+import {onMounted,onUnmounted,ref,reactive,watch,computed} from 'vue'
 import {Plus,Settings2,PenLine,Search,Check,Server,Copy,Trash2,ScanEye} from 'lucide-vue-next'
 import {api,time,type ModelProfile} from '../../app/api'
 import Modal from '../../components/Modal.vue'
@@ -17,16 +17,31 @@ const probing=ref(false),probeResult=ref<any>(),probeError=ref('')
 let probeSeq=0
 watch(()=>JSON.stringify(form)+apiKey.value+clearKey.value,()=>{probeSeq++;probeResult.value=undefined;probeError.value=''})
 async function testVision(){if(probing.value)return;const n=++probeSeq;probing.value=true;probeError.value='';probeResult.value=undefined;try{const result=await api('/model-configs/test-vision','POST',payload());if(n===probeSeq)probeResult.value=result}catch(e){if(n===probeSeq)probeError.value=(e as Error).message}finally{probing.value=false}}
+const detectTimeout=ref(5)
+let detectController:AbortController|undefined
 let detectSeq=0
-watch(()=>[form.base_url,form.provider,form.protocol,apiKey.value,clearKey.value],()=>{detectSeq++;detected.value=[];detectError.value='';detectNote.value='';detecting.value=false})
+onUnmounted(()=>detectController?.abort())
+watch(()=>[form.base_url,form.provider,form.protocol,apiKey.value,clearKey.value],()=>{detectController?.abort();detectSeq++;detected.value=[];detectError.value='';detectNote.value='';detecting.value=false})
 async function load(){loading.value=true;try{const [profiles,meta]=await Promise.all([api<ModelProfile[]>('/model-configs'),api<{presets:Preset[];default_prompt:string}>('/model-presets')]);rows.value=profiles;presets.value=meta.presets;defaultPrompt.value=meta.default_prompt;error.value=''}catch(e){error.value=(e as Error).message}finally{loading.value=false}}
 function open(p?:ModelProfile){selected.value=p;Object.assign(form,initial(),p||{});form.thinking=form.thinking||'default';form.thinking_adapter=form.thinking_adapter||'auto';form.thinking_effort=form.thinking_effort||'low';form.thinking_budget=form.thinking_budget||1024;apiKey.value='';clearKey.value=false;dialogError.value='';detected.value=[];detectError.value='';detectNote.value='';detectSeq++;editing.value=true}
 function chooseProvider(){form.thinking='default';form.thinking_adapter='auto';const preset=presets.value.find(p=>p.id===form.provider);if(preset){form.base_url=preset.base_url;form.protocol=preset.protocol};form.model='';apiKey.value='';form.omit_temperature=['openai','claude'].includes(form.provider);if(form.protocol==='anthropic'&&form.temperature>1)form.temperature=1}
 function payload(){return {...form,id:selected.value?.id||0,version:selected.value?.version||0,...(clearKey.value?{api_key:''}:apiKey.value?{api_key:apiKey.value}:{})}}
 async function save(){saving.value=true;dialogError.value='';try{await api(selected.value?`/model-configs/${selected.value.id}`:'/model-configs',selected.value?'PATCH':'POST',payload());editing.value=false;apiKey.value='';await load();emit('changed')}catch(e){dialogError.value=(e as Error).message}finally{saving.value=false}}
-async function detect(){const n=++detectSeq;detecting.value=true;detected.value=[];detectError.value='';detectNote.value='';try{const data=await api<{models:{id:string;name:string}[];truncated:boolean}>('/model-configs/detect','POST',payload());if(n!==detectSeq)return;detected.value=data.models;detectNote.value=data.models.length?`检测到 ${data.models.length} 个模型${data.truncated?'（已达到列表上限）':''}`:'服务没有返回模型，可手动填写'}catch(e){if(n===detectSeq)detectError.value=(e as Error).message}finally{if(n===detectSeq)detecting.value=false}}
+async function detect(){
+ detectController?.abort()
+ const controller=new AbortController(),seconds=detectTimeout.value,n=++detectSeq
+ detectController=controller
+ const timer=setTimeout(()=>controller.abort(),seconds*1000)
+ detecting.value=true;detected.value=[];detectError.value='';detectNote.value=''
+ try{
+  const data=await api<{models:{id:string;name:string}[];truncated:boolean}>('/model-configs/detect','POST',{...payload(),detect_timeout_seconds:seconds},controller.signal)
+  if(n!==detectSeq)return
+  detected.value=data.models;detectNote.value=data.models.length?`检测到 ${data.models.length} 个模型${data.truncated?'（已达到列表上限）':''}`:'服务没有返回模型，可手动填写'
+ }catch(e){if(n===detectSeq)detectError.value=controller.signal.aborted?`模型检测超时（${seconds}s），请重试或增加检测超时`:(e as Error).message}
+ finally{clearTimeout(timer);if(n===detectSeq){detecting.value=false;detectController=undefined}}
+}
 async function setDefault(p:ModelProfile){if(p.is_default||settingDefault.value)return;settingDefault.value=true;try{await api(`/model-configs/${p.id}/default`,'POST',{});await load();emit('changed')}catch(e){error.value=(e as Error).message}finally{settingDefault.value=false}}
-function close(){if(saving.value)return;editing.value=false;apiKey.value='';probeSeq++;probeResult.value=undefined;probeError.value='';detectSeq++;detecting.value=false}
+function close(){if(saving.value)return;detectController?.abort();editing.value=false;apiKey.value='';probeSeq++;probeResult.value=undefined;probeError.value='';detectSeq++;detecting.value=false}
 const thinkingAdapters=computed(()=>form.protocol==='anthropic'?[{value:'adaptive',label:'Claude 自适应思考'},{value:'budget',label:'Claude 固定思考预算'}]:[{value:'thinking',label:'DeepSeek / 智谱 · thinking'},{value:'effort',label:'OpenAI / Ollama · reasoning_effort'},{value:'template',label:'本地模板 · enable_thinking'}])
 const manualClaude=computed(()=>form.provider==='claude'&&!/4[.-][678]|claude-(opus|sonnet)-5|mythos|fable/i.test(form.model))
 const showBudget=computed(()=>form.thinking==='enabled'&&(form.thinking_adapter==='budget'||manualClaude.value))
@@ -41,7 +56,7 @@ onMounted(load)
 <Modal v-if="editing" :title="selected?'编辑模型配置':'新增模型配置'" wide @close="close"><form @submit.prevent="save" class="model-form"><label>配置名称<input v-model="form.title" aria-label="配置名称" required maxlength="80" placeholder="例如：旅行视频 · 本地模型"/></label><div class="form-grid"><label>服务类型<SelectField v-model="form.provider" label="服务类型" :options="presets.map(p=>({value:p.id,label:p.name}))" @change="chooseProvider"/></label><label v-if="form.provider==='custom'">接口协议<SelectField v-model="form.protocol" label="接口协议" @change="form.thinking='default';form.thinking_adapter='auto'" :options="[{value:'openai',label:'OpenAI 兼容'},{value:'anthropic',label:'Anthropic Messages'}]"/></label></div>
 <label>服务 URL<input v-model="form.base_url" aria-label="服务 URL" type="url" required maxlength="2048" placeholder="http://127.0.0.1:8080/v1"/></label>
 <label>API 密钥<input v-model="apiKey" aria-label="API 密钥" type="password" autocomplete="new-password" :disabled="clearKey" maxlength="8192" :placeholder="selected?.has_api_key?'已保存，留空保持原密钥':'本地无鉴权服务可留空'"/></label><label v-if="selected?.has_api_key" class="check-label"><input type="checkbox" v-model="clearKey"/>清除已保存密钥</label>
-<div class="model-detect"><label>模型名称<input v-model="form.model" aria-label="模型名称" required maxlength="256" placeholder="输入模型 ID，或检测后选择"/></label><button type="button" :disabled="detecting||!form.base_url" @click="detect"><Search :size="15"/>{{detecting?'检测中…':'检测可用模型'}}</button></div><div v-if="detected.length" class="detected-models"><SelectField :model-value="form.model" label="检测到的模型" :options="detected.map(m=>({value:m.id,label:m.name?`${m.id} · ${m.name}`:m.id}))" @update:model-value="form.model=String($event)"/></div><p v-if="detectNote" class="model-detect-note" role="status"><Check :size="14"/>{{detectNote}}</p><div v-if="detectError" class="notice error" role="alert">{{detectError}}</div><p class="help">检测仅获取服务返回的模型列表，请选择支持图片输入的模型。URL 填 API 基础地址，不包含 /chat/completions 或 /messages。</p>
+<div class="model-detect"><label>模型名称<input v-model="form.model" aria-label="模型名称" required maxlength="256" placeholder="输入模型 ID，或检测后选择"/></label><label class="detect-timeout">检测超时<SelectField v-model="detectTimeout" label="检测超时" :options="[{value:5,label:'5s'},{value:10,label:'10s'},{value:15,label:'15s'}]"/></label><button type="button" :disabled="detecting||!form.base_url" @click="detect"><Search :size="15"/>{{detecting?'检测中…':'检测可用模型'}}</button></div><div v-if="detected.length" class="detected-models"><SelectField :model-value="form.model" label="检测到的模型" :options="detected.map(m=>({value:m.id,label:m.name?`${m.id} · ${m.name}`:m.id}))" @update:model-value="form.model=String($event)"/></div><p v-if="detectNote" class="model-detect-note" role="status"><Check :size="14"/>{{detectNote}}</p><div v-if="detectError" class="notice error" role="alert">{{detectError}}</div><p class="help">检测仅获取服务返回的模型列表，请选择支持图片输入的模型。URL 填 API 基础地址，不包含 /chat/completions 或 /messages。</p>
 <div class="vision-probe"><button type="button" :disabled="probing||!form.base_url||!form.model" @click="testVision"><ScanEye :size="16"/>{{probing?'正在测试图片识别…':'测试图片识别'}}</button><p class="help">发送一张内置随机色块图，调用一次模型，可能消耗额度。不使用你的媒体文件。</p><p v-if="form.provider==='zhipu-coding'" class="help">Coding Plan 的图片能力取决于套餐与模型；本测试验证直接图片请求，不调用视觉 MCP。</p><div v-if="probeError" class="notice error" role="alert">{{probeError}}</div><div v-if="probeResult" class="probe-result" :class="probeResult.status" role="status"><strong>{{probeResult.message}}</strong><p>耗时 {{probeResult.elapsed_ms}} ms <span v-if="probeResult.code">· {{probeResult.code}}</span><span v-if="probeResult.http_status"> · HTTP {{probeResult.http_status}}</span></p><p>预期：{{probeResult.expected}}</p><p v-if="probeResult.answer">回答：{{probeResult.answer}}</p></div></div>
 <label>并发任务数<input v-model.number="form.workers" aria-label="并发任务数" type="number" min="1" max="32" required/><small>同时处理的视频数量，保存后也应用于该配置的排队和运行中批次；降低时等待在途任务完成。</small></label><label>思考模式<SelectField v-model="form.thinking" label="思考模式" :options="[{value:'default',label:'跟随模型默认'},{value:'disabled',label:'关闭思考'},{value:'enabled',label:'开启思考'}]"/></label>
 <label v-if="form.provider==='custom'&&form.thinking!=='default'">思考参数类型<SelectField v-model="form.thinking_adapter" label="思考参数类型" :options="[{value:'auto',label:'请选择服务支持的参数'},...thinkingAdapters]"/></label>

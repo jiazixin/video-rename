@@ -1,6 +1,6 @@
 # Web 服务配置
 
-完整可复制示例在 [configs/config.example.yaml](../configs/config.example.yaml)。所有 YAML 配置路径相对于配置文件所在目录；默认读取 `configs/config.local.yaml`，也可通过 `--config/-f` 显式指定。不读取环境变量覆盖，未知字段、重复 key 和非法媒体参数报错。
+完整可复制示例在 [configs/config.example.yaml](../configs/config.example.yaml)。所有 YAML 配置路径相对于配置文件所在目录；默认读取 `configs/config.local.yaml`，也可通过 `--config/-f` 显式指定。不读取环境变量覆盖，未知字段、重复 key 和非法配置类型报错。
 
 | 字段 | 默认 / 要求 | 作用 |
 | --- | --- | --- |
@@ -10,12 +10,6 @@
 | storage | ../data | 数据目录，自动创建，必须在媒体根目录外；内部数据库文件名固定 |
 | auth.username | 必填 | 管理员账号 |
 | auth.password | 非空，拒绝占位密码，无最短长度限制 | 管理员密码，仅后端读取，不写入数据库或 API 响应 |
-| sampling.strategy | hybrid | hybrid / size / duration |
-| sampling.max_frames | 12，1–32 | 每个视频最大采样帧数 |
-| sampling.skip_start_ratio / skip_end_ratio | 各 0.05 | 跳过首尾比例，和必须小于 1 |
-| sampling.duration_rules / size_rules | 现有默认分档 | 显式填写则整表替换；最后一档为 null 兜底 |
-| images.max_dimension | 768，128–2048 | JPEG 最长边，不放大小图 |
-| images.jpeg_quality | 4，2–15 | FFmpeg JPEG 质量 |
 
 `logging` 已退出 Web 服务协议。成功 / 失败记录、操作历史和处理标记统一使用 SQLite。已有内部流水线测试仍使用旧日志结构，它不是 Web 服务的配置入口。
 
@@ -28,3 +22,13 @@
 
 `storage` 省略时使用 `../data`（相对于配置文件目录）；项目默认配置位于 `configs/`，因此数据落在项目根目录的 `data/`。填写自定义位置时只提供目录，例如 `storage: "/srv/video-rename/data"`。程序在该目录中管理 `data.sqlite`、密钥、锁和 SQLite 辅助文件，备份时保留整个目录。
 
+
+## Web 抽帧设置
+
+侧栏「抽帧设置」统一管理抽帧策略、最大帧数、首尾跳过比例、时长/大小档位、图片最长边和 JPEG 质量。设置保存到 SQLite，不写回 YAML；YAML 不支持 sampling 和 images，无导入或兼容处理。
+
+默认 hybrid，最多 12 帧，首尾各跳过 5%，图片最长边 768 像素，JPEG 质量 4。最大帧数和每档帧数为 1–32；首尾跳过比例之和小于 100%；最长边 128–2048 像素；JPEG 质量 2–15（越小通常越清晰）。
+
+时长档位默认为 30s/3 帧、2m/5 帧、10m/8 帧、30m/10 帧，其余 12 帧；大小档位为 50MiB/3 帧、200MiB/5 帧、1024MiB/8 帧，其余 12 帧。上限严格递增，末档固定覆盖其余范围。时长输入支持 30s、2m、1h。混合策略按时长为主，大小辅助最多增加 2 帧；实际帧数同时受最大帧数和有效采样窗口长度限制。
+
+手动运行、自动计划和失败重试创建批次时，读取当前设置并保存快照。保存新设置立即作用于以后创建的批次，已有批次使用创建时的抽帧和图片参数。

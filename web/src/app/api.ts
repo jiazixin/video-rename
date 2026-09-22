@@ -8,9 +8,9 @@ export function key(): string {
  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`
 }
-export async function api<T=any>(path:string,method='GET',body?:unknown):Promise<T>{
- const response=await fetch(`/api${path}`,{method,headers:{'Content-Type':'application/json',...(session.value?{'X-CSRF-Token':session.value.csrf}:{})},credentials:'same-origin',...(body===undefined?{}:{body:JSON.stringify(body)})})
- const data=await response.json().catch(()=>({message:'服务响应异常'}))
+export async function api<T=any>(path:string,method='GET',body?:unknown,signal?:AbortSignal):Promise<T>{
+ const response=await fetch(`/api${path}`,{method,signal,headers:{'Content-Type':'application/json',...(session.value?{'X-CSRF-Token':session.value.csrf}:{})},credentials:'same-origin',...(body===undefined?{}:{body:JSON.stringify(body)})})
+ const data=await response.json().catch((error)=>{if(signal?.aborted)throw error;return {message:'服务响应异常'}})
  if(!response.ok){if(response.status===401)session.value=null;throw new Error(data.message||'请求失败')}
  return data
 }

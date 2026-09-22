@@ -93,5 +93,20 @@ INSERT INTO schema_migrations VALUES(9,datetime('now'));`); err != nil {
 			return err
 		}
 	}
+	if version < 10 {
+		if _, err = tx.Exec(`CREATE TABLE sampling_settings(id INTEGER PRIMARY KEY CHECK(id=1),settings TEXT NOT NULL);
+ALTER TABLE runs ADD COLUMN sampling_snapshot TEXT NOT NULL DEFAULT '';
+INSERT INTO schema_migrations VALUES(10,datetime('now'));`); err != nil {
+			return err
+		}
+	}
+	if version < 11 {
+		if _, err = tx.Exec(`CREATE TABLE image_numberings(id TEXT PRIMARY KEY,parent INTEGER NOT NULL REFERENCES entries(id),status TEXT NOT NULL,created TEXT NOT NULL,fingerprint TEXT NOT NULL,undo_of TEXT NOT NULL DEFAULT '',error TEXT NOT NULL DEFAULT '');
+CREATE INDEX image_numbering_parent ON image_numberings(parent,created);
+CREATE TABLE image_numbering_items(batch TEXT NOT NULL REFERENCES image_numberings(id),position INTEGER NOT NULL,entry INTEGER NOT NULL REFERENCES entries(id),version INTEGER NOT NULL,identity TEXT NOT NULL,size INTEGER NOT NULL,mtime TEXT NOT NULL,old_name TEXT NOT NULL,new_name TEXT NOT NULL,temp_name TEXT NOT NULL,current_name TEXT NOT NULL,pending_name TEXT NOT NULL DEFAULT '',operation INTEGER NOT NULL DEFAULT 0,undo_of INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(batch,entry));
+INSERT INTO schema_migrations VALUES(11,datetime('now'));`); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }

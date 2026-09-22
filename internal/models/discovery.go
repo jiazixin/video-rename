@@ -22,14 +22,17 @@ type Discovery struct {
 }
 
 // Discover only lists advertised models; it never sends a prompt or video.
-func Discover(ctx context.Context, s config.ServerConfig) (Discovery, error) {
+func Discover(ctx context.Context, s config.ServerConfig, timeout time.Duration) (Discovery, error) {
 	out := Discovery{Models: []AvailableModel{}}
+	if timeout != 5*time.Second && timeout != 10*time.Second && timeout != 15*time.Second {
+		return out, fmt.Errorf("检测超时只能选择 5s、10s 或 15s")
+	}
 	if err := config.ValidateConnection(&s); err != nil {
 		return out, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	seen := map[string]bool{}
 	after := ""
 	for page := 0; page < 10; page++ {
@@ -55,11 +58,17 @@ func Discover(ctx context.Context, s config.ServerConfig) (Discovery, error) {
 		}
 		resp, err := client.Do(req)
 		if err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				return out, fmt.Errorf("模型检测超时（%s），请重试或增加检测超时", timeout)
+			}
 			return out, fmt.Errorf("无法连接模型服务，请检查地址、网络和超时")
 		}
 		raw, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
 		resp.Body.Close()
 		if err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				return out, fmt.Errorf("模型检测超时（%s），请重试或增加检测超时", timeout)
+			}
 			return out, fmt.Errorf("读取模型列表失败")
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {

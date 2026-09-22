@@ -16,7 +16,7 @@ Go 通过参数数组启动 ffprobe，不拼接 shell 命令。输入先转为�
 
 ## 2. 帧数算法
 
-设 D 为视频时长（秒），S 为字节数。Nd、Ns 分别来自 sampling.duration_rules、sampling.size_rules；以下为默认分档，可在配置中调整。
+设 D 为视频时长（秒），S 为字节数。Nd、Ns 分别来自 sampling.duration_rules、sampling.size_rules；以下为默认分档，可在 Web「抽帧设置」中调整。
 
 | 时长（取首个命中的上界） | 基础帧数 Nd |
 | --- | --- |

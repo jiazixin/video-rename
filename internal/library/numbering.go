@@ -1,0 +1,684 @@
+package library
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"math/big"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"video-rename/internal/domain"
+	"video-rename/internal/rename"
+	"video-rename/internal/storage"
+)
+
+type NumberingItem struct {
+	Entry     int64  `json:"entry"`
+	Old       string `json:"old_name"`
+	New       string `json:"new_name"`
+	Version   int64  `json:"-"`
+	Identity  string `json:"-"`
+	Size      int64  `json:"-"`
+	Mtime     string `json:"-"`
+	Temp      string `json:"-"`
+	Current   string `json:"-"`
+	Pending   string `json:"-"`
+	Operation int64  `json:"-"`
+	UndoOf    int64  `json:"-"`
+}
+type Numbering struct {
+	ID          string          `json:"id"`
+	Parent      int64           `json:"parent"`
+	Status      string          `json:"status"`
+	Created     string          `json:"created"`
+	UndoOf      string          `json:"undo_of"`
+	Error       string          `json:"error"`
+	Total       int             `json:"total"`
+	Changed     int             `json:"changed"`
+	Items       []NumberingItem `json:"items,omitempty"`
+	Fingerprint string          `json:"-"`
+}
+
+func numberingToken() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(b[:])
+}
+func imageNumber(name string) *big.Int {
+	s := strings.TrimSuffix(name, filepath.Ext(name))
+	if s == "" {
+		return nil
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return nil
+		}
+	}
+	n, ok := new(big.Int).SetString(s, 10)
+	if !ok || n.Sign() <= 0 {
+		return nil
+	}
+	return n
+}
+
+// Every format shares one sequence. Unselected pictures reserve their numbers too.
+func numberingNames(selected, outside []Entry) []NumberingItem {
+	max := new(big.Int)
+	used := map[string]bool{}
+	for _, group := range [][]Entry{selected, outside} {
+		for _, e := range group {
+			if n := imageNumber(e.Name); n != nil && n.Cmp(max) > 0 {
+				max.Set(n)
+			}
+		}
+	}
+	for _, e := range outside {
+		if n := imageNumber(e.Name); n != nil {
+			used[n.String()] = true
+		}
+	}
+	result := make([]NumberingItem, 0, len(selected))
+	for _, e := range selected {
+		n := imageNumber(e.Name)
+		if n == nil || used[n.String()] {
+			max.Add(max, big.NewInt(1))
+			n = new(big.Int).Set(max)
+		}
+		used[n.String()] = true
+		result = append(result, NumberingItem{Entry: e.ID, Old: e.Name, New: n.String() + strings.ToLower(filepath.Ext(e.Name)), Version: e.Version, Identity: e.Identity, Size: e.Size, Mtime: e.Mtime})
+	}
+	return result
+}
+
+func directoryFingerprint(path string) (string, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.New()
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			return "", err
+		}
+		// Lstat-based identity also detects replaced files; never traverse symlinks.
+		snap, err := domain.StatSnapshot(filepath.Join(path, e.Name()))
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(hash, "%q:%s:%d:%s:%d\n", e.Name(), Identity(snap), info.Size(), stamp(snap), info.Mode())
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func (l *Library) checkNumberingAvailable(id int64) error {
+	var n int
+	err := l.DB.QueryRow(`WITH RECURSIVE descendants(id) AS (SELECT ? UNION ALL SELECT e.id FROM entries e JOIN descendants d ON e.parent=d.id WHERE e.present=1), ancestors(id,parent) AS (SELECT id,parent FROM entries WHERE id=? UNION ALL SELECT e.id,e.parent FROM entries e JOIN ancestors a ON e.id=a.parent)
+ SELECT count(*) FROM image_numberings WHERE status IN ('running','rollback','review') AND (parent IN (SELECT id FROM descendants) OR parent IN (SELECT id FROM ancestors))`, id, id).Scan(&n)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return fmt.Errorf("该目录有未完成的图片编号，请先在编号记录中恢复")
+	}
+	return nil
+}
+
+func (l *Library) PreviewNumbering(parent int64, query, sortBy string) (Numbering, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err := l.CheckAvailable(parent); err != nil {
+		return Numbering{}, err
+	}
+	dir, err := l.Get(parent)
+	if err != nil {
+		return Numbering{}, err
+	}
+	if dir.Kind != "directory" {
+		return Numbering{}, fmt.Errorf("不是目录")
+	}
+	if l.Busy != nil && l.Busy(parent) {
+		return Numbering{}, fmt.Errorf("目录有活动任务，请等待任务完成")
+	}
+	path, err := l.Path(parent)
+	if err != nil {
+		return Numbering{}, err
+	}
+	before, err := directoryFingerprint(path)
+	if err != nil {
+		return Numbering{}, err
+	}
+	value, sortBy := directoryOrder(sortBy)
+	order := "ASC"
+	if strings.HasSuffix(sortBy, "_desc") {
+		order = "DESC"
+	}
+	rows, err := l.DB.Query(`SELECT entry,instr(lower(name),lower(?))>0 FROM directory_items WHERE dir=? AND generation=(SELECT generation FROM directory_state WHERE dir=?) AND kind='file' ORDER BY `+value+` `+order+`,name COLLATE NATURAL_NAME `+order+`,entry `+order, query, parent, parent)
+	if err != nil {
+		return Numbering{}, err
+	}
+	type candidate struct {
+		id       int64
+		selected bool
+	}
+	var candidates []candidate
+	for rows.Next() {
+		var c candidate
+		if err = rows.Scan(&c.id, &c.selected); err != nil {
+			rows.Close()
+			return Numbering{}, err
+		}
+		candidates = append(candidates, c)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return Numbering{}, err
+	}
+	var selected, outside []Entry
+	indexed := map[string]bool{}
+	for _, c := range candidates {
+		e, err := l.Get(c.id)
+		if err != nil {
+			return Numbering{}, err
+		}
+		if !IsImage(e.Name) {
+			continue
+		}
+		item := NumberingItem{Identity: e.Identity, Size: e.Size, Mtime: e.Mtime}
+		if !numberingMatch(filepath.Join(path, e.Name), item) {
+			return Numbering{}, fmt.Errorf("图片已变化，请刷新目录后重试")
+		}
+		indexed[e.Name] = true
+		if c.selected {
+			selected = append(selected, e)
+		} else {
+			outside = append(outside, e)
+		}
+	}
+	disk, err := os.ReadDir(path)
+	if err != nil {
+		return Numbering{}, err
+	}
+	for _, e := range disk {
+		if e.Type().IsRegular() && IsImage(e.Name()) && !indexed[e.Name()] {
+			return Numbering{}, fmt.Errorf("图片索引不完整，请刷新目录后重试")
+		}
+	}
+	after, err := directoryFingerprint(path)
+	if err != nil {
+		return Numbering{}, err
+	}
+	if before != after {
+		return Numbering{}, fmt.Errorf("目录已变化，请重新预览")
+	}
+	if len(selected) == 0 {
+		return Numbering{}, fmt.Errorf("当前筛选下没有可编号的图片")
+	}
+	b := Numbering{ID: numberingToken(), Parent: parent, Created: storage.Now(), Status: "preview", Fingerprint: before, Items: numberingNames(selected, outside)}
+	return l.saveNumberingPreview(b, path)
+}
+
+func numberingMatch(path string, i NumberingItem) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	s, err := domain.StatSnapshot(path)
+	return err == nil && Identity(s) == i.Identity && s.Size == i.Size && stamp(s) == i.Mtime
+}
+func (l *Library) saveNumberingPreview(b Numbering, path string) (Numbering, error) {
+	changed := map[string]bool{}
+	identities := map[string]bool{}
+	for _, i := range b.Items {
+		if err := ValidName(i.New); err != nil {
+			return Numbering{}, err
+		}
+		if identities[i.Identity] {
+			return Numbering{}, fmt.Errorf("图片包含硬链接，无法安全整批编号")
+		}
+		identities[i.Identity] = true
+		if i.Old != i.New {
+			changed[i.Old] = true
+			b.Changed++
+		}
+	}
+	for idx := range b.Items {
+		i := &b.Items[idx]
+		i.Current = i.Old
+		i.Temp = ".video-rename-" + b.ID + fmt.Sprintf("-%d.tmp", idx)
+		if _, err := os.Lstat(filepath.Join(path, i.Temp)); !os.IsNotExist(err) {
+			return Numbering{}, fmt.Errorf("临时名称冲突，请重新预览")
+		}
+		if i.Old == i.New {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(path, i.New)); err == nil {
+			// Case-only aliases are safe because all changed files first move to temp names.
+			if !changed[i.New] && !numberingMatch(filepath.Join(path, i.New), *i) {
+				return Numbering{}, fmt.Errorf("目标 %s 被未参与本次操作的文件或目录占用", i.New)
+			}
+		} else if !os.IsNotExist(err) {
+			return Numbering{}, err
+		}
+	}
+	b.Total = len(b.Items)
+	tx, err := l.DB.Begin()
+	if err != nil {
+		return Numbering{}, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("INSERT INTO image_numberings(id,parent,status,created,fingerprint,undo_of) VALUES(?,?,?,?,?,?)", b.ID, b.Parent, b.Status, b.Created, b.Fingerprint, b.UndoOf); err != nil {
+		return Numbering{}, err
+	}
+	for idx, i := range b.Items {
+		if _, err = tx.Exec(`INSERT INTO image_numbering_items(batch,position,entry,version,identity,size,mtime,old_name,new_name,temp_name,current_name,undo_of) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, b.ID, idx, i.Entry, i.Version, i.Identity, i.Size, i.Mtime, i.Old, i.New, i.Temp, i.Current, i.UndoOf); err != nil {
+			return Numbering{}, err
+		}
+	}
+	// Unconfirmed previews are disposable; completed journals remain available for restore.
+	if _, err = tx.Exec(`DELETE FROM image_numbering_items WHERE batch IN (SELECT id FROM image_numberings WHERE status='preview' AND created<?)`, b.Created[:10]); err != nil {
+		return Numbering{}, err
+	}
+	if _, err = tx.Exec(`DELETE FROM image_numberings WHERE status='preview' AND created<?`, b.Created[:10]); err != nil {
+		return Numbering{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Numbering{}, err
+	}
+	return b, nil
+}
+
+func (l *Library) Numbering(id string) (Numbering, error) {
+	var b Numbering
+	err := l.DB.QueryRow("SELECT id,parent,status,created,fingerprint,undo_of,error FROM image_numberings WHERE id=?", id).Scan(&b.ID, &b.Parent, &b.Status, &b.Created, &b.Fingerprint, &b.UndoOf, &b.Error)
+	if err != nil {
+		return b, err
+	}
+	rows, err := l.DB.Query(`SELECT entry,version,identity,size,mtime,old_name,new_name,temp_name,current_name,pending_name,operation,undo_of FROM image_numbering_items WHERE batch=? ORDER BY position`, id)
+	if err != nil {
+		return b, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var i NumberingItem
+		if err = rows.Scan(&i.Entry, &i.Version, &i.Identity, &i.Size, &i.Mtime, &i.Old, &i.New, &i.Temp, &i.Current, &i.Pending, &i.Operation, &i.UndoOf); err != nil {
+			return b, err
+		}
+		b.Items = append(b.Items, i)
+		if i.Old != i.New {
+			b.Changed++
+		}
+	}
+	b.Total = len(b.Items)
+	return b, rows.Err()
+}
+func (l *Library) NumberingHistory(parent int64) ([]Numbering, error) {
+	rows, err := l.DB.Query(`SELECT b.id,b.parent,b.status,b.created,b.undo_of,b.error,count(i.entry),COALESCE(sum(i.old_name<>i.new_name),0) FROM image_numberings b JOIN image_numbering_items i ON i.batch=b.id WHERE b.parent=? AND b.status<>'preview' GROUP BY b.id ORDER BY b.created DESC,b.id DESC LIMIT 50`, parent)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []Numbering{}
+	for rows.Next() {
+		var b Numbering
+		if err = rows.Scan(&b.ID, &b.Parent, &b.Status, &b.Created, &b.UndoOf, &b.Error, &b.Total, &b.Changed); err != nil {
+			return nil, err
+		}
+		result = append(result, b)
+	}
+	return result, rows.Err()
+}
+func (l *Library) PreviewNumberingRestore(id string) (Numbering, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	original, err := l.Numbering(id)
+	if err != nil {
+		return Numbering{}, err
+	}
+	if original.Status != "committed" || original.UndoOf != "" {
+		return Numbering{}, fmt.Errorf("该批次不可还原")
+	}
+	if err = l.CheckAvailable(original.Parent); err != nil {
+		return Numbering{}, err
+	}
+	path, err := l.Path(original.Parent)
+	if err != nil {
+		return Numbering{}, err
+	}
+	fingerprint, err := directoryFingerprint(path)
+	if err != nil {
+		return Numbering{}, err
+	}
+	b := Numbering{ID: numberingToken(), Parent: original.Parent, Created: storage.Now(), Status: "preview", Fingerprint: fingerprint, UndoOf: id}
+	for _, i := range original.Items {
+		if i.Old == i.New {
+			continue
+		}
+		e, err := l.Get(i.Entry)
+		if err != nil {
+			return Numbering{}, err
+		}
+		if e.Parent != b.Parent || e.Name != i.New || e.RestoreID != i.Operation || !numberingMatch(filepath.Join(path, e.Name), i) {
+			return Numbering{}, fmt.Errorf("图片 %s 已变化或有后续改名，不能整批还原", i.New)
+		}
+		b.Items = append(b.Items, NumberingItem{Entry: e.ID, Version: e.Version, Identity: i.Identity, Size: i.Size, Mtime: i.Mtime, Old: i.New, New: i.Old, UndoOf: i.Operation})
+	}
+	if len(b.Items) == 0 {
+		return Numbering{}, fmt.Errorf("该批次没有需要还原的图片")
+	}
+	return l.saveNumberingPreview(b, path)
+}
+
+func (l *Library) ApplyNumbering(id string) (Numbering, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b, err := l.Numbering(id)
+	if err != nil {
+		return b, err
+	}
+	if b.Status == "committed" || b.Status == "restored" {
+		return b, nil
+	}
+	if b.Status != "preview" {
+		return b, fmt.Errorf("该批次%s，请查看编号记录", b.Status)
+	}
+	if l.broken != nil {
+		return b, fmt.Errorf("服务有待恢复操作，请重启核对")
+	}
+	if err = l.CheckAvailable(b.Parent); err != nil {
+		return b, err
+	}
+	if l.Busy != nil && l.Busy(b.Parent) {
+		return b, fmt.Errorf("目录有活动任务，请等待任务完成")
+	}
+	path, err := l.Path(b.Parent)
+	if err != nil {
+		return b, err
+	}
+	fingerprint, err := directoryFingerprint(path)
+	if err != nil {
+		return b, err
+	}
+	if fingerprint != b.Fingerprint {
+		return b, fmt.Errorf("预览后目录已变化，请重新预览")
+	}
+	if b.UndoOf != "" {
+		original, err := l.Numbering(b.UndoOf)
+		if err != nil {
+			return b, err
+		}
+		if original.Status != "committed" {
+			return b, fmt.Errorf("原批次已还原或不可用")
+		}
+	}
+	for _, i := range b.Items {
+		e, err := l.Get(i.Entry)
+		if err != nil {
+			return b, err
+		}
+		if e.Parent != b.Parent || e.Version != i.Version || e.Name != i.Old || !numberingMatch(filepath.Join(path, i.Old), i) {
+			return b, fmt.Errorf("图片 %s 已变化，请重新预览", i.Old)
+		}
+		if err = l.CheckAvailable(i.Entry); err != nil {
+			return b, err
+		}
+		if e.TaskStatus != "" || (l.Busy != nil && l.Busy(i.Entry)) {
+			return b, fmt.Errorf("图片有活动任务，请等待完成")
+		}
+		if i.UndoOf != 0 && e.RestoreID != i.UndoOf {
+			return b, fmt.Errorf("图片有后续改名，不能整批还原")
+		}
+	}
+	if _, err = l.DB.Exec("UPDATE image_numberings SET status='running' WHERE id=?", id); err != nil {
+		return b, err
+	}
+	b.Status = "running"
+	if err = l.performNumbering(&b, path); err != nil {
+		// A failed COMMIT can have an uncertain outcome. Inspect durable state
+		// before moving files back; if the database is unavailable, let startup recover.
+		persisted, readErr := l.Numbering(id)
+		if readErr != nil {
+			l.broken = readErr
+			return b, fmt.Errorf("编号结果待核对，请重启恢复：%w", readErr)
+		}
+		if persisted.Status == "committed" {
+			return persisted, nil
+		}
+		b = persisted
+		cause := err
+		if recovery := l.rollbackNumbering(&b, path); recovery != nil {
+			b.Status = "review"
+			b.Error = fmt.Sprintf("%v；恢复未完成：%v", cause, recovery)
+		} else {
+			b.Status = "rolled_back"
+			b.Error = fmt.Sprintf("操作失败，已恢复原名：%v", cause)
+		}
+		if _, dbErr := l.DB.Exec("UPDATE image_numberings SET status=?,error=? WHERE id=?", b.Status, b.Error, id); dbErr != nil {
+			l.broken = dbErr
+		}
+		return b, errors.New(b.Error)
+	}
+	return l.Numbering(id)
+}
+
+// Persist the intent before each no-replace move, then fsync before recording completion.
+func (l *Library) moveNumbering(b *Numbering, i *NumberingItem, path, target string) error {
+	if i.Current == target {
+		return nil
+	}
+	if checked, err := l.Path(b.Parent); err != nil || checked != path {
+		return fmt.Errorf("父目录已变化")
+	}
+	if !numberingMatch(filepath.Join(path, i.Current), *i) {
+		return fmt.Errorf("图片 %s 身份或内容已变化", i.Current)
+	}
+	if _, err := l.DB.Exec("UPDATE image_numbering_items SET pending_name=? WHERE batch=? AND entry=?", target, b.ID, i.Entry); err != nil {
+		return err
+	}
+	i.Pending = target
+	if err := rename.NoReplace(filepath.Join(path, i.Current), filepath.Join(path, target)); err != nil {
+		return err
+	}
+	if err := syncNumberingDir(path); err != nil {
+		return err
+	}
+	if _, err := l.DB.Exec("UPDATE image_numbering_items SET current_name=?,pending_name='' WHERE batch=? AND entry=?", target, b.ID, i.Entry); err != nil {
+		return err
+	}
+	i.Current = target
+	i.Pending = ""
+	return nil
+}
+func syncNumberingDir(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
+}
+func (l *Library) performNumbering(b *Numbering, path string) error {
+	for idx := range b.Items {
+		i := &b.Items[idx]
+		if i.Old != i.New {
+			if err := l.moveNumbering(b, i, path, i.Temp); err != nil {
+				return err
+			}
+		}
+	}
+	for idx := range b.Items {
+		i := &b.Items[idx]
+		if i.Old != i.New {
+			if err := l.moveNumbering(b, i, path, i.New); err != nil {
+				return err
+			}
+		}
+	}
+	for _, i := range b.Items {
+		if !numberingMatch(filepath.Join(path, i.New), i) {
+			return fmt.Errorf("图片 %s 在提交前发生变化", i.New)
+		}
+	}
+	tx, err := l.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Temporarily free database name uniqueness within the same transaction.
+	for _, i := range b.Items {
+		if i.Old != i.New {
+			if _, err = tx.Exec("UPDATE entries SET name=? WHERE id=?", i.Temp, i.Entry); err != nil {
+				return err
+			}
+		}
+	}
+	for _, i := range b.Items {
+		if i.Old == i.New {
+			continue
+		}
+		source := "manual"
+		if b.UndoOf != "" {
+			source = "restore"
+		}
+		o := Operation{Entry: i.Entry, Parent: b.Parent, Old: i.Old, New: i.New, Identity: i.Identity, Size: i.Size, Mtime: i.Mtime, Kind: "file", Source: source, UndoOf: i.UndoOf}
+		res, err := tx.Exec(`INSERT INTO operations(entry,parent,old_name,new_name,identity,size,mtime,kind,source,status,undo_of,request_key,created) VALUES(?,?,?,?,?,?,?,?,?,'prepared',?,?,?)`, o.Entry, o.Parent, o.Old, o.New, o.Identity, o.Size, o.Mtime, o.Kind, o.Source, o.UndoOf, "numbering:"+b.ID+fmt.Sprint(i.Entry), storage.Now())
+		if err != nil {
+			return err
+		}
+		o.ID, _ = res.LastInsertId()
+		oldrel, _ := filepath.Rel(l.Root, filepath.Join(path, i.Old))
+		newrel, _ := filepath.Rel(l.Root, filepath.Join(path, i.New))
+		if err = l.finishTx(tx, o, oldrel, newrel); err != nil {
+			return err
+		}
+		if _, err = tx.Exec("UPDATE image_numbering_items SET operation=? WHERE batch=? AND entry=?", o.ID, b.ID, i.Entry); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec("UPDATE image_numberings SET status='committed',error='' WHERE id=?", b.ID); err != nil {
+		return err
+	}
+	if b.UndoOf != "" {
+		if _, err = tx.Exec("UPDATE image_numberings SET status='restored' WHERE id=?", b.UndoOf); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// Resolve a crash between filesystem rename and journal completion without guessing.
+func (l *Library) reconcileNumbering(b *Numbering, path string) error {
+	names, err := os.ReadDir(path)
+	if err != nil {
+		return err
+	}
+	exact := map[string]bool{}
+	for _, n := range names {
+		exact[n.Name()] = true
+	}
+	for idx := range b.Items {
+		i := &b.Items[idx]
+		current := exact[i.Current] && numberingMatch(filepath.Join(path, i.Current), *i)
+		if i.Pending != "" {
+			pending := exact[i.Pending] && numberingMatch(filepath.Join(path, i.Pending), *i)
+			if current == pending {
+				return fmt.Errorf("无法唯一确定图片 %s 的位置，需要人工核对", i.Old)
+			}
+			if pending {
+				i.Current = i.Pending
+			}
+			if _, err = l.DB.Exec("UPDATE image_numbering_items SET current_name=?,pending_name='' WHERE batch=? AND entry=?", i.Current, b.ID, i.Entry); err != nil {
+				return err
+			}
+			i.Pending = ""
+		} else if !current {
+			return fmt.Errorf("图片 %s 已被外部修改，需要人工核对", i.Old)
+		}
+	}
+	return syncNumberingDir(path)
+}
+func (l *Library) rollbackNumbering(b *Numbering, path string) error {
+	if _, err := l.DB.Exec("UPDATE image_numberings SET status='rollback' WHERE id=?", b.ID); err != nil {
+		return err
+	}
+	if err := l.reconcileNumbering(b, path); err != nil {
+		return err
+	}
+	// Stage first, including final names that may occupy another item's original name.
+	for idx := range b.Items {
+		i := &b.Items[idx]
+		if i.Current != i.Old {
+			if err := l.moveNumbering(b, i, path, i.Temp); err != nil {
+				return err
+			}
+		}
+	}
+	for idx := range b.Items {
+		i := &b.Items[idx]
+		if i.Current != i.Old {
+			if err := l.moveNumbering(b, i, path, i.Old); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+func (l *Library) recoverNumberings() error {
+	rows, err := l.DB.Query("SELECT id FROM image_numberings WHERE status IN ('running','rollback','review') ORDER BY created")
+	if err != nil {
+		return err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if _, err = l.recoverNumbering(id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (l *Library) RecoverNumbering(id string) (Numbering, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.recoverNumbering(id)
+}
+func (l *Library) recoverNumbering(id string) (Numbering, error) {
+	b, err := l.Numbering(id)
+	if err != nil {
+		return b, err
+	}
+	if b.Status != "running" && b.Status != "rollback" && b.Status != "review" {
+		return b, nil
+	}
+	path, err := l.Path(b.Parent)
+	if err == nil {
+		err = l.rollbackNumbering(&b, path)
+	}
+	b.Status = "rolled_back"
+	b.Error = "中断的图片编号已恢复原名"
+	if err != nil {
+		b.Status = "review"
+		b.Error = "图片编号恢复未完成：" + err.Error()
+	}
+	_, dbErr := l.DB.Exec("UPDATE image_numberings SET status=?,error=? WHERE id=?", b.Status, b.Error, id)
+	return b, dbErr
+}

@@ -2,10 +2,12 @@ package models
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 	"video-rename/internal/config"
 )
 
@@ -28,7 +30,7 @@ func TestDiscoverProtocolsAndRedirectProtection(t *testing.T) {
 			}))
 			defer server.Close()
 			cfg := config.ServerConfig{Provider: "custom", Protocol: protocol, BaseURL: server.URL + "/v1", APIKey: "test-key"}
-			out, err := Discover(context.Background(), cfg)
+			out, err := Discover(context.Background(), cfg, 5*time.Second)
 			if err != nil || len(out.Models) != 2 || out.Models[0].ID != "a-model" {
 				t.Fatal(out, err)
 			}
@@ -39,7 +41,7 @@ func TestDiscoverProtocolsAndRedirectProtection(t *testing.T) {
 	defer target.Close()
 	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL, 302) }))
 	defer redirect.Close()
-	if _, err := Discover(context.Background(), config.ServerConfig{Provider: "custom", BaseURL: redirect.URL, APIKey: "secret"}); err == nil || hits != 0 {
+	if _, err := Discover(context.Background(), config.ServerConfig{Provider: "custom", BaseURL: redirect.URL, APIKey: "secret"}, 5*time.Second); err == nil || hits != 0 {
 		t.Fatal("followed redirect", err, hits)
 	}
 	failure := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -47,8 +49,32 @@ func TestDiscoverProtocolsAndRedirectProtection(t *testing.T) {
 		w.Write([]byte("secret in upstream error"))
 	}))
 	defer failure.Close()
-	_, err := Discover(context.Background(), config.ServerConfig{Provider: "custom", BaseURL: failure.URL, APIKey: "secret"})
+	_, err := Discover(context.Background(), config.ServerConfig{Provider: "custom", BaseURL: failure.URL, APIKey: "secret"}, 5*time.Second)
 	if err == nil || strings.Contains(err.Error(), "secret") {
 		t.Fatal("unsafe error", err)
+	}
+}
+
+func TestDiscoverTimeout(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		t.Run(fmt.Sprint(streaming), func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if streaming {
+					w.Write([]byte(`{"data":[`))
+					w.(http.Flusher).Flush()
+				}
+				<-r.Context().Done()
+			}))
+			defer server.Close()
+			started := time.Now()
+			_, err := Discover(context.Background(), config.ServerConfig{Provider: "custom", BaseURL: server.URL}, 5*time.Second)
+			if err == nil || !strings.Contains(err.Error(), "模型检测超时（5s）") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if elapsed := time.Since(started); elapsed < 4*time.Second || elapsed > 7*time.Second {
+				t.Fatalf("unexpected duration: %v", elapsed)
+			}
+		})
 	}
 }

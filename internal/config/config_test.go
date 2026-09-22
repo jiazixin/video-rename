@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,30 +15,13 @@ const minimalYAML = "# deployment\n"
 
 // fullYAML 与 docs/configuration.md 的完整示例一致。
 const fullYAML = `
-
-sampling:
-  strategy: "hybrid"
-  max_frames: 12
-  skip_start_ratio: 0.05
-  skip_end_ratio: 0.05
-  duration_rules:
-    - {max_duration: "30s", frames: 3}
-    - {max_duration: "2m", frames: 5}
-    - {max_duration: "10m", frames: 8}
-    - {max_duration: "30m", frames: 10}
-    - {max_duration: null, frames: 12}
-  size_rules:
-    - {max_mib: 50, frames: 3}
-    - {max_mib: 200, frames: 5}
-    - {max_mib: 1024, frames: 8}
-    - {max_mib: null, frames: 12}
-
-images:
-  max_dimension: 768
-  jpeg_quality: 4
-
-logging:
-  dir: "./logs"
+listen: "127.0.0.1"
+port: 8790
+path: "/srv/videos"
+storage: "../data"
+auth:
+  username: "admin"
+  password: "test-password"
 `
 
 func loadTemp(t *testing.T, content string, name string) (*Config, error) {
@@ -137,7 +122,7 @@ server:
 }
 
 func TestInvalidStrategyRejected(t *testing.T) {
-	_, err := loadTemp(t, minimalYAML+"sampling:\n  strategy: \"random\"\n", "config.yaml")
+	_, err := loadFrameSettings(t, minimalYAML+"sampling:\n  strategy: \"random\"\n", "config.yaml")
 	if err == nil || !strings.Contains(err.Error(), "strategy") {
 		t.Fatalf("非法枚举应报错, got %v", err)
 	}
@@ -171,13 +156,13 @@ func TestRuleTableValidation(t *testing.T) {
 		"大小表非递增":  base + "  size_rules:\n    - {max_mib: 200, frames: 3}\n    - {max_mib: 50, frames: 5}\n    - {max_mib: null, frames: 8}\n",
 	}
 	for name, y := range cases {
-		if _, err := loadTemp(t, y, "config.yaml"); err == nil {
+		if _, err := loadFrameSettings(t, y, "config.yaml"); err == nil {
 			t.Errorf("%s 应报错", name)
 		}
 	}
 	// 未使用的表也必须合法:duration 策略下 size_rules 仍要校验
 	bad := base + "  strategy: \"duration\"\n  size_rules:\n    - {max_mib: 100, frames: 3}\n    - {max_mib: 50, frames: 5}\n    - {max_mib: null, frames: 8}\n"
-	if _, err := loadTemp(t, bad, "config.yaml"); err == nil {
+	if _, err := loadFrameSettings(t, bad, "config.yaml"); err == nil {
 		t.Error("未使用表的违规配置应报错")
 	}
 }
@@ -188,7 +173,7 @@ func TestRuleTableReplacesDefaults(t *testing.T) {
     - {max_duration: "1m", frames: 4}
     - {max_duration: null, frames: 6}
 `
-	cfg, err := loadTemp(t, y, "config.yaml")
+	cfg, err := loadFrameSettings(t, y, "config.yaml")
 	if err != nil {
 		t.Fatalf("加载失败: %v", err)
 	}
@@ -209,11 +194,11 @@ func TestRuleTableReplacesDefaults(t *testing.T) {
 
 func TestSkipRatioValidation(t *testing.T) {
 	y := minimalYAML + "sampling:\n  skip_start_ratio: 0.6\n  skip_end_ratio: 0.5\n"
-	if _, err := loadTemp(t, y, "config.yaml"); err == nil {
+	if _, err := loadFrameSettings(t, y, "config.yaml"); err == nil {
 		t.Error("跳过比例之和 ≥ 1 应报错")
 	}
 	y = minimalYAML + "sampling:\n  skip_start_ratio: -0.1\n"
-	if _, err := loadTemp(t, y, "config.yaml"); err == nil {
+	if _, err := loadFrameSettings(t, y, "config.yaml"); err == nil {
 		t.Error("负跳过比例应报错")
 	}
 }
@@ -221,12 +206,12 @@ func TestSkipRatioValidation(t *testing.T) {
 func TestImagesValidation(t *testing.T) {
 	for _, v := range []string{"64", "4096"} {
 		y := minimalYAML + "images:\n  max_dimension: " + v + "\n"
-		if _, err := loadTemp(t, y, "config.yaml"); err == nil {
+		if _, err := loadFrameSettings(t, y, "config.yaml"); err == nil {
 			t.Errorf("max_dimension=%s 应报错", v)
 		}
 	}
 	y := minimalYAML + "images:\n  jpeg_quality: 16\n"
-	if _, err := loadTemp(t, y, "config.yaml"); err == nil {
+	if _, err := loadFrameSettings(t, y, "config.yaml"); err == nil {
 		t.Error("jpeg_quality=16 应报错")
 	}
 }
@@ -285,5 +270,31 @@ func TestPromptHashStable(t *testing.T) {
 func TestRejectPromptInYAML(t *testing.T) {
 	if _, err := loadTemp(t, minimalYAML+"\nprompt: 不应从配置读取\n", "config.yaml"); err == nil {
 		t.Fatal("YAML prompt must be rejected")
+	}
+}
+
+// Media validation fixtures decode directly into runtime fields; Load never accepts them.
+func loadFrameSettings(t *testing.T, content, _ string) (*Config, error) {
+	t.Helper()
+	c := defaults()
+	value := struct {
+		Sampling SamplingConfig `yaml:"sampling"`
+		Images   ImagesConfig   `yaml:"images"`
+	}{c.Sampling, c.Images}
+	if err := yaml.Unmarshal([]byte(content), &value); err != nil {
+		return nil, err
+	}
+	c.Sampling, c.Images = value.Sampling, value.Images
+	if errs := c.validateSampling(); len(errs) > 0 {
+		return nil, fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return c, nil
+}
+
+func TestFrameSettingsNotInDeploymentYAML(t *testing.T) {
+	for _, field := range []string{"sampling", "images"} {
+		if _, err := loadTemp(t, field+": {}\n", "config.yaml"); err == nil {
+			t.Fatalf("unexpected deployment field %s", field)
+		}
 	}
 }

@@ -26,37 +26,37 @@ const (
 	StrategyDuration Strategy = "duration"
 )
 
-// SamplingConfig 抽帧规则。带 yaml 标签的字段参与解码;
-// Parsed* 为校验后填充的派生值。
+// SamplingConfig 是 Web 设置及任务快照中的抽帧规则，不从部署 YAML 读取。
+// Parsed* 为校验后填充的派生值，不写入 JSON。
 type SamplingConfig struct {
-	Strategy      string         `yaml:"strategy"`
-	MaxFrames     int            `yaml:"max_frames"`
-	SkipStart     float64        `yaml:"skip_start_ratio"`
-	SkipEnd       float64        `yaml:"skip_end_ratio"`
-	DurationRules []DurationRule `yaml:"duration_rules"`
-	SizeRules     []SizeRule     `yaml:"size_rules"`
+	Strategy      string         `yaml:"strategy" json:"strategy"`
+	MaxFrames     int            `yaml:"max_frames" json:"max_frames"`
+	SkipStart     float64        `yaml:"skip_start_ratio" json:"skip_start_ratio"`
+	SkipEnd       float64        `yaml:"skip_end_ratio" json:"skip_end_ratio"`
+	DurationRules []DurationRule `yaml:"duration_rules" json:"duration_rules"`
+	SizeRules     []SizeRule     `yaml:"size_rules" json:"size_rules"`
 
-	ParsedStrategy Strategy             `yaml:"-"`
-	ParsedDuration []ParsedDurationRule `yaml:"-"`
-	ParsedSize     []ParsedSizeRule     `yaml:"-"`
+	ParsedStrategy Strategy             `yaml:"-" json:"-"`
+	ParsedDuration []ParsedDurationRule `yaml:"-" json:"-"`
+	ParsedSize     []ParsedSizeRule     `yaml:"-" json:"-"`
 }
 
 // DurationRule 时长分档;MaxDuration 为 nil 表示兜底档。
 type DurationRule struct {
-	MaxDuration *string `yaml:"max_duration"`
-	Frames      int     `yaml:"frames"`
+	MaxDuration *string `yaml:"max_duration" json:"max_duration"`
+	Frames      int     `yaml:"frames" json:"frames"`
 }
 
 // SizeRule 大小分档(MiB);MaxMiB 为 nil 表示兜底档。
 type SizeRule struct {
-	MaxMiB *int64 `yaml:"max_mib"`
-	Frames int    `yaml:"frames"`
+	MaxMiB *int64 `yaml:"max_mib" json:"max_mib"`
+	Frames int    `yaml:"frames" json:"frames"`
 }
 
 // ImagesConfig 截图尺寸与 JPEG 质量。
 type ImagesConfig struct {
-	MaxDimension int `yaml:"max_dimension"`
-	JPEGQuality  int `yaml:"jpeg_quality"`
+	MaxDimension int `yaml:"max_dimension" json:"max_dimension"`
+	JPEGQuality  int `yaml:"jpeg_quality" json:"jpeg_quality"`
 }
 
 // LoggingConfig 日志目录。
@@ -81,8 +81,8 @@ type Config struct {
 	Server        ServerConfig   `yaml:"-"`
 	Prompt        string         `yaml:"-"` // Runtime task snapshot; never read from YAML.
 	Workers       int            `yaml:"-"`
-	Sampling      SamplingConfig `yaml:"sampling"`
-	Images        ImagesConfig   `yaml:"images"`
+	Sampling      SamplingConfig `yaml:"-"`
+	Images        ImagesConfig   `yaml:"-"`
 	Logging       LoggingConfig  `yaml:"logging"`
 
 	// 以下为校验后填充的派生值。
@@ -236,6 +236,23 @@ func (c *Config) validate() []string {
 		errs = append(errs, "workers 必须在 1–32 之间")
 	}
 
+	errs = append(errs, c.validateSampling()...)
+
+	// logging
+	if strings.TrimSpace(c.Logging.Dir) == "" {
+		errs = append(errs, "logging.dir 必须非空")
+	} else {
+		dir := c.Logging.Dir
+		if !filepath.IsAbs(dir) {
+			dir = filepath.Join(c.ConfigDir, dir)
+		}
+		c.ResolvedLoggingDir = filepath.Clean(dir)
+	}
+	return errs
+}
+
+func (c *Config) validateSampling() []string {
+	var errs []string
 	// sampling
 	switch c.Sampling.Strategy {
 	case string(StrategyHybrid), string(StrategySize), string(StrategyDuration):
@@ -274,16 +291,6 @@ func (c *Config) validate() []string {
 		errs = append(errs, "images.jpeg_quality 必须在 2–15 之间")
 	}
 
-	// logging
-	if strings.TrimSpace(c.Logging.Dir) == "" {
-		errs = append(errs, "logging.dir 必须非空")
-	} else {
-		dir := c.Logging.Dir
-		if !filepath.IsAbs(dir) {
-			dir = filepath.Join(c.ConfigDir, dir)
-		}
-		c.ResolvedLoggingDir = filepath.Clean(dir)
-	}
 	return errs
 }
 
@@ -343,8 +350,8 @@ func parseSizeRules(rules []SizeRule) ([]ParsedSizeRule, []string) {
 			out = append(out, ParsedSizeRule{Max: math.MaxInt64, Frames: r.Frames})
 			continue
 		}
-		if *r.MaxMiB <= 0 {
-			errs = append(errs, fmt.Sprintf("sampling.size_rules 第 %d 档 max_mib 必须为正整数", i+1))
+		if *r.MaxMiB <= 0 || *r.MaxMiB > math.MaxInt64/(1024*1024) {
+			errs = append(errs, fmt.Sprintf("sampling.size_rules 第 %d 档 max_mib 必须为有效的正整数且换算字节后不能溢出", i+1))
 			continue
 		}
 		if prev != 0 && *r.MaxMiB <= prev {
