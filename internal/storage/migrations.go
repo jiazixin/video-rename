@@ -1,5 +1,10 @@
 package storage
 
+import (
+	"database/sql"
+	"time"
+)
+
 // migrate applies upgrades atomically without rebuilding or dropping user data.
 func (s *Store) migrate() error {
 	tx, err := s.Begin()
@@ -125,5 +130,63 @@ INSERT INTO schema_migrations VALUES(13,datetime('now'));`); err != nil {
 			return err
 		}
 	}
+	if version < 15 {
+		if err = migrateTokenUsageRecords(tx); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
+}
+
+// migrateTokenUsageRecords adds the per-request usage ledger. Existing run
+// aggregates become one legacy row each: the batch time stands in for request
+// times that were never recorded, and the aggregate counts move over verbatim
+// so analytics never double-counts them.
+func migrateTokenUsageRecords(tx *sql.Tx) error {
+	if _, err := tx.Exec(`CREATE TABLE token_usage_records(id INTEGER PRIMARY KEY, run INTEGER NOT NULL REFERENCES runs(id), item INTEGER UNIQUE REFERENCES run_items(id), recorded_at INTEGER NOT NULL, tokens INTEGER NOT NULL, records INTEGER NOT NULL DEFAULT 1, estimated_records INTEGER NOT NULL DEFAULT 0, legacy INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX token_usage_time ON token_usage_records(recorded_at);
+CREATE INDEX token_usage_run ON token_usage_records(run,recorded_at);`); err != nil {
+		return err
+	}
+	rows, err := tx.Query(`SELECT u.run,u.token_count,u.token_records,u.token_estimated_records,r.started,r.created FROM run_token_usage u JOIN runs r ON r.id=u.run WHERE u.token_records>0`)
+	if err != nil {
+		return err
+	}
+	type legacyRow struct {
+		run, tokens, records, estimated, at int64
+	}
+	var pending []legacyRow
+	for rows.Next() {
+		var row legacyRow
+		var started, created string
+		if err = rows.Scan(&row.run, &row.tokens, &row.records, &row.estimated, &started, &created); err != nil {
+			rows.Close()
+			return err
+		}
+		row.at = legacyTime(started, created)
+		pending = append(pending, row)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, row := range pending {
+		if _, err = tx.Exec(`INSERT INTO token_usage_records(run,item,recorded_at,tokens,records,estimated_records,legacy) VALUES(?,NULL,?,?,?,?,1)`, row.run, row.at, row.tokens, row.records, row.estimated); err != nil {
+			return err
+		}
+	}
+	_, err = tx.Exec("INSERT INTO schema_migrations VALUES(15,datetime('now'))")
+	return err
+}
+
+// legacyTime prefers the batch's actual start; unreadable timestamps fall back
+// to the submit time and only then to the epoch, so counts are never dropped.
+func legacyTime(started, created string) int64 {
+	for _, value := range []string{started, created} {
+		if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+			return parsed.UnixMilli()
+		}
+	}
+	return 0
 }

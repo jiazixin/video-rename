@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestExclusiveInstanceAndForeignKeys(t *testing.T) {
@@ -52,8 +53,57 @@ func TestVersionOneUpgradePreservesData(t *testing.T) {
 	if err = upgraded.QueryRow("SELECT name,model_config_id FROM schedules").Scan(&name, &promptID); err != nil || name != "保留计划" || promptID != 1 {
 		t.Fatal(name, promptID, err)
 	}
-	if err = upgraded.QueryRow("SELECT max(version) FROM schema_migrations").Scan(&version); err != nil || version != 14 {
+	if err = upgraded.QueryRow("SELECT max(version) FROM schema_migrations").Scan(&version); err != nil || version != 15 {
 		t.Fatal(version, err)
+	}
+}
+
+func TestVersionFifteenBackfillsLegacyUsageLedger(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v14.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(schema + `
+ ALTER TABLE runs ADD COLUMN started TEXT NOT NULL DEFAULT '';
+ ALTER TABLE runs ADD COLUMN model_snapshot TEXT NOT NULL DEFAULT '';
+ CREATE TABLE model_configs(id INTEGER PRIMARY KEY,title TEXT NOT NULL,body TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1,created TEXT NOT NULL,updated TEXT NOT NULL,is_default INTEGER NOT NULL DEFAULT 0,settings TEXT NOT NULL DEFAULT '{}',api_key TEXT NOT NULL DEFAULT '');
+ CREATE TABLE notification_channels(kind TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 0,failure_only INTEGER NOT NULL DEFAULT 0,credentials TEXT NOT NULL,after_run INTEGER NOT NULL DEFAULT 0);
+ INSERT INTO schema_migrations VALUES(14,'then');
+ INSERT INTO runs(id,source,targets,recursive,status,created,started,finished,request_key) VALUES
+  (11,'manual','[]',1,'completed','2026-09-01T08:00:00Z','2026-09-01T08:05:00Z','2026-09-01T09:00:00Z','k11'),
+  (12,'schedule','[]',1,'completed','2026-09-02T08:00:00Z','','2026-09-02T09:00:00Z','k12');
+ INSERT INTO run_token_usage(run,token_count,token_records,token_estimated_records) VALUES
+  (11,195,2,1),(12,0,0,0);
+ `); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	upgraded, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = upgraded.Close() }()
+	var count int
+	if err = upgraded.QueryRow("SELECT count(*) FROM token_usage_records").Scan(&count); err != nil || count != 1 {
+		t.Fatal("expected one backfilled row", count, err)
+	}
+	var run, tokens, records, estimated, legacy int
+	var at int64
+	if err = upgraded.QueryRow("SELECT run,recorded_at,tokens,records,estimated_records,legacy FROM token_usage_records").Scan(&run, &at, &tokens, &records, &estimated, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if run != 11 || at != int64(time.Date(2026, 9, 1, 8, 5, 0, 0, time.UTC).UnixMilli()) || tokens != 195 || records != 2 || estimated != 1 || legacy != 1 {
+		t.Fatal("backfill mismatch", run, at, tokens, records, estimated, legacy)
+	}
+	upgraded.Close()
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if err = reopened.QueryRow("SELECT count(*) FROM token_usage_records").Scan(&count); err != nil || count != 1 {
+		t.Fatal("re-open duplicated legacy rows", count, err)
 	}
 }
 

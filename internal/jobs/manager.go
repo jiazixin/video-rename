@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -583,13 +584,8 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.C
 					request, response = diagnostic.RawRequest, diagnostic.RawResponse
 				}
 			}
-			if tokens, estimated, ok := tokenusage.Count(request, response); ok {
-				rough := 0
-				if estimated {
-					rough = 1
-				}
-				_, _ = m.DB.Exec(`INSERT INTO run_token_usage(run,token_count,token_records,token_estimated_records) VALUES(?,?,1,?)
-ON CONFLICT(run) DO UPDATE SET token_count=token_count+excluded.token_count,token_records=token_records+1,token_estimated_records=token_estimated_records+excluded.token_estimated_records`, run, tokens, rough)
+			if err := tokenusage.Record(m.DB, run, it.ID, request, response, time.Now()); err != nil {
+				slog.Error("记录 token 用量失败", "run", run, "item", it.ID, "error", err)
 			}
 			if lease != nil {
 				defer func() { lease.Release(committed) }()

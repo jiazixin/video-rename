@@ -27,3 +27,10 @@ export const statusNames:Record<string,string>={queued:'排队中',scanning:'扫
 export const actionNames:Record<string,string>={manual:'手动命名',automatic:'自动命名',restore:'还原',recovery:'恢复核对',scan:'目录扫描',run:'运行',schedule:'计划触发',scheduler:'调度器'}
 
 export interface ModelProfile {workers:number;thinking:string;thinking_adapter:string;thinking_effort:string;thinking_budget:number;provider:string;protocol:string;base_url:string;model:string;timeout:string;temperature:number;max_tokens:number;omit_temperature:boolean;has_api_key:boolean;ready:boolean;is_default:boolean;id:number;title:string;body:string;version:number;created:string;updated:string}
+export interface UsageTotals {tokens:number;records:number;estimated_records:number;legacy_records:number;batches:number}
+export interface UsageBucket {from:string;to:string;tokens:number;records:number;estimated_records:number;legacy_records:number}
+export interface UsageModel {key:string;model:string;provider:string;protocol:string;tokens:number;records:number;estimated_records:number;legacy_records:number;batches:number}
+export interface UsageProfile {id:number;title:string;tokens:number;records:number;estimated_records:number;legacy_records:number;batches:number}
+export interface UsageSource {key:string;tokens:number;records:number;estimated_records:number;legacy_records:number;batches:number}
+export interface UsageBatch {id:number;model:string;provider:string;protocol:string;profile_id:number;profile_title:string;source:string;status:string;created:string;started:string;finished:string;tokens:number;records:number;estimated_records:number;legacy_records:number;lifetime_tokens:number;lifetime_records:number;last_recorded_at:string}
+export interface UsageReport {range:{from:string;to:string;timezone:string;interval:string};totals:UsageTotals;trend:UsageBucket[];models:UsageModel[];profiles:UsageProfile[];sources:UsageSource[];top_batches:UsageBatch[];batches:{items:UsageBatch[];total:number;page:number;size:number};options:{models:{key:string;model:string;provider:string;protocol:string}[];profiles:{id:number;title:string}[]}}
