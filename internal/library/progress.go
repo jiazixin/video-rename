@@ -1,6 +1,50 @@
 package library
 
-import "video-rename/internal/discovery"
+import (
+	"database/sql"
+	"errors"
+
+	"video-rename/internal/discovery"
+)
+
+// DirectoryContents counts only immediate children from the last complete index.
+type DirectoryContents struct {
+	Directories int `json:"directories"`
+	Videos      int `json:"videos"`
+	Images      int `json:"images"`
+}
+
+func (l *Library) directoryContents(id int64) (*DirectoryContents, error) {
+	var generation int64
+	err := l.DB.QueryRow("SELECT generation FROM directory_state WHERE dir=? AND generation>0 AND error=''", id).Scan(&generation)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	rows, err := l.DB.Query("SELECT kind,name FROM directory_items WHERE dir=? AND generation=?", id, generation)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	contents := &DirectoryContents{}
+	for rows.Next() {
+		var kind, name string
+		if err := rows.Scan(&kind, &name); err != nil {
+			return nil, err
+		}
+		switch {
+		case kind == "directory":
+			contents.Directories++
+		case kind == "file" && discovery.IsVideoExtension(name):
+			contents.Videos++
+		case kind == "file" && IsImage(name):
+			contents.Images++
+		}
+	}
+	return contents, rows.Err()
+}
 
 // DirectoryProgress summarizes the indexed subtree. Unknown directories prevent
 // a partially discovered tree from being presented as fully processed.
@@ -50,5 +94,9 @@ func (l *Library) WithProgress(e Entry) (Entry, error) {
 		return e, err
 	}
 	e.Progress = progress
+	e.Contents, err = l.directoryContents(e.ID)
+	if err != nil {
+		return e, err
+	}
 	return e, nil
 }

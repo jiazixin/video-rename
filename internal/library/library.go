@@ -19,6 +19,7 @@ import (
 
 type Entry struct {
 	Progress   *DirectoryProgress `json:"progress,omitempty"`
+	Contents   *DirectoryContents `json:"contents"`
 	TaskStatus string             `json:"task_status"`
 	ID         int64              `json:"id"`
 	Parent     int64              `json:"parent"`

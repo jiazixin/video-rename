@@ -42,6 +42,7 @@ button>svg{flex-shrink:0}
 button.detail-button,.row-actions button,.model-card-actions button,.plan-card footer>button,.batch-toolbar button,.diagnostic-buttons button{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:5px 10px;gap:6px;border:1px solid var(--line);border-radius:7px;background:#fff;color:var(--steel);font-size:12px;font-weight:500;line-height:20px}
 button.detail-button:hover:not(:disabled),.row-actions button:hover:not(:disabled),.model-card-actions button:hover:not(:disabled),.plan-card footer>button:hover:not(:disabled){background:#f2f6f4;border-color:#b9cdc2;color:#285e47}
 button.detail-button>svg,.row-actions button>svg,.model-card-actions button>svg,.plan-card footer>button>svg{width:16px;height:16px}
+button.detail-button.icon-only-action,.row-actions button.icon-only-action{width:36px;min-width:36px;min-height:36px;padding:0}
 button.cancel-run,.row-actions button.cancel-run,button.danger-button,.plan-card footer>button.danger-button,.model-card-actions button.model-delete{color:#b44444;background:#fff7f7;border-color:#ebc9c9;border-radius:7px;gap:6px;line-height:20px}
 button.cancel-run:hover:not(:disabled),.row-actions button.cancel-run:hover:not(:disabled),button.danger-button:hover:not(:disabled),.plan-card footer>button.danger-button:hover:not(:disabled),.model-card-actions button.model-delete:hover:not(:disabled){background:#fce9e9;border-color:#d89999;color:#943232}
 .modal-actions>button{min-height:38px;padding:8px 12px;font-size:13px;border-radius:7px;gap:6px}
