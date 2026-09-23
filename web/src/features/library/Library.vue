@@ -64,7 +64,7 @@ function toggleSort(field:string){sort.value=sort.value===`${field}_asc`?`${fiel
 function sortLabel(field:string){return sort.value===`${field}_asc`?'升序':sort.value===`${field}_desc`?'降序':''}
 const cursors=ref<number[]>([])
 function routeDirectory(){const value=Number(location.hash.match(/^#library\/(\d+)$/)?.[1]||1);return Number.isSafeInteger(value)&&value>0?value:1}
-const dir=ref(routeDirectory()),page=ref<Page>(),busy=ref(false),error=ref(''),notice=ref(''),q=ref(''),kind=ref('video'),offset=ref(0),limit=ref(100)
+const dir=ref(routeDirectory()),page=ref<Page>(),busy=ref(false),error=ref(''),notice=ref(''),q=ref(''),kind=ref(''),offset=ref(0),limit=ref(100)
 const selected=ref<Entry>(),mode=ref(''),newName=ref(''),saving=ref(false),dialogError=ref(''),recursive=ref(true),history=ref<any[]>([])
 const inlineEntry=ref<Entry>(),inlineInput=ref<HTMLInputElement>(),inlineName=ref(''),inlineExtension=ref(''),inlineVersion=ref(0),inlineSaving=ref(false),inlineError=ref('')
 function setInlineInput(el:unknown){inlineInput.value=el instanceof HTMLInputElement?el:undefined}
@@ -164,7 +164,7 @@ function enter(id:number,updateRoute=true){
  if(!saved)window.scrollTo({top:0,behavior:'instant'})
  dir.value=id
  if(updateRoute&&(routeDirectory()!==id||!location.hash.startsWith('#library/')))location.hash=`library/${id}`
- offset.value=saved?.offset||0;cursors.value=[...(saved?.cursors||[])];q.value=saved?.q||'';kind.value=saved?.kind??'video';sort.value=saved?.sort??sort.value;limit.value=saved?.limit??limit.value
+ offset.value=saved?.offset||0;cursors.value=[...(saved?.cursors||[])];q.value=saved?.q||'';kind.value=saved?.kind??'';sort.value=saved?.sort??sort.value;limit.value=saved?.limit??limit.value
  page.value=saved?.snapshot
  void load(!!page.value)
  if(page.value)void restorePosition(seq,page.value)

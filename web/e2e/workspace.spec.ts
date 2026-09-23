@@ -189,10 +189,13 @@ test('任务历史文件名分列、省略与操作颜色',async({page})=>{
 
 })
 
-test('默认视频保留目录、图片筛选与弹窗预览',async({page})=>{
+test('默认全部类型、视频和图片筛选与弹窗预览',async({page})=>{
  await login(page)
  const filter=page.getByRole('combobox',{name:'类型筛选'})
- await expect(filter).toHaveText('视频')
+ await expect(filter).toHaveText('全部类型')
+ await expect(page.getByRole('button',{name:'2026 · 旅行记录',exact:true})).toBeVisible()
+ await expect(page.getByText('photo.png',{exact:true})).toBeVisible()
+ await filter.click();await page.getByRole('option',{name:'视频',exact:true}).click()
  await expect(page.getByRole('button',{name:'2026 · 旅行记录',exact:true})).toBeVisible()
  await expect(page.getByText('photo.png',{exact:true})).toHaveCount(0)
  await filter.click();await page.getByRole('option',{name:'图片',exact:true}).click()
