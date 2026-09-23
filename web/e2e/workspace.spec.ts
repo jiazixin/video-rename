@@ -12,7 +12,7 @@ async function login(page:any){await page.goto('/');await page.getByLabel('用�
 test('登录、目录、手动改名、冲突保护和还原',async({page})=>{
  await page.goto('/');await page.screenshot({path:'test-results/login-desktop.png',fullPage:true});await page.getByLabel('用户名',{exact:true}).fill('admin');await page.getByLabel('密码',{exact:true}).fill('incorrect-password');await page.getByRole('button',{name:'登录',exact:true}).click();await expect(page.getByRole('alert')).toContainText('账号或密码错误');await login(page)
  await page.screenshot({path:'test-results/library-desktop.png',fullPage:true})
- await page.getByRole('button',{name:'重命名 VID_20260920_001.mp4',exact:true}).click();await page.getByLabel('新名称',{exact:true}).fill('已占用名称');await page.getByRole('button',{name:'保存名称'}).click();await expect(page.getByRole('dialog').getByRole('alert')).toContainText('目标已存在');await page.getByLabel('新名称',{exact:true}).fill('海边散步');await page.getByRole('button',{name:'保存名称'}).click();await expect(page.getByText('海边散步.mp4',{exact:true})).toBeVisible({timeout:10000})
+ await page.getByRole('button',{name:'双击或按 Enter 重命名 VID_20260920_001.mp4'}).dblclick();const editor=page.getByRole('textbox',{name:'编辑 VID_20260920_001.mp4'});await editor.fill('已占用名称');await editor.press('Enter');await expect(page.locator('.inline-rename small[role="alert"]')).toContainText('目标已存在');await editor.fill('海边散步');await editor.press('Enter');await expect(page.getByText('海边散步.mp4',{exact:true})).toBeVisible({timeout:10000})
  await page.getByRole('button',{name:'还原 海边散步.mp4',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('VID_20260920_001.mp4');await page.getByRole('button',{name:'确认还原'}).click();await expect(page.getByText('VID_20260920_001.mp4',{exact:true})).toBeVisible({timeout:10000});await expect(page.getByRole('button',{name:'自动命名 VID_20260920_001.mp4',exact:true})).toBeEnabled()
  await page.getByRole('button',{name:'任务历史',exact:true}).click();await expect(page.locator('tbody').getByText('手动命名',{exact:true}).first()).toBeVisible();await page.getByRole('button',{name:'失败记录',exact:true}).click();await expect(page.locator('tbody').getByText(/目标已存在/).first()).toBeVisible();await page.getByRole('button',{name:'退出登录',exact:true}).click();await expect(page.getByRole('heading',{name:'登录工作台'})).toBeVisible()
 })
@@ -22,7 +22,7 @@ test('提示词新增、持久化、编辑和计划选择',async({page})=>{
  await login(page);await page.getByRole('button',{name:'系统设置',exact:true}).click();await page.getByRole('button',{name:'模型配置',exact:true}).click();await page.getByRole('button',{name:'新增配置',exact:true}).click();await page.getByLabel('配置名称',{exact:true}).fill('旅行专用提示词');await page.getByLabel('服务 URL',{exact:true}).fill(modelURL());await page.getByLabel('模型名称',{exact:true}).fill('视觉模型 · 本地测试');await page.getByLabel('命名提示词',{exact:true}).fill('用于测试的独立提示词：准确描述旅行风景，只输出中文标题。');await page.getByRole('button',{name:'保存配置',exact:true}).click();await expect(page.getByRole('heading',{name:'旅行专用提示词',exact:true})).toBeVisible();await page.reload();await expect(page.getByRole('heading',{name:'旅行专用提示词',exact:true})).toBeVisible();await page.getByRole('button',{name:'编辑模型配置 旅行专用提示词',exact:true}).click();await page.getByLabel('命名提示词',{exact:true}).fill('用于测试的独立提示词：准确描述旅行风景，不编造内容，只输出中文标题。');await page.getByRole('button',{name:'保存配置',exact:true}).click();await page.locator('.model-card').filter({hasText:'旅行专用提示词'}).getByText('命名提示词',{exact:true}).click();await expect(page.getByText('用于测试的独立提示词：准确描述旅行风景，不编造内容，只输出中文标题。',{exact:true})).toBeVisible();await page.getByRole('radio',{name:'设为全局默认 旅行专用提示词',exact:true}).check();await page.reload();await expect(page.getByRole('radio',{name:'设为全局默认 旅行专用提示词',exact:true})).toBeChecked();await page.screenshot({path:'test-results/prompts-desktop.png',fullPage:true})
  await page.getByRole('button',{name:'运行计划',exact:true}).click();await page.getByRole('button',{name:'自动计划和运行记录',exact:true}).click();await page.getByRole('button',{name:'新建计划',exact:true}).click();await page.getByLabel('计划名称',{exact:true}).fill('提示词绑定测试');await expect(page.getByRole('combobox',{name:'模型配置'})).toHaveText('旅行专用提示词');await page.getByLabel('选择 2026 · 旅行记录',{exact:true}).check();await page.getByLabel('保存后启用计划',{exact:true}).uncheck();await page.getByRole('button',{name:'保存计划',exact:true}).click();await expect(page.getByRole('heading',{name:'提示词绑定测试',exact:true})).toBeVisible();await page.getByRole('button',{name:'编辑 提示词绑定测试'}).click();await expect(page.getByRole('combobox',{name:'模型配置'})).toHaveText('旅行专用提示词');await page.getByRole('dialog').getByRole('button',{name:'取消',exact:true}).click()
 })
-test('真实 FFmpeg 抽帧、测试模型、自动命名与再次跳过',async({page})=>{test.setTimeout(120000);await login(page);await page.getByRole('button',{name:'自动命名测试',exact:true}).click();await expect(page.getByText('clip.mp4',{exact:true})).toBeVisible({timeout:10000});await page.getByRole('button',{name:'运行此目录',exact:true}).click();await expect(page.getByRole('combobox',{name:'模型配置'})).toHaveText('旅行专用提示词');await page.getByRole('button',{name:'开始运行',exact:true}).click();await page.getByRole('button',{name:'运行计划',exact:true}).click();await expect(page.locator('tbody tr').first().getByText('已完成',{exact:true})).toBeVisible({timeout:65000});const successes=await(await page.request.get('/api/logs?category=success&action=automatic')).json();const diagnostics=await(await page.request.get(`/api/logs/${successes[0].id}/diagnostics`)).json();expect(diagnostics.request).toContain('messages');expect(diagnostics.response).toContain('choices');expect(diagnostics.request).not.toContain('base64,');await page.getByRole('button',{name:'文件目录',exact:true}).click();await expect(page.getByText('山间晨雾与日出.mp4',{exact:true})).toBeVisible({timeout:10000});await page.getByRole('button',{name:'运行此目录',exact:true}).click();await page.getByRole('button',{name:'开始运行',exact:true}).click();await page.getByRole('button',{name:'运行计划',exact:true}).click();await expect(page.locator('tbody tr').first()).toContainText('已完成',{timeout:10000});await expect(page.locator('tbody tr').first().locator('td').nth(4)).toHaveText('1');await page.getByRole('button',{name:'文件目录',exact:true}).click();await page.getByRole('button',{name:'还原 山间晨雾与日出.mp4',exact:true}).click();await page.getByRole('button',{name:'确认还原',exact:true}).click();await expect(page.getByRole('button',{name:'自动命名 clip.mp4',exact:true})).toBeEnabled();await page.getByRole('button',{name:'运行此目录',exact:true}).click();await expect(page.getByRole('combobox',{name:'模型配置'})).toHaveText('旅行专用提示词');await page.getByRole('button',{name:'开始运行',exact:true}).click();await page.getByRole('button',{name:'运行计划',exact:true}).click();await expect(page.locator('tbody tr').first().getByText('已完成',{exact:true})).toBeVisible({timeout:65000});await expect(page.locator('tbody tr').first().locator('td').nth(3)).toHaveText('1 / 1');await expect(page.locator('tbody tr').first().locator('td').nth(4)).toHaveText('0')})
+test('真实 FFmpeg 抽帧、测试模型、自动命名与再次跳过',async({page})=>{test.setTimeout(120000);await login(page);await page.getByRole('button',{name:'自动命名测试',exact:true}).click();await expect(page.getByText('clip.mp4',{exact:true})).toBeVisible({timeout:10000});await page.getByRole('button',{name:'运行此目录',exact:true}).click();await expect(page.getByRole('combobox',{name:'模型配置'})).toHaveText('旅行专用提示词');await page.getByRole('button',{name:'开始运行',exact:true}).click();await page.getByRole('button',{name:'运行计划',exact:true}).click();await expect(page.locator('tbody tr').first().getByText('已完成',{exact:true})).toBeVisible({timeout:65000});const successes=await(await page.request.get('/api/logs?category=success&action=automatic')).json();const diagnostics=await(await page.request.get(`/api/logs/${successes[0].id}/diagnostics`)).json();expect(diagnostics.request).toContain('messages');expect(diagnostics.response).toContain('choices');expect(diagnostics.request).not.toContain('base64,');await page.getByRole('button',{name:'文件目录',exact:true}).click();await expect(page.getByText('山间晨雾与日出.mp4',{exact:true})).toBeVisible({timeout:10000});await page.getByRole('button',{name:'运行此目录',exact:true}).click();await page.getByRole('button',{name:'开始运行',exact:true}).click();await page.getByRole('button',{name:'运行计划',exact:true}).click();await expect(page.locator('tbody tr').first()).toContainText('已完成',{timeout:10000});await expect(page.locator('tbody tr').first().locator('.run-stat[data-stat="skipped"]')).toHaveText('跳过数 1');await expect(page.locator('tbody tr').first().locator('td.run-tokens')).toHaveText('—');await page.getByRole('button',{name:'文件目录',exact:true}).click();await page.getByRole('button',{name:'还原 山间晨雾与日出.mp4',exact:true}).click();await page.getByRole('button',{name:'确认还原',exact:true}).click();await expect(page.getByRole('button',{name:'自动命名 clip.mp4',exact:true})).toBeEnabled();await page.getByRole('button',{name:'运行此目录',exact:true}).click();await expect(page.getByRole('combobox',{name:'模型配置'})).toHaveText('旅行专用提示词');await page.getByRole('button',{name:'开始运行',exact:true}).click();await page.getByRole('button',{name:'运行计划',exact:true}).click();await expect(page.locator('tbody tr').first().getByText('已完成',{exact:true})).toBeVisible({timeout:65000});await expect(page.locator('tbody tr').first().locator('.run-stat[data-stat="done"]')).toHaveText('成功数 1');await expect(page.locator('tbody tr').first().locator('.run-stat[data-stat="skipped"]')).toHaveText('跳过数 0')})
 
 test('目录日志分列与统一下拉框键盘操作',async({page})=>{
  await login(page)
@@ -30,7 +30,7 @@ test('目录日志分列与统一下拉框键盘操作',async({page})=>{
  await type.click();await expect(page.getByRole('listbox')).toBeVisible();await type.press('End');await type.press('Enter');await expect(type).toHaveText('其他文件');await expect(page.locator('tbody tr')).toHaveCount(0)
  await type.click();await type.press('Home');await type.press('Enter')
  await page.getByRole('button',{name:'2026 · 旅行记录',exact:true}).click();await expect(page.getByText('IMG_20260901.mp4',{exact:true})).toBeVisible()
- await page.getByRole('button',{name:'重命名 IMG_20260901.mp4',exact:true}).click();await page.getByLabel('新名称',{exact:true}).fill('旅行回忆');await page.getByRole('button',{name:'保存名称'}).click();await expect(page.getByText('旅行回忆.mp4',{exact:true})).toBeVisible()
+ await page.getByRole('button',{name:'双击或按 Enter 重命名 IMG_20260901.mp4'}).dblclick();const imgEditor=page.getByRole('textbox',{name:'编辑 IMG_20260901.mp4'});await imgEditor.fill('旅行回忆');await imgEditor.press('Enter');await expect(page.getByText('旅行回忆.mp4',{exact:true})).toBeVisible()
  await page.getByRole('button',{name:'任务历史',exact:true}).click()
  const row=page.locator('tbody tr').filter({hasText:'旅行回忆.mp4'}).first()
  await expect(row.locator('td').nth(4)).toHaveText('2026 · 旅行记录');await expect(row.locator('td').nth(5)).toHaveText('IMG_20260901.mp4');await expect(row.locator('td').nth(6)).toHaveText('旅行回忆.mp4');await expect(row.locator('td').nth(5)).not.toContainText('2026 ·')
@@ -90,7 +90,7 @@ test('弹窗锁滚动、多选反选、批量还原和视频播放',async({page}
  await expect(page.getByRole('status')).toContainText('运行 #999 已加入队列')
  await page.unroute('**/api/runs')
  await page.getByRole('button',{name:'上一页',exact:true}).click()
- for(const n of ['0000','0001']){await page.getByRole('button',{name:`重命名 片段_${n}.mp4`,exact:true}).click();await page.getByLabel('新名称',{exact:true}).fill(`批量_${n}`);await page.getByRole('button',{name:'保存名称',exact:true}).click();await expect(page.getByText(`批量_${n}.mp4`,{exact:true})).toBeVisible();await page.getByLabel(`选择 批量_${n}.mp4`,{exact:true}).check()}
+ for(const n of ['0000','0001']){await page.getByRole('button',{name:`双击或按 Enter 重命名 片段_${n}.mp4`}).dblclick();const batchEditor=page.getByRole('textbox',{name:`编辑 片段_${n}.mp4`});await batchEditor.fill(`批量_${n}`);await batchEditor.press('Enter');await expect(page.getByText(`批量_${n}.mp4`,{exact:true})).toBeVisible();await page.getByLabel(`选择 批量_${n}.mp4`,{exact:true}).check()}
  await page.getByRole('button',{name:'批量还原（2）',exact:true}).click();await page.getByRole('button',{name:'确认批量还原',exact:true}).click();await expect(page.locator('.notice.success')).toContainText('已还原 2 项，失败 0 项')
  await expect(page.getByText('片段_0000.mp4',{exact:true})).toBeVisible()
  await expect(page.getByText('片段_0001.mp4',{exact:true})).toBeVisible()
@@ -107,7 +107,7 @@ test('弹窗锁滚动、多选反选、批量还原和视频播放',async({page}
  expect(await page.evaluate(()=>document.body.style.overflow)).not.toBe('hidden')
  await page.getByRole('button',{name:'文件目录',exact:true}).click()
  await page.getByRole('button',{name:'媒体库',exact:true}).click()
- await page.getByRole('button',{name:'播放 preview.webm',exact:true}).click()
+ await page.getByRole('button',{name:'播放视频 preview.webm',exact:true}).click()
  await expect(page.locator('video')).toBeVisible()
  await expect.poll(()=>page.locator('video').evaluate((v:HTMLVideoElement)=>v.readyState)).toBeGreaterThanOrEqual(2)
  await expect(page.locator('video')).not.toHaveAttribute('controls')
@@ -269,8 +269,8 @@ test('图片识别测试与智谱 Coding Plan 预设',async({page})=>{
 })
 
 test('清除已选和全部历史不影响还原',async({page})=>{
- await login(page);await page.getByRole('button',{name:'重命名 VID_20260920_001.mp4',exact:true}).click();await page.getByLabel('新名称',{exact:true}).fill('清除保留测试');await page.getByRole('button',{name:'保存名称',exact:true}).click();await expect(page.getByText('清除保留测试.mp4',{exact:true})).toBeVisible()
- await page.getByRole('button',{name:'重命名 清除保留测试.mp4',exact:true}).click();await page.getByLabel('新名称',{exact:true}).fill('已占用名称');await page.getByRole('button',{name:'保存名称',exact:true}).click();await expect(page.getByRole('alert')).toBeVisible();await page.getByRole('button',{name:'取消',exact:true}).click()
+ await login(page);await page.getByRole('button',{name:'双击或按 Enter 重命名 VID_20260920_001.mp4'}).dblclick();const clearEditor=page.getByRole('textbox',{name:'编辑 VID_20260920_001.mp4'});await clearEditor.fill('清除保留测试');await clearEditor.press('Enter');await expect(page.getByText('清除保留测试.mp4',{exact:true})).toBeVisible()
+ await page.getByRole('button',{name:'双击或按 Enter 重命名 清除保留测试.mp4'}).dblclick();const conflictEditor=page.getByRole('textbox',{name:'编辑 清除保留测试.mp4'});await conflictEditor.fill('已占用名称');await conflictEditor.press('Enter');await expect(page.locator('.inline-rename small[role="alert"]')).toBeVisible();await conflictEditor.press('Escape')
  await page.getByRole('button',{name:'任务历史',exact:true}).click();const row=page.locator('tbody tr').filter({hasText:'清除保留测试.mp4'}).first();await row.getByRole('checkbox').check()
  await page.getByRole('button',{name:'清除记录',exact:true}).click();await page.getByRole('button',{name:'取消',exact:true}).click();await expect(row).toBeVisible()
  await page.getByRole('button',{name:'清除记录',exact:true}).click();await page.getByRole('button',{name:'确认清除',exact:true}).click();await expect(row).toHaveCount(0)
@@ -462,9 +462,10 @@ test('目录大小和时间排序按钮、重命名时间展示',async({page})=>
  // 用未被前序用例改动过的文件验证"从未改名显示 —";VID 已被改名还原过,重命名时间不为空。
  const untouched=page.locator('tbody tr').filter({has:page.getByText('已占用名称.mp4',{exact:true})})
  await expect(untouched.locator('td').nth(5)).toHaveText('—')
- await page.getByRole('button',{name:'重命名 VID_20260920_001.mp4',exact:true}).click()
- await page.getByLabel('新名称',{exact:true}).fill('排序时间验证')
- await page.getByRole('button',{name:'保存名称'}).click()
+ await page.getByRole('button',{name:'双击或按 Enter 重命名 VID_20260920_001.mp4'}).dblclick()
+ const sortEditor=page.getByRole('textbox',{name:'编辑 VID_20260920_001.mp4'})
+ await sortEditor.fill('排序时间验证')
+ await sortEditor.press('Enter')
  const renamed=page.locator('tbody tr').filter({has:page.getByText('排序时间验证.mp4',{exact:true})})
  await expect(renamed.locator('td').nth(5)).not.toHaveText('—')
  await page.screenshot({path:'test-results/library-sorting.png',fullPage:true})
@@ -655,7 +656,7 @@ test('批次记录按实际开始计算耗时，排除排队时间',async({page}
 
 test('大播放器、方向键十秒跳转与跨页切集',async({page})=>{
  await login(page)
- await page.getByRole('button',{name:'播放 preview.webm',exact:true}).click()
+ await page.getByRole('button',{name:'播放视频 preview.webm',exact:true}).click()
  const media=page.locator('video')
  await expect.poll(()=>media.evaluate((v:HTMLVideoElement)=>v.readyState)).toBeGreaterThanOrEqual(2)
  expect((await page.getByRole('dialog').boundingBox())!.width).toBeGreaterThan(1000)
@@ -666,7 +667,7 @@ test('大播放器、方向键十秒跳转与跨页切集',async({page})=>{
  await expect.poll(()=>media.evaluate((v:HTMLVideoElement)=>v.currentTime)).toBeCloseTo(15,0)
  await page.getByRole('dialog').getByRole('button',{name:'关闭',exact:true}).click()
  await page.getByRole('button',{name:'分页测试',exact:true}).click()
- await page.getByRole('button',{name:'播放 片段_0099.mp4',exact:true}).click()
+ await page.getByRole('button',{name:'播放视频 片段_0099.mp4',exact:true}).click()
  await page.getByRole('button',{name:'下一集',exact:true}).click()
  await expect(page.getByRole('dialog')).toHaveAttribute('aria-label','片段_0100.mp4')
  await page.getByRole('button',{name:'上一集',exact:true}).click()
