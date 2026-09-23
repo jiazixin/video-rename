@@ -3,6 +3,7 @@ package models
 import (
 	"context"
 	"crypto/rand"
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -26,7 +27,11 @@ type ProbeResult struct {
 	ElapsedMS  int64  `json:"elapsed_ms"`
 }
 
-func Probe(ctx context.Context, s config.ServerConfig) (out ProbeResult, err error) {
+func Probe(ctx context.Context, s config.ServerConfig, timeout time.Duration) (out ProbeResult, err error) {
+	if timeout != 5*time.Second && timeout != 10*time.Second && timeout != 15*time.Second {
+		return out, fmt.Errorf("图片识别测试超时只能选择 5s、10s 或 15s")
+	}
+	s.Timeout = timeout.String()
 	var cfg config.Config
 	if err = cfg.ApplyModel(s, ""); err != nil {
 		return

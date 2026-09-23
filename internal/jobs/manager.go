@@ -23,6 +23,7 @@ import (
 	"video-rename/internal/sampling"
 	"video-rename/internal/storage"
 	"video-rename/internal/systemsettings"
+	"video-rename/internal/tokenusage"
 )
 
 type Run struct {
@@ -43,6 +44,9 @@ type Run struct {
 	Done             int             `json:"done"`
 	Skipped          int             `json:"skipped"`
 	Failed           int             `json:"failed"`
+	TokenCount       int64           `json:"token_count"`
+	TokenRecords     int             `json:"token_records"`
+	TokenEstimated   int             `json:"token_estimated_records"`
 	Error            string          `json:"error"`
 	Plan             int64           `json:"plan"`
 }
@@ -243,11 +247,11 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	return id, tx.Commit()
 }
 
-const runColumns = "id,source,targets,recursive,status,created,finished,discovered,done,skipped,failed,error,plan,model_config_id,model_config_title,prompt_body,config_summary,started"
+const runColumns = "r.id,r.source,r.targets,r.recursive,r.status,r.created,r.finished,r.discovered,r.done,r.skipped,r.failed,r.error,r.plan,r.model_config_id,r.model_config_title,r.prompt_body,r.config_summary,r.started,COALESCE(u.token_count,0),COALESCE(u.token_records,0),COALESCE(u.token_estimated_records,0)"
 
 func scanRun(row interface{ Scan(...any) error }) (r Run, err error) {
 	var raw, summary string
-	err = row.Scan(&r.ID, &r.Source, &raw, &r.Recursive, &r.Status, &r.Created, &r.Finished, &r.Discovered, &r.Done, &r.Skipped, &r.Failed, &r.Error, &r.Plan, &r.ModelConfigID, &r.ModelConfigTitle, &r.PromptBody, &summary, &r.Started)
+	err = row.Scan(&r.ID, &r.Source, &raw, &r.Recursive, &r.Status, &r.Created, &r.Finished, &r.Discovered, &r.Done, &r.Skipped, &r.Failed, &r.Error, &r.Plan, &r.ModelConfigID, &r.ModelConfigTitle, &r.PromptBody, &summary, &r.Started, &r.TokenCount, &r.TokenRecords, &r.TokenEstimated)
 	if err == nil {
 		err = json.Unmarshal([]byte(raw), &r.Targets)
 		if json.Valid([]byte(summary)) {
@@ -257,7 +261,7 @@ func scanRun(row interface{ Scan(...any) error }) (r Run, err error) {
 	return
 }
 func (m *Manager) Get(id int64) (Run, error) {
-	r, err := scanRun(m.DB.QueryRow("SELECT "+runColumns+" FROM runs WHERE id=?", id))
+	r, err := scanRun(m.DB.QueryRow("SELECT "+runColumns+" FROM runs r LEFT JOIN run_token_usage u ON u.run=r.id WHERE r.id=?", id))
 	if err == nil {
 		for _, target := range r.Targets {
 			r.TargetNames = append(r.TargetNames, m.Library.DisplayPath(target))
@@ -269,7 +273,7 @@ func (m *Manager) List(before int64) ([]Run, error) {
 	if before <= 0 {
 		before = 1 << 62
 	}
-	rows, err := m.DB.Query("SELECT "+runColumns+" FROM runs WHERE id<? ORDER BY id DESC LIMIT 50", before)
+	rows, err := m.DB.Query("SELECT "+runColumns+" FROM runs r LEFT JOIN run_token_usage u ON u.run=r.id WHERE r.id<? ORDER BY r.id DESC LIMIT 50", before)
 	if err != nil {
 		return nil, err
 	}
@@ -572,6 +576,21 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.C
 			var exchange domain.ModelDiagnostics
 			var lease *framecache.Lease
 			title, lease, err = m.analyze(domain.WithModelDiagnostics(ctx, &exchange), batch, cfg, domain.VideoJob{Path: p, Snapshot: snap, JobID: fmt.Sprint(it.ID)}, probe, ffmpeg, extracted)
+			request, response := exchange.Request, exchange.Response
+			if err != nil {
+				var diagnostic *domain.JobError
+				if errors.As(err, &diagnostic) {
+					request, response = diagnostic.RawRequest, diagnostic.RawResponse
+				}
+			}
+			if tokens, estimated, ok := tokenusage.Count(request, response); ok {
+				rough := 0
+				if estimated {
+					rough = 1
+				}
+				_, _ = m.DB.Exec(`INSERT INTO run_token_usage(run,token_count,token_records,token_estimated_records) VALUES(?,?,1,?)
+ON CONFLICT(run) DO UPDATE SET token_count=token_count+excluded.token_count,token_records=token_records+1,token_estimated_records=token_estimated_records+excluded.token_estimated_records`, run, tokens, rough)
+			}
 			if lease != nil {
 				defer func() { lease.Release(committed) }()
 			}

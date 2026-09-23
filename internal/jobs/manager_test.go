@@ -110,6 +110,38 @@ func TestAutomaticRenameSkipRestoreAndOverlap(t *testing.T) {
 		t.Fatalf("restored file was not reprocessed %+v", r)
 	}
 }
+func TestRunTokenCountAccumulatesAndSurvivesHistoryDeletion(t *testing.T) {
+	m, root := setup(t)
+	for _, name := range []string{"a.mp4", "b.mp4"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("video"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.Analyze = func(ctx context.Context, _ *config.Config, job domain.VideoJob, _, _ string) (string, error) {
+		response := `{}`
+		if filepath.Base(job.Path) == "a.mp4" {
+			response = `{"usage":{"total_tokens":120}}`
+		}
+		domain.CaptureModelDiagnostics(ctx, domain.TitleResult{RawRequest: `{"_local_context":{"text_tokens_estimate":75}}`, RawResponse: response})
+		return "renamed-" + filepath.Base(job.Path), nil
+	}
+	id, err := m.Create(Request{Targets: []int64{1}, Key: "token-count-run"}, "manual", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Execute(context.Background(), id)
+	run, err := m.Get(id)
+	if err != nil || run.TokenCount != 195 || run.TokenRecords != 2 || run.TokenEstimated != 1 {
+		t.Fatalf("run token totals: %+v, %v", run, err)
+	}
+	if _, err = m.DB.Exec("DELETE FROM events WHERE run=?", id); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := m.List(0)
+	if err != nil || len(listed) != 1 || listed[0].TokenCount != 195 {
+		t.Fatalf("persisted token totals after history deletion: %+v, %v", listed, err)
+	}
+}
 func TestManualProtectsFileAndCancel(t *testing.T) {
 	m, root := setup(t)
 	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {

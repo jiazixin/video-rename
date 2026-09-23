@@ -14,7 +14,10 @@ type modelInput struct {
 func (a *App) modelRoutes(api *http.ServeMux) {
 	store := models.Store{DB: a.DB}
 	api.HandleFunc("POST /api/model-configs/test-vision", func(w http.ResponseWriter, r *http.Request) {
-		input := modelInput{Profile: models.Profile{ServerConfig: models.DefaultSettings()}}
+		input := struct {
+			modelInput
+			ProbeTimeoutSeconds int `json:"probe_timeout_seconds"`
+		}{modelInput: modelInput{Profile: models.Profile{ServerConfig: models.DefaultSettings()}}, ProbeTimeoutSeconds: 5}
 		if !decode(w, r, &input) {
 			return
 		}
@@ -22,7 +25,7 @@ func (a *App) modelRoutes(api *http.ServeMux) {
 			failure(w, err)
 			return
 		}
-		result, err := models.Probe(r.Context(), input.ServerConfig)
+		result, err := models.Probe(r.Context(), input.ServerConfig, time.Duration(input.ProbeTimeoutSeconds)*time.Second)
 		if err != nil {
 			failure(w, err)
 			return
@@ -93,10 +96,7 @@ func (a *App) modelRoutes(api *http.ServeMux) {
 	api.HandleFunc("POST /api/model-configs", save)
 	api.HandleFunc("PATCH /api/model-configs/{id}", save)
 	api.HandleFunc("POST /api/model-configs/detect", func(w http.ResponseWriter, r *http.Request) {
-		input := struct {
-			modelInput
-			DetectTimeoutSeconds int `json:"detect_timeout_seconds"`
-		}{modelInput: modelInput{Profile: models.Profile{ServerConfig: models.DefaultSettings()}}, DetectTimeoutSeconds: 5}
+		input := modelInput{Profile: models.Profile{ServerConfig: models.DefaultSettings()}}
 		if !decode(w, r, &input) {
 			return
 		}
@@ -104,7 +104,7 @@ func (a *App) modelRoutes(api *http.ServeMux) {
 			failure(w, err)
 			return
 		}
-		out, err := models.Discover(r.Context(), input.ServerConfig, time.Duration(input.DetectTimeoutSeconds)*time.Second)
+		out, err := models.Discover(r.Context(), input.ServerConfig, 5*time.Second)
 		if err != nil {
 			failure(w, err)
 			return

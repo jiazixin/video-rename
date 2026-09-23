@@ -389,14 +389,14 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 	if limit != 50 && limit != 100 && limit != 200 {
 		limit = 100
 	}
-	where := " FROM events WHERE category=? AND (?=0 OR run=?) AND (?='' OR instr(lower(old_path||new_path||message),lower(?))>0) AND (?='' OR action=?) AND (?='' OR created>=?) AND (?='' OR created<=?)"
+	where := " FROM events e LEFT JOIN runs r ON r.id=e.run WHERE e.category=? AND (?=0 OR e.run=?) AND (?='' OR instr(lower(e.old_path||e.new_path||e.message),lower(?))>0) AND (?='' OR e.action=?) AND (?='' OR e.created>=?) AND (?='' OR e.created<=?)"
 	args := []any{category, run, run, q.Get("q"), q.Get("q"), q.Get("action"), q.Get("action"), q.Get("from"), q.Get("from"), q.Get("to"), q.Get("to")}
 	var total int
 	if err := a.DB.QueryRow("SELECT COUNT(*)"+where, args...).Scan(&total); err != nil {
 		failure(w, err)
 		return
 	}
-	rows, err := a.DB.Query("SELECT id,category,action,entry,operation,run,old_path,new_path,message,created"+where+" AND id<? ORDER BY id DESC LIMIT ?", append(args, before, limit+1)...)
+	rows, err := a.DB.Query("SELECT e.id,e.category,e.action,e.entry,e.operation,e.run,e.old_path,e.new_path,e.message,e.created,COALESCE(r.config_summary,''),COALESCE(r.model_config_title,'')"+where+" AND e.id<? ORDER BY e.id DESC LIMIT ?", append(args, before, limit+1)...)
 	if err != nil {
 		failure(w, err)
 		return
@@ -405,12 +405,16 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
 	for rows.Next() {
 		var id, entry, op, run int64
-		var cat, action, old, new, msg, created string
-		if err = rows.Scan(&id, &cat, &action, &entry, &op, &run, &old, &new, &msg, &created); err != nil {
+		var cat, action, old, new, msg, created, summary, modelTitle string
+		if err = rows.Scan(&id, &cat, &action, &entry, &op, &run, &old, &new, &msg, &created, &summary, &modelTitle); err != nil {
 			failure(w, err)
 			return
 		}
-		out = append(out, map[string]any{"id": id, "category": cat, "action": action, "entry": entry, "operation": op, "run": run, "old_path": old, "new_path": new, "message": msg, "created": created})
+		var snapshot struct {
+			Model string `json:"model"`
+		}
+		_ = json.Unmarshal([]byte(summary), &snapshot)
+		out = append(out, map[string]any{"id": id, "category": cat, "action": action, "entry": entry, "operation": op, "run": run, "old_path": old, "new_path": new, "message": msg, "created": created, "model": snapshot.Model, "model_config_title": modelTitle})
 	}
 	if err := rows.Err(); err != nil {
 		failure(w, err)

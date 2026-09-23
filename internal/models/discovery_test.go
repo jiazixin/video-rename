@@ -69,7 +69,7 @@ func TestDiscoverTimeout(t *testing.T) {
 			defer server.Close()
 			started := time.Now()
 			_, err := Discover(context.Background(), config.ServerConfig{Provider: "custom", BaseURL: server.URL}, 5*time.Second)
-			if err == nil || !strings.Contains(err.Error(), "模型检测超时（5s）") {
+			if err == nil || !strings.Contains(err.Error(), "模型列表检测超时（5s）") {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if elapsed := time.Since(started); elapsed < 4*time.Second || elapsed > 7*time.Second {

@@ -98,3 +98,34 @@ func TestHistoryBatchFiltering(t *testing.T) {
 		t.Fatal("batch list requires authentication")
 	}
 }
+
+func TestHistoryShowsBatchModelSnapshot(t *testing.T) {
+	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Workers: 1, Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	result, err := a.DB.Exec(`INSERT INTO runs(source,targets,recursive,status,created,request_key,model_config_title,config_summary)
+VALUES('manual','[]',1,'completed','now','history-model-run','旅行模型配置','{"model":"glm-4.6v"}')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, category := range []string{"success", "failure"} {
+		if _, err = a.DB.Exec("INSERT INTO events(category,action,run,created) VALUES(?,'automatic',?,'now')", category, run); err != nil {
+			t.Fatal(err)
+		}
+		response := httptest.NewRecorder()
+		a.logs(response, httptest.NewRequest("GET", "/api/logs?category="+category, nil))
+		var rows []struct {
+			Model string `json:"model"`
+			Title string `json:"model_config_title"`
+		}
+		if err = json.Unmarshal(response.Body.Bytes(), &rows); err != nil || len(rows) != 1 || rows[0].Model != "glm-4.6v" || rows[0].Title != "旅行模型配置" {
+			t.Fatalf("%s model snapshot: %+v, %v", category, rows, err)
+		}
+	}
+}

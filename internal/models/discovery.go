@@ -59,7 +59,7 @@ func Discover(ctx context.Context, s config.ServerConfig, timeout time.Duration)
 		resp, err := client.Do(req)
 		if err != nil {
 			if ctx.Err() == context.DeadlineExceeded {
-				return out, fmt.Errorf("模型检测超时（%s），请重试或增加检测超时", timeout)
+				return out, fmt.Errorf("模型列表检测超时（%s），请重试或检查服务", timeout)
 			}
 			return out, fmt.Errorf("无法连接模型服务，请检查地址、网络和超时")
 		}
@@ -67,7 +67,7 @@ func Discover(ctx context.Context, s config.ServerConfig, timeout time.Duration)
 		resp.Body.Close()
 		if err != nil {
 			if ctx.Err() == context.DeadlineExceeded {
-				return out, fmt.Errorf("模型检测超时（%s），请重试或增加检测超时", timeout)
+				return out, fmt.Errorf("模型列表检测超时（%s），请重试或检查服务", timeout)
 			}
 			return out, fmt.Errorf("读取模型列表失败")
 		}
