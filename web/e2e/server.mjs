@@ -27,7 +27,7 @@ const modelPort=model.address().port
 mkdirSync(resolve('test-results'),{recursive:true})
 writeFileSync(resolve('test-results/fixture.json'),JSON.stringify({modelURL:`http://127.0.0.1:${modelPort}/v1`}))
 const cfg=join(base,'config.yaml')
-writeFileSync(cfg,`listen: "127.0.0.1"\nport: 18790\npath: ${JSON.stringify(media)}\nstorage: ${JSON.stringify(join(base,'data'))}\ntmp-storage: ${JSON.stringify(join(base,'cache'))}\nauth:\n  username: "admin"\n  password: "test-password-123"\n`,{mode:0o600})
+writeFileSync(cfg,`listen: "127.0.0.1"\nport: 18790\nmedia-path: ${JSON.stringify(media)}\nstorage: ${JSON.stringify(join(base,'data'))}\ntmp-storage: ${JSON.stringify(join(base,'cache'))}\nauth:\n  username: "admin"\n  password: "test-password-123"\n`,{mode:0o600})
 const child=spawn(resolve('../bin/video-rename'),['--config',cfg],{stdio:'inherit'})
 let stopped=false
 function stop(){if(stopped)return;stopped=true;child.kill('SIGTERM');model.close();setTimeout(()=>{rmSync(base,{recursive:true,force:true});process.exit(0)},1500)}

@@ -17,7 +17,7 @@ const minimalYAML = "# deployment\n"
 const fullYAML = `
 listen: "127.0.0.1"
 port: 8790
-path: "/srv/videos"
+media-path: "/srv/videos"
 storage: "../data"
 auth:
   username: "admin"
@@ -296,5 +296,15 @@ func TestFrameSettingsNotInDeploymentYAML(t *testing.T) {
 		if _, err := loadTemp(t, field+": {}\n", "config.yaml"); err == nil {
 			t.Fatalf("unexpected deployment field %s", field)
 		}
+	}
+}
+
+func TestMediaPathConfigKey(t *testing.T) {
+	cfg, err := loadTemp(t, "media-path: /srv/videos\n", "config.yaml")
+	if err != nil || cfg.Path != "/srv/videos" {
+		t.Fatalf("media-path 未正确加载: cfg=%+v err=%v", cfg, err)
+	}
+	if _, err := loadTemp(t, "path: /srv/videos\n", "config.yaml"); err == nil {
+		t.Fatal("旧 path 字段应被拒绝")
 	}
 }

@@ -11,7 +11,7 @@ func TestServiceConfiguration(t *testing.T) {
 	base := t.TempDir()
 	media := filepath.Join(base, "media")
 	os.Mkdir(media, 0700)
-	cfg, err := loadTemp(t, minimalYAML+"\nlisten: 127.0.0.1\nport: 8790\npath: "+media+"\nauth:\n  username: admin\n  password: test-password-123\nstorage: "+filepath.Join(base, "state")+"\n", "cfg.yaml")
+	cfg, err := loadTemp(t, minimalYAML+"\nlisten: 127.0.0.1\nport: 8790\nmedia-path: "+media+"\nauth:\n  username: admin\n  password: test-password-123\nstorage: "+filepath.Join(base, "state")+"\n", "cfg.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestStorageDirectoryAndShortPassword(t *testing.T) {
 	}
 	for _, storage := range []string{"./custom/nested", filepath.Join(base, "absolute"), ""} {
 		t.Run(storage, func(t *testing.T) {
-			yaml := "path: " + media + "\nauth:\n  username: admin\n  password: x\n"
+			yaml := "media-path: " + media + "\nauth:\n  username: admin\n  password: x\n"
 			if storage != "" {
 				yaml += "storage: " + storage + "\n"
 			}
@@ -96,7 +96,7 @@ func TestStorageDirectoryRejectsFilesAndMediaSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, storage := range []string{existing, filepath.Join(existing, "child"), link, filepath.Join(link, "new", "data")} {
-		cfg, err := loadTemp(t, "path: "+media+"\nstorage: "+storage+"\nauth:\n  username: admin\n  password: x\n", "cfg.yaml")
+		cfg, err := loadTemp(t, "media-path: "+media+"\nstorage: "+storage+"\nauth:\n  username: admin\n  password: x\n", "cfg.yaml")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -116,7 +116,7 @@ func TestTempStorageResolutionAndIsolation(t *testing.T) {
 	if err := os.Mkdir(media, 0700); err != nil {
 		t.Fatal(err)
 	}
-	yaml := "path: " + media + "\nstorage: ../state\nauth:\n  username: admin\n  password: test\n"
+	yaml := "media-path: " + media + "\nstorage: ../state\nauth:\n  username: admin\n  password: test\n"
 	cfg, err := loadTemp(t, yaml+"tmp-storage: ./frames\n", "config.yaml")
 	if err != nil {
 		t.Fatal(err)

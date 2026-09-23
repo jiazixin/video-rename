@@ -1,7 +1,7 @@
 # 复制为 configs/config.local.yaml 后编辑。路径相对于配置文件目录。
 listen: "127.0.0.1"                    # 局域网访问可改为 0.0.0.0
 port: 8790
-path: "/srv/videos"                   # 已存在的真实媒体根目录
+media-path: "/srv/videos"                   # 已存在的真实媒体根目录
 storage: "../data"                    # 数据目录，内部固定 data.sqlite；不要放在媒体目录内
 
 # 可复用截图缓存，相对于本配置文件；容量与抽帧并发在系统设置中调整。

@@ -1,23 +1,15 @@
 .settings-tabs{flex-wrap:wrap;margin-bottom:24px}.processing-fieldset{padding:0;margin:0;border:0;display:grid;gap:20px}.processing-card{padding:26px;display:grid;grid-template-columns:1fr 1fr;gap:36px}.processing-card h2{margin:8px 0}.processing-card label{display:flex;flex-direction:column;gap:10px}.processing-card input{max-width:240px}.processing-card small{font-weight:400;line-height:1.7}.processing-cache{margin-top:20px;padding:26px}.processing-cache header,.cache-usage,.processing-footer{display:flex;align-items:center;justify-content:space-between;gap:16px}.cache-usage{margin:18px 0 12px;flex-wrap:wrap}.cache-usage strong{font-size:26px}.cache-usage small{font-size:15px;color:var(--ash)}.cache-usage span{color:var(--ash);font-size:13px}.processing-cache progress{width:100%;height:8px;accent-color:#45866c}.processing-cache dl{display:grid;grid-template-columns:90px 1fr;gap:12px;font-size:13px;line-height:1.8;margin-top:22px}.processing-cache dt{color:var(--ash)}.processing-cache dd{margin:0;overflow-wrap:anywhere}.processing-footer{margin-top:22px}.system-settings>.page-heading{margin-bottom:22px}@media(max-width:760px){.processing-card{grid-template-columns:1fr;gap:18px;padding:20px}.processing-cache{padding:20px}.processing-footer{align-items:stretch;flex-direction:column}.settings-tabs button{flex:1 1 40%;justify-content:center}.processing-cache dl{grid-template-columns:1fr;gap:4px}.processing-cache dd{margin-bottom:10px}}
 
-/* One visual system for all four settings surfaces. */
+/* Sampling retains its current layout; model and notification items use full rows. */
 .system-settings{--settings-gap:20px;--settings-pad:24px;min-width:0}
-.system-settings .settings-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:8px;margin-bottom:28px;background:#f3f6f4;border:1px solid #e4eae6;border-radius:12px}
-.system-settings .settings-tabs button{display:flex;align-items:center;justify-content:flex-start;gap:12px;min-width:0;padding:16px;border:1px solid transparent;border-radius:8px;color:#727d76;background:transparent;text-align:left}
-.system-settings .settings-tabs button.active{background:#fff;border-color:#d8e4dc;color:#24664e;box-shadow:0 2px 5px #193c2910}
-.system-settings .settings-tabs button:hover{background:#fff}
-.system-settings .settings-tabs button:after{display:none}
-.system-settings .settings-tabs button>svg{flex-shrink:0}
-.settings-tabs strong{display:block;font-size:14px;font-weight:600}
-.settings-tabs small{display:block;margin-top:5px;font-size:11px;font-weight:400;color:#7c867f;line-height:1.5}
-.system-settings .panel{border-color:#dfe6e1;border-radius:12px;box-shadow:none}
-.system-settings h2{font-size:17px;line-height:1.5;letter-spacing:-.2px}
-.system-settings .eyebrow{color:#56816b;letter-spacing:1.5px;font-size:10px}
-.system-settings .help{font-size:12px;line-height:1.75;color:#7a837d}
-.system-settings :is(.sampling-card,.processing-card,.notification-card,.model-card){padding:var(--settings-pad)}
+.system-settings :is(.sampling-page,.notification-settings,.model-grid) .panel{border-color:#dfe6e1;border-radius:12px;box-shadow:none}
+.system-settings :is(.sampling-page,.notification-settings,.model-grid,.model-toolbar) h2{font-size:17px;line-height:1.5;letter-spacing:-.2px}
+.system-settings :is(.sampling-page,.notification-settings,.model-toolbar) .eyebrow{color:#56816b;letter-spacing:1.5px;font-size:10px}
+.system-settings :is(.sampling-page,.notification-settings,.model-grid,.model-toolbar) .help{font-size:12px;line-height:1.75;color:#7a837d}
+.system-settings :is(.sampling-card,.notification-card,.model-card){padding:var(--settings-pad)}
 .system-settings :is(.sampling-grid,.model-grid,.notification-grid){grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--settings-gap)}
-.system-settings :is(.sampling-card,.processing-card,.notification-card) label:not(.check-label){display:flex;flex-direction:column;gap:8px;font-size:13px;font-weight:500}
-.system-settings :is(.sampling-card,.processing-card,.notification-card) input:not([type=checkbox]){width:100%;max-width:none;min-width:0;box-sizing:border-box;height:42px}
+.system-settings :is(.sampling-card,.notification-card) label:not(.check-label){display:flex;flex-direction:column;gap:8px;font-size:13px;font-weight:500}
+.system-settings :is(.sampling-card,.notification-card) input:not([type=checkbox]){width:100%;max-width:none;min-width:0;box-sizing:border-box;height:42px}
 .system-settings .sampling-card label{margin-top:16px}
 .system-settings .sampling-card header{margin-bottom:18px}
 .system-settings .sampling-card .help{margin-top:8px;margin-bottom:12px}
@@ -26,14 +18,8 @@
 .system-settings .sampling-grid>.sampling-card{min-height:390px}
 .system-settings .sampling-rules{padding-top:20px}
 .system-settings .sampling-rule-head,.system-settings .sampling-rule-row{grid-template-columns:minmax(0,1fr) minmax(100px,.4fr) 36px}
-.system-settings .processing-fieldset{min-width:0;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--settings-gap)}
-.system-settings .processing-card{display:flex;flex-direction:column;gap:18px;min-width:0}
-.system-settings .processing-card>div{min-height:110px}
-.system-settings .processing-card label{margin:0}
-.system-settings .processing-cache{padding:var(--settings-pad)}
-.system-settings .processing-cache h2{margin:0}
-.system-settings :is(.processing-footer,.sampling-footer){margin-top:20px;padding:18px 22px;border:1px solid #dfe6e1;border-radius:12px;background:#f6f9f7}
-.system-settings :is(.processing-footer,.sampling-footer) .help{margin:0}
+.system-settings :is(.sampling-footer){margin-top:20px;padding:18px 22px;border:1px solid #dfe6e1;border-radius:12px;background:#f6f9f7}
+.system-settings :is(.sampling-footer) .help{margin:0}
 .system-settings .model-toolbar{align-items:center;justify-content:space-between;gap:20px;margin-bottom:22px}
 .system-settings .model-toolbar h2,.notification-intro h2{margin:6px 0}
 .system-settings .model-toolbar p,.notification-intro p{margin:0}
@@ -54,5 +40,26 @@
 .system-settings .notification-card label{margin:0}
 .system-settings .notification-card p{margin:0}
 .system-settings .notification-card footer{padding-top:16px;flex-wrap:wrap}
-@media(max-width:1100px){.system-settings .processing-fieldset{grid-template-columns:1fr}.system-settings .processing-card{display:grid;grid-template-columns:1fr 1fr;gap:24px}.system-settings .processing-card>div{min-height:0}.settings-tabs small{display:none}.system-settings .settings-tabs button{padding:14px 10px;gap:8px}}
-@media(max-width:760px){.system-settings{--settings-pad:18px;--settings-gap:16px}.system-settings .settings-tabs{grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:20px}.system-settings :is(.sampling-grid,.model-grid,.notification-grid,.processing-card){grid-template-columns:minmax(0,1fr)}.system-settings .sampling-grid{gap:0}.system-settings .sampling-grid>.sampling-card{min-height:0}.system-settings .sampling-rule-head,.system-settings .sampling-rule-row{grid-template-columns:minmax(0,1fr) 76px 30px}.system-settings .model-toolbar{align-items:flex-start;flex-direction:column}.system-settings .model-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.system-settings :is(.processing-footer,.sampling-footer){padding:16px;gap:14px}.system-settings .notification-card footer button{flex:1}}
+
+.system-settings .model-grid,.system-settings .notification-grid{grid-template-columns:minmax(0,1fr)}
+.system-settings .model-card{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:36px;row-gap:18px;padding:26px}
+.system-settings .model-card>header{grid-column:1;grid-row:1 / 4;margin:0;align-items:flex-start}
+.system-settings .model-card>.model-endpoint,.system-settings .model-card>.model-metrics,.system-settings .model-card>.model-prompt{grid-column:2;margin:0}
+.system-settings .model-card>footer{grid-column:1 / -1;margin:0}
+.system-settings .notification-card{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:36px;row-gap:12px;padding:26px;align-items:start}
+.system-settings .notification-card>header{grid-column:1;grid-row:1;border:0;padding:0}
+.system-settings .notification-card>.help{grid-column:1;grid-row:2}
+.notification-fields{grid-column:2;grid-row:1 / 4;display:flex;flex-direction:column;gap:16px;min-width:0}
+@media(max-width:760px){
+ .system-settings{--settings-pad:18px;--settings-gap:16px}
+ .system-settings :is(.sampling-grid,.model-grid,.notification-grid,.model-card,.notification-card){grid-template-columns:minmax(0,1fr)}
+ .system-settings .sampling-grid{gap:0}
+ .system-settings .sampling-grid>.sampling-card{min-height:0}
+ .system-settings .sampling-rule-head,.system-settings .sampling-rule-row{grid-template-columns:minmax(0,1fr) 76px 30px}
+ .system-settings .model-toolbar{align-items:flex-start;flex-direction:column}
+ .system-settings .model-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .system-settings .sampling-footer{padding:16px;gap:14px}
+ .system-settings .model-card,.system-settings .notification-card{padding:20px}
+ .system-settings .model-card>header,.system-settings .model-card>.model-endpoint,.system-settings .model-card>.model-metrics,.system-settings .model-card>.model-prompt,.system-settings .notification-card>header,.system-settings .notification-card>.help,.notification-fields{grid-column:1;grid-row:auto}
+ .system-settings .notification-card footer button{flex:1}
+}

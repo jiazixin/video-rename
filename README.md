@@ -17,7 +17,7 @@ npm --prefix web ci
 npm --prefix web run build
 go build -o bin/video-rename ./cmd/video-rename
 cp configs/config.example.yaml configs/config.local.yaml
-# 编辑 path、auth 等部署配置后启动；模型在登录后的页面设置：
+# 编辑 media-path、auth 等部署配置后启动；模型在登录后的页面设置：
 ./bin/video-rename --config configs/config.local.yaml
 ```
 
@@ -28,7 +28,7 @@ cp configs/config.example.yaml configs/config.local.yaml
 ```yaml
 listen: "127.0.0.1"
 port: 8790
-path: "/srv/videos"
+media-path: "/srv/videos"
 storage: "../data"
 tmp-storage: "../.cache"
 auth:
@@ -39,7 +39,7 @@ auth:
 - 默认配置为 `configs/config.local.yaml`，也可用 `--config/-f` 指定；保留 `--help`、`--version`。
 - 已移除处理参数 `--path/-p`、`--workers`、`--recursive`、`--dry-run`。媒体根目录写 YAML，并发任务数在模型配置中设置，运行范围和递归选项在页面设置。
 - 路径相对于配置文件所在目录；`--config` 本身相对于工作目录。配置优先级为 YAML > 内置默认值，不读取环境变量覆盖。
-- `path` 必填且必须存在；数据库与配置不得放在可操作的媒体根目录内。`storage` 指向数据目录，省略时默认 `../data`，数据库文件名固定为 `data.sqlite`。
+- `media-path` 必填且必须存在；数据库与配置不得放在可操作的媒体根目录内。`storage` 指向数据目录，省略时默认 `../data`，数据库文件名固定为 `data.sqlite`。
 - 业务日志、处理标记、历史、计划均在 SQLite 中。旧 `logging` 配置在 Web 服务启动时明确报错；旧 JSONL 文件不删除、不自动导入。
 - 配置不会从界面写回。修改部署配置后重启，页面模型配置保存后直接用于新任务；认证变更会使旧会话失效。
 

@@ -365,7 +365,7 @@ test('自动计划和手动运行分区、目录选择显示处理状态',async(
  await expect(picker.getByText('全部已处理',{exact:true})).toBeVisible()
  await expect(picker.getByText('部分已处理',{exact:true})).toBeVisible()
  await page.getByLabel('选择 2026 · 旅行记录',{exact:true}).check()
- await expect(picker).toContainText('已选 1 个目录')
+ await expect(picker).toContainText('共选 1 个目录')
  await page.screenshot({path:'test-results/plan-picker-status.png',fullPage:true})
  await page.setViewportSize({width:390,height:844})
  await expect(picker.getByText('全部已处理',{exact:true})).toBeVisible()

@@ -75,7 +75,7 @@ type Config struct {
 	LegacyLogging bool           `yaml:"-"`
 	Listen        string         `yaml:"listen"`
 	Port          int            `yaml:"port"`
-	Path          string         `yaml:"path"`
+	Path          string         `yaml:"media-path"`
 	TempStorage   string         `yaml:"tmp-storage"`
 	Storage       string         `yaml:"storage"`
 	Auth          AuthConfig     `yaml:"auth"`

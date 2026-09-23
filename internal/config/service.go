@@ -23,7 +23,7 @@ func (c *Config) ValidateService() error {
 		return fmt.Errorf("auth.username 必填，auth.password 必须非空且不能使用示例占位值")
 	}
 	if strings.TrimSpace(c.Path) == "" || strings.TrimSpace(c.Storage) == "" {
-		return fmt.Errorf("path 与 storage 必填")
+		return fmt.Errorf("media-path 与 storage 必填")
 	}
 	resolve := func(p string) string {
 		if !filepath.IsAbs(p) {
@@ -49,7 +49,7 @@ func (c *Config) ValidateService() error {
 	c.Path = root
 	st, err := os.Stat(c.Path)
 	if err != nil || !st.IsDir() {
-		return fmt.Errorf("path 必须是现有目录")
+		return fmt.Errorf("media-path 必须是现有目录")
 	}
 	// Resolve the nearest existing ancestor so a symlink cannot hide storage inside media.
 	parent := c.Storage
