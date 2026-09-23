@@ -24,7 +24,7 @@ func TestStabilityZeroDisablesWait(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	m.Execute(ctx, id)
 	run, err := m.Get(id)
@@ -56,7 +56,7 @@ func TestStabilityWaitProtectsChangedFileAndCanBeCancelled(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			done := make(chan struct{})
 			started := time.Now()

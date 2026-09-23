@@ -1,7 +1,6 @@
 package library
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,7 +21,7 @@ func TestNaturalSortingAcrossPages(t *testing.T) {
 		var generation int64
 		var files []string
 		for {
-			p, err := l.ListSorted(context.Background(), 1, cursor, 50, generation, "", "", false, desc)
+			p, err := l.ListSorted(t.Context(), 1, cursor, 50, generation, "", "", false, desc)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -72,7 +71,7 @@ func TestMetadataSortingAndRenameTime(t *testing.T) {
 	}
 	for _, field := range []string{"size", "mtime"} {
 		for _, direction := range []string{"asc", "desc"} {
-			p, err := l.ListOrdered(context.Background(), 1, 0, 50, 0, "", "", false, field+"_"+direction)
+			p, err := l.ListOrdered(t.Context(), 1, 0, 50, 0, "", "", false, field+"_"+direction)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -100,7 +99,7 @@ func TestMetadataSortingAndRenameTime(t *testing.T) {
 	if after.RenamedAt != op.Created || after.Mtime != before.Mtime {
 		t.Fatalf("bad timestamps: %+v", after)
 	}
-	p, err := l.ListOrdered(context.Background(), 1, 0, 50, 0, "", "", false, "renamed_desc")
+	p, err := l.ListOrdered(t.Context(), 1, 0, 50, 0, "", "", false, "renamed_desc")
 	if err != nil {
 		t.Fatal(err)
 	}

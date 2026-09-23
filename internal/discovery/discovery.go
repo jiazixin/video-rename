@@ -8,11 +8,12 @@
 package discovery
 
 import (
+	"cmp"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 
 	"video-rename/internal/domain"
 )
@@ -94,7 +95,7 @@ func Discover(root string, opts Options) (*Result, error) {
 	default:
 		return nil, fmt.Errorf("输入 %s 不是普通文件或目录", abs)
 	}
-	sort.Slice(res.Jobs, func(i, j int) bool { return res.Jobs[i].Path < res.Jobs[j].Path })
+	slices.SortFunc(res.Jobs, func(a, b domain.VideoJob) int { return cmp.Compare(a.Path, b.Path) })
 	// 按文件身份去重(硬链接),保留排序后的首个
 	seen := map[[2]uint64]bool{}
 	deduped := res.Jobs[:0]

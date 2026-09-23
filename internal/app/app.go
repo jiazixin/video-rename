@@ -4,7 +4,8 @@ package app
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -66,10 +67,9 @@ func New(cfg *config.Config) (*App, error) {
 	return &App{Notifications: notifications.New(db), DB: db, Library: l, Jobs: j, Scheduler: s, Auth: auth.New(db, cfg.Auth), ctx: ctx, cancel: cancel}, nil
 }
 func (a *App) Start() {
-	a.wg.Add(3)
-	go func() { defer a.wg.Done(); a.Notifications.Loop(a.ctx) }()
-	go func() { defer a.wg.Done(); a.Jobs.Loop(a.ctx) }()
-	go func() { defer a.wg.Done(); a.Scheduler.Loop(a.ctx) }()
+	a.wg.Go(func() { a.Notifications.Loop(a.ctx) })
+	a.wg.Go(func() { a.Jobs.Loop(a.ctx) })
+	a.wg.Go(func() { a.Scheduler.Loop(a.ctx) })
 }
 func (a *App) Close() error {
 	a.cancel()
@@ -81,7 +81,7 @@ func (a *App) Close() error {
 func send(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	_ = json.MarshalWrite(w, v)
 }
 func failure(w http.ResponseWriter, err error) {
 	status := 409
@@ -94,13 +94,12 @@ func failure(w http.ResponseWriter, err error) {
 }
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
-	d := json.NewDecoder(r.Body)
-	d.DisallowUnknownFields()
-	if err := d.Decode(v); err != nil {
+	d := jsontext.NewDecoder(r.Body)
+	if err := json.UnmarshalDecode(d, v, json.RejectUnknownMembers(true)); err != nil {
 		send(w, 400, map[string]string{"message": "请求字段或格式无效"})
 		return false
 	}
-	if err := d.Decode(new(any)); err != io.EOF {
+	if _, err := d.ReadValue(); !errors.Is(err, io.EOF) {
 		send(w, 400, map[string]string{"message": "请求只能包含一个 JSON 对象"})
 		return false
 	}

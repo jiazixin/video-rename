@@ -1,7 +1,7 @@
 // Package tokenusage extracts a best-effort token count from saved model diagnostics.
 package tokenusage
 
-import "encoding/json"
+import "encoding/json/v2"
 
 // Count prefers the provider's total usage. Without it, the existing local text
 // estimate is used; image tokens and unrecorded retries cannot be reconstructed.

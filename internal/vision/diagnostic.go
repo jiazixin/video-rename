@@ -1,7 +1,8 @@
 package vision
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"net/url"
 	"strings"
 	"unicode/utf8"
@@ -16,7 +17,7 @@ func responseDiagnostic(raw []byte) string {
 		return ""
 	}
 	var envelope struct {
-		Error json.RawMessage `json:"error"`
+		Error jsontext.Value `json:"error"`
 	}
 	if json.Unmarshal(raw, &envelope) != nil {
 		return "[非结构化错误响应正文已省略]"

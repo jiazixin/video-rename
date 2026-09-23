@@ -138,7 +138,19 @@ async function restorePosition(request:number,result:Page){
  pendingPosition=undefined
  const row=saved.anchor?listRoot.value?.querySelector<HTMLElement>(`[data-entry-id="${saved.anchor}"]`):undefined
  window.scrollTo({top:row?window.scrollY+row.getBoundingClientRect().top+row.offsetHeight/2-window.innerHeight/2:saved.scrollY,behavior:'instant'})
- if(row)returnAnchor.value=saved.anchor
+ if(row){
+  returnAnchor.value=saved.anchor
+  // 行内异步内容(如目录状态)在滚动后才渲染会改变行高,半秒内多次复核并校正,保持锚定行精确居中。
+  for(const delay of [0,60,180,400]){
+   setTimeout(()=>{
+    if(disposed||request!==seq||pendingPosition||!returnAnchor.value)return
+    const r=listRoot.value?.querySelector<HTMLElement>(`[data-entry-id="${saved.anchor}"]`)
+    if(!r)return
+    const rect=r.getBoundingClientRect(),offset=rect.top+rect.height/2-window.innerHeight/2
+    if(Math.abs(offset)>1)window.scrollTo({top:window.scrollY+offset,behavior:'instant'})
+   },delay)
+  }
+ }
 }
 function cancelPendingPosition(){pendingPosition=undefined}
 function scrollKey(event:KeyboardEvent){

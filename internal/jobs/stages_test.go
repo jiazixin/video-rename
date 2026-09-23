@@ -47,7 +47,7 @@ func TestStagedFailureAndCancellationReuseUntilCommit(t *testing.T) {
 				t.Fatal(err)
 			}
 			done := make(chan struct{})
-			go func() { defer close(done); m.Execute(context.Background(), id) }()
+			go func() { defer close(done); m.Execute(t.Context(), id) }()
 			select {
 			case <-entered:
 			case <-time.After(5 * time.Second):
@@ -71,7 +71,7 @@ func TestStagedFailureAndCancellationReuseUntilCommit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			m.Execute(context.Background(), id)
+			m.Execute(t.Context(), id)
 			r, _ := m.Get(id)
 			if r.Done != 1 || extracts.Load() != 1 || m.Cache.Stats().Entries != 0 {
 				t.Fatal(r, extracts.Load(), m.Cache.Stats())
@@ -81,10 +81,10 @@ func TestStagedFailureAndCancellationReuseUntilCommit(t *testing.T) {
 }
 func TestCrossBatchExtractionWhileModelBlockedAndSharedLimit(t *testing.T) {
 	m, root := setup(t)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		os.WriteFile(filepath.Join(root, fmt.Sprintf("%d.mp4", i)), []byte("video"), 0600)
 	}
-	if err := m.Library.Refresh(context.Background(), 1); err != nil {
+	if err := m.Library.Refresh(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := m.DB.Query("SELECT id FROM entries WHERE parent=1 ORDER BY id")
@@ -146,7 +146,7 @@ func TestCrossBatchExtractionWhileModelBlockedAndSharedLimit(t *testing.T) {
 		}
 		runs = append(runs, id)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() { defer close(done); m.Loop(ctx) }()
 	defer func() {
@@ -157,7 +157,7 @@ func TestCrossBatchExtractionWhileModelBlockedAndSharedLimit(t *testing.T) {
 			t.Error("loop failed to stop")
 		}
 	}()
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		select {
 		case <-extracted:
 		case <-time.After(5 * time.Second):
@@ -207,7 +207,7 @@ func TestCancelStopsExtractionAndLeavesOtherBatchRunning(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := m.Library.Refresh(context.Background(), 1); err != nil {
+	if err := m.Library.Refresh(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
 	var cancelEntry, continueEntry int64
@@ -250,7 +250,7 @@ func TestCancelStopsExtractionAndLeavesOtherBatchRunning(t *testing.T) {
 			return "", ctx.Err()
 		}
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	firstDone, secondDone := make(chan struct{}), make(chan struct{})
 	go func() { defer close(firstDone); m.Execute(ctx, first) }()
@@ -292,7 +292,7 @@ func TestBatchPrefetchUsesCapacityInsteadOfVideoCount(t *testing.T) {
 		t.Run(fmt.Sprintf("capacity-limited=%v", limited), func(t *testing.T) {
 			m, root := setup(t)
 			const count = 140 // Cross both the old 64-item cap and the 128-item SQL page.
-			for i := 0; i < count; i++ {
+			for i := range count {
 				if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("%03d.mp4", i)), []byte("video"), 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -341,7 +341,7 @@ func TestBatchPrefetchUsesCapacityInsteadOfVideoCount(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			done := make(chan struct{})
 			go func() { defer close(done); m.Execute(ctx, id) }()
 			defer func() {
@@ -364,7 +364,7 @@ func TestBatchPrefetchUsesCapacityInsteadOfVideoCount(t *testing.T) {
 			if limited {
 				expected = 3
 			}
-			for i := 0; i < expected; i++ {
+			for range expected {
 				awaitFrame()
 			}
 			if limited {
@@ -391,7 +391,7 @@ func TestBatchPrefetchUsesCapacityInsteadOfVideoCount(t *testing.T) {
 				if err != nil || r.Done != 0 {
 					t.Fatalf("expected prefetch while model blocked: %+v %v", r, err)
 				}
-				for i := 0; i < count; i++ {
+				for range count {
 					permits <- struct{}{}
 				}
 			}

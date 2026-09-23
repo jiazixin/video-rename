@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"fmt"
 	"net/http/httptest"
 	"os"
@@ -19,7 +18,7 @@ func TestPlaybackRangeAndRestrictions(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer a.Close()
-	if err = a.Library.Refresh(context.Background(), 1); err != nil {
+	if err = a.Library.Refresh(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
 	var id int64
@@ -61,7 +60,7 @@ func TestImagePreviewRestrictions(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer a.Close()
-	if err = a.Library.Refresh(context.Background(), 1); err != nil {
+	if err = a.Library.Refresh(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"photo.png", "active.svg"} {

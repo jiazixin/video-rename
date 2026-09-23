@@ -2,7 +2,7 @@ package pipeline
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"image"
 	"image/color"
@@ -28,8 +28,8 @@ import (
 func makeJPEG(t *testing.T, path string, w, h int) {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			img.Set(x, y, color.RGBA{uint8(x), uint8(y), 128, 255})
 		}
 	}
@@ -117,7 +117,7 @@ func readJSONL(t *testing.T, path string) []map[string]any {
 		t.Fatal(err)
 	}
 	var out []map[string]any
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
 		if line == "" {
 			continue
 		}
@@ -166,7 +166,7 @@ func TestEndToEndRename(t *testing.T) {
 	opts := baseOptions(cfg, videos)
 	opts.FFprobePath = fakeProbeScript(t, work, fixture)
 	opts.FFmpegPath = fakeFFmpegScript(t, work, fixture)
-	sum, code := Run(context.Background(), opts)
+	sum, code := Run(t.Context(), opts)
 
 	if code != 0 {
 		t.Fatalf("退出码 = %d (summary=%+v)", code, sum)
@@ -220,7 +220,7 @@ func TestEndToEndDryRun(t *testing.T) {
 	opts.DryRun = true
 	opts.FFprobePath = fakeProbeScript(t, work, fixture)
 	opts.FFmpegPath = fakeFFmpegScript(t, work, fixture)
-	sum, code := Run(context.Background(), opts)
+	sum, code := Run(t.Context(), opts)
 
 	if code != 0 {
 		t.Fatalf("退出码 = %d", code)
@@ -261,7 +261,7 @@ func TestEndToEndMixedFailures(t *testing.T) {
 	opts := baseOptions(cfg, videos)
 	opts.FFprobePath = fakeProbeScript(t, work, fixture)
 	opts.FFmpegPath = fakeFFmpegScript(t, work, fixture)
-	sum, code := Run(context.Background(), opts)
+	sum, code := Run(t.Context(), opts)
 
 	if code != 1 {
 		t.Fatalf("有失败时退出码 = %d, 期望 1", code)
@@ -309,7 +309,7 @@ func TestEndToEndUnchanged(t *testing.T) {
 	opts := baseOptions(cfg, videos)
 	opts.FFprobePath = fakeProbeScript(t, work, fixture)
 	opts.FFmpegPath = fakeFFmpegScript(t, work, fixture)
-	sum, code := Run(context.Background(), opts)
+	sum, code := Run(t.Context(), opts)
 
 	if code != 0 {
 		t.Fatalf("退出码 = %d", code)
@@ -324,31 +324,32 @@ func TestWorkersBound(t *testing.T) {
 	fixture := filepath.Join(work, "f.jpg")
 	makeJPEG(t, fixture, 320, 180)
 
-	var cur, max int64
+	var max int64
+	var cur atomic.Int64
 	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n := atomic.AddInt64(&cur, 1)
+		n := cur.Add(1)
 		mu.Lock()
 		if n > max {
 			max = n
 		}
 		mu.Unlock()
 		time.Sleep(60 * time.Millisecond)
-		atomic.AddInt64(&cur, -1)
+		cur.Add(-1)
 		fmt.Fprint(w, `{"choices":[{"message":{"content":"并发标题"},"finish_reason":"stop"}]}`)
 	}))
 	defer srv.Close()
 	cfg := loadConfig(t, srv.URL)
 
 	videos := t.TempDir()
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		writeDummy(t, videos, fmt.Sprintf("v%d.mp4", i))
 	}
 	opts := baseOptions(cfg, videos)
 	opts.Workers = 1
 	opts.FFprobePath = fakeProbeScript(t, work, fixture)
 	opts.FFmpegPath = fakeFFmpegScript(t, work, fixture)
-	sum, code := Run(context.Background(), opts)
+	sum, code := Run(t.Context(), opts)
 	if code != 0 {
 		t.Fatalf("退出码 = %d (%+v)", code, sum)
 	}
@@ -372,14 +373,14 @@ func TestAuthFailureAborts(t *testing.T) {
 	cfg := loadConfig(t, srv.URL)
 
 	videos := t.TempDir()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		writeDummy(t, videos, fmt.Sprintf("v%d.mp4", i))
 	}
 	opts := baseOptions(cfg, videos)
 	opts.Workers = 1
 	opts.FFprobePath = fakeProbeScript(t, work, fixture)
 	opts.FFmpegPath = fakeFFmpegScript(t, work, fixture)
-	sum, code := Run(context.Background(), opts)
+	sum, code := Run(t.Context(), opts)
 
 	if code != 2 {
 		t.Fatalf("全局故障退出码 = %d, 期望 2", code)
@@ -409,7 +410,7 @@ func TestCancellation(t *testing.T) {
 	cfg := loadConfig(t, srv.URL)
 
 	videos := t.TempDir()
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		writeDummy(t, videos, fmt.Sprintf("v%d.mp4", i))
 	}
 	opts := baseOptions(cfg, videos)
@@ -417,7 +418,7 @@ func TestCancellation(t *testing.T) {
 	opts.FFprobePath = fakeProbeScript(t, work, fixture)
 	opts.FFmpegPath = fakeFFmpegScript(t, work, fixture)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	go func() {
 		time.Sleep(300 * time.Millisecond) // 等第一个任务进入推理
 		cancel()
@@ -449,7 +450,7 @@ func TestZeroCandidates(t *testing.T) {
 	opts := baseOptions(cfg, empty)
 	opts.FFprobePath = "ffprobe"
 	opts.FFmpegPath = "ffmpeg"
-	sum, code := Run(context.Background(), opts)
+	sum, code := Run(t.Context(), opts)
 	if code != 0 || sum.Discovered != 0 {
 		t.Errorf("零候选应正常结束: code=%d %+v", code, sum)
 	}
@@ -476,7 +477,7 @@ func TestSourceChangedBeforeCommit(t *testing.T) {
 	opts := baseOptions(cfg, videos)
 	opts.FFprobePath = fakeProbeScript(t, work, fixture)
 	opts.FFmpegPath = fakeFFmpegScript(t, work, fixture)
-	sum, code := Run(context.Background(), opts)
+	sum, code := Run(t.Context(), opts)
 	if code != 1 || sum.Failed != 1 {
 		t.Fatalf("摘要异常: code=%d %+v", code, sum)
 	}

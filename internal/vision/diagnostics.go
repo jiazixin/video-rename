@@ -1,7 +1,8 @@
 package vision
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -53,7 +54,7 @@ func diagnosticJSON(raw []byte, key string, request bool) string {
 		if obj, ok := value.(map[string]any); ok && request {
 			obj["_local_context"] = estimate
 		}
-		raw, _ = json.MarshalIndent(value, "", "  ")
+		raw, _ = json.Marshal(value, jsontext.WithIndent("  "))
 	}
 	text := string(raw)
 	if key != "" {

@@ -2,7 +2,7 @@ package vision
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -67,7 +67,7 @@ func TestTitleHappyPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotAuth = r.Header.Get("Authorization")
-		json.NewDecoder(r.Body).Decode(&gotBody)
+		json.UnmarshalRead(r.Body, &gotBody)
 		w.Write([]byte(okResponse("  海边散步  ")))
 	}))
 	defer srv.Close()
@@ -75,7 +75,7 @@ func TestTitleHappyPath(t *testing.T) {
 	cfg := testConfig(t, srv.URL)
 	cfg.Server.APIKey = "secret-key"
 	c := newTestClient(cfg)
-	res, jerr := c.Title(context.Background(), cfg.Prompt, frameSet(3))
+	res, jerr := c.Title(t.Context(), cfg.Prompt, frameSet(3))
 	if jerr != nil {
 		t.Fatal(jerr)
 	}
@@ -137,7 +137,7 @@ func TestNoKeyMeansNoAuthHeader(t *testing.T) {
 	defer srv.Close()
 	cfg := testConfig(t, srv.URL)
 	c := newTestClient(cfg)
-	if _, jerr := c.Title(context.Background(), cfg.Prompt, frameSet(1)); jerr != nil {
+	if _, jerr := c.Title(t.Context(), cfg.Prompt, frameSet(1)); jerr != nil {
 		t.Fatal(jerr)
 	}
 	if auth != "" {
@@ -146,23 +146,23 @@ func TestNoKeyMeansNoAuthHeader(t *testing.T) {
 }
 
 func TestUnauthorizedNoRetryAndGlobal(t *testing.T) {
-	var calls int32
+	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&calls, 1)
+		calls.Add(1)
 		w.WriteHeader(401)
 		w.Write([]byte(`{"error":{"message":"invalid key"}}`))
 	}))
 	defer srv.Close()
 	c := newTestClient(testConfig(t, srv.URL))
-	res, jerr := c.Title(context.Background(), "p", frameSet(1))
+	res, jerr := c.Title(t.Context(), "p", frameSet(1))
 	if jerr == nil || jerr.Code != domain.CodeAPIUnauthorized {
 		t.Fatalf("应报 API_UNAUTHORIZED, got %+v", jerr)
 	}
 	if !jerr.Global {
 		t.Error("鉴权失败应标记全局故障")
 	}
-	if atomic.LoadInt32(&calls) != 1 {
-		t.Errorf("401 不应重试, calls = %d", calls)
+	if calls.Load() != 1 {
+		t.Errorf("401 不应重试, calls = %d", calls.Load())
 	}
 	if res.Attempts != 1 {
 		t.Errorf("attempts = %d", res.Attempts)
@@ -170,9 +170,9 @@ func TestUnauthorizedNoRetryAndGlobal(t *testing.T) {
 }
 
 func TestRetryableStatusRetries(t *testing.T) {
-	var calls int32
+	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n := atomic.AddInt32(&calls, 1)
+		n := calls.Add(1)
 		if n <= 2 {
 			w.Header().Set("Retry-After", "0")
 			w.WriteHeader(503)
@@ -183,7 +183,7 @@ func TestRetryableStatusRetries(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := newTestClient(testConfig(t, srv.URL))
-	res, jerr := c.Title(context.Background(), "p", frameSet(1))
+	res, jerr := c.Title(t.Context(), "p", frameSet(1))
 	if jerr != nil {
 		t.Fatal(jerr)
 	}
@@ -193,20 +193,20 @@ func TestRetryableStatusRetries(t *testing.T) {
 }
 
 func TestRetryExhausted(t *testing.T) {
-	var calls int32
+	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&calls, 1)
+		calls.Add(1)
 		w.WriteHeader(429)
 		w.Write([]byte(`{"error":{"message":"busy"}}`))
 	}))
 	defer srv.Close()
 	c := newTestClient(testConfig(t, srv.URL))
-	res, jerr := c.Title(context.Background(), "p", frameSet(1))
+	res, jerr := c.Title(t.Context(), "p", frameSet(1))
 	if jerr == nil || jerr.Code != domain.CodeAPIRateLimited {
 		t.Fatalf("应报 API_RATE_LIMITED, got %+v", jerr)
 	}
-	if atomic.LoadInt32(&calls) != 3 {
-		t.Errorf("最多 3 次尝试, calls = %d", calls)
+	if calls.Load() != 3 {
+		t.Errorf("最多 3 次尝试, calls = %d", calls.Load())
 	}
 	if res.Attempts != 3 {
 		t.Errorf("attempts = %d", res.Attempts)
@@ -214,20 +214,20 @@ func TestRetryExhausted(t *testing.T) {
 }
 
 func TestBadRequestNoRetry(t *testing.T) {
-	var calls int32
+	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&calls, 1)
+		calls.Add(1)
 		w.WriteHeader(400)
 		w.Write([]byte(`{"error":{"message":"invalid request"}}`))
 	}))
 	defer srv.Close()
 	c := newTestClient(testConfig(t, srv.URL))
-	_, jerr := c.Title(context.Background(), "p", frameSet(1))
+	_, jerr := c.Title(t.Context(), "p", frameSet(1))
 	if jerr == nil || jerr.Code != domain.CodeAPIHTTPError || jerr.HTTPStatus != 400 {
 		t.Fatalf("400 不重试, got %+v", jerr)
 	}
-	if atomic.LoadInt32(&calls) != 1 {
-		t.Errorf("calls = %d", calls)
+	if calls.Load() != 1 {
+		t.Errorf("calls = %d", calls.Load())
 	}
 	if !strings.Contains(jerr.StderrTail, "invalid request") {
 		t.Errorf("应保留响应摘要: %q", jerr.StderrTail)
@@ -235,24 +235,24 @@ func TestBadRequestNoRetry(t *testing.T) {
 }
 
 func TestRetryAfterTooLongStops(t *testing.T) {
-	var calls int32
+	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&calls, 1)
+		calls.Add(1)
 		w.Header().Set("Retry-After", "60")
 		w.WriteHeader(429)
 		w.Write([]byte(`{}`))
 	}))
 	defer srv.Close()
 	c := newTestClient(testConfig(t, srv.URL))
-	_, jerr := c.Title(context.Background(), "p", frameSet(1))
+	_, jerr := c.Title(t.Context(), "p", frameSet(1))
 	if jerr == nil || jerr.Code != domain.CodeAPIRateLimited {
 		t.Fatalf("got %+v", jerr)
 	}
 	if !strings.Contains(jerr.Message, "停止重试") {
 		t.Errorf("应注明停止原因: %s", jerr.Message)
 	}
-	if atomic.LoadInt32(&calls) != 1 {
-		t.Errorf("不应再重发: %d", calls)
+	if calls.Load() != 1 {
+		t.Errorf("不应再重发: %d", calls.Load())
 	}
 }
 
@@ -263,7 +263,7 @@ func TestResponseTooLarge(t *testing.T) {
 	defer srv.Close()
 	c := newTestClient(testConfig(t, srv.URL))
 	c.responseLimit = 1024
-	_, jerr := c.Title(context.Background(), "p", frameSet(1))
+	_, jerr := c.Title(t.Context(), "p", frameSet(1))
 	if jerr == nil || jerr.Code != domain.CodeAPIResponseTooLarge {
 		t.Fatalf("应报 API_RESPONSE_TOO_LARGE, got %+v", jerr)
 	}
@@ -273,7 +273,7 @@ func TestBodyBudgetDropsFrames(t *testing.T) {
 	var images int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
-		json.NewDecoder(r.Body).Decode(&body)
+		json.UnmarshalRead(r.Body, &body)
 		msgs := body["messages"].([]any)
 		parts := msgs[1].(map[string]any)["content"].([]any)
 		for _, p := range parts {
@@ -286,7 +286,7 @@ func TestBodyBudgetDropsFrames(t *testing.T) {
 	defer srv.Close()
 	c := newTestClient(testConfig(t, srv.URL))
 	c.bodyLimit = 2000 // 4 帧(每帧约 700B)必超,均匀删至 2 帧
-	res, jerr := c.Title(context.Background(), "p", frameSet(4))
+	res, jerr := c.Title(t.Context(), "p", frameSet(4))
 	if jerr != nil {
 		t.Fatal(jerr)
 	}
@@ -305,7 +305,7 @@ func TestBodyBudgetSingleFrameTooLarge(t *testing.T) {
 	defer srv.Close()
 	c := newTestClient(testConfig(t, srv.URL))
 	c.bodyLimit = 16
-	_, jerr := c.Title(context.Background(), "p", frameSet(1))
+	_, jerr := c.Title(t.Context(), "p", frameSet(1))
 	if jerr == nil || jerr.Code != domain.CodeRequestTooLarge {
 		t.Fatalf("应报 REQUEST_TOO_LARGE, got %+v", jerr)
 	}
@@ -313,7 +313,7 @@ func TestBodyBudgetSingleFrameTooLarge(t *testing.T) {
 
 func TestZeroFramesRejected(t *testing.T) {
 	c := newTestClient(testConfig(t, "http://unused"))
-	if _, jerr := c.Title(context.Background(), "p", nil); jerr == nil {
+	if _, jerr := c.Title(t.Context(), "p", nil); jerr == nil {
 		t.Fatal("零帧不应调用模型")
 	}
 }
@@ -324,7 +324,7 @@ func TestTruncatedOutputRejected(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := newTestClient(testConfig(t, srv.URL))
-	_, jerr := c.Title(context.Background(), "p", frameSet(1))
+	_, jerr := c.Title(t.Context(), "p", frameSet(1))
 	if jerr == nil || jerr.Code != domain.CodeModelOutputTruncated {
 		t.Fatalf("应报 MODEL_OUTPUT_TRUNCATED, got %+v", jerr)
 	}
@@ -339,9 +339,25 @@ func TestToolCallsRejected(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := newTestClient(testConfig(t, srv.URL))
-	_, jerr := c.Title(context.Background(), "p", frameSet(1))
+	_, jerr := c.Title(t.Context(), "p", frameSet(1))
 	if jerr == nil || jerr.Code != domain.CodeAPIResponseInvalid {
 		t.Fatalf("应拒绝 tool_calls, got %+v", jerr)
+	}
+}
+
+func TestNullToolCallsAccepted(t *testing.T) {
+	// 网关(sub2api 等)常显式返回 "tool_calls": null,不应误判为工具调用。
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"choices":[{"message":{"content":"一个正常的中文标题","tool_calls":null},"finish_reason":"stop"}]}`))
+	}))
+	defer srv.Close()
+	c := newTestClient(testConfig(t, srv.URL))
+	result, jerr := c.Title(t.Context(), "p", frameSet(1))
+	if jerr != nil {
+		t.Fatalf("tool_calls 为 null 时应成功, got %+v", jerr)
+	}
+	if result.Title != "一个正常的中文标题" {
+		t.Fatalf("标题不符, got %q", result.Title)
 	}
 }
 
@@ -351,7 +367,7 @@ func TestEmptyChoicesRejected(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := newTestClient(testConfig(t, srv.URL))
-	_, jerr := c.Title(context.Background(), "p", frameSet(1))
+	_, jerr := c.Title(t.Context(), "p", frameSet(1))
 	if jerr == nil || jerr.Code != domain.CodeAPIResponseInvalid {
 		t.Fatalf("应拒绝空 choices, got %+v", jerr)
 	}
@@ -363,7 +379,7 @@ func TestBadJSONRejected(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := newTestClient(testConfig(t, srv.URL))
-	_, jerr := c.Title(context.Background(), "p", frameSet(1))
+	_, jerr := c.Title(t.Context(), "p", frameSet(1))
 	if jerr == nil || jerr.Code != domain.CodeAPIResponseInvalid {
 		t.Fatalf("应报 API_RESPONSE_INVALID, got %+v", jerr)
 	}
@@ -381,7 +397,7 @@ func TestRedirectDisabled(t *testing.T) {
 	defer srv.Close()
 	c := newTestClient(testConfig(t, srv.URL))
 	// CheckRedirect 返回错误 → 传输层错误,绝不追随重定向
-	_, jerr := c.Title(context.Background(), "p", frameSet(1))
+	_, jerr := c.Title(t.Context(), "p", frameSet(1))
 	if jerr == nil {
 		t.Fatal("重定向应被拒绝")
 	}
@@ -399,7 +415,7 @@ func TestTimeout(t *testing.T) {
 	cfg := testConfig(t, srv.URL)
 	cfg.TimeoutDuration = 80 * time.Millisecond
 	c := newTestClient(cfg)
-	_, jerr := c.Title(context.Background(), "p", frameSet(1))
+	_, jerr := c.Title(t.Context(), "p", frameSet(1))
 	if jerr == nil {
 		t.Fatal("超时应失败")
 	}
@@ -492,7 +508,7 @@ func TestConsecutiveVideosDoNotShareConversation(t *testing.T) {
 	bodies := make(chan chatRequest, 2)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body chatRequest
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := json.UnmarshalRead(r.Body, &body); err != nil {
 			t.Error(err)
 		}
 		bodies <- body
@@ -505,7 +521,7 @@ func TestConsecutiveVideosDoNotShareConversation(t *testing.T) {
 		if err := os.WriteFile(path, []byte(marker), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := c.Title(context.Background(), marker, []domain.Frame{{Path: path}}); err != nil {
+		if _, err := c.Title(t.Context(), marker, []domain.Frame{{Path: path}}); err != nil {
 			t.Fatal(err)
 		}
 		body := <-bodies
@@ -569,7 +585,7 @@ func TestNamingFailureMarkerStopsWithoutRetry(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
 				var body map[string]any
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				if err := json.UnmarshalRead(r.Body, &body); err != nil {
 					t.Fatal(err)
 				}
 				prompt := body["messages"].([]any)[0].(map[string]any)["content"].(string)
@@ -579,7 +595,7 @@ func TestNamingFailureMarkerStopsWithoutRetry(t *testing.T) {
 				fmt.Fprint(w, okResponse(answer))
 			}))
 			defer server.Close()
-			result, err := newTestClient(testConfig(t, server.URL)).Title(context.Background(), "自定义命名要求", frameSet(1))
+			result, err := newTestClient(testConfig(t, server.URL)).Title(t.Context(), "自定义命名要求", frameSet(1))
 			if err == nil || err.Code != domain.CodeNamingFailed || err.Global || result.Title != "" || calls != 1 {
 				t.Fatalf("result=%+v err=%+v calls=%d", result, err, calls)
 			}
@@ -597,7 +613,7 @@ func TestSuccessfulTitleKeepsSanitizedExchange(t *testing.T) {
 	defer server.Close()
 	cfg := testConfig(t, server.URL)
 	cfg.Server.APIKey = "private-key"
-	result, err := newTestClient(cfg).Title(context.Background(), "标题测试", frameSet(1))
+	result, err := newTestClient(cfg).Title(t.Context(), "标题测试", frameSet(1))
 	if err != nil {
 		t.Fatal(err)
 	}

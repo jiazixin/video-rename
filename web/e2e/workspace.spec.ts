@@ -14,7 +14,7 @@ test('登录、目录、手动改名、冲突保护和还原',async({page})=>{
  await page.screenshot({path:'test-results/library-desktop.png',fullPage:true})
  await page.getByRole('button',{name:'重命名 VID_20260920_001.mp4',exact:true}).click();await page.getByLabel('新名称',{exact:true}).fill('已占用名称');await page.getByRole('button',{name:'保存名称'}).click();await expect(page.getByRole('dialog').getByRole('alert')).toContainText('目标已存在');await page.getByLabel('新名称',{exact:true}).fill('海边散步');await page.getByRole('button',{name:'保存名称'}).click();await expect(page.getByText('海边散步.mp4',{exact:true})).toBeVisible({timeout:10000})
  await page.getByRole('button',{name:'还原 海边散步.mp4',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('VID_20260920_001.mp4');await page.getByRole('button',{name:'确认还原'}).click();await expect(page.getByText('VID_20260920_001.mp4',{exact:true})).toBeVisible({timeout:10000});await expect(page.getByRole('button',{name:'自动命名 VID_20260920_001.mp4',exact:true})).toBeEnabled()
- await page.getByRole('button',{name:'任务历史',exact:true}).click();await expect(page.locator('tbody').getByText('手动命名',{exact:true}).first()).toBeVisible();await page.getByRole('button',{name:'失败记录',exact:true}).click();await expect(page.locator('tbody').getByText(/目标已存在/)).toBeVisible();await page.getByRole('button',{name:'退出登录',exact:true}).click();await expect(page.getByRole('heading',{name:'登录工作台'})).toBeVisible()
+ await page.getByRole('button',{name:'任务历史',exact:true}).click();await expect(page.locator('tbody').getByText('手动命名',{exact:true}).first()).toBeVisible();await page.getByRole('button',{name:'失败记录',exact:true}).click();await expect(page.locator('tbody').getByText(/目标已存在/).first()).toBeVisible();await page.getByRole('button',{name:'退出登录',exact:true}).click();await expect(page.getByRole('heading',{name:'登录工作台'})).toBeVisible()
 })
 test('惰性子目录、分页、筛选与窄屏',async({page})=>{await login(page);await page.getByRole('button',{name:'分页测试',exact:true}).click();await expect(page.getByText('片段_0000.mp4',{exact:true})).toBeVisible({timeout:10000});await page.reload();await expect(page.getByText('片段_0000.mp4',{exact:true})).toBeVisible();await page.goBack();await expect(page.getByText('VID_20260920_001.mp4',{exact:true})).toBeVisible();await page.goForward();await expect(page.getByText('片段_0000.mp4',{exact:true})).toBeVisible();await expect(page.locator('tbody tr')).toHaveCount(100);await expect(page.getByText('共 230 项 · 100 项 / 当前页',{exact:true})).toBeVisible();await page.getByRole('button',{name:'下一页',exact:true}).click();await expect(page.getByText('片段_0100.mp4',{exact:true})).toBeVisible();await page.getByRole('button',{name:'上一页',exact:true}).click();await expect(page.getByText('片段_0000.mp4',{exact:true})).toBeVisible();await page.getByRole('button',{name:'切换名称排序'}).click();await expect(page.getByText('片段_0229.mp4',{exact:true})).toBeVisible();await page.getByLabel('搜索当前目录').fill('0229');await expect(page.locator('tbody tr')).toHaveCount(1);await expect(page.getByText('共 1 项 · 1 项 / 当前页',{exact:true})).toBeVisible();await page.setViewportSize({width:390,height:844});await page.screenshot({path:'test-results/library-mobile.png',fullPage:true});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy()})
 test('计划创建、Cron 预览、暂停、编辑和删除',async({page})=>{await login(page);await page.getByRole('button',{name:'运行计划',exact:true}).click();await page.getByRole('button',{name:'自动计划和运行记录',exact:true}).click();await page.getByRole('button',{name:'新建计划',exact:true}).click();await page.getByLabel('计划名称',{exact:true}).fill('每日旅行整理');await page.getByRole('button',{name:'预览执行时间'}).click();await expect(page.locator('.schedule-preview li')).toHaveCount(5);await page.getByLabel('选择 2026 · 旅行记录',{exact:true}).check();await page.getByRole('button',{name:'保存计划',exact:true}).click();await expect(page.getByRole('heading',{name:'每日旅行整理',exact:true})).toBeVisible();await page.getByRole('switch',{name:'暂停 每日旅行整理'}).click();await expect(page.getByText('已暂停',{exact:true})).toBeVisible();await page.getByRole('button',{name:'编辑 每日旅行整理'}).click();await page.getByRole('combobox',{name:'执行频率'}).click();await page.getByRole('option',{name:'Cron 表达式',exact:true}).click();await page.getByLabel('Cron 表达式',{exact:true}).fill('0 */6 * * *');await page.getByRole('button',{name:'保存计划',exact:true}).click();await page.screenshot({path:'test-results/runs-desktop.png',fullPage:true});await page.getByRole('button',{name:'删除 每日旅行整理'}).click();await page.getByRole('button',{name:'删除计划',exact:true}).click();await expect(page.getByRole('heading',{name:'每日旅行整理',exact:true})).toHaveCount(0)})
@@ -252,6 +252,8 @@ test('模型复制与删除确认',async({page})=>{
  await page.getByRole('button',{name:'取消',exact:true}).click();await expect(page.getByRole('button',{name:'删除模型配置 默认视频命名 副本',exact:true})).toBeVisible()
  await page.getByRole('button',{name:'删除模型配置 默认视频命名 副本',exact:true}).click();await page.getByRole('button',{name:'确认删除',exact:true}).click()
  await expect(page.getByRole('button',{name:'删除模型配置 默认视频命名 副本',exact:true})).toHaveCount(0)
+ // 前序用例可能已切换全局默认;先把默认视频命名设回默认,再验证默认配置不可删除。
+ await page.getByRole('radio',{name:'设为全局默认 默认视频命名',exact:true}).check()
  await page.getByRole('button',{name:'删除模型配置 默认视频命名',exact:true}).click();await page.getByRole('button',{name:'确认删除',exact:true}).click();await expect(page.getByRole('alert')).toContainText('全局默认')
 })
 
@@ -457,13 +459,14 @@ test('目录大小和时间排序按钮、重命名时间展示',async({page})=>
    expect((await response).ok()).toBeTruthy()
   }
  }
- const row=page.locator('tbody tr').filter({has:page.getByText('VID_20260920_001.mp4',{exact:true})})
- await expect(row.locator('td').nth(4)).toHaveText('—')
+ // 用未被前序用例改动过的文件验证"从未改名显示 —";VID 已被改名还原过,重命名时间不为空。
+ const untouched=page.locator('tbody tr').filter({has:page.getByText('已占用名称.mp4',{exact:true})})
+ await expect(untouched.locator('td').nth(5)).toHaveText('—')
  await page.getByRole('button',{name:'重命名 VID_20260920_001.mp4',exact:true}).click()
  await page.getByLabel('新名称',{exact:true}).fill('排序时间验证')
  await page.getByRole('button',{name:'保存名称'}).click()
  const renamed=page.locator('tbody tr').filter({has:page.getByText('排序时间验证.mp4',{exact:true})})
- await expect(renamed.locator('td').nth(4)).not.toHaveText('—')
+ await expect(renamed.locator('td').nth(5)).not.toHaveText('—')
  await page.screenshot({path:'test-results/library-sorting.png',fullPage:true})
  await page.getByRole('button',{name:'还原 排序时间验证.mp4',exact:true}).click()
  await page.getByRole('button',{name:'确认还原'}).click()
@@ -621,14 +624,16 @@ test('切换页面后返回上级目录仍定位先前进入的文件夹',async(
 })
 test('目录内容在进入索引后显示直接子项数量',async({page})=>{
  await login(page)
- const album=page.locator('.file-table tbody tr').filter({has:page.getByRole('button',{name:'2026 · 旅行记录',exact:true})})
+ // 用未被前序用例进入过的目录验证懒统计初始态;2026 · 旅行记录 已被访问,统计已缓存。
+ const album=page.locator('.file-table tbody tr').filter({has:page.getByRole('button',{name:'家庭影像',exact:true})})
  await expect(album.locator('.contents-cell')).toHaveText('待统计')
- await page.getByRole('button',{name:'2026 · 旅行记录',exact:true}).click()
- await expect(page.getByText('IMG_20260901.mp4',{exact:true})).toBeVisible()
+ await page.getByRole('button',{name:'家庭影像',exact:true}).click()
+ await expect(page.getByText('这里还没有内容',{exact:true})).toBeVisible()
  await page.getByRole('button',{name:'媒体库',exact:true}).click()
- await expect(album.locator('.contents-counts span')).toHaveText(['子目录 0','视频 1','图片 0'])
+ await expect(album.locator('.contents-counts span')).toHaveText(['子目录 0','视频 0','图片 0'])
  await page.getByRole('button',{name:'图片编号测试',exact:true}).click()
- await expect(page.getByText('video.MP4',{exact:true})).toBeVisible()
+ // video.MP4 按名称排序在 207 项的末尾,不在第一页;用首页首项确认目录已加载。
+ await expect(page.getByText('photo-000.PNG',{exact:true})).toBeVisible()
  await page.getByRole('button',{name:'媒体库',exact:true}).click()
  const images=page.locator('.file-table tbody tr').filter({has:page.getByRole('button',{name:'图片编号测试',exact:true})})
  await expect(images.locator('.contents-counts span')).toHaveText(['子目录 1','视频 1','图片 205'])

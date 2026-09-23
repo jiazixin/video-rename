@@ -3,7 +3,7 @@ package pipeline
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,10 +23,10 @@ import (
 func TestRegressionCancellationAllJobs(t *testing.T) {
 	cfg := loadConfig(t, "http://unused")
 	videos := t.TempDir()
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		writeDummy(t, videos, fmt.Sprintf("v%02d.mp4", i))
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	opts := baseOptions(cfg, videos)
 	opts.Workers = 1
@@ -48,14 +48,14 @@ func TestRegressionAuthDoesNotStartQueuedJobs(t *testing.T) {
 	defer srv.Close()
 	cfg := loadConfig(t, srv.URL)
 	videos := t.TempDir()
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		writeDummy(t, videos, fmt.Sprintf("v%02d.mp4", i))
 	}
 	opts := baseOptions(cfg, videos)
 	opts.Workers = 1
 	opts.FFprobePath = fakeProbeScript(t, work, fixture)
 	opts.FFmpegPath = fakeFFmpegScript(t, work, fixture)
-	sum, code := Run(context.Background(), opts)
+	sum, code := Run(t.Context(), opts)
 	if code != 2 || sum.Failed != 1 || sum.Cancelled != 19 {
 		t.Fatalf("摘要异常: code=%d %+v", code, sum)
 	}
@@ -80,7 +80,7 @@ func TestRegressionPendingContainsIdentity(t *testing.T) {
 	opts := baseOptions(cfg, videos)
 	opts.FFprobePath = fakeProbeScript(t, work, fixture)
 	opts.FFmpegPath = fakeFFmpegScript(t, work, fixture)
-	sum, code := Run(context.Background(), opts)
+	sum, code := Run(t.Context(), opts)
 	if code != 0 {
 		t.Fatal(code)
 	}
@@ -112,13 +112,13 @@ func TestRegressionCancellationDuringInference(t *testing.T) {
 	work := t.TempDir()
 	fixture := filepath.Join(work, "f.jpg")
 	makeJPEG(t, fixture, 320, 180)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { cancel(); w.WriteHeader(200) }))
 	defer srv.Close()
 	cfg := loadConfig(t, srv.URL)
 	videos := t.TempDir()
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		writeDummy(t, videos, fmt.Sprintf("v%02d.mp4", i))
 	}
 	opts := baseOptions(cfg, videos)
@@ -201,7 +201,7 @@ func TestLogFailureStopsRemainingJobs(t *testing.T) {
 			opts.FFprobePath = fakeProbeScript(t, work, fixture)
 			opts.FFmpegPath = fakeFFmpegScript(t, work, fixture)
 			var logs *faultLog
-			sum, code := runWithLogger(context.Background(), opts, func(dir string) (eventLog, error) {
+			sum, code := runWithLogger(t.Context(), opts, func(dir string) (eventLog, error) {
 				w, err := runlog.Open(dir)
 				logs = &faultLog{Writer: w, failAt: kind}
 				return logs, err
@@ -252,7 +252,7 @@ func TestCancelledBeforeCommitPreservesSource(t *testing.T) {
 	}
 	defer w.Close()
 	c := newCommitter(w, false, "apply", cfg)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	c.commit(ctx, domain.VideoJob{JobID: "1", Path: src, Snapshot: snapshot}, &jobRecord{started: time.Now(), title: domain.TitleResult{Title: "新标题"}})
 	if c.stats().cancelled != 1 {
@@ -274,7 +274,7 @@ func (w notifyWriter) Write(p []byte) (int, error) { return w(p) }
 func TestGlobalFailureWithInFlightJob(t *testing.T) {
 	for _, kind := range []string{"auth", "log"} {
 		t.Run(kind, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			work := t.TempDir()
 			fixture := filepath.Join(work, "f.jpg")
@@ -318,7 +318,7 @@ func TestGlobalFailureWithInFlightJob(t *testing.T) {
 			defer srv.Close()
 			cfg := loadConfig(t, srv.URL)
 			videos := t.TempDir()
-			for i := 0; i < 20; i++ {
+			for i := range 20 {
 				writeDummy(t, videos, fmt.Sprintf("v%02d.mp4", i))
 			}
 			opts := baseOptions(cfg, videos)

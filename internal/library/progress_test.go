@@ -1,7 +1,6 @@
 package library
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -30,7 +29,7 @@ func TestDirectoryProgressRequiresCompleteIndex(t *testing.T) {
 		t.Fatalf("%+v", p)
 	}
 	a := entry(t, l, 1, "a.mp4")
-	l.SetProcessed(context.Background(), []int64{a.ID}, true)
+	l.SetProcessed(t.Context(), []int64{a.ID}, true)
 	if p := get(); p.Unknown != 1 || p.Processed != 1 {
 		t.Fatalf("%+v", p)
 	}
@@ -39,11 +38,11 @@ func TestDirectoryProgressRequiresCompleteIndex(t *testing.T) {
 	if p := get(); p.Unknown != 0 || p.Total != 2 || p.Processed != 1 {
 		t.Fatalf("%+v", p)
 	}
-	l.SetProcessed(context.Background(), []int64{d.ID}, true)
+	l.SetProcessed(t.Context(), []int64{d.ID}, true)
 	if p := get(); p.Processed != 2 || p.Total != 2 {
 		t.Fatalf("%+v", p)
 	}
-	l.SetProcessed(context.Background(), []int64{1}, false)
+	l.SetProcessed(t.Context(), []int64{1}, false)
 	if p := get(); p.Processed != 0 || p.Total != 2 {
 		t.Fatalf("%+v", p)
 	}

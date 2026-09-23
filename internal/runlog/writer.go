@@ -8,7 +8,7 @@ package runlog
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,10 +21,10 @@ const SchemaVersion = 1
 
 // Metadata 结果 metadata 字段。
 type Metadata struct {
-	SizeBytes       int64   `json:"size_bytes,omitempty"`
-	DurationSeconds float64 `json:"duration_seconds,omitempty"`
-	Width           int     `json:"width,omitempty"`
-	Height          int     `json:"height,omitempty"`
+	SizeBytes       int64   `json:"size_bytes,omitzero"`
+	DurationSeconds float64 `json:"duration_seconds,omitzero"`
+	Width           int     `json:"width,omitzero"`
+	Height          int     `json:"height,omitzero"`
 }
 
 // SourceSnapshot 保存扫描时身份，供未确认 pending 的人工核对使用。
@@ -49,16 +49,16 @@ type Event struct {
 	SourceSnapshot *SourceSnapshot `json:"source_snapshot,omitempty"`
 	TargetPath     string          `json:"target_path,omitempty"`
 	Stage          string          `json:"stage,omitempty"`
-	ElapsedMS      int64           `json:"elapsed_ms,omitempty"`
-	Metadata       Metadata        `json:"metadata,omitempty"`
-	FramesPlanned  int             `json:"frames_planned,omitempty"`
-	FramesSent     int             `json:"frames_sent,omitempty"`
-	HTTPAttempts   int             `json:"http_attempts,omitempty"`
+	ElapsedMS      int64           `json:"elapsed_ms,omitzero"`
+	Metadata       Metadata        `json:"metadata,omitzero"`
+	FramesPlanned  int             `json:"frames_planned,omitzero"`
+	FramesSent     int             `json:"frames_sent,omitzero"`
+	HTTPAttempts   int             `json:"http_attempts,omitzero"`
 	Warnings       []string        `json:"warnings,omitempty"`
 	ErrorCode      string          `json:"error_code,omitempty"`
 	ErrorMessage   string          `json:"error_message,omitempty"`
-	ExitCode       int             `json:"exit_code,omitempty"`
-	HTTPStatus     int             `json:"http_status,omitempty"`
+	ExitCode       int             `json:"exit_code,omitzero"`
+	HTTPStatus     int             `json:"http_status,omitzero"`
 	StderrTail     string          `json:"stderr_tail,omitempty"`
 	AbortReason    string          `json:"abort_reason,omitempty"`
 	Model          string          `json:"model,omitempty"`

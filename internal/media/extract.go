@@ -122,7 +122,7 @@ func (e *Extractor) Extract(ctx context.Context, job domain.VideoJob, meta domai
 	if n > 0 {
 		seg = plan.WindowLen / time.Duration(n)
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if ctx.Err() != nil {
 			set.Warn = append(set.Warn, fmt.Sprintf("抽帧预算耗尽,剩余 %d 个采样点未尝试", n-i))
 			break

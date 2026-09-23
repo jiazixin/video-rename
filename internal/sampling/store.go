@@ -3,7 +3,7 @@ package sampling
 
 import (
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"video-rename/internal/config"
 	"video-rename/internal/storage"

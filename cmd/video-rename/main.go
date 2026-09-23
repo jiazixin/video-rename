@@ -79,8 +79,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 			o.Version = true
 			name = "version"
 		case name == "--config" || name == "-f" || strings.HasPrefix(name, "-f"):
-			if strings.HasPrefix(name, "-f") && name != "-f" {
-				value = strings.TrimPrefix(name, "-f")
+			if rest, ok := strings.CutPrefix(name, "-f"); ok && rest != "" {
+				value = rest
 				has = true
 			}
 			if !has {

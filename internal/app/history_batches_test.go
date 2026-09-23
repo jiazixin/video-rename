@@ -1,7 +1,7 @@
 package app
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/http/httptest"
 	"strconv"
@@ -16,7 +16,7 @@ func TestHistoryBatchFiltering(t *testing.T) {
 	}
 	defer a.Close()
 	for _, category := range []string{"success", "failure"} {
-		for i := 0; i < 105; i++ {
+		for range 105 {
 			if _, err := a.DB.Exec("INSERT INTO events(category,action,run,old_path,message,created) VALUES(?,'automatic',7,'clip.mp4','test','2026-09-21')", category); err != nil {
 				t.Fatal(err)
 			}
@@ -40,9 +40,9 @@ func TestHistoryBatchFiltering(t *testing.T) {
 			w := httptest.NewRecorder()
 			a.logs(w, httptest.NewRequest("GET", fmt.Sprintf("/api/logs?category=%s&run=7&limit=%d&paged=1", category, limit), nil))
 			var page struct {
-				Items []map[string]any
-				Total int
-				Next  int64
+				Items []map[string]any `json:"items"`
+				Total int              `json:"total"`
+				Next  int64            `json:"next"`
 			}
 			if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
 				t.Fatal(err)
@@ -76,13 +76,13 @@ func TestHistoryBatchFiltering(t *testing.T) {
 		}
 		w = httptest.NewRecorder()
 		a.logs(w, httptest.NewRequest("GET", "/api/logs?category="+category+"&run=8&q=clip", nil))
-		if w.Body.String() != "[]\n" {
+		if w.Body.String() != "[]" {
 			t.Fatalf("combined filter: %s", w.Body.String())
 		}
 	}
 	w := httptest.NewRecorder()
 	a.logBatches(w, httptest.NewRequest("GET", "/api/logs/batches", nil))
-	if w.Body.String() != "[8,7]\n" {
+	if w.Body.String() != "[8,7]" {
 		t.Fatalf("batch options: %s", w.Body.String())
 	}
 	for _, run := range []string{"0", "-1", "bad"} {

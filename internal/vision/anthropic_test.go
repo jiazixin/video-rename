@@ -1,8 +1,7 @@
 package vision
 
 import (
-	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,7 +23,7 @@ func TestAnthropicMultiImageSystemAndParameters(t *testing.T) {
 			Temperature float64 `json:"temperature"`
 			MaxTokens   int     `json:"max_tokens"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := json.UnmarshalRead(r.Body, &body); err != nil {
 			t.Error(err)
 		}
 		if !strings.Contains(body.System, "标题要求") || !strings.Contains(body.System, protocolNote) || len(body.Messages) != 1 || body.Messages[0].Role != "user" || len(body.Messages[0].Content) != 21 || body.Temperature != 0.8 || body.MaxTokens != 1024 {
@@ -45,7 +44,7 @@ func TestAnthropicMultiImageSystemAndParameters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, jobErr := New(&cfg).Title(context.Background(), cfg.Prompt, frameSet(10))
+	result, jobErr := New(&cfg).Title(t.Context(), cfg.Prompt, frameSet(10))
 	if jobErr != nil || result.Title != "山间晨雾" {
 		t.Fatal(result, jobErr)
 	}

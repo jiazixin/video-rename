@@ -21,8 +21,8 @@ import (
 func makeJPEG(t *testing.T, path string, w, h int, quality int) {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			img.Set(x, y, color.RGBA{uint8(x % 256), uint8(y % 256), 128, 255})
 		}
 	}
@@ -81,7 +81,7 @@ func testPlan(n int) domain.FramePlan {
 		WindowLen:   6 * time.Second,
 		Times:       make([]time.Duration, n),
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		plan.Times[i] = plan.WindowStart + time.Duration((float64(i)+0.5)*float64(plan.WindowLen)/float64(n))
 	}
 	return plan
@@ -128,7 +128,7 @@ func TestExtractHappyPath(t *testing.T) {
 	job, _ := fakeJob(t, 100)
 	meta := domain.VideoMeta{StreamIndex: 0, DisplayWidth: 3840, DisplayHeight: 2160}
 	ex := testExtractor(ff, 768, 4)
-	set, jerr := ex.Extract(context.Background(), job, meta, testPlan(3))
+	set, jerr := ex.Extract(t.Context(), job, meta, testPlan(3))
 	if jerr != nil {
 		t.Fatal(jerr)
 	}
@@ -171,7 +171,7 @@ func TestExtractRetriesAtOneThird(t *testing.T) {
 	job, _ := fakeJob(t, 100)
 	meta := domain.VideoMeta{StreamIndex: 0, DisplayWidth: 320, DisplayHeight: 180}
 	ex := testExtractor(ff, 768, 4)
-	set, jerr := ex.Extract(context.Background(), job, meta, plan)
+	set, jerr := ex.Extract(t.Context(), job, meta, plan)
 	if jerr != nil {
 		t.Fatal(jerr)
 	}
@@ -209,7 +209,7 @@ func TestExtractOversizeRecompress(t *testing.T) {
 	if ex.ImageLimit <= si.Size() {
 		t.Fatalf("夹具尺寸不满足测试假设: big=%d small=%d", fi.Size(), si.Size())
 	}
-	set, jerr := ex.Extract(context.Background(), job, meta, testPlan(1))
+	set, jerr := ex.Extract(t.Context(), job, meta, testPlan(1))
 	if jerr != nil {
 		t.Fatal(jerr)
 	}
@@ -236,7 +236,7 @@ func TestExtractImageTooLargeFailsVideo(t *testing.T) {
 	meta := domain.VideoMeta{StreamIndex: 0, DisplayWidth: 320, DisplayHeight: 180}
 	ex := testExtractor(ff, 768, 4)
 	ex.ImageLimit = 10 // 一切图片都超限
-	set, jerr := ex.Extract(context.Background(), job, meta, testPlan(1))
+	set, jerr := ex.Extract(t.Context(), job, meta, testPlan(1))
 	if jerr == nil || jerr.Code != domain.CodeExtractInsufficientFrames {
 		t.Fatalf("应报 EXTRACT_INSUFFICIENT_FRAMES, got %+v", jerr)
 	}
@@ -261,7 +261,7 @@ func TestExtractBudgetTimeout(t *testing.T) {
 	meta := domain.VideoMeta{StreamIndex: 0, DisplayWidth: 320, DisplayHeight: 180}
 	ex := testExtractor(p, 768, 4)
 	ex.Budget = 150 * time.Millisecond
-	set, jerr := ex.Extract(context.Background(), job, meta, testPlan(1))
+	set, jerr := ex.Extract(t.Context(), job, meta, testPlan(1))
 	if jerr == nil || jerr.Code != domain.CodeExtractTimeout {
 		t.Fatalf("应报 EXTRACT_TIMEOUT, got %+v", jerr)
 	}
@@ -283,7 +283,7 @@ func TestExtractPartialFailureStillSucceeds(t *testing.T) {
 	job, _ := fakeJob(t, 100)
 	meta := domain.VideoMeta{StreamIndex: 0, DisplayWidth: 320, DisplayHeight: 180}
 	ex := testExtractor(p, 768, 4)
-	set, jerr := ex.Extract(context.Background(), job, meta, plan)
+	set, jerr := ex.Extract(t.Context(), job, meta, plan)
 	if jerr == nil || jerr.Code != domain.CodeExtractInsufficientFrames {
 		t.Fatalf("零帧应失败, got %+v", jerr)
 	}
@@ -305,7 +305,7 @@ func TestExtractArgumentsIncludeSeekAndMap(t *testing.T) {
 	job, path := fakeJob(t, 100)
 	meta := domain.VideoMeta{StreamIndex: 3, DisplayWidth: 320, DisplayHeight: 180}
 	ex := testExtractor(p, 768, 7)
-	set, jerr := ex.Extract(context.Background(), job, meta, testPlan(1))
+	set, jerr := ex.Extract(t.Context(), job, meta, testPlan(1))
 	if jerr != nil {
 		t.Fatal(jerr)
 	}
@@ -328,7 +328,7 @@ func TestExtractArgumentsIncludeSeekAndMap(t *testing.T) {
 func TestExtractEmptyPlan(t *testing.T) {
 	job, _ := fakeJob(t, 100)
 	ex := testExtractor("ffmpeg", 768, 4)
-	set, jerr := ex.Extract(context.Background(), job, domain.VideoMeta{DisplayWidth: 320, DisplayHeight: 180}, domain.FramePlan{})
+	set, jerr := ex.Extract(t.Context(), job, domain.VideoMeta{DisplayWidth: 320, DisplayHeight: 180}, domain.FramePlan{})
 	if jerr == nil || jerr.Code != domain.CodeExtractInsufficientFrames {
 		t.Fatalf("空计划应失败, got %+v", jerr)
 	}
@@ -340,7 +340,7 @@ func TestExtractCancelledContext(t *testing.T) {
 	fixture := filepath.Join(dir, "f.jpg")
 	makeJPEG(t, fixture, 320, 180, 90)
 	ff := fakeFFmpeg(t, "ffmpeg-cancel", fixture, "")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	job, _ := fakeJob(t, 100)
 	meta := domain.VideoMeta{DisplayWidth: 320, DisplayHeight: 180}
@@ -370,7 +370,7 @@ func TestExtractKeepsBothAttemptDiagnostics(t *testing.T) {
 	}
 	job, _ := fakeJob(t, 100)
 	ex := testExtractor(ff, 768, 4)
-	_, err := ex.Extract(context.Background(), job, domain.VideoMeta{StreamIndex: 0, DisplayWidth: 320, DisplayHeight: 180}, testPlan(2))
+	_, err := ex.Extract(t.Context(), job, domain.VideoMeta{StreamIndex: 0, DisplayWidth: 320, DisplayHeight: 180}, testPlan(2))
 	if err == nil {
 		t.Fatal("expected extraction failure")
 	}

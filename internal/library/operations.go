@@ -169,7 +169,7 @@ func (l *Library) AutoCommit(id int64, snap domain.Snapshot, title, key string, 
 		return Operation{}, je
 	}
 	alloc := naming.NewAllocator()
-	for i := 0; i < 9999; i++ {
+	for i := range 9999 {
 		res, je := alloc.Allocate(filepath.Dir(p), clean, filepath.Ext(e.Name), domain.VideoJob{Path: p, Snapshot: snap})
 		if je != nil {
 			return Operation{}, je

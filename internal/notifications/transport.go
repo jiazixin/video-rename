@@ -5,7 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,9 +40,8 @@ func request(c Credentials, kind, title, body string) (string, any) {
 		// Use the JSON API rather than the legacy /key[/title/body] route.
 		u, _ := url.Parse(endpoint)
 		path := strings.TrimRight(u.Path, "/")
-		split := strings.LastIndex(path, "/")
-		deviceKey := path[split+1:]
-		u.Path = path[:split+1] + "push"
+		prefix, deviceKey, _ := strings.CutLast(path, "/")
+		u.Path = prefix + "/push"
 		u.RawPath = ""
 		q := u.Query()
 		q.Del("title")

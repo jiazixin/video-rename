@@ -255,7 +255,7 @@ func (l *Library) Refresh(ctx context.Context, id int64) error {
 		if err = tx.Commit(); err != nil {
 			return fail(err)
 		}
-		if re == io.EOF {
+		if errors.Is(re, io.EOF) {
 			break
 		}
 		if re != nil {

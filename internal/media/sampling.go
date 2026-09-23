@@ -60,7 +60,7 @@ func (s *Sampler) Plan(duration time.Duration, sizeBytes int64) (plan domain.Fra
 	plan.WindowStart = time.Duration(a * float64(time.Second))
 	plan.WindowLen = time.Duration(l * float64(time.Second))
 	plan.Times = make([]time.Duration, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		t := a + (float64(i)+0.5)*l/float64(n)
 		if !isFinite(t) {
 			return plan, fmt.Errorf("无法生成有效时间点 %d", i)

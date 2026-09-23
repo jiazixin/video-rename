@@ -1,9 +1,11 @@
 package tokenusage
 
 import (
+	"cmp"
 	"database/sql"
-	"encoding/json"
-	"sort"
+	"encoding/json/v2"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -367,11 +369,7 @@ func lifetimeUsage(tx *sql.Tx, ids map[int64]bool) (map[int64][2]int64, error) {
 	if len(ids) == 0 {
 		return out, nil
 	}
-	keys := make([]int64, 0, len(ids))
-	for id := range ids {
-		keys = append(keys, id)
-	}
-	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	keys := slices.Sorted(maps.Keys(ids))
 	placeholders := strings.TrimRight(strings.Repeat("?,", len(keys)), ",")
 	args := make([]any, len(keys))
 	for i, id := range keys {
@@ -423,16 +421,16 @@ func reportOptions(tx *sql.Tx) (ReportOptions, error) {
 	for _, model := range models {
 		out.Models = append(out.Models, model)
 	}
-	sort.Slice(out.Models, func(i, j int) bool {
-		if out.Models[i].Model != out.Models[j].Model {
-			return out.Models[i].Model < out.Models[j].Model
+	slices.SortFunc(out.Models, func(a, b OptionModel) int {
+		if c := cmp.Compare(a.Model, b.Model); c != 0 {
+			return c
 		}
-		return out.Models[i].Key < out.Models[j].Key
+		return cmp.Compare(a.Key, b.Key)
 	})
 	for id, title := range profiles {
 		out.Profiles = append(out.Profiles, OptionProfile{ID: id, Title: title})
 	}
-	sort.Slice(out.Profiles, func(i, j int) bool { return out.Profiles[i].ID < out.Profiles[j].ID })
+	slices.SortFunc(out.Profiles, func(a, b OptionProfile) int { return cmp.Compare(a.ID, b.ID) })
 	return out, nil
 }
 
@@ -441,11 +439,11 @@ func sortedModels(models map[string]*ModelGroup) []ModelGroup {
 	for _, model := range models {
 		out = append(out, *model)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Tokens != out[j].Tokens {
-			return out[i].Tokens > out[j].Tokens
+	slices.SortFunc(out, func(a, b ModelGroup) int {
+		if c := cmp.Compare(b.Tokens, a.Tokens); c != 0 {
+			return c
 		}
-		return out[i].Key < out[j].Key
+		return cmp.Compare(a.Key, b.Key)
 	})
 	return out
 }
@@ -455,11 +453,11 @@ func sortedProfiles(profiles map[int64]*ProfileGroup) []ProfileGroup {
 	for _, profile := range profiles {
 		out = append(out, *profile)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Tokens != out[j].Tokens {
-			return out[i].Tokens > out[j].Tokens
+	slices.SortFunc(out, func(a, b ProfileGroup) int {
+		if c := cmp.Compare(b.Tokens, a.Tokens); c != 0 {
+			return c
 		}
-		return out[i].ID < out[j].ID
+		return cmp.Compare(a.ID, b.ID)
 	})
 	return out
 }
@@ -469,11 +467,11 @@ func sortedSources(sources map[string]*SourceGroup) []SourceGroup {
 	for _, source := range sources {
 		out = append(out, *source)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Tokens != out[j].Tokens {
-			return out[i].Tokens > out[j].Tokens
+	slices.SortFunc(out, func(a, b SourceGroup) int {
+		if c := cmp.Compare(b.Tokens, a.Tokens); c != 0 {
+			return c
 		}
-		return out[i].Key < out[j].Key
+		return cmp.Compare(a.Key, b.Key)
 	})
 	return out
 }
@@ -483,17 +481,17 @@ func sortedBatches(batches map[int64]*batchAcc, sortKey string) []*batchAcc {
 	for _, batch := range batches {
 		out = append(out, batch)
 	}
-	sort.Slice(out, func(i, j int) bool {
+	slices.SortFunc(out, func(a, b *batchAcc) int {
 		if sortKey == "recent" {
-			if out[i].last != out[j].last {
-				return out[i].last > out[j].last
+			if c := cmp.Compare(b.last, a.last); c != 0 {
+				return c
 			}
-			return out[i].id > out[j].id
+			return cmp.Compare(b.id, a.id)
 		}
-		if out[i].tokens != out[j].tokens {
-			return out[i].tokens > out[j].tokens
+		if c := cmp.Compare(b.tokens, a.tokens); c != 0 {
+			return c
 		}
-		return out[i].id > out[j].id
+		return cmp.Compare(b.id, a.id)
 	})
 	return out
 }

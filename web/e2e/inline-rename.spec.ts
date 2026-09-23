@@ -36,4 +36,11 @@ test('文件名双击进入行内编辑，保存与取消保留扩展名',async(
  await expect(page.locator('.inline-rename small[role="alert"]')).toBeVisible()
  await again.press('Escape')
  await expect(renamed).toBeVisible()
+
+ // 用还原功能恢复共享夹具文件名:再改名一次会留下新的改名历史,
+ // 还原则回到原始状态,不污染后续用例对 VID_20260920_001.mp4 的断言。
+ await page.getByRole('button',{name:'还原 快速重命名测试.mp4',exact:true}).click()
+ await expect(page.getByRole('dialog')).toContainText('VID_20260920_001.mp4')
+ await page.getByRole('button',{name:'确认还原',exact:true}).click()
+ await expect(filename).toBeVisible()
 })

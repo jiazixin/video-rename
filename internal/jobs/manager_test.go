@@ -76,7 +76,7 @@ func TestAutomaticRenameSkipRestoreAndOverlap(t *testing.T) {
 	if err != nil || same != id {
 		t.Fatal("request not idempotent")
 	}
-	m.Execute(context.Background(), id)
+	m.Execute(t.Context(), id)
 	r, _ := m.Get(id)
 	if r.Done != 1 || r.Discovered != 1 || calls.Load() != 1 {
 		t.Fatalf("bad first run %+v calls=%d", r, calls.Load())
@@ -88,7 +88,7 @@ func TestAutomaticRenameSkipRestoreAndOverlap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.Execute(context.Background(), id)
+	m.Execute(t.Context(), id)
 	r, _ = m.Get(id)
 	if r.Skipped != 1 || calls.Load() != 1 {
 		t.Fatalf("duplicate %+v calls=%d", r, calls.Load())
@@ -104,7 +104,7 @@ func TestAutomaticRenameSkipRestoreAndOverlap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.Execute(context.Background(), id)
+	m.Execute(t.Context(), id)
 	r, _ = m.Get(id)
 	if r.Done != 1 || r.Skipped != 0 || calls.Load() != 2 {
 		t.Fatalf("restored file was not reprocessed %+v", r)
@@ -129,7 +129,7 @@ func TestRunTokenCountAccumulatesAndSurvivesHistoryDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.Execute(context.Background(), id)
+	m.Execute(t.Context(), id)
 	run, err := m.Get(id)
 	if err != nil || run.TokenCount != 195 || run.TokenRecords != 2 || run.TokenEstimated != 1 {
 		t.Fatalf("run token totals: %+v, %v", run, err)
@@ -147,7 +147,7 @@ func TestManualProtectsFileAndCancel(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Library.Refresh(context.Background(), 1); err != nil {
+	if err := m.Library.Refresh(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
 	var eid int64
@@ -164,7 +164,7 @@ func TestManualProtectsFileAndCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.Execute(context.Background(), id)
+	m.Execute(t.Context(), id)
 	r, _ := m.Get(id)
 	if r.Skipped != 1 {
 		t.Fatalf("%+v", r)
@@ -176,7 +176,7 @@ func TestManualProtectsFileAndCancel(t *testing.T) {
 	if err = m.Cancel(id); err != nil {
 		t.Fatal(err)
 	}
-	m.Execute(context.Background(), id)
+	m.Execute(t.Context(), id)
 	r, _ = m.Get(id)
 	if r.Status != "cancelled" {
 		t.Fatal(r.Status)
@@ -193,7 +193,7 @@ func TestChangedDuringAnalysisDoesNotRename(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.Execute(context.Background(), id)
+	m.Execute(t.Context(), id)
 	r, _ := m.Get(id)
 	if r.Failed != 1 {
 		t.Fatalf("%+v", r)
@@ -216,7 +216,7 @@ func TestCancelInFlight(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan struct{})
-	go func() { m.Execute(context.Background(), id); close(done) }()
+	go func() { m.Execute(t.Context(), id); close(done) }()
 	select {
 	case <-started:
 	case <-time.After(5 * time.Second):
@@ -291,7 +291,7 @@ func TestPromptSnapshotAndIsolation(t *testing.T) {
 		}
 		return "新标题" + filepath.Base(j.Path), nil
 	}
-	m.Execute(context.Background(), id)
+	m.Execute(t.Context(), id)
 	r, err := m.Get(id)
 	if err != nil || r.Done != 2 || calls.Load() != 2 || r.PromptBody != "批次创建时的要求" || r.ModelConfigTitle != "独立提示词" {
 		t.Fatal(r, err, calls.Load())
@@ -340,7 +340,7 @@ func TestManuallyMarkedFilesSkipAndCanBeReenabled(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	result := m.Library.SetProcessed(context.Background(), []int64{1}, true)
+	result := m.Library.SetProcessed(t.Context(), []int64{1}, true)
 	if result.Changed != 1 || result.Failed != 0 {
 		t.Fatalf("%+v", result)
 	}
@@ -351,13 +351,13 @@ func TestManuallyMarkedFilesSkipAndCanBeReenabled(t *testing.T) {
 	}
 	for i, key := range []string{"marked-run-1", "marked-run-2"} {
 		if i == 1 {
-			m.Library.SetProcessed(context.Background(), []int64{1}, false)
+			m.Library.SetProcessed(t.Context(), []int64{1}, false)
 		}
 		id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: key}, "manual", 0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		m.Execute(context.Background(), id)
+		m.Execute(t.Context(), id)
 		r, _ := m.Get(id)
 		if i == 0 && (r.Skipped != 1 || calls != 0) {
 			t.Fatalf("marked file processed %+v", r)
@@ -380,7 +380,7 @@ func TestNamingFailureKeepsFileAndRecordsFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.Execute(context.Background(), id)
+	m.Execute(t.Context(), id)
 	r, _ := m.Get(id)
 	if r.Failed != 1 || r.Done != 0 || r.Status != "partial_failure" {
 		t.Fatalf("%+v", r)

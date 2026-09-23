@@ -5,20 +5,22 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	jsonv1 "encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
-	"golang.org/x/sys/unix"
 	"video-rename/internal/config"
 	"video-rename/internal/domain"
+
+	"golang.org/x/sys/unix"
 )
 
 const Retention = 72 * time.Hour
@@ -55,13 +57,19 @@ type Stats struct {
 	Entries  int    `json:"entries"`
 }
 
+// durationOptions 让 json/v2 按 v1 的纳秒数字语义往返 time.Duration;
+// manifest 中的 FrameSet 含多个 Duration 字段,v2 默认不序列化该类型。
+var durationOptions = []json.Options{
+	jsonv1.FormatDurationAsNano(true),
+}
+
 func Key(job domain.VideoJob, cfg *config.Config) string {
 	raw, _ := json.Marshal(struct {
 		Version  int
 		Snapshot domain.Snapshot
 		Sampling config.SamplingConfig
 		Images   config.ImagesConfig
-	}{1, job.Snapshot, cfg.Sampling, cfg.Images})
+	}{1, job.Snapshot, cfg.Sampling, cfg.Images}, durationOptions...)
 	h := sha256.Sum256(raw)
 	return hex.EncodeToString(h[:])
 }
@@ -113,7 +121,7 @@ func New(base string, limit int64) (*Cache, error) {
 		var r record
 		raw, e := os.ReadFile(filepath.Join(root, d.Name(), "manifest.json"))
 		if e == nil {
-			e = json.Unmarshal(raw, &r)
+			e = json.Unmarshal(raw, &r, durationOptions...)
 		}
 		if e == nil && r.Key == d.Name() {
 			e = c.validate(&r)
@@ -194,7 +202,7 @@ func (c *Cache) pruneLocked(now time.Time, need int64) error {
 			all = append(all, r)
 		}
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].LastUsed.Before(all[j].LastUsed) })
+	slices.SortFunc(all, func(a, b *record) int { return a.LastUsed.Compare(b.LastUsed) })
 	for _, r := range all {
 		if now.Sub(r.LastUsed) >= Retention || c.used()+c.reserved+need > c.limit {
 			if err := c.remove(r); err != nil {
@@ -206,7 +214,7 @@ func (c *Cache) pruneLocked(now time.Time, need int64) error {
 }
 func (c *Cache) persist(r *record) error {
 	dir := filepath.Join(c.root, r.Key)
-	raw, err := json.Marshal(r)
+	raw, err := json.Marshal(r, durationOptions...)
 	if err != nil {
 		return err
 	}
@@ -268,7 +276,7 @@ func (c *Cache) validate(r *record) error {
 func (c *Cache) lease(r *record) *Lease {
 	r.pins++
 	set := r.Set
-	set.Frames = append([]domain.Frame(nil), r.Set.Frames...)
+	set.Frames = slices.Clone(r.Set.Frames)
 	set.TempDir = filepath.Join(c.root, r.Key)
 	for i := range set.Frames {
 		set.Frames[i].Path = filepath.Join(set.TempDir, set.Frames[i].Path)

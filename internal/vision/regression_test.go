@@ -2,7 +2,7 @@ package vision
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,12 +22,12 @@ func TestErrorRedaction(t *testing.T) {
 			t.Run(fmt.Sprintf("%d/%d", status, len(message)), func(t *testing.T) {
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.WriteHeader(status)
-					_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"message": message}})
+					_ = json.MarshalWrite(w, map[string]any{"error": map[string]string{"message": message}})
 				}))
 				defer srv.Close()
 				cfg := testConfig(t, srv.URL)
 				cfg.Server.APIKey = secret
-				_, err := newTestClient(cfg).Title(context.Background(), prompt, frameSet(1))
+				_, err := newTestClient(cfg).Title(t.Context(), prompt, frameSet(1))
 				if err == nil {
 					t.Fatal("应返回错误")
 				}
@@ -52,7 +52,7 @@ func TestErrorJSONEscapedSecret(t *testing.T) {
 	defer srv.Close()
 	cfg := testConfig(t, srv.URL)
 	cfg.Server.APIKey = "secret-value"
-	_, err := newTestClient(cfg).Title(context.Background(), "p", frameSet(1))
+	_, err := newTestClient(cfg).Title(t.Context(), "p", frameSet(1))
 	if err == nil || strings.Contains(err.Error(), "secret-value") || strings.Contains(err.Error(), "must-not-log") {
 		t.Fatalf("未过滤 JSON 转义或额外字段: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestResponseBodyTimeoutRetries(t *testing.T) {
 	defer srv.Close()
 	cfg := testConfig(t, srv.URL)
 	cfg.TimeoutDuration = 60 * time.Millisecond
-	res, err := newTestClient(cfg).Title(context.Background(), "prompt", frameSet(1))
+	res, err := newTestClient(cfg).Title(t.Context(), "prompt", frameSet(1))
 	if calls.Load() != 3 || res.Attempts != 3 || err == nil || err.Code != domain.CodeAPITimeout {
 		t.Fatalf("响应头之后超时应按超时重试，实际 calls=%d attempts=%d error=%v", calls.Load(), res.Attempts, err)
 	}
@@ -86,14 +86,14 @@ func TestResponseBodyDisconnectRetries(t *testing.T) {
 		fmt.Fprint(w, okResponse("最终标题"))
 	}))
 	defer srv.Close()
-	res, err := newTestClient(testConfig(t, srv.URL)).Title(context.Background(), "p", frameSet(1))
+	res, err := newTestClient(testConfig(t, srv.URL)).Title(t.Context(), "p", frameSet(1))
 	if err != nil || res.Attempts != 3 || res.Title != "最终标题" {
 		t.Fatalf("重连失败: %+v %v", res, err)
 	}
 }
 
 func TestResponseBodyCancellationDoesNotRetry(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +121,7 @@ func TestResponseBodyDisconnectKeepsAuthFailure(t *testing.T) {
 				fmt.Fprint(w, "{")
 			}))
 			defer srv.Close()
-			res, err := newTestClient(testConfig(t, srv.URL)).Title(context.Background(), "p", frameSet(1))
+			res, err := newTestClient(testConfig(t, srv.URL)).Title(t.Context(), "p", frameSet(1))
 			if err == nil || err.HTTPStatus != status || calls.Load() != 1 || res.Attempts != 1 {
 				t.Fatalf("状态策略丢失: %+v %v", res, err)
 			}

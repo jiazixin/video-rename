@@ -4,13 +4,14 @@ package jobs
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 
@@ -28,28 +29,28 @@ import (
 )
 
 type Run struct {
-	TargetNames      []string        `json:"target_names,omitempty"`
-	RequestConfig    json.RawMessage `json:"request_config,omitempty"`
-	ModelConfigID    int64           `json:"model_config_id"`
-	ModelConfigTitle string          `json:"model_config_title"`
-	PromptBody       string          `json:"prompt_body"`
-	ID               int64           `json:"id"`
-	Source           string          `json:"source"`
-	Targets          []int64         `json:"targets"`
-	Recursive        bool            `json:"recursive"`
-	Status           string          `json:"status"`
-	Created          string          `json:"created"`
-	Started          string          `json:"started"`
-	Finished         string          `json:"finished"`
-	Discovered       int             `json:"discovered"`
-	Done             int             `json:"done"`
-	Skipped          int             `json:"skipped"`
-	Failed           int             `json:"failed"`
-	TokenCount       int64           `json:"token_count"`
-	TokenRecords     int             `json:"token_records"`
-	TokenEstimated   int             `json:"token_estimated_records"`
-	Error            string          `json:"error"`
-	Plan             int64           `json:"plan"`
+	TargetNames      []string       `json:"target_names,omitempty"`
+	RequestConfig    jsontext.Value `json:"request_config,omitempty"`
+	ModelConfigID    int64          `json:"model_config_id"`
+	ModelConfigTitle string         `json:"model_config_title"`
+	PromptBody       string         `json:"prompt_body"`
+	ID               int64          `json:"id"`
+	Source           string         `json:"source"`
+	Targets          []int64        `json:"targets"`
+	Recursive        bool           `json:"recursive"`
+	Status           string         `json:"status"`
+	Created          string         `json:"created"`
+	Started          string         `json:"started"`
+	Finished         string         `json:"finished"`
+	Discovered       int            `json:"discovered"`
+	Done             int            `json:"done"`
+	Skipped          int            `json:"skipped"`
+	Failed           int            `json:"failed"`
+	TokenCount       int64          `json:"token_count"`
+	TokenRecords     int            `json:"token_records"`
+	TokenEstimated   int            `json:"token_estimated_records"`
+	Error            string         `json:"error"`
+	Plan             int64          `json:"plan"`
 }
 type Request struct {
 	ModelConfigID int64   `json:"model_config_id"`
@@ -137,7 +138,7 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 		return 0, fmt.Errorf("请选择 1–100 个目录或文件，并提供请求键")
 	}
 	// Normalize scopes without scanning them. Overlapping recursive targets are redundant.
-	sort.Slice(r.Targets, func(i, j int) bool { return r.Targets[i] < r.Targets[j] })
+	slices.Sort(r.Targets)
 	normalized := make([]int64, 0, len(r.Targets))
 	for _, id := range r.Targets {
 		covered := false
@@ -255,8 +256,8 @@ func scanRun(row interface{ Scan(...any) error }) (r Run, err error) {
 	err = row.Scan(&r.ID, &r.Source, &raw, &r.Recursive, &r.Status, &r.Created, &r.Finished, &r.Discovered, &r.Done, &r.Skipped, &r.Failed, &r.Error, &r.Plan, &r.ModelConfigID, &r.ModelConfigTitle, &r.PromptBody, &summary, &r.Started, &r.TokenCount, &r.TokenRecords, &r.TokenEstimated)
 	if err == nil {
 		err = json.Unmarshal([]byte(raw), &r.Targets)
-		if json.Valid([]byte(summary)) {
-			r.RequestConfig = json.RawMessage(summary)
+		if jsontext.Value(summary).IsValid() {
+			r.RequestConfig = jsontext.Value(summary)
 		}
 	}
 	return
@@ -303,8 +304,7 @@ func (m *Manager) Loop(ctx context.Context) {
 	defer ticker.Stop()
 	var wg sync.WaitGroup
 	defer wg.Wait()
-	wg.Add(1)
-	go func() { defer wg.Done(); m.Cache.Loop(ctx) }()
+	wg.Go(func() { m.Cache.Loop(ctx) })
 	launched := map[int64]bool{}
 	finished := make(chan int64, 20)
 	for {
@@ -331,8 +331,7 @@ func (m *Manager) Loop(ctx context.Context) {
 					continue
 				}
 				launched[id] = true
-				wg.Add(1)
-				go func(id int64) { defer wg.Done(); m.Execute(ctx, id); finished <- id }(id)
+				wg.Go(func() { m.Execute(ctx, id); finished <- id })
 			}
 		}
 	}

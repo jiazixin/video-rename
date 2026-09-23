@@ -7,11 +7,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"math/rand"
 	"net"
 	"net/http"
@@ -143,7 +143,7 @@ func (c *Client) Title(ctx context.Context, prompt string, frames []domain.Frame
 		}
 		// 退避:基数 min(15s, 2s × 2^(k−1)) 加 0.5–1 倍 jitter;
 		// Retry-After 是最小等待要求,与本地退避取较大值。
-		base := time.Duration(math.Min(float64(15*time.Second), float64((1<<uint(attempt-1))*2*time.Second)))
+		base := min(15*time.Second, (1<<uint(attempt-1))*2*time.Second)
 		wait := time.Duration(float64(base) * (0.5 + 0.5*c.jitter()))
 		if rerr.RetryAfter > wait {
 			wait = rerr.RetryAfter
@@ -181,7 +181,7 @@ func (c *Client) buildBody(prompt string, frames []domain.Frame) ([]byte, int, *
 		}
 		body, err := json.Marshal(request)
 		if err == nil {
-			var fields map[string]json.RawMessage
+			var fields map[string]jsontext.Value
 			err = json.Unmarshal(body, &fields)
 			if err == nil {
 				if c.omitTemperature || c.settings.Thinking == "enabled" {
@@ -283,8 +283,11 @@ type imageURL struct {
 type chatResponse struct {
 	Choices []struct {
 		Message struct {
-			Content   string          `json:"content"`
-			ToolCalls json.RawMessage `json:"tool_calls"`
+			// ToolCalls 用类型化切片而非 jsontext.Value:网关常返回
+			// "tool_calls": null,RawMessage 会存下字面量 "null"(len=4),
+			// 导致误判为包含工具调用;切片对 null/[] 都解码为长度 0。
+			Content   string           `json:"content"`
+			ToolCalls []jsontext.Value `json:"tool_calls"`
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`

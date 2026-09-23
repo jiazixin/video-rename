@@ -44,7 +44,7 @@ func TestFrameSettingsFrozenForEachBatch(t *testing.T) {
 		}
 		return "renamed", nil
 	}
-	m.Execute(context.Background(), id)
+	m.Execute(t.Context(), id)
 	if err = os.WriteFile(filepath.Join(root, "b.mp4"), []byte("new video"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestFrameSettingsFrozenForEachBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.Execute(context.Background(), id)
+	m.Execute(t.Context(), id)
 	if calls != 2 {
 		t.Fatalf("analyze calls=%d", calls)
 	}

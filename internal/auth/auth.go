@@ -6,7 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -40,14 +40,14 @@ func New(db *storage.Store, cfg config.AuthConfig) *Auth {
 func write(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	_ = json.MarshalWrite(w, v)
 }
 func fail(w http.ResponseWriter, status int, msg string) {
 	write(w, status, map[string]string{"message": msg})
 }
-func (a *Auth) limited(ip string) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+
+// pruneLocked drops failure records older than one minute; caller holds mu.
+func (a *Auth) pruneLocked() {
 	now := time.Now()
 	for k, list := range a.attempts {
 		fresh := list[:0]
@@ -62,12 +62,24 @@ func (a *Auth) limited(ip string) bool {
 			a.attempts[k] = fresh
 		}
 	}
-	if len(a.attempts[ip]) >= 10 || len(a.attempts["*"]) >= 100 {
-		return true
-	}
-	a.attempts[ip] = append(a.attempts[ip], now)
-	a.attempts["*"] = append(a.attempts["*"], now)
-	return false
+}
+
+// limited reports whether ip has too many recent failed logins.
+// Only failures count: successful sign-ins must not lock a legitimate
+// user out of repeated logins.
+func (a *Auth) limited(ip string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.pruneLocked()
+	return len(a.attempts[ip]) >= 10 || len(a.attempts["*"]) >= 100
+}
+
+// failed records one failed login attempt for rate limiting.
+func (a *Auth) failed(ip string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.attempts[ip] = append(a.attempts[ip], time.Now())
+	a.attempts["*"] = append(a.attempts["*"], time.Now())
 }
 func sameOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
@@ -138,13 +150,14 @@ func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	if err := json.UnmarshalRead(r.Body, &input); err != nil {
 		fail(w, 400, "登录格式无效")
 		return
 	}
 	user, pass := hash(input.Username), hash(input.Password)
 	wantUser, wantPass := hash(a.Config.Username), hash(a.Config.Password)
 	if subtle.ConstantTimeCompare([]byte(user), []byte(wantUser))&subtle.ConstantTimeCompare([]byte(pass), []byte(wantPass)) != 1 {
+		a.failed(ip)
 		fail(w, 401, "账号或密码错误")
 		return
 	}

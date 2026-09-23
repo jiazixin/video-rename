@@ -394,7 +394,7 @@ func (c *Config) PromptHash() string {
 
 func shortHash(s string) string {
 	var h uint64 = 14695981039346656037
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		h ^= uint64(s[i])
 		h *= 1099511628211
 	}

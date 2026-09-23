@@ -2,7 +2,7 @@ package app
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -26,8 +26,8 @@ func TestRetryHistoryRejectsUnsupportedAndKeepsFailures(t *testing.T) {
 	w := httptest.NewRecorder()
 	a.retryHistory(w, httptest.NewRequest("POST", "/api/logs/retry", strings.NewReader(`{"ids":[1,2,999],"key":"retry-test-request"}`)))
 	var result struct {
-		Accepted []int64
-		Errors   []string
+		Accepted []int64  `json:"accepted"`
+		Errors   []string `json:"errors"`
 	}
 	if err = json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ exit 0
 			t.Fatal(err)
 		}
 	}
-	if err = a.Library.Refresh(context.Background(), 1); err != nil {
+	if err = a.Library.Refresh(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = a.DB.Exec("INSERT INTO events(category,action,entry,created) SELECT 'failure','automatic',id,'now' FROM entries WHERE kind='file'"); err != nil {
@@ -89,9 +89,9 @@ exit 0
 	w := httptest.NewRecorder()
 	a.retryHistory(w, httptest.NewRequest("POST", "/api/logs/retry", strings.NewReader(`{"ids":[1,2,3],"key":"batch-retry-request"}`)))
 	var result struct {
-		Accepted []int64
-		Runs     []int64
-		Errors   []string
+		Accepted []int64  `json:"accepted"`
+		Runs     []int64  `json:"runs"`
+		Errors   []string `json:"errors"`
 	}
 	if err = json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
@@ -111,7 +111,7 @@ exit 0
 	a.Jobs.Analyze = func(context.Context, *config.Config, domain.VideoJob, string, string) (string, error) {
 		return "new-title", nil
 	}
-	a.Jobs.Execute(context.Background(), result.Runs[0])
+	a.Jobs.Execute(t.Context(), result.Runs[0])
 	if err = a.DB.QueryRow("SELECT count(*) FROM events WHERE category='failure'").Scan(&count); err != nil || count != 0 {
 		t.Fatal(count, err)
 	}

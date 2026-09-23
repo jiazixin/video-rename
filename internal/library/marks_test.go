@@ -1,7 +1,6 @@
 package library
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,7 +21,7 @@ func TestProcessedMarksRecursiveAndPersistent(t *testing.T) {
 	}
 	refresh(t, l, 1)
 	d := entry(t, l, 1, "dir")
-	r := l.SetProcessed(context.Background(), []int64{d.ID, d.ID}, true)
+	r := l.SetProcessed(t.Context(), []int64{d.ID, d.ID}, true)
 	if r.Changed != 2 || r.Failed != 0 {
 		t.Fatalf("%+v", r)
 	}
@@ -53,7 +52,7 @@ func TestProcessedMarksRecursiveAndPersistent(t *testing.T) {
 	if a.Processed != "marked" {
 		t.Fatal("mark lost on restart")
 	}
-	r = l.SetProcessed(context.Background(), []int64{d.ID}, false)
+	r = l.SetProcessed(t.Context(), []int64{d.ID}, false)
 	if r.Changed != 2 || r.Failed != 0 {
 		t.Fatalf("%+v", r)
 	}
@@ -68,11 +67,11 @@ func TestProcessedMarksPreserveHistoryAndValidateIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := l.SetProcessed(context.Background(), []int64{a.ID}, true)
+	r := l.SetProcessed(t.Context(), []int64{a.ID}, true)
 	if r.Changed != 0 {
 		t.Fatal("overwrote existing processed origin")
 	}
-	r = l.SetProcessed(context.Background(), []int64{a.ID}, false)
+	r = l.SetProcessed(t.Context(), []int64{a.ID}, false)
 	if r.Changed != 1 {
 		t.Fatalf("%+v", r)
 	}
@@ -84,14 +83,14 @@ func TestProcessedMarksPreserveHistoryAndValidateIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	l.Busy = func(int64) bool { return true }
-	if r = l.SetProcessed(context.Background(), []int64{a.ID}, true); r.Failed != 1 {
+	if r = l.SetProcessed(t.Context(), []int64{a.ID}, true); r.Failed != 1 {
 		t.Fatal("busy file accepted")
 	}
 	l.Busy = nil
 	if err = os.WriteFile(filepath.Join(root, "a.mp4"), []byte("different content"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if r = l.SetProcessed(context.Background(), []int64{a.ID}, true); r.Failed != 1 {
+	if r = l.SetProcessed(t.Context(), []int64{a.ID}, true); r.Failed != 1 {
 		t.Fatal("stale file accepted")
 	}
 }
@@ -101,7 +100,7 @@ func TestRenameKeepsDirectoryPageAvailable(t *testing.T) {
 	put(t, filepath.Join(root, "a.mp4"))
 	put(t, filepath.Join(root, "b.mp4"))
 	refresh(t, l, 1)
-	before, err := l.List(context.Background(), 1, 0, 100, 0, "", "", false)
+	before, err := l.List(t.Context(), 1, 0, 100, 0, "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +108,7 @@ func TestRenameKeepsDirectoryPageAvailable(t *testing.T) {
 	if _, err = l.Rename(e.ID, e.Version, "z.mp4", "keep-index"); err != nil {
 		t.Fatal(err)
 	}
-	after, err := l.List(context.Background(), 1, 0, 100, before.Generation, "", "", false)
+	after, err := l.List(t.Context(), 1, 0, 100, before.Generation, "", "", false)
 	if err != nil || len(after.Items) != 2 || after.Generation != before.Generation || after.Items[1].Name != "z.mp4" {
 		t.Fatalf("%+v %v", after, err)
 	}
@@ -124,7 +123,7 @@ func TestProcessedMarksHardLinksAndChangedContent(t *testing.T) {
 	refresh(t, l, 1)
 	a := entry(t, l, 1, "a.mp4")
 	alias := entry(t, l, 1, "alias.mp4")
-	r := l.SetProcessed(context.Background(), []int64{a.ID, alias.ID, a.ID}, true)
+	r := l.SetProcessed(t.Context(), []int64{a.ID, alias.ID, a.ID}, true)
 	if r.Changed != 1 || r.Unchanged != 1 || r.Failed != 0 {
 		t.Fatalf("%+v", r)
 	}

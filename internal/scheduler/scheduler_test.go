@@ -1,7 +1,6 @@
 package scheduler
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -119,7 +118,7 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 	if _, err = s.Save(p); err == nil {
 		t.Fatal("stale edit accepted")
 	}
-	if err = l.Refresh(context.Background(), 1); err != nil {
+	if err = l.Refresh(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
 }

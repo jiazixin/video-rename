@@ -1,7 +1,6 @@
 package models
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -30,7 +29,7 @@ func TestDiscoverProtocolsAndRedirectProtection(t *testing.T) {
 			}))
 			defer server.Close()
 			cfg := config.ServerConfig{Provider: "custom", Protocol: protocol, BaseURL: server.URL + "/v1", APIKey: "test-key"}
-			out, err := Discover(context.Background(), cfg, 5*time.Second)
+			out, err := Discover(t.Context(), cfg, 5*time.Second)
 			if err != nil || len(out.Models) != 2 || out.Models[0].ID != "a-model" {
 				t.Fatal(out, err)
 			}
@@ -41,7 +40,7 @@ func TestDiscoverProtocolsAndRedirectProtection(t *testing.T) {
 	defer target.Close()
 	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL, 302) }))
 	defer redirect.Close()
-	if _, err := Discover(context.Background(), config.ServerConfig{Provider: "custom", BaseURL: redirect.URL, APIKey: "secret"}, 5*time.Second); err == nil || hits != 0 {
+	if _, err := Discover(t.Context(), config.ServerConfig{Provider: "custom", BaseURL: redirect.URL, APIKey: "secret"}, 5*time.Second); err == nil || hits != 0 {
 		t.Fatal("followed redirect", err, hits)
 	}
 	failure := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +48,7 @@ func TestDiscoverProtocolsAndRedirectProtection(t *testing.T) {
 		w.Write([]byte("secret in upstream error"))
 	}))
 	defer failure.Close()
-	_, err := Discover(context.Background(), config.ServerConfig{Provider: "custom", BaseURL: failure.URL, APIKey: "secret"}, 5*time.Second)
+	_, err := Discover(t.Context(), config.ServerConfig{Provider: "custom", BaseURL: failure.URL, APIKey: "secret"}, 5*time.Second)
 	if err == nil || strings.Contains(err.Error(), "secret") {
 		t.Fatal("unsafe error", err)
 	}
@@ -68,7 +67,7 @@ func TestDiscoverTimeout(t *testing.T) {
 			}))
 			defer server.Close()
 			started := time.Now()
-			_, err := Discover(context.Background(), config.ServerConfig{Provider: "custom", BaseURL: server.URL}, 5*time.Second)
+			_, err := Discover(t.Context(), config.ServerConfig{Provider: "custom", BaseURL: server.URL}, 5*time.Second)
 			if err == nil || !strings.Contains(err.Error(), "模型列表检测超时（5s）") {
 				t.Fatalf("unexpected error: %v", err)
 			}

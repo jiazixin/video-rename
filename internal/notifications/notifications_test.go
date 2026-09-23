@@ -5,7 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -27,7 +27,7 @@ func TestProviderPayloadsAndBusinessErrors(t *testing.T) {
 			rejected := false
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var body map[string]any
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				if err := json.UnmarshalRead(r.Body, &body); err != nil {
 					t.Error(err)
 				}
 				if r.Method != "POST" || r.Header.Get("Content-Type") != "application/json" {
@@ -131,9 +131,9 @@ func TestQueueFilteringRetriesAndSecretPreservation(t *testing.T) {
 		}
 		return fmt.Errorf("mock offline")
 	}
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		s.DB.Exec("UPDATE notification_deliveries SET next_attempt='2000-01-01T00:00:00Z'")
-		if err = s.tick(context.Background()); err != nil {
+		if err = s.tick(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -150,7 +150,7 @@ func TestQueueFilteringRetriesAndSecretPreservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	addRun(t, s, "failed", 1)
-	s.tick(context.Background())
+	s.tick(t.Context())
 	if calls != 3 {
 		t.Fatal("disabled channel sent")
 	}
@@ -163,8 +163,8 @@ func TestQueueSuccessIsDeduplicated(t *testing.T) {
 	addRun(t, s, "completed", 0)
 	calls := 0
 	s.Send = func(Credentials, string, string, string) error { calls++; return nil }
-	for i := 0; i < 3; i++ {
-		if err := s.tick(context.Background()); err != nil {
+	for range 3 {
+		if err := s.tick(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -179,13 +179,13 @@ func TestNotificationRecoveryAttemptLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	addRun(t, s, "completed", 0)
-	if err := s.enqueue(context.Background()); err != nil {
+	if err := s.enqueue(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.DB.Exec("UPDATE notification_deliveries SET status='sending',attempts=3"); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	s.Loop(ctx)
 	history, err := s.History()
@@ -204,7 +204,7 @@ func TestBarkBatchBodyThroughJSONEndpoint(t *testing.T) {
 			t.Errorf("wrong route: %s", r.URL.Path)
 		}
 		var payload map[string]string
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		if err := json.UnmarshalRead(r.Body, &payload); err != nil {
 			t.Fatal(err)
 		}
 		if payload["device_key"] != "test-key" || payload["title"] != "video-rename · 批次失败（部分失败）" {
@@ -222,7 +222,7 @@ func TestBarkBatchBodyThroughJSONEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	addRun(t, s, "partial_failure", 1)
-	if err := s.tick(context.Background()); err != nil {
+	if err := s.tick(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	history, err := s.History()
@@ -247,7 +247,7 @@ func TestNotificationTimezoneUsesDST(t *testing.T) {
 		if _, err := s.DB.Exec("UPDATE runs SET started=? WHERE id=?", tc.date, id); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.enqueue(context.Background()); err != nil {
+		if err := s.enqueue(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		var body string

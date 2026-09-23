@@ -1,7 +1,6 @@
 package media
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -193,7 +192,7 @@ func TestProbeExecFailure(t *testing.T) {
 	script := writeScript(t, "echo 'Invalid data found when processing input' >&2\nexit 1\n")
 	job, _ := fakeJob(t, 10)
 	prober := &Prober{FFprobePath: script}
-	_, jerr := prober.Probe(context.Background(), job)
+	_, jerr := prober.Probe(t.Context(), job)
 	if jerr == nil || jerr.Code != domain.CodeProbeExecFailed {
 		t.Fatalf("执行失败应报 PROBE_EXEC_FAILED, got %+v", jerr)
 	}
@@ -210,7 +209,7 @@ func TestProbeTimeout(t *testing.T) {
 	job, _ := fakeJob(t, 10)
 	prober := &Prober{FFprobePath: script, Timeout: 150 * time.Millisecond}
 	start := time.Now()
-	_, jerr := prober.Probe(context.Background(), job)
+	_, jerr := prober.Probe(t.Context(), job)
 	if jerr == nil || jerr.Code != domain.CodeProbeTimeout {
 		t.Fatalf("应报 PROBE_TIMEOUT, got %+v", jerr)
 	}
@@ -223,7 +222,7 @@ func TestProbeOutputLimit(t *testing.T) {
 	script := writeScript(t, "yes '{\"streams\":[]}' | head -c 100000\n")
 	job, _ := fakeJob(t, 10)
 	prober := &Prober{FFprobePath: script, StdoutLimit: 1024}
-	_, jerr := prober.Probe(context.Background(), job)
+	_, jerr := prober.Probe(t.Context(), job)
 	if jerr == nil || jerr.Code != domain.CodeProbeOutputLimit {
 		t.Fatalf("应报 PROBE_OUTPUT_LIMIT, got %+v", jerr)
 	}
@@ -233,7 +232,7 @@ func TestProbeBadJSON(t *testing.T) {
 	script := writeScript(t, "echo 'not-json'\n")
 	job, _ := fakeJob(t, 10)
 	prober := &Prober{FFprobePath: script}
-	_, jerr := prober.Probe(context.Background(), job)
+	_, jerr := prober.Probe(t.Context(), job)
 	if jerr == nil || jerr.Code != domain.CodeProbeJSONInvalid {
 		t.Fatalf("应报 PROBE_JSON_INVALID, got %+v", jerr)
 	}
@@ -242,7 +241,7 @@ func TestProbeBadJSON(t *testing.T) {
 func TestProbeMissingBinary(t *testing.T) {
 	job, _ := fakeJob(t, 10)
 	prober := &Prober{FFprobePath: filepath.Join(t.TempDir(), "no-such-tool")}
-	_, jerr := prober.Probe(context.Background(), job)
+	_, jerr := prober.Probe(t.Context(), job)
 	if jerr == nil || jerr.Code != domain.CodeProbeExecFailed {
 		t.Fatalf("工具缺失应报 PROBE_EXEC_FAILED(启动前另有 TOOL_NOT_FOUND 检查), got %+v", jerr)
 	}
@@ -254,7 +253,7 @@ func TestProbeScriptOutputsFixture(t *testing.T) {
 	script := writeScript(t, "cat <<'JSONEOF'\n"+fixture+"\nJSONEOF\n")
 	job, _ := fakeJob(t, 1000)
 	prober := &Prober{FFprobePath: script}
-	meta, jerr := prober.Probe(context.Background(), job)
+	meta, jerr := prober.Probe(t.Context(), job)
 	if jerr != nil {
 		t.Fatal(jerr)
 	}

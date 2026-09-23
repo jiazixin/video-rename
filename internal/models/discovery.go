@@ -1,13 +1,14 @@
 package models
 
 import (
+	"cmp"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
+	"slices"
 	"time"
 	"video-rename/internal/config"
 )
@@ -113,6 +114,6 @@ func Discover(ctx context.Context, s config.ServerConfig, timeout time.Duration)
 			out.Truncated = true
 		}
 	}
-	sort.Slice(out.Models, func(i, j int) bool { return out.Models[i].ID < out.Models[j].ID })
+	slices.SortFunc(out.Models, func(a, b AvailableModel) int { return cmp.Compare(a.ID, b.ID) })
 	return out, nil
 }

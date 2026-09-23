@@ -1,7 +1,6 @@
 package jobs
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,7 +15,7 @@ func TestQueuedScopeVisibleAndRejectsOtherBatch(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := m.Library.Refresh(context.Background(), 1); err != nil {
+	if err := m.Library.Refresh(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
 	var a, b int64
@@ -31,7 +30,7 @@ func TestQueuedScopeVisibleAndRejectsOtherBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = m.Library.Refresh(context.Background(), 1); err != nil {
+	if err = m.Library.Refresh(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
 	e, err := m.Library.Get(b)
@@ -74,10 +73,10 @@ func TestQueuedDirectoryCoversIndexedChildren(t *testing.T) {
 	m, root := setup(t)
 	os.Mkdir(filepath.Join(root, "sub"), 0700)
 	os.WriteFile(filepath.Join(root, "sub", "a.mp4"), []byte("video"), 0600)
-	m.Library.Refresh(context.Background(), 1)
+	m.Library.Refresh(t.Context(), 1)
 	var dir, file int64
 	m.DB.QueryRow("SELECT id FROM entries WHERE name='sub'").Scan(&dir)
-	m.Library.Refresh(context.Background(), dir)
+	m.Library.Refresh(t.Context(), dir)
 	m.DB.QueryRow("SELECT id FROM entries WHERE name='a.mp4'").Scan(&file)
 	id, err := m.Create(Request{Targets: []int64{1}, Recursive: false, Key: "nonrecursive-root"}, "manual", 0)
 	if err != nil {

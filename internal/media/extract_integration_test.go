@@ -6,7 +6,6 @@
 package media
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,7 +54,7 @@ func TestIntegrationProbeAndExtractLandscape(t *testing.T) {
 	st, _ := domain.StatSnapshot(video)
 	job.Path, job.Snapshot = video, st
 
-	meta, jerr := prober.Probe(context.Background(), job)
+	meta, jerr := prober.Probe(t.Context(), job)
 	if jerr != nil {
 		t.Fatal(jerr)
 	}
@@ -76,7 +75,7 @@ func TestIntegrationProbeAndExtractLandscape(t *testing.T) {
 	}
 
 	ex := &Extractor{FFmpegPath: lookTool(t, "ffmpeg"), Images: defaultImages()}
-	set, jerr := ex.Extract(context.Background(), job, meta, plan)
+	set, jerr := ex.Extract(t.Context(), job, meta, plan)
 	if jerr != nil {
 		t.Fatal(jerr)
 	}
@@ -100,7 +99,7 @@ func TestIntegrationExtractPortrait4K(t *testing.T) {
 	prober := &Prober{FFprobePath: lookTool(t, "ffprobe")}
 	st, _ := domain.StatSnapshot(video)
 	job := domain.VideoJob{Path: video, Snapshot: st}
-	meta, jerr := prober.Probe(context.Background(), job)
+	meta, jerr := prober.Probe(t.Context(), job)
 	if jerr != nil {
 		t.Fatal(jerr)
 	}
@@ -111,7 +110,7 @@ func TestIntegrationExtractPortrait4K(t *testing.T) {
 	ex := &Extractor{FFmpegPath: lookTool(t, "ffmpeg"), Images: defaultImages()}
 	s := NewSampler(loadDefaultSampling(t))
 	plan, _ := s.Plan(meta.Duration, st.Size)
-	set, jerr := ex.Extract(context.Background(), job, meta, plan)
+	set, jerr := ex.Extract(t.Context(), job, meta, plan)
 	if jerr != nil {
 		t.Fatal(jerr)
 	}
@@ -132,7 +131,7 @@ func TestIntegrationExtractSAR(t *testing.T) {
 	prober := &Prober{FFprobePath: lookTool(t, "ffprobe")}
 	st, _ := domain.StatSnapshot(video)
 	job := domain.VideoJob{Path: video, Snapshot: st}
-	meta, jerr := prober.Probe(context.Background(), job)
+	meta, jerr := prober.Probe(t.Context(), job)
 	if jerr != nil {
 		t.Fatal(jerr)
 	}
@@ -146,7 +145,7 @@ func TestIntegrationExtractSAR(t *testing.T) {
 	ex := &Extractor{FFmpegPath: lookTool(t, "ffmpeg"), Images: defaultImages()}
 	s := NewSampler(loadDefaultSampling(t))
 	plan, _ := s.Plan(meta.Duration, st.Size)
-	set, jerr := ex.Extract(context.Background(), job, meta, plan)
+	set, jerr := ex.Extract(t.Context(), job, meta, plan)
 	if jerr != nil {
 		t.Fatalf("SAR 提取失败: %v (meta=%+v)", jerr, meta)
 	}
@@ -166,7 +165,7 @@ func TestIntegrationVeryShortVideo(t *testing.T) {
 	prober := &Prober{FFprobePath: lookTool(t, "ffprobe")}
 	st, _ := domain.StatSnapshot(video)
 	job := domain.VideoJob{Path: video, Snapshot: st}
-	meta, jerr := prober.Probe(context.Background(), job)
+	meta, jerr := prober.Probe(t.Context(), job)
 	if jerr != nil {
 		t.Fatal(jerr)
 	}
@@ -176,7 +175,7 @@ func TestIntegrationVeryShortVideo(t *testing.T) {
 		t.Fatalf("0.4 秒视频应取 1 帧: %d", plan.TargetN)
 	}
 	ex := &Extractor{FFmpegPath: lookTool(t, "ffmpeg"), Images: defaultImages()}
-	set, jerr := ex.Extract(context.Background(), job, meta, plan)
+	set, jerr := ex.Extract(t.Context(), job, meta, plan)
 	if jerr != nil {
 		t.Fatalf("极短视频应至少一帧: %v", jerr)
 	}
@@ -193,7 +192,7 @@ func TestIntegrationCorruptFile(t *testing.T) {
 	prober := &Prober{FFprobePath: lookTool(t, "ffprobe")}
 	st, _ := domain.StatSnapshot(video)
 	job := domain.VideoJob{Path: video, Snapshot: st}
-	_, jerr := prober.Probe(context.Background(), job)
+	_, jerr := prober.Probe(t.Context(), job)
 	if jerr == nil {
 		t.Fatal("损坏文件应探测失败")
 	}

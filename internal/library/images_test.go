@@ -1,7 +1,6 @@
 package library
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,7 +13,7 @@ func TestAdjacentImagesWrapAndSkipVideos(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := l.Refresh(context.Background(), 1); err != nil {
+	if err := l.Refresh(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
 	var id int64

@@ -15,7 +15,7 @@ import (
 
 func TestRunningBatchConcurrencyChangesAndCancellation(t *testing.T) {
 	m, root := setup(t)
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("%d.mp4", i)), []byte("video"), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -53,7 +53,7 @@ func TestRunningBatchConcurrencyChangesAndCancellation(t *testing.T) {
 			return "renamed-" + filepath.Base(j.Path), nil
 		}
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() { defer close(done); m.Execute(ctx, id) }()
 	defer func() {
@@ -151,7 +151,7 @@ func TestDeletedModelUsesBatchConcurrencySnapshot(t *testing.T) {
 		}
 		return "renamed", nil
 	}
-	m.Execute(context.Background(), id)
+	m.Execute(t.Context(), id)
 	run, err := m.Get(id)
 	if err != nil || run.Status != "completed" || run.Done != 1 {
 		t.Fatalf("run=%+v err=%v", run, err)

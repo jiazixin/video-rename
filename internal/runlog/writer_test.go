@@ -2,7 +2,7 @@ package runlog
 
 import (
 	"bufio"
-	"encoding/json"
+	"encoding/json/v2"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -102,7 +102,7 @@ func TestConcurrentWrites(t *testing.T) {
 	}
 	defer w.Close()
 	var wg sync.WaitGroup
-	for i := 0; i < 32; i++ {
+	for i := range 32 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -185,7 +186,7 @@ func (c *committer) cancelled(job domain.VideoJob, reason string) {
 
 // baseEvent 组装任务的公共事件字段(含脱敏:不写 prompt 原文与 API key)。
 func (c *committer) baseEvent(job domain.VideoJob, rec *jobRecord) runlog.Event {
-	warnings := append([]string(nil), rec.warnings...)
+	warnings := slices.Clone(rec.warnings)
 	if rec.frames.Failed != nil && len(rec.frames.Failed) > 0 {
 		warnings = append(warnings, fmt.Sprintf("失败采样点 %d 个", len(rec.frames.Failed)))
 	}

@@ -1,7 +1,6 @@
 package library
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -132,7 +131,7 @@ func TestNumberingApplyRestoreAndIdempotence(t *testing.T) {
 }
 func TestNumberingCrossPageOrderAndSearch(t *testing.T) {
 	l, root, _ := fixture(t)
-	for i := 0; i < 225; i++ {
+	for i := range 225 {
 		put(t, filepath.Join(root, fmt.Sprintf("photo-%03d.PNG", i)))
 	}
 	put(t, filepath.Join(root, "8.jpg"))
@@ -149,7 +148,7 @@ func TestNumberingCrossPageOrderAndSearch(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		p, err := l.ListOrdered(context.Background(), 1, 0, 200, 0, "photo", "image", false, sort)
+		p, err := l.ListOrdered(t.Context(), 1, 0, 200, 0, "photo", "image", false, sort)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -309,7 +308,7 @@ func TestNumberingRecoveryNeverOverwritesExternalFile(t *testing.T) {
 	if err = restarted.CheckAvailable(1); err == nil {
 		t.Fatal("uncertain directory available")
 	}
-	if err = restarted.Refresh(context.Background(), 1); err == nil {
+	if err = restarted.Refresh(t.Context(), 1); err == nil {
 		t.Fatal("scanned temporary files")
 	}
 	if err = os.Remove(filepath.Join(root, i.Old)); err != nil {

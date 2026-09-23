@@ -51,13 +51,11 @@ func (m *Manager) processPending(ctx context.Context, run Run, cfg config.Config
 				extracted()
 				return nil
 			}
-			wg.Add(1)
-			go func(it item, extracted func()) {
-				defer wg.Done()
+			wg.Go(func() {
 				defer extracted()
 				copy := cfg
 				m.process(ctx, run, it, &copy, extracted)
-			}(it, extracted)
+			})
 			after = it.ID
 		}
 	}

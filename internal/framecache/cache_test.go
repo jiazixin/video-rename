@@ -31,7 +31,7 @@ func TestReuseRestartCorruptionAndSuccessfulRemoval(t *testing.T) {
 	base := t.TempDir()
 	c := mustCache(t, base, 1000000)
 	key := strings.Repeat("a", 64)
-	lease, err := c.Acquire(context.Background(), key, 100000, build)
+	lease, err := c.Acquire(t.Context(), key, 100000, build)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestReuseRestartCorruptionAndSuccessfulRemoval(t *testing.T) {
 		t.Fatal("complete cache was not reused")
 		return domain.FrameSet{}, nil
 	}
-	lease, err = c.Acquire(context.Background(), key, 100000, unexpected)
+	lease, err = c.Acquire(t.Context(), key, 100000, unexpected)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestReuseRestartCorruptionAndSuccessfulRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
-	lease, err = c.Acquire(context.Background(), key, 100000, func(p string) (domain.FrameSet, error) { calls++; return build(p) })
+	lease, err = c.Acquire(t.Context(), key, 100000, func(p string) (domain.FrameSet, error) { calls++; return build(p) })
 	if err != nil || calls != 1 {
 		t.Fatal(err, calls)
 	}
@@ -64,11 +64,11 @@ func TestReuseRestartCorruptionAndSuccessfulRemoval(t *testing.T) {
 }
 func TestCapacityWaitCancellationEvictionAndPinnedExpiry(t *testing.T) {
 	c := mustCache(t, t.TempDir(), 140000)
-	a, err := c.Acquire(context.Background(), strings.Repeat("a", 64), 100000, build)
+	a, err := c.Acquire(t.Context(), strings.Repeat("a", 64), 100000, build)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
 	_, err = c.Acquire(ctx, strings.Repeat("b", 64), 100000, build)
 	if err != context.DeadlineExceeded {
@@ -81,7 +81,7 @@ func TestCapacityWaitCancellationEvictionAndPinnedExpiry(t *testing.T) {
 		t.Fatal("pinned cache expired")
 	}
 	a.Release(false)
-	b, err := c.Acquire(context.Background(), strings.Repeat("b", 64), 100000, build)
+	b, err := c.Acquire(t.Context(), strings.Repeat("b", 64), 100000, build)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestPartialFailureCleanedAndUnknownFilesUntouched(t *testing.T) {
 	sentinel := filepath.Join(base, "personal.txt")
 	os.WriteFile(sentinel, []byte("keep"), 0600)
 	c := mustCache(t, base, 1000000)
-	_, err := c.Acquire(context.Background(), strings.Repeat("a", 64), 100000, func(work string) (domain.FrameSet, error) {
+	_, err := c.Acquire(t.Context(), strings.Repeat("a", 64), 100000, func(work string) (domain.FrameSet, error) {
 		build(work)
 		return domain.FrameSet{}, fmt.Errorf("cancelled extraction")
 	})
@@ -144,11 +144,11 @@ func TestMappingDependsOnSourceAndFramesNotModel(t *testing.T) {
 func TestSharedLeaseSuccessDeletesAfterLastReader(t *testing.T) {
 	c := mustCache(t, t.TempDir(), 1000000)
 	key := strings.Repeat("c", 64)
-	first, err := c.Acquire(context.Background(), key, 100000, build)
+	first, err := c.Acquire(t.Context(), key, 100000, build)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := c.Acquire(context.Background(), key, 100000, build)
+	second, err := c.Acquire(t.Context(), key, 100000, build)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -23,7 +23,7 @@ type ProbeResult struct {
 	Expected   string `json:"expected"`
 	Message    string `json:"message"`
 	Code       string `json:"code,omitempty"`
-	HTTPStatus int    `json:"http_status,omitempty"`
+	HTTPStatus int    `json:"http_status,omitzero"`
 	ElapsedMS  int64  `json:"elapsed_ms"`
 }
 

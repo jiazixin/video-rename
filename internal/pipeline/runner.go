@@ -171,7 +171,6 @@ func runWithLogger(ctx context.Context, opts Options, openLog func(string) (even
 	}
 
 	worker := func() {
-		defer wg.Done()
 		for job := range queue {
 			if reason := stopReason(); reason != "" {
 				committer.cancelled(job, reason)
@@ -193,9 +192,8 @@ func runWithLogger(ctx context.Context, opts Options, openLog func(string) (even
 			progress(job, describe(job, rec))
 		}
 	}
-	for i := 0; i < opts.Workers; i++ {
-		wg.Add(1)
-		go worker()
+	for range opts.Workers {
+		wg.Go(worker)
 	}
 	for _, job := range res.Jobs {
 		if reason := stopReason(); reason != "" {

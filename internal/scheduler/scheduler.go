@@ -3,16 +3,17 @@ package scheduler
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"time"
 	_ "time/tzdata"
 
-	"github.com/robfig/cron/v3"
 	"video-rename/internal/jobs"
 	"video-rename/internal/models"
 	"video-rename/internal/storage"
+
+	"github.com/robfig/cron/v3"
 )
 
 type Plan struct {

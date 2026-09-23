@@ -1,7 +1,6 @@
 package library
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,7 +32,7 @@ func fixture(t *testing.T) (*Library, string, string) {
 }
 func refresh(t *testing.T, l *Library, id int64) {
 	t.Helper()
-	if err := l.Refresh(context.Background(), id); err != nil {
+	if err := l.Refresh(t.Context(), id); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -187,7 +186,7 @@ func TestPreparedRecovery(t *testing.T) {
 }
 func TestPagedDirectoryDoesNotRecurse(t *testing.T) {
 	l, root, _ := fixture(t)
-	for i := 0; i < 260; i++ {
+	for i := range 260 {
 		put(t, filepath.Join(root, fmt.Sprintf("%03d.mp4", i)))
 	}
 	if err := os.Mkdir(filepath.Join(root, "nested"), 0700); err != nil {
@@ -195,7 +194,7 @@ func TestPagedDirectoryDoesNotRecurse(t *testing.T) {
 	}
 	put(t, filepath.Join(root, "nested", "hidden.mp4"))
 	refresh(t, l, 1)
-	p, err := l.List(context.Background(), 1, 0, 100, 0, "", "", false)
+	p, err := l.List(t.Context(), 1, 0, 100, 0, "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +208,7 @@ func TestPagedDirectoryDoesNotRecurse(t *testing.T) {
 	if count != 262 {
 		t.Fatalf("unexpected recursive index %d", count)
 	}
-	next, err := l.List(context.Background(), 1, p.Next, 100, p.Generation, "", "", false)
+	next, err := l.List(t.Context(), 1, p.Next, 100, p.Generation, "", "", false)
 	if err != nil || len(next.Items) != 100 {
 		t.Fatalf("next %v", err)
 	}
@@ -290,7 +289,7 @@ func TestRestoreUnchangedAutomaticNameClearsProtection(t *testing.T) {
 	if err := os.WriteFile(path, []byte("video"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := l.Refresh(context.Background(), 1); err != nil {
+	if err := l.Refresh(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
 	var id int64

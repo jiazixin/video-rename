@@ -243,7 +243,7 @@ func TestAllocateByteBudgetWithSuffix(t *testing.T) {
 func TestAllocateConflictExhausted(t *testing.T) {
 	dir := t.TempDir()
 	job, _ := newFile(t, dir, "s.mp4")
-	for n := 0; n < 100; n++ {
+	for n := range 100 {
 		name := "题"
 		if n > 0 {
 			name = fmt_Sprintf(n)
