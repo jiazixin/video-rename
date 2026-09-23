@@ -396,7 +396,7 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 		failure(w, err)
 		return
 	}
-	rows, err := a.DB.Query("SELECT e.id,e.category,e.action,e.entry,e.operation,e.run,e.old_path,e.new_path,e.message,e.created,COALESCE(r.config_summary,''),COALESCE(r.model_config_title,'')"+where+" AND e.id<? ORDER BY e.id DESC LIMIT ?", append(args, before, limit+1)...)
+	rows, err := a.DB.Query("SELECT e.id,e.category,e.action,e.entry,e.operation,e.run,e.old_path,e.new_path,e.message,e.created,COALESCE(r.config_summary,''),COALESCE(r.model_config_title,''),COALESCE((SELECT SUM(t.tokens) FROM token_usage_records t JOIN run_items i ON i.id=t.item WHERE t.run=e.run AND i.entry=e.entry),0),COALESCE((SELECT MAX(t.estimated_records) FROM token_usage_records t JOIN run_items i ON i.id=t.item WHERE t.run=e.run AND i.entry=e.entry),0)"+where+" AND e.id<? ORDER BY e.id DESC LIMIT ?", append(args, before, limit+1)...)
 	if err != nil {
 		failure(w, err)
 		return
@@ -406,7 +406,8 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id, entry, op, run int64
 		var cat, action, old, new, msg, created, summary, modelTitle string
-		if err = rows.Scan(&id, &cat, &action, &entry, &op, &run, &old, &new, &msg, &created, &summary, &modelTitle); err != nil {
+		var tokens, tokenEstimated int64
+		if err = rows.Scan(&id, &cat, &action, &entry, &op, &run, &old, &new, &msg, &created, &summary, &modelTitle, &tokens, &tokenEstimated); err != nil {
 			failure(w, err)
 			return
 		}
@@ -414,7 +415,7 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 			Model string `json:"model"`
 		}
 		_ = json.Unmarshal([]byte(summary), &snapshot)
-		out = append(out, map[string]any{"id": id, "category": cat, "action": action, "entry": entry, "operation": op, "run": run, "old_path": old, "new_path": new, "message": msg, "created": created, "model": snapshot.Model, "model_config_title": modelTitle})
+		out = append(out, map[string]any{"id": id, "category": cat, "action": action, "entry": entry, "operation": op, "run": run, "old_path": old, "new_path": new, "message": msg, "created": created, "model": snapshot.Model, "model_config_title": modelTitle, "tokens": tokens, "token_estimated": tokenEstimated > 0})
 	}
 	if err := rows.Err(); err != nil {
 		failure(w, err)

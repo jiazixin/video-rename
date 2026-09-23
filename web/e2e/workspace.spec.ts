@@ -157,7 +157,7 @@ test('任务历史文件名分列、省略与操作颜色',async({page})=>{
  await login(page)
  const old='旧文件名'.repeat(35)+'.mp4',next='新文件名'.repeat(35)+'.mp4'
  await page.route('**/api/logs?*',route=>route.fulfill({json:['manual','automatic','restore','scan','run','schedule'].map((action,i)=>({id:100+i,category:'success',action,old_path:'测试目录/'+old,new_path:'测试目录/'+next,created:new Date().toISOString(),run:1,model:action==='automatic'?'fixture-model':'',model_config_title:action==='automatic'?'fixture profile':''}))}))
- await page.getByRole('button',{name:'任务历史',exact:true}).click();await expect(page.getByRole('columnheader',{name:'旧文件名',exact:true})).toBeVisible();await expect(page.getByRole('columnheader',{name:'新文件名',exact:true})).toBeVisible();await expect(page.getByRole('columnheader',{name:'模型',exact:true})).toBeVisible();await expect(page.locator('.history-table tbody tr').first().locator('.stacked-date-time span')).toHaveCount(2);await expect(page.locator('.history-table .table-model').nth(1)).toHaveText('fixture-model')
+ await page.getByRole('button',{name:'任务历史',exact:true}).click();await expect(page.getByRole('columnheader',{name:'旧文件名',exact:true})).toBeVisible();await expect(page.getByRole('columnheader',{name:'新文件名',exact:true})).toBeVisible();await expect(page.getByRole('columnheader',{name:'模型配置',exact:true})).toBeVisible();await expect(page.locator('.history-table tbody tr').first().locator('.stacked-date-time span')).toHaveCount(2);await expect(page.locator('.history-table .table-model').nth(1)).toHaveText('fixture profile')
  const cell=page.locator('.history-filename').first();await expect(cell).toHaveAttribute('title',old);expect(await cell.evaluate(e=>e.scrollWidth>e.clientWidth&&getComputedStyle(e).textOverflow==='ellipsis')).toBeTruthy();await cell.hover()
  const colors=await page.locator('.action-badge').evaluateAll(elements=>elements.map(e=>getComputedStyle(e).color));expect(new Set(colors).size).toBe(6)
  await page.screenshot({path:'test-results/task-history.png',animations:'disabled'})
@@ -645,7 +645,7 @@ test('批次记录按实际开始计算耗时，排除排队时间',async({page}
  await page.getByRole('button',{name:'运行计划',exact:true}).click()
  await page.getByRole('button',{name:'自动计划和运行记录',exact:true}).click()
  const section=page.getByRole('region',{name:'自动计划',exact:true})
- await expect(section.getByRole('columnheader',{name:'结束时间',exact:true})).toBeVisible();await expect(section.getByRole('columnheader',{name:'模型',exact:true})).toBeVisible();await expect(section.locator('tbody tr .table-model')).toHaveText('fixture-model');await expect(section.locator('tbody tr .stacked-date-time').first().locator('span')).toHaveCount(2)
+ await expect(section.getByRole('columnheader',{name:'结束时间',exact:true})).toBeVisible();await expect(section.getByRole('columnheader',{name:'模型配置',exact:true})).toBeVisible();await expect(section.locator('tbody tr .table-model')).toHaveText('fixture profile');await expect(section.locator('tbody tr .stacked-date-time').first().locator('span')).toHaveCount(2)
  await expect(section.getByRole('cell',{name:'1h1m53s',exact:true})).toBeVisible()
  await expect(section.locator('tbody tr td').nth(7)).not.toHaveText('—')
  await page.route('**/api/runs',route=>route.fulfill({json:[{id:988,source:'schedule',plan:1,status:'queued',created:'2026-09-22T01:00:00Z',started:'',finished:'',done:0,discovered:0,skipped:0,failed:0,targets:[]}]}))

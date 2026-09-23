@@ -86,9 +86,12 @@ const hasData=computed(()=>!!totals.value&&totals.value.records>0)
   </div>
  </div>
  <div v-if="error" role="alert" class="notice error">{{error}}<button @click="load">重试</button></div>
- <div class="panel usage-filters">
+ <div class="usage-filters">
   <div class="filterbar log-filters">
    <SelectField v-model="preset" label="时间范围" :options="presets"/>
+   <SelectField v-model="model" label="模型" :options="modelOptions"/>
+   <SelectField v-model="profile" label="模型配置" :options="profileOptions"/>
+   <SelectField v-model="source" label="运行来源" :options="[{value:'',label:'全部来源'},{value:'manual',label:'手动运行'},{value:'scheduled',label:'自动计划'}]"/>
    <template v-if="preset==='custom'">
     <DateField v-model="fromDate" label="起始日期"/>
     <input v-model="fromTime" type="time" aria-label="起始时刻"/>
@@ -96,9 +99,6 @@ const hasData=computed(()=>!!totals.value&&totals.value.records>0)
     <input v-model="toTime" type="time" aria-label="结束时刻"/>
     <button class="primary" @click="refresh"><ChevronRight :size="14"/>查询</button>
    </template>
-   <SelectField v-model="model" label="模型" :options="modelOptions"/>
-   <SelectField v-model="profile" label="模型配置" :options="profileOptions"/>
-   <SelectField v-model="source" label="运行来源" :options="[{value:'',label:'全部来源'},{value:'manual',label:'手动运行'},{value:'scheduled',label:'自动计划'}]"/>
    <span v-if="run" class="usage-run-chip">批次 #{{run}}<button aria-label="清除批次筛选" @click="run=0">×</button></span>
    <span class="filter-spacer"/>
    <button class="text-button" @click="reset"><RotateCcw :size="14"/>重置</button>
@@ -116,6 +116,7 @@ const hasData=computed(()=>!!totals.value&&totals.value.records>0)
    <template v-if="totals?.legacy_records">其中 {{totals.legacy_records.toLocaleString()}} 条为升级前的批次汇总，按批次时间归属，无法精确到请求时刻。</template>
    文字粗估不含图片 token；未记录的内部重试和模型测试不计入。
   </p>
+  <div class="usage-stack">
   <div class="panel">
    <div class="panel-toolbar"><h2>消耗趋势</h2><span class="subtle">{{hasData?'':'暂无数据'}}</span></div>
    <div class="usage-trend-wrap" :class="{refreshing:loading}"><UsageTrend :buckets="report.trend" :interval="report.range.interval"/></div>
@@ -180,6 +181,7 @@ const hasData=computed(()=>!!totals.value&&totals.value.records>0)
     </tr></tbody>
    </table></div>
    <div v-else class="empty compact">当前筛选没有批次用量记录</div>
+  </div>
   </div>
  </template>
  <div v-else-if="loading" class="panel empty"><RefreshCw :size="22" class="spin"/><h3>正在统计用量…</h3></div>

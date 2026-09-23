@@ -1,16 +1,17 @@
-/* 用量分析：统计块、趋势图与筛选沿用全局浅色面板语言。 */
-.usage-filters{margin-bottom:24px}
+/* 用量分析：筛选不装箱,统计块之间用统一间距,面板语言与全局一致。 */
+.usage-filters{margin-bottom:26px}
 .usage-filters .filterbar{border:0;background:transparent;padding:0}
 .usage-filters input[type=time]{max-width:110px;min-height:38px;font-size:12px;padding:7px 9px}
 .usage-run-chip{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:#2c6e56;background:#eef6f1;border:1px solid #d4e6db;border-radius:6px;padding:7px 8px 7px 11px;white-space:nowrap}
 .usage-run-chip button{border:0;background:transparent;padding:0 2px;font-size:14px;line-height:1;color:#4d7864}
 .usage-run-chip button:hover:not(:disabled){background:transparent;color:#1b1b1b}
-.usage-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:14px}
-.usage-kpi{display:flex;flex-direction:column;gap:7px;padding:17px 19px;border:1px solid var(--line);border-radius:11px;background:#fcfdfd}
+.usage-stack{display:flex;flex-direction:column;gap:18px}
+.usage-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:16px}
+.usage-kpi{display:flex;flex-direction:column;gap:7px;padding:18px 20px;border:1px solid var(--line);border-radius:12px;background:#fcfdfd}
 .usage-kpi span{font-size:11px;color:var(--ash)}
 .usage-kpi strong{font-size:26px;font-weight:500;letter-spacing:-.5px;font-variant-numeric:tabular-nums}
 .usage-kpi small{font-size:11px;color:var(--ash);font-variant-numeric:tabular-nums}
-.usage-notes{margin:0 0 22px}
+.usage-notes{margin:0 0 20px}
 .usage-trend-wrap{padding:14px 18px 6px;position:relative;transition:opacity .15s}
 .usage-trend-wrap.refreshing{opacity:.55}
 .usage-trend{position:relative}

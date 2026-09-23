@@ -3,7 +3,6 @@ package jobs
 import (
 	"encoding/json/v2"
 	"fmt"
-	"video-rename/internal/library"
 )
 
 // All callers create batches through Create's mutex, including scheduled runs.
@@ -36,24 +35,49 @@ func (m *Manager) checkOverlap(request Request) error {
 	if err != nil {
 		return err
 	}
-	covers := func(a, b library.Entry, recursive bool) bool {
-		if a.ID == b.ID || a.Kind == "file" && b.Kind == "file" && a.Identity == b.Identity {
-			return true
-		}
-		return a.Kind == "directory" && (recursive && m.Library.IsWithin(b.ID, a.ID) || b.Kind == "file" && b.Parent == a.ID)
+	// 每个条目只读取一次轻量字段,再在内存中做两两比较;
+	// 之前的写法对每个目标对都执行完整 Get(含运行状态与操作历史子查询),
+	// 目标数增长时呈平方级放大,拖慢批量提交。
+	type target struct {
+		id, parent int64
+		kind       string
+		identity   string
 	}
+	unique := map[int64]struct{}{}
 	for _, id := range request.Targets {
-		a, err := m.Library.Get(id)
-		if err != nil {
+		unique[id] = struct{}{}
+	}
+	for _, s := range scopes {
+		for _, id := range s.targets {
+			unique[id] = struct{}{}
+		}
+	}
+	entries := make(map[int64]target, len(unique))
+	for id := range unique {
+		var t target
+		if err := m.DB.QueryRow("SELECT id,parent,kind,identity FROM entries WHERE id=? AND present=1", id).Scan(&t.id, &t.parent, &t.kind, &t.identity); err != nil {
+			for _, s := range scopes {
+				for _, other := range s.targets {
+					if other == id {
+						return fmt.Errorf("批次 #%d 的目标状态不可用，请等待结束或取消后重试", s.id)
+					}
+				}
+			}
 			return err
 		}
+		entries[id] = t
+	}
+	covers := func(a, b target, recursive bool) bool {
+		if a.id == b.id || a.kind == "file" && b.kind == "file" && a.identity == b.identity {
+			return true
+		}
+		return a.kind == "directory" && (recursive && m.Library.IsWithin(b.id, a.id) || b.kind == "file" && b.parent == a.id)
+	}
+	for _, id := range request.Targets {
+		a := entries[id]
 		for _, s := range scopes {
 			for _, other := range s.targets {
-				b, err := m.Library.Get(other)
-				if err != nil {
-					return fmt.Errorf("批次 #%d 的目标状态不可用，请等待结束或取消后重试", s.id)
-				}
-				if covers(a, b, request.Recursive) || covers(b, a, s.recursive) {
+				if covers(a, entries[other], request.Recursive) || covers(entries[other], a, s.recursive) {
 					return fmt.Errorf("所选范围与批次 #%d 重叠，该批次尚未结束，请勿重复提交", s.id)
 				}
 			}
