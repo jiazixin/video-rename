@@ -132,6 +132,16 @@ test('模型 URL 预设、检测模型、密钥保留与编辑参数',async({pag
  const presets=[['智谱','https://open.bigmodel.cn/api/paas/v4'],['DeepSeek','https://api.deepseek.com/v1'],['OpenAI','https://api.openai.com/v1'],['Claude','https://api.anthropic.com/v1'],['Ollama','http://127.0.0.1:11434/v1'],['自定义','']]
  for(const [name,url]of presets){await page.getByRole('combobox',{name:'服务类型',exact:true}).click();await page.getByRole('option',{name,exact:true}).click();await expect(page.getByLabel('服务 URL',{exact:true})).toHaveValue(url)}
  await page.getByLabel('配置名称',{exact:true}).fill('检测与密钥测试');await page.getByLabel('服务 URL',{exact:true}).fill(modelURL());await page.getByLabel('API 密钥',{exact:true}).fill('ui-secret-not-in-response')
+ await page.getByLabel('模型名称',{exact:true}).fill('/models/Qwen3-VL-8B-Instruct-heretic-Q8_0.gguf')
+ const detectControlsDoNotOverlap=()=>page.locator('.model-detect').evaluate(row=>{
+  const bounds=row.getBoundingClientRect()
+  const controls=[row.querySelector('input')!,row.querySelector('.select-trigger')!,row.querySelector(':scope > button')!].map(e=>e.getBoundingClientRect())
+  return controls.every((a,i)=>a.left>=bounds.left-1&&a.right<=bounds.right+1&&controls.slice(i+1).every(b=>a.right<=b.left||b.right<=a.left||a.bottom<=b.top||b.bottom<=a.top))
+ })
+ expect(await detectControlsDoNotOverlap()).toBe(true)
+ await page.setViewportSize({width:390,height:844});expect(await detectControlsDoNotOverlap()).toBe(true)
+ await page.screenshot({path:'test-results/model-detect-mobile.png',animations:'disabled'})
+ await page.setViewportSize({width:1440,height:1000})
  await expect(page.getByRole('combobox',{name:'检测超时',exact:true})).toHaveText('5s')
  await page.getByRole('combobox',{name:'检测超时',exact:true}).click();await expect(page.getByRole('option')).toHaveText(['5s','10s','15s']);await page.getByRole('option',{name:'10s',exact:true}).click()
  const detectionRequest=page.waitForRequest(r=>r.url().endsWith('/model-configs/detect'))
