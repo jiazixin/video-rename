@@ -53,7 +53,7 @@ func TestVersionOneUpgradePreservesData(t *testing.T) {
 	if err = upgraded.QueryRow("SELECT name,model_config_id FROM schedules").Scan(&name, &promptID); err != nil || name != "保留计划" || promptID != 1 {
 		t.Fatal(name, promptID, err)
 	}
-	if err = upgraded.QueryRow("SELECT max(version) FROM schema_migrations").Scan(&version); err != nil || version != 15 {
+	if err = upgraded.QueryRow("SELECT max(version) FROM schema_migrations").Scan(&version); err != nil || version != 16 {
 		t.Fatal(version, err)
 	}
 }
@@ -69,6 +69,8 @@ func TestVersionFifteenBackfillsLegacyUsageLedger(t *testing.T) {
  ALTER TABLE runs ADD COLUMN model_snapshot TEXT NOT NULL DEFAULT '';
  CREATE TABLE model_configs(id INTEGER PRIMARY KEY,title TEXT NOT NULL,body TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1,created TEXT NOT NULL,updated TEXT NOT NULL,is_default INTEGER NOT NULL DEFAULT 0,settings TEXT NOT NULL DEFAULT '{}',api_key TEXT NOT NULL DEFAULT '');
  CREATE TABLE notification_channels(kind TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 0,failure_only INTEGER NOT NULL DEFAULT 0,credentials TEXT NOT NULL,after_run INTEGER NOT NULL DEFAULT 0);
+ CREATE TABLE image_numberings(id TEXT PRIMARY KEY,parent INTEGER NOT NULL REFERENCES entries(id),status TEXT NOT NULL,created TEXT NOT NULL,fingerprint TEXT NOT NULL,undo_of TEXT NOT NULL DEFAULT '',error TEXT NOT NULL DEFAULT '');
+ CREATE TABLE image_numbering_items(batch TEXT NOT NULL REFERENCES image_numberings(id),position INTEGER NOT NULL,entry INTEGER NOT NULL REFERENCES entries(id),version INTEGER NOT NULL,identity TEXT NOT NULL,size INTEGER NOT NULL,mtime TEXT NOT NULL,old_name TEXT NOT NULL,new_name TEXT NOT NULL,temp_name TEXT NOT NULL,current_name TEXT NOT NULL,pending_name TEXT NOT NULL DEFAULT '',operation INTEGER NOT NULL DEFAULT 0,undo_of INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(batch,entry));
  INSERT INTO schema_migrations VALUES(14,'then');
  INSERT INTO runs(id,source,targets,recursive,status,created,started,finished,request_key) VALUES
   (11,'manual','[]',1,'completed','2026-09-01T08:00:00Z','2026-09-01T08:05:00Z','2026-09-01T09:00:00Z','k11'),

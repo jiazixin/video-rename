@@ -52,11 +52,55 @@ func numberedFixture(t *testing.T) (*Library, string, Numbering) {
 	}
 	put(t, filepath.Join(root, "folder", "nested.JPG"))
 	refresh(t, l, 1)
-	b, err := l.PreviewNumbering(1, "", "name_asc")
+	b, err := l.PreviewNumbering(1, "image", "", "name_asc")
 	if err != nil {
 		t.Fatal(err)
 	}
 	return l, root, b
+}
+func TestAudioNumberingScopesToAudioFiles(t *testing.T) {
+	l, root, _ := fixture(t)
+	for _, name := range []string{"song.MP3", "1.mp3", "pic.jpg", "clip.mp4"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	refresh(t, l, 1)
+	if _, err := l.PreviewNumbering(1, "video", "", "name_asc"); err == nil {
+		t.Fatal("invalid media accepted")
+	}
+	b, err := l.PreviewNumbering(1, "audio", "", "name_asc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Total != 2 || b.Changed != 1 {
+		t.Fatal(b)
+	}
+	if b.Items[0].Old != "1.mp3" || b.Items[0].New != "1.mp3" || b.Items[1].Old != "song.MP3" || b.Items[1].New != "2.mp3" {
+		t.Fatal(b.Items)
+	}
+	if _, err = l.ApplyNumbering(b.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"pic.jpg", "clip.mp4", "1.mp3", "2.mp3"} {
+		if _, err = os.Stat(filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	undo, err := l.PreviewNumberingRestore(b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = l.ApplyNumbering(undo.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(filepath.Join(root, "song.MP3")); err != nil {
+		t.Fatal(err)
+	}
+	images, err := l.PreviewNumbering(1, "image", "", "name_asc")
+	if err != nil || images.Total != 1 || images.Items[0].Old != "pic.jpg" {
+		t.Fatal(images, err)
+	}
 }
 func assertOriginals(t *testing.T, root string, b Numbering) {
 	t.Helper()
@@ -136,7 +180,7 @@ func TestNumberingCrossPageOrderAndSearch(t *testing.T) {
 	}
 	put(t, filepath.Join(root, "8.jpg"))
 	refresh(t, l, 1)
-	b, err := l.PreviewNumbering(1, "photo", "name_desc")
+	b, err := l.PreviewNumbering(1, "image", "photo", "name_desc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +188,7 @@ func TestNumberingCrossPageOrderAndSearch(t *testing.T) {
 		t.Fatal(b.Total, b.Items[0], b.Items[224])
 	}
 	for _, sort := range []string{"name_asc", "name_desc", "size_asc", "size_desc", "mtime_asc", "mtime_desc", "renamed_asc", "renamed_desc"} {
-		b, err = l.PreviewNumbering(1, "photo", sort)
+		b, err = l.PreviewNumbering(1, "image", "photo", sort)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -175,7 +219,7 @@ func TestNumberingPreflightProtection(t *testing.T) {
 			t.Fatal(err)
 		}
 		refresh(t, l, 1)
-		if _, err := l.PreviewNumbering(1, "", "name_asc"); err == nil {
+		if _, err := l.PreviewNumbering(1, "image", "", "name_asc"); err == nil {
 			t.Fatal("directory conflict accepted")
 		}
 	})
@@ -207,7 +251,7 @@ func TestNumberingPreflightProtection(t *testing.T) {
 			t.Fatal(err)
 		}
 		refresh(t, l, 1)
-		if _, err := l.PreviewNumbering(1, "", "name_asc"); err == nil {
+		if _, err := l.PreviewNumbering(1, "image", "", "name_asc"); err == nil {
 			t.Fatal("hard links accepted")
 		}
 	})

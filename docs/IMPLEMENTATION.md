@@ -119,9 +119,9 @@ schema v9 保存 notification_preferences.timezone。认证完成后浏览器提
 
 schema v10 增加 sampling_settings 单行设置与 runs.sampling_snapshot。internal/sampling 读写全局参数，复用 config.FrameSettings 校验；GET/PUT /api/sampling 复用认证、CSRF 和严格 JSON 解码。创建批次读取设置并记录快照，执行时校验并恢复派生采样表，图片参数也进入快照。YAML sampling/images 字段移除，不导入、不兼容。前端 features/sampling 提供规则表及基础表单，沿用 SelectField。
 
-## 图片一键编号
+## 图片与音频一键编号
 
-schema v11 增加 image_numberings 和 image_numbering_items。服务端复用目录排序表达式，读取完整当前目录索引，按搜索过滤图片，冻结预览中的文件身份、版本、原名、新名及目录指纹；确认时重新校验。编号为正整数，前导零规范化，0 和非纯数字名称进入续排；使用大整数避免长数字溢出。不同格式共用序号，未参与的编号图片保留其号码。硬链接重复参与时拒绝操作。
+schema v11 增加 image_numberings 和 image_numbering_items；schema v16 增加 media 列区分图片与音频批次，两类共用同一套编号规则、移动日志与崩溃恢复机制，编号记录按类型分开查询。接口为 `POST /api/directories/{id}/numberings/preview`（body 指定 media）、`GET /api/directories/{id}/numberings?media=` 与 `/api/numberings/{id}` 下的 apply / restore-preview / recover。服务端复用目录排序表达式，读取完整当前目录索引，按搜索过滤所选类型文件，冻结预览中的文件身份、版本、原名、新名及目录指纹；确认时重新校验。编号为正整数，前导零规范化，0 和非纯数字名称进入续排；使用大整数避免长数字溢出。不同格式共用序号，未参与的编号文件保留其号码。硬链接重复参与时拒绝操作。
 
 修改项先全部转唯一临时名，再转最终名。每次移动前写入 pending_name，使用平台 no-replace 改名并同步目录后记录 current_name。最终在单一数据库事务中提交索引、原名到最终名的历史以及批次状态；临时名不出现在历史中。数据库提交结果不确定时先查持久状态，不盲目回滚。中断批次在启动时依据文件身份与 current/pending 证据做两阶段回滚；证据不一致或原名被外部文件占用时标记 review，阻止相关范围改名和扫描，用户可在编号记录中重试恢复。
 

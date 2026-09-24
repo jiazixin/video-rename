@@ -41,7 +41,7 @@ func TestImageNumberingAPI(t *testing.T) {
 		handler.ServeHTTP(w, r)
 		return w
 	}
-	if w := request("POST", "/api/directories/1/image-numberings/preview", `{}`, false); w.Code != 401 && w.Code != 403 {
+	if w := request("POST", "/api/directories/1/numberings/preview", `{}`, false); w.Code != 401 && w.Code != 403 {
 		t.Fatal(w.Code)
 	}
 	w := request("POST", "/api/auth/login", `{"username":"admin","password":"test-password"}`, false)
@@ -51,10 +51,10 @@ func TestImageNumberingAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	csrf = session["csrf"]
-	if w = request("POST", "/api/directories/1/image-numberings/preview", `{}`, false); w.Code != 403 {
+	if w = request("POST", "/api/directories/1/numberings/preview", `{}`, false); w.Code != 403 {
 		t.Fatal("no CSRF accepted", w.Code)
 	}
-	w = request("POST", "/api/directories/1/image-numberings/preview", `{"query":"","sort":"name_desc"}`, true)
+	w = request("POST", "/api/directories/1/numberings/preview", `{"media":"image","query":"","sort":"name_desc"}`, true)
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
@@ -66,32 +66,92 @@ func TestImageNumberingAPI(t *testing.T) {
 		t.Fatal("internal journal exposed")
 	}
 	for _, action := range []string{"apply", "restore-preview", "recover"} {
-		if w = request("POST", "/api/image-numberings/"+b.ID+"/"+action, `{}`, false); w.Code != 403 {
+		if w = request("POST", "/api/numberings/"+b.ID+"/"+action, `{}`, false); w.Code != 403 {
 			t.Fatal("no CSRF accepted", action, w.Code)
 		}
 	}
 	for range 2 {
-		w = request("POST", "/api/image-numberings/"+b.ID+"/apply", `{}`, true)
+		w = request("POST", "/api/numberings/"+b.ID+"/apply", `{}`, true)
 		if w.Code != 200 {
 			t.Fatal(w.Code, w.Body.String())
 		}
 	}
-	w = request("GET", "/api/directories/1/image-numberings", "", false)
+	w = request("GET", "/api/directories/1/numberings?media=image", "", false)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "committed") {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	w = request("POST", "/api/image-numberings/"+b.ID+"/restore-preview", `{}`, true)
+	w = request("POST", "/api/numberings/"+b.ID+"/restore-preview", `{}`, true)
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	if err = json.Unmarshal(w.Body.Bytes(), &b); err != nil {
 		t.Fatal(err)
 	}
-	w = request("POST", "/api/image-numberings/"+b.ID+"/apply", `{}`, true)
+	w = request("POST", "/api/numberings/"+b.ID+"/apply", `{}`, true)
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	if raw, err := os.ReadFile(filepath.Join(root, "photo.PNG")); err != nil || string(raw) != "picture" {
 		t.Fatal(string(raw), err)
+	}
+}
+
+func TestAudioNumberingAPI(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "track.MP3"), []byte("audio"), 0600)
+	os.WriteFile(filepath.Join(root, "cover.png"), []byte("cover"), 0600)
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Workers: 1, Auth: config.AuthConfig{Username: "admin", Password: "test-password"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	if err = a.Library.Refresh(t.Context(), 1); err != nil {
+		t.Fatal(err)
+	}
+	handler := a.Handler()
+	unauth := httptest.NewRecorder()
+	handler.ServeHTTP(unauth, httptest.NewRequest("GET", "/api/directories/1/numberings?media=video", nil))
+	if unauth.Code != 401 {
+		t.Fatal("unprotected", unauth.Code)
+	}
+	loginReq := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"test-password"}`))
+	loginReq.Header.Set("Content-Type", "application/json")
+	login := httptest.NewRecorder()
+	handler.ServeHTTP(login, loginReq)
+	request := func(method, path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		for _, c := range login.Result().Cookies() {
+			r.AddCookie(c)
+		}
+		var session map[string]string
+		json.Unmarshal(login.Body.Bytes(), &session)
+		r.Header.Set("X-CSRF-Token", session["csrf"])
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	if w := request("POST", "/api/directories/1/numberings/preview", `{"media":"video","query":"","sort":"name_asc"}`); w.Code != 400 {
+		t.Fatal("invalid media accepted", w.Code)
+	}
+	w := request("POST", "/api/directories/1/numberings/preview", `{"media":"audio","query":"","sort":"name_asc"}`)
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var b library.Numbering
+	if err = json.Unmarshal(w.Body.Bytes(), &b); err != nil || len(b.Items) != 1 || b.Items[0].New != "1.mp3" {
+		t.Fatal(b, err)
+	}
+	if w = request("POST", "/api/numberings/"+b.ID+"/apply", `{}`); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if _, err = os.Stat(filepath.Join(root, "cover.png")); err != nil {
+		t.Fatal("image touched by audio numbering", err)
+	}
+	if w = request("GET", "/api/directories/1/numberings?media=audio", ""); w.Code != 200 || !strings.Contains(w.Body.String(), "committed") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if w = request("GET", "/api/directories/1/numberings?media=image", ""); w.Code != 200 || strings.Contains(w.Body.String(), "committed") {
+		t.Fatal("audio batch leaked into image history", w.Code)
 	}
 }

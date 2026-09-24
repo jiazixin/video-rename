@@ -12,6 +12,11 @@ func IsImage(name string) bool {
 	return strings.Contains("|jpg|jpeg|png|gif|webp|avif|bmp|", "|"+strings.TrimPrefix(strings.ToLower(filepath.Ext(name)), ".")+"|")
 }
 
+// IsAudio mirrors playback.go's audioExts; the lists must stay in sync.
+func IsAudio(name string) bool {
+	return strings.Contains("|mp3|m4a|m4b|aac|flac|wav|wave|ogg|oga|opus|wma|aiff|aif|caf|", "|"+strings.TrimPrefix(strings.ToLower(filepath.Ext(name)), ".")+"|")
+}
+
 // AdjacentImage reads a single neighboring image from the current directory index.
 // File names are unique within a live parent; the parent/name index bounds traversal.
 func (l *Library) AdjacentImage(id int64, previous bool) (Entry, error) {

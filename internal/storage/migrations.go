@@ -135,6 +135,12 @@ INSERT INTO schema_migrations VALUES(13,datetime('now'));`); err != nil {
 			return err
 		}
 	}
+	if version < 16 {
+		if _, err = tx.Exec(`ALTER TABLE image_numberings ADD COLUMN media TEXT NOT NULL DEFAULT 'image';
+INSERT INTO schema_migrations VALUES(16,datetime('now'));`); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 

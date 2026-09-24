@@ -41,6 +41,7 @@ type Numbering struct {
 	Changed     int             `json:"changed"`
 	Items       []NumberingItem `json:"items,omitempty"`
 	Fingerprint string          `json:"-"`
+	Media       string          `json:"-"`
 }
 
 func numberingToken() string {
@@ -49,6 +50,33 @@ func numberingToken() string {
 		panic(err)
 	}
 	return hex.EncodeToString(b[:])
+}
+
+// Numbering runs per media class with identical rules; only the file filter
+// and the user-facing noun differ.
+type mediaClass struct {
+	value string
+	label string
+	match func(name string) bool
+}
+
+var numberingMedia = map[string]mediaClass{
+	"image": {"image", "图片", IsImage},
+	"audio": {"audio", "音频", IsAudio},
+}
+
+func mediaOf(value string) (mediaClass, error) {
+	m, ok := numberingMedia[value]
+	if !ok {
+		return mediaClass{}, fmt.Errorf("无效的媒体类型")
+	}
+	return m, nil
+}
+func mediaLabel(value string) string {
+	if m, ok := numberingMedia[value]; ok {
+		return m.label
+	}
+	return "文件"
 }
 func imageNumber(name string) *big.Int {
 	s := strings.TrimSuffix(name, filepath.Ext(name))
@@ -125,15 +153,19 @@ func (l *Library) checkNumberingAvailable(id int64) error {
 		return err
 	}
 	if n > 0 {
-		return fmt.Errorf("该目录有未完成的图片编号，请先在编号记录中恢复")
+		return fmt.Errorf("该目录有未完成的编号，请先在编号记录中恢复")
 	}
 	return nil
 }
 
-func (l *Library) PreviewNumbering(parent int64, query, sortBy string) (Numbering, error) {
+func (l *Library) PreviewNumbering(parent int64, media, query, sortBy string) (Numbering, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if err := l.CheckAvailable(parent); err != nil {
+	m, err := mediaOf(media)
+	if err != nil {
+		return Numbering{}, err
+	}
+	if err = l.CheckAvailable(parent); err != nil {
 		return Numbering{}, err
 	}
 	dir, err := l.Get(parent)
@@ -188,12 +220,12 @@ func (l *Library) PreviewNumbering(parent int64, query, sortBy string) (Numberin
 		if err != nil {
 			return Numbering{}, err
 		}
-		if !IsImage(e.Name) {
+		if !m.match(e.Name) {
 			continue
 		}
 		item := NumberingItem{Identity: e.Identity, Size: e.Size, Mtime: e.Mtime}
 		if !numberingMatch(filepath.Join(path, e.Name), item) {
-			return Numbering{}, fmt.Errorf("图片已变化，请刷新目录后重试")
+			return Numbering{}, fmt.Errorf("%s已变化，请刷新目录后重试", m.label)
 		}
 		indexed[e.Name] = true
 		if c.selected {
@@ -207,8 +239,8 @@ func (l *Library) PreviewNumbering(parent int64, query, sortBy string) (Numberin
 		return Numbering{}, err
 	}
 	for _, e := range disk {
-		if e.Type().IsRegular() && IsImage(e.Name()) && !indexed[e.Name()] {
-			return Numbering{}, fmt.Errorf("图片索引不完整，请刷新目录后重试")
+		if e.Type().IsRegular() && m.match(e.Name()) && !indexed[e.Name()] {
+			return Numbering{}, fmt.Errorf("%s索引不完整，请刷新目录后重试", m.label)
 		}
 	}
 	after, err := directoryFingerprint(path)
@@ -219,9 +251,9 @@ func (l *Library) PreviewNumbering(parent int64, query, sortBy string) (Numberin
 		return Numbering{}, fmt.Errorf("目录已变化，请重新预览")
 	}
 	if len(selected) == 0 {
-		return Numbering{}, fmt.Errorf("当前筛选下没有可编号的图片")
+		return Numbering{}, fmt.Errorf("当前筛选下没有可编号的%s", m.label)
 	}
-	b := Numbering{ID: numberingToken(), Parent: parent, Created: storage.Now(), Status: "preview", Fingerprint: before, Items: numberingNames(selected, outside)}
+	b := Numbering{ID: numberingToken(), Parent: parent, Created: storage.Now(), Status: "preview", Fingerprint: before, Media: m.value, Items: numberingNames(selected, outside)}
 	return l.saveNumberingPreview(b, path)
 }
 
@@ -234,6 +266,7 @@ func numberingMatch(path string, i NumberingItem) bool {
 	return err == nil && Identity(s) == i.Identity && s.Size == i.Size && stamp(s) == i.Mtime
 }
 func (l *Library) saveNumberingPreview(b Numbering, path string) (Numbering, error) {
+	label := mediaLabel(b.Media)
 	changed := map[string]bool{}
 	identities := map[string]bool{}
 	for _, i := range b.Items {
@@ -241,7 +274,7 @@ func (l *Library) saveNumberingPreview(b Numbering, path string) (Numbering, err
 			return Numbering{}, err
 		}
 		if identities[i.Identity] {
-			return Numbering{}, fmt.Errorf("图片包含硬链接，无法安全整批编号")
+			return Numbering{}, fmt.Errorf("%s包含硬链接，无法安全整批编号", label)
 		}
 		identities[i.Identity] = true
 		if i.Old != i.New {
@@ -274,7 +307,7 @@ func (l *Library) saveNumberingPreview(b Numbering, path string) (Numbering, err
 		return Numbering{}, err
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec("INSERT INTO image_numberings(id,parent,status,created,fingerprint,undo_of) VALUES(?,?,?,?,?,?)", b.ID, b.Parent, b.Status, b.Created, b.Fingerprint, b.UndoOf); err != nil {
+	if _, err = tx.Exec("INSERT INTO image_numberings(id,parent,status,created,fingerprint,undo_of,media) VALUES(?,?,?,?,?,?,?)", b.ID, b.Parent, b.Status, b.Created, b.Fingerprint, b.UndoOf, b.Media); err != nil {
 		return Numbering{}, err
 	}
 	for idx, i := range b.Items {
@@ -297,7 +330,7 @@ func (l *Library) saveNumberingPreview(b Numbering, path string) (Numbering, err
 
 func (l *Library) Numbering(id string) (Numbering, error) {
 	var b Numbering
-	err := l.DB.QueryRow("SELECT id,parent,status,created,fingerprint,undo_of,error FROM image_numberings WHERE id=?", id).Scan(&b.ID, &b.Parent, &b.Status, &b.Created, &b.Fingerprint, &b.UndoOf, &b.Error)
+	err := l.DB.QueryRow("SELECT id,parent,status,created,fingerprint,undo_of,error,media FROM image_numberings WHERE id=?", id).Scan(&b.ID, &b.Parent, &b.Status, &b.Created, &b.Fingerprint, &b.UndoOf, &b.Error, &b.Media)
 	if err != nil {
 		return b, err
 	}
@@ -319,8 +352,11 @@ func (l *Library) Numbering(id string) (Numbering, error) {
 	b.Total = len(b.Items)
 	return b, rows.Err()
 }
-func (l *Library) NumberingHistory(parent int64) ([]Numbering, error) {
-	rows, err := l.DB.Query(`SELECT b.id,b.parent,b.status,b.created,b.undo_of,b.error,count(i.entry),COALESCE(sum(i.old_name<>i.new_name),0) FROM image_numberings b JOIN image_numbering_items i ON i.batch=b.id WHERE b.parent=? AND b.status<>'preview' GROUP BY b.id ORDER BY b.created DESC,b.id DESC LIMIT 50`, parent)
+func (l *Library) NumberingHistory(parent int64, media string) ([]Numbering, error) {
+	if _, err := mediaOf(media); err != nil {
+		return nil, err
+	}
+	rows, err := l.DB.Query(`SELECT b.id,b.parent,b.status,b.created,b.undo_of,b.error,count(i.entry),COALESCE(sum(i.old_name<>i.new_name),0) FROM image_numberings b JOIN image_numbering_items i ON i.batch=b.id WHERE b.parent=? AND b.media=? AND b.status<>'preview' GROUP BY b.id ORDER BY b.created DESC,b.id DESC LIMIT 50`, parent, media)
 	if err != nil {
 		return nil, err
 	}
@@ -356,7 +392,7 @@ func (l *Library) PreviewNumberingRestore(id string) (Numbering, error) {
 	if err != nil {
 		return Numbering{}, err
 	}
-	b := Numbering{ID: numberingToken(), Parent: original.Parent, Created: storage.Now(), Status: "preview", Fingerprint: fingerprint, UndoOf: id}
+	b := Numbering{ID: numberingToken(), Parent: original.Parent, Created: storage.Now(), Status: "preview", Fingerprint: fingerprint, UndoOf: id, Media: original.Media}
 	for _, i := range original.Items {
 		if i.Old == i.New {
 			continue
@@ -366,12 +402,12 @@ func (l *Library) PreviewNumberingRestore(id string) (Numbering, error) {
 			return Numbering{}, err
 		}
 		if e.Parent != b.Parent || e.Name != i.New || e.RestoreID != i.Operation || !numberingMatch(filepath.Join(path, e.Name), i) {
-			return Numbering{}, fmt.Errorf("图片 %s 已变化或有后续改名，不能整批还原", i.New)
+			return Numbering{}, fmt.Errorf("%s %s 已变化或有后续改名，不能整批还原", mediaLabel(b.Media), i.New)
 		}
 		b.Items = append(b.Items, NumberingItem{Entry: e.ID, Version: e.Version, Identity: i.Identity, Size: i.Size, Mtime: i.Mtime, Old: i.New, New: i.Old, UndoOf: i.Operation})
 	}
 	if len(b.Items) == 0 {
-		return Numbering{}, fmt.Errorf("该批次没有需要还原的图片")
+		return Numbering{}, fmt.Errorf("该批次没有需要还原的%s", mediaLabel(b.Media))
 	}
 	return l.saveNumberingPreview(b, path)
 }
@@ -424,16 +460,16 @@ func (l *Library) ApplyNumbering(id string) (Numbering, error) {
 			return b, err
 		}
 		if e.Parent != b.Parent || e.Version != i.Version || e.Name != i.Old || !numberingMatch(filepath.Join(path, i.Old), i) {
-			return b, fmt.Errorf("图片 %s 已变化，请重新预览", i.Old)
+			return b, fmt.Errorf("%s %s 已变化，请重新预览", mediaLabel(b.Media), i.Old)
 		}
 		if err = l.CheckAvailable(i.Entry); err != nil {
 			return b, err
 		}
 		if e.TaskStatus != "" || (l.Busy != nil && l.Busy(i.Entry)) {
-			return b, fmt.Errorf("图片有活动任务，请等待完成")
+			return b, fmt.Errorf("%s有活动任务，请等待完成", mediaLabel(b.Media))
 		}
 		if i.UndoOf != 0 && e.RestoreID != i.UndoOf {
-			return b, fmt.Errorf("图片有后续改名，不能整批还原")
+			return b, fmt.Errorf("%s有后续改名，不能整批还原", mediaLabel(b.Media))
 		}
 	}
 	if _, err = l.DB.Exec("UPDATE image_numberings SET status='running' WHERE id=?", id); err != nil {
@@ -477,7 +513,7 @@ func (l *Library) moveNumbering(b *Numbering, i *NumberingItem, path, target str
 		return fmt.Errorf("父目录已变化")
 	}
 	if !numberingMatch(filepath.Join(path, i.Current), *i) {
-		return fmt.Errorf("图片 %s 身份或内容已变化", i.Current)
+		return fmt.Errorf("%s %s 身份或内容已变化", mediaLabel(b.Media), i.Current)
 	}
 	if _, err := l.DB.Exec("UPDATE image_numbering_items SET pending_name=? WHERE batch=? AND entry=?", target, b.ID, i.Entry); err != nil {
 		return err
@@ -523,7 +559,7 @@ func (l *Library) performNumbering(b *Numbering, path string) error {
 	}
 	for _, i := range b.Items {
 		if !numberingMatch(filepath.Join(path, i.New), i) {
-			return fmt.Errorf("图片 %s 在提交前发生变化", i.New)
+			return fmt.Errorf("%s %s 在提交前发生变化", mediaLabel(b.Media), i.New)
 		}
 	}
 	tx, err := l.DB.Begin()
@@ -589,7 +625,7 @@ func (l *Library) reconcileNumbering(b *Numbering, path string) error {
 		if i.Pending != "" {
 			pending := exact[i.Pending] && numberingMatch(filepath.Join(path, i.Pending), *i)
 			if current == pending {
-				return fmt.Errorf("无法唯一确定图片 %s 的位置，需要人工核对", i.Old)
+				return fmt.Errorf("无法唯一确定%s %s 的位置，需要人工核对", mediaLabel(b.Media), i.Old)
 			}
 			if pending {
 				i.Current = i.Pending
@@ -599,7 +635,7 @@ func (l *Library) reconcileNumbering(b *Numbering, path string) error {
 			}
 			i.Pending = ""
 		} else if !current {
-			return fmt.Errorf("图片 %s 已被外部修改，需要人工核对", i.Old)
+			return fmt.Errorf("%s %s 已被外部修改，需要人工核对", mediaLabel(b.Media), i.Old)
 		}
 	}
 	return syncNumberingDir(path)
@@ -674,10 +710,10 @@ func (l *Library) recoverNumbering(id string) (Numbering, error) {
 		err = l.rollbackNumbering(&b, path)
 	}
 	b.Status = "rolled_back"
-	b.Error = "中断的图片编号已恢复原名"
+	b.Error = fmt.Sprintf("中断的%s编号已恢复原名", mediaLabel(b.Media))
 	if err != nil {
 		b.Status = "review"
-		b.Error = "图片编号恢复未完成：" + err.Error()
+		b.Error = fmt.Sprintf("%s编号恢复未完成：%v", mediaLabel(b.Media), err)
 	}
 	_, dbErr := l.DB.Exec("UPDATE image_numberings SET status=?,error=? WHERE id=?", b.Status, b.Error, id)
 	return b, dbErr
