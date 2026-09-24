@@ -219,6 +219,7 @@ func (a *App) Handler() http.Handler {
 	api.HandleFunc("GET /api/logs", a.logs)
 	api.HandleFunc("GET /api/logs/batches", a.logBatches)
 	api.HandleFunc("GET /api/usage/analytics", a.usageAnalytics)
+	api.HandleFunc("GET /api/runs/analytics", a.runsAnalytics)
 	api.HandleFunc("POST /api/runs", func(w http.ResponseWriter, r *http.Request) {
 		var v jobs.Request
 		if !decode(w, r, &v) {

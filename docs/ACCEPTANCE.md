@@ -221,3 +221,16 @@ npm run test:e2e -- workspace.spec.ts --grep '返回目录恢复|批次记录按
 - `npm run test:e2e -- settings.spec.ts`（web 目录）通过；覆盖默认 30、保存 0、刷新恢复和设置页移动布局，已查看桌面截图。
 - 新增后端用例验证等待中取消、源文件变化跳过、已有等待不被新设置缩短，以及升级默认值与重启保留 0。
 - 未重启用户服务，未使用真实媒体或真实模型。
+
+### 2026-09-24 用量分析双页签与数据分析仪表盘
+
+用量分析页改为「模型用量 / 数据分析」双页签（hash `#usage/tokens|analysis`，默认模型用量，原页面行为不变）；新增数据分析仪表盘。schema v19 为 run_items 记录逐项 started_ms / finished_ms，`internal/runstats` 聚合与 `GET /api/runs/analytics` 提供成功率、耗时、吞吐、分位、分布、配置比较、散点、失败归组与分页明细。图表配色（三系列 #0e8a5c / #2468af / #b14545、耗时分布单色顺序色带）经 dataviz 校验脚本通过（CVD、对比、ordinal 单色）。
+
+- `go test ./...`、`go vet ./...` 全部通过；`go test -race ./internal/runstats ./internal/jobs ./internal/storage ./internal/app` 通过。
+- 新增 `internal/runstats` 聚合用例（口径、分桶、旧数据回退归属、分布、分位、筛选、分页、全量起点）、`internal/app` 接口用例（含 `/api/runs/analytics` 字面路由优先于 `{id}` 通配的验证）与 jobs 逐项计时落库用例；三个倒回旧 schema 的既有测试同步剔除新列。
+- `npm --prefix web run check`、`npm --prefix web run build` 通过；`go build -o bin/video-rename ./cmd/video-rename` 通过。
+- `npm --prefix web run test:e2e` **54 / 54 通过**（约 2.9 分钟，含新增 usage-analysis 5 项：页签切换与 hash 直达、指标与图表交互、排序筛选参数、空态与窄屏截图、错误重试；usage.spec 5 项原断言无改动通过）。
+- 已查看桌面（1440px）与移动（390px）整页截图：布局按指标卡 → 趋势 → 并排面板 → 比较 → 散点 → 失败分析 → 明细排布，无横向溢出。
+- **升级路径实测**：用 HEAD（693f488）旧版二进制 + 真实 FFmpeg 抽帧 + 本地 OpenAI 兼容假模型生成 v18 生产形态数据库（2 批次：3 改名 + 3 跳过、255 token、3 操作、3 标记），新版二进制原地升级后 schema v19、`run_items` 新增计时列（旧行 0）、runs / items / token / operations / marks 计数逐项一致；升级前已留整目录备份。
+- **指标数值实测**（同一环境，`from` 缺省取全部）：升级后旧数据 `avg_batch_ms`=16252 与 SQL 直查 (32499.824+5.372)/2 精确一致，`legacy_items`=6 按批次完成时间回退归属，分桶 / 散点 / 配置汇总吻合；新版再跑 1 个真实批次（1 改名 + 3 跳过）后 `timed_items`=1、逐项耗时 1307ms（> 模型 1.2s 延迟，与 SQL `finished_ms-started_ms` 相等），P50=P95=1307、耗时分布「5 秒内=1」、`avg_batch_ms`=21276 与三批次 SQL 均值一致。
+- 局限：模型侧为本地假服务（协议与真实 OpenAI 兼容服务一致，未调用云端真实模型）；stock sqlite3 CLI 不识别应用注册的 NATURAL_NAME 排序规则，完整性以应用成功打开、迁移与查询为准。

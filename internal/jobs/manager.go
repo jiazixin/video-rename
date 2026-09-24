@@ -443,7 +443,7 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 		if current.Error != "" {
 			status = "failed"
 		}
-		_, _ = m.DB.Exec("UPDATE run_items SET status='cancelled' WHERE run=? AND status IN ('queued','running')", id)
+		_, _ = m.DB.Exec("UPDATE run_items SET status='cancelled',finished_ms=? WHERE run=? AND status IN ('queued','running')", time.Now().UnixMilli(), id)
 	} else {
 		r, _ = m.Get(id)
 		if r.Failed > 0 {
@@ -480,7 +480,7 @@ func (m *Manager) scan(ctx context.Context, run, id int64, recursive bool) error
 		if n > 0 {
 			_, err = m.DB.Exec("UPDATE runs SET discovered=discovered+1 WHERE id=?", run)
 			if err == nil && e.Processed != "" {
-				_, err = m.DB.Exec("UPDATE run_items SET status='skipped',message='已处理，跳过' WHERE run=? AND identity=?", run, e.Identity)
+				_, err = m.DB.Exec("UPDATE run_items SET status='skipped',message='已处理，跳过',finished_ms=? WHERE run=? AND identity=?", time.Now().UnixMilli(), run, e.Identity)
 				if err == nil {
 					_, err = m.DB.Exec("UPDATE runs SET skipped=skipped+1 WHERE id=?", run)
 				}
@@ -542,7 +542,7 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.C
 	}
 	committed := false
 	finish := func(status, msg string) {
-		_, _ = m.DB.Exec("UPDATE run_items SET status=?,message=? WHERE id=?", status, msg, it.ID)
+		_, _ = m.DB.Exec("UPDATE run_items SET status=?,message=?,finished_ms=? WHERE id=?", status, msg, time.Now().UnixMilli(), it.ID)
 		column := "done"
 		if status == "skipped" {
 			column = "skipped"
@@ -572,7 +572,7 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.C
 		return
 	}
 	if err == nil {
-		_, err = m.DB.Exec("UPDATE run_items SET status='running' WHERE id=?", it.ID)
+		_, err = m.DB.Exec("UPDATE run_items SET status='running',started_ms=? WHERE id=?", time.Now().UnixMilli(), it.ID)
 	}
 	if err == nil {
 		err = m.Library.CheckAvailable(it.Entry)

@@ -53,7 +53,7 @@ func TestVersionOneUpgradePreservesData(t *testing.T) {
 	if err = upgraded.QueryRow("SELECT name,model_config_id FROM schedules").Scan(&name, &promptID); err != nil || name != "保留计划" || promptID != 1 {
 		t.Fatal(name, promptID, err)
 	}
-	if err = upgraded.QueryRow("SELECT max(version) FROM schema_migrations").Scan(&version); err != nil || version != 18 {
+	if err = upgraded.QueryRow("SELECT max(version) FROM schema_migrations").Scan(&version); err != nil || version != 19 {
 		t.Fatal(version, err)
 	}
 }

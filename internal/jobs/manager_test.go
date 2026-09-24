@@ -415,3 +415,38 @@ func TestNamingFailureKeepsFileAndRecordsFailure(t *testing.T) {
 		t.Fatal("missing failure history")
 	}
 }
+func TestRunItemsRecordProcessingTiming(t *testing.T) {
+	m, root := setup(t)
+	if err := os.WriteFile(filepath.Join(root, "timed.mp4"), []byte("video"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m.Analyze = func(context.Context, *config.Config, domain.VideoJob, string, string) (string, error) {
+		time.Sleep(20 * time.Millisecond)
+		return "计时标题", nil
+	}
+	id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "timing-run-1"}, "manual", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Execute(t.Context(), id)
+	var started, finished int64
+	if err = m.DB.QueryRow("SELECT started_ms,finished_ms FROM run_items WHERE run=?", id).Scan(&started, &finished); err != nil {
+		t.Fatal(err)
+	}
+	if started <= 0 || finished < started+20 {
+		t.Fatalf("processed item should record timing: started=%d finished=%d", started, finished)
+	}
+	// The already-processed file is skipped during the next scan: it gets a
+	// completion timestamp for attribution but never a processing start.
+	id, err = m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "timing-run-2"}, "manual", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Execute(t.Context(), id)
+	if err = m.DB.QueryRow("SELECT started_ms,finished_ms FROM run_items WHERE run=?", id).Scan(&started, &finished); err != nil {
+		t.Fatal(err)
+	}
+	if started != 0 || finished <= 0 {
+		t.Fatalf("scan skip should record only completion: started=%d finished=%d", started, finished)
+	}
+}

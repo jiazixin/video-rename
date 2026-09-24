@@ -161,6 +161,14 @@ GET /api/usage/analytics 在登录保护下聚合账本：`[from,to)` 半开区�
 
 前端 `web/src/features/usage/` 提供筛选行（预设区间、自定义日期时刻、模型 / 配置 / 来源 / 批次）、总览卡片、SVG 趋势图（悬停与方向键取值、完整数据表替代）、模型对比条、高消耗批次排行与分页明细；请求带中止与序号防迟到覆盖，错误提供重试。图表色 #0e8a5c / #0c7f52 已通过配色校验（浅色表面、色度与对比达标）。浏览器测试覆盖导航与直达、筛选参数往返、空态、错误重试与窄屏。
 
+## 数据分析页签
+
+schema v19 为 run_items 增加 started_ms / finished_ms（毫秒，0 表示未记录）：jobs 在置 running 时写 started_ms，finish()、扫描期跳过与取消批量置状态时写 finished_ms；扫描前跳过的项只有完成时刻、不进耗时统计。旧数据不回填。
+
+`internal/runstats` 聚合批次性能（结构与 tokenusage 平行：单读事务 + Go 内聚合 + 相同分桶粒度）：批次按实际开始（缺失用提交时间）归属 `[from,to)` 半开区间；批次耗时 = finished − started；逐项耗时 = finished_ms − started_ms（仅 done / failed 计入，cancelled 排除）；条目完成时刻优先 finished_ms，缺失回退批次 finished 并计入 legacy_items；P50 / P95 为 nearest-rank 分位；失败原因按首行截断 100 字符归组。`GET /api/runs/analytics`（字面路由优先于 `/api/runs/{id}` 通配）提供 from / to / timezone / profile / source / sort（recent / duration / size）/ page / size 参数，风格与 usage 接口一致。
+
+前端页签 `#usage/tokens|analysis` 由 App.vue 解析（默认 tokens）。`Usage.vue` 变为壳组件，原正文移入 `UsageTokens.vue` 行为不变；`UsageAnalysis.vue` 提供 10 格指标卡、批次耗时趋势、处理结果趋势（成功 #0e8a5c / 跳过 #2468af / 失败 #b14545，CVD 与对比校验通过）、吞吐趋势 + 耗时分布（单色顺序色带 ordinal 校验通过）并排、模型配置性能比较、`AnalysisScatter` 散点（最近点拾取 + 方向键）、失败分析与分页批次明细；图表组件 `AnalysisLine` / `AnalysisHistogram` / `AnalysisScatter` 沿用 UsageTrend 的悬停 / 键盘 / 数据表惯例，样式在 `analysis.css`。浏览器测试覆盖页签切换与 hash 直达、指标渲染、图表交互、排序筛选参数、空态、错误重试与窄屏截图。
+
 ## Prompt配置与提示词库
 
 schema v18 重建 `prompts` 表（v4 已把旧表改名 `model_configs`，名称可复用）：提示词成为独立实体（名称 1–80 字、正文 ≤16000 字节、上限 200 条、版本校验），`internal/prompts` 提供增删改查；删除前检查 `model_configs.prompt_id` 引用，被引用时返回 409 与数量。`model_configs` 新增 `prompt_id` 并删除 `body` 列，正文与提示词名称在读取时 LEFT JOIN 解析（API 的 `body`/`prompt_title` 为只读视图）；迁移把旧正文按内容去重回填为提示词条目，标题取同正文的最低 ID 配置，配置自动关联，历史运行快照不受影响。全局固定提示词存 `system_settings.fixed_prompt`（空值回退代码默认），`internal/systemsettings` 提供 `FixedPrompt`/`SaveFixedPrompt`，接口为 `GET /api/prompts`（返回 fixed_prompt + 列表）、`PUT /api/prompts/fixed` 与提示词的 POST/PATCH/DELETE；`/api/model-presets` 不再返回 default_prompt。

@@ -152,6 +152,13 @@ INSERT INTO schema_migrations VALUES(17,datetime('now'));`); err != nil {
 			return err
 		}
 	}
+	if version < 19 {
+		if _, err = tx.Exec(`ALTER TABLE run_items ADD COLUMN started_ms INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE run_items ADD COLUMN finished_ms INTEGER NOT NULL DEFAULT 0;
+INSERT INTO schema_migrations VALUES(19,datetime('now'));`); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 

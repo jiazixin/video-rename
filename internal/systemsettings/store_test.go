@@ -50,7 +50,7 @@ func TestVersionTwelveUpgradePreservesSettingsAndDefaultsWait(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec("INSERT INTO system_settings(id,extract_workers,cache_gb) VALUES(1,3,2); ALTER TABLE system_settings DROP COLUMN stability_seconds; ALTER TABLE events DROP COLUMN processing_log; ALTER TABLE image_numberings DROP COLUMN media; ALTER TABLE system_settings DROP COLUMN numbering; ALTER TABLE system_settings DROP COLUMN fixed_prompt; DROP TABLE token_usage_records; DROP TABLE prompts; ALTER TABLE model_configs DROP COLUMN prompt_id; ALTER TABLE model_configs ADD COLUMN body TEXT NOT NULL DEFAULT ''; DELETE FROM schema_migrations WHERE version>=13"); err != nil {
+	if _, err = db.Exec("INSERT INTO system_settings(id,extract_workers,cache_gb) VALUES(1,3,2); ALTER TABLE system_settings DROP COLUMN stability_seconds; ALTER TABLE events DROP COLUMN processing_log; ALTER TABLE image_numberings DROP COLUMN media; ALTER TABLE system_settings DROP COLUMN numbering; ALTER TABLE system_settings DROP COLUMN fixed_prompt; DROP TABLE token_usage_records; DROP TABLE prompts; ALTER TABLE model_configs DROP COLUMN prompt_id; ALTER TABLE model_configs ADD COLUMN body TEXT NOT NULL DEFAULT ''; ALTER TABLE run_items DROP COLUMN started_ms; ALTER TABLE run_items DROP COLUMN finished_ms; DELETE FROM schema_migrations WHERE version>=13"); err != nil {
 		db.Close()
 		t.Fatal(err)
 	}

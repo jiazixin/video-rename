@@ -1,0 +1,29 @@
+/* 数据分析：沿用用量分析的卡片与图表语言；新增双列布局、图例、直方图与散点。 */
+.usage-tabs{margin-bottom:22px}
+.analysis-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:16px}
+.analysis-duo{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start}
+.analysis-duo .panel{min-width:0}
+.analysis-legend{display:flex;gap:18px;flex-wrap:wrap;padding:12px 18px 0}
+.analysis-legend-item{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:var(--steel)}
+.analysis-legend-item i{width:14px;height:3px;border-radius:2px;flex:none}
+.series-line{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.analysis-histogram{padding:18px 20px 8px;display:flex;flex-direction:column;gap:11px}
+.analysis-hist-row{display:grid;grid-template-columns:76px 1fr 52px;align-items:center;gap:12px}
+.analysis-hist-label{font-size:11px;color:var(--steel);white-space:nowrap;text-align:right}
+.analysis-hist-track{height:16px;border-radius:0 4px 4px 0;background:#f0f2f1;overflow:hidden}
+.analysis-hist-bar{height:100%;border-radius:0 4px 4px 0;min-width:2px;transition:width .2s}
+.analysis-hist-value{font-size:11px;color:var(--steel);font-variant-numeric:tabular-nums}
+.analysis-hist-empty{position:static;text-align:center}
+.scatter-dot{stroke:#fff;stroke-width:2}
+.scatter-halo{fill:none;stroke-width:2;opacity:.55}
+.analysis-failures{padding:18px 20px;display:flex;flex-direction:column;gap:16px}
+.analysis-failure{display:flex;flex-direction:column;gap:6px}
+.analysis-failure strong{font-size:12.5px;font-weight:500;overflow-wrap:anywhere}
+.analysis-subhead{margin-top:6px;padding-top:14px;border-top:1px solid var(--line)}
+@media(max-width:1150px){
+ .analysis-duo{grid-template-columns:1fr}
+}
+@media(max-width:800px){
+ .analysis-kpis{grid-template-columns:1fr 1fr}
+ .analysis-hist-row{grid-template-columns:70px 1fr 44px;gap:8px}
+}
