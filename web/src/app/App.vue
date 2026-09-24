@@ -16,7 +16,7 @@ function hash(){
  if(location.hash.startsWith('#library'))libraryHash=location.hash.slice(1)
  const [name,tab]=location.hash.slice(1).split('/')
  page.value=['library','history','runs','usage','settings'].includes(name||'')?name!:'library'
- settingsTab.value=['processing','models','sampling','notifications'].includes(tab||'')?tab!:'processing'
+ settingsTab.value=['processing','numbering','models','sampling','notifications'].includes(tab||'')?tab!:'processing'
 }
 async function loadSystem(){if(session.value){try{system.value=await api('/system')}catch{}}}
 onMounted(async()=>{hash();window.addEventListener('hashchange',hash);await bootstrap();await loadSystem();loading.value=false})

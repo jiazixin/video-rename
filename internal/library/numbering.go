@@ -78,48 +78,89 @@ func mediaLabel(value string) string {
 	}
 	return "文件"
 }
-func imageNumber(name string) *big.Int {
-	s := strings.TrimSuffix(name, filepath.Ext(name))
-	if s == "" {
+// numberedValue reads the ordinal of a name shaped prefix+digits; names with
+// another shape carry no number and join the tail of the sequence.
+func numberedValue(name, prefix string) *big.Int {
+	base := strings.TrimSuffix(name, filepath.Ext(name))
+	if prefix != "" {
+		if !strings.HasPrefix(base, prefix) {
+			return nil
+		}
+		base = base[len(prefix):]
+	}
+	if base == "" {
 		return nil
 	}
-	for _, c := range s {
+	for _, c := range base {
 		if c < '0' || c > '9' {
 			return nil
 		}
 	}
-	n, ok := new(big.Int).SetString(s, 10)
+	n, ok := new(big.Int).SetString(base, 10)
 	if !ok || n.Sign() <= 0 {
 		return nil
 	}
 	return n
 }
 
-// Every format shares one sequence. Unselected pictures reserve their numbers too.
-func numberingNames(selected, outside []Entry) []NumberingItem {
+func padNumber(n *big.Int, width int) string {
+	s := n.String()
+	for len(s) < width {
+		s = "0" + s
+	}
+	return s
+}
+
+// Every format shares one sequence. Unselected files of the same class, and
+// the peer class when one sequence is shared, reserve their numbers too.
+func numberingNames(selected, outside, peers []Entry, r domain.MediaNumberingRules, peerPrefix string) []NumberingItem {
 	max := new(big.Int)
 	used := map[string]bool{}
-	for _, group := range [][]Entry{selected, outside} {
-		for _, e := range group {
-			if n := imageNumber(e.Name); n != nil && n.Cmp(max) > 0 {
+	// Selected files raise the ceiling but never block their own number;
+	// outside and peer files reserve theirs.
+	scan := func(e Entry, prefix string, reserve bool) {
+		if n := numberedValue(e.Name, prefix); n != nil {
+			if n.Cmp(max) > 0 {
 				max.Set(n)
+			}
+			if reserve {
+				used[n.String()] = true
 			}
 		}
 	}
-	for _, e := range outside {
-		if n := imageNumber(e.Name); n != nil {
-			used[n.String()] = true
-		}
+	for _, e := range selected {
+		scan(e, r.Prefix, false)
 	}
+	for _, e := range outside {
+		scan(e, r.Prefix, true)
+	}
+	for _, e := range peers {
+		scan(e, peerPrefix, true)
+	}
+	// Compact mode assigns fresh consecutive numbers and only steps around
+	// numbers kept by files outside this batch.
+	next := big.NewInt(0)
 	result := make([]NumberingItem, 0, len(selected))
 	for _, e := range selected {
-		n := imageNumber(e.Name)
-		if n == nil || used[n.String()] {
-			max.Add(max, big.NewInt(1))
-			n = new(big.Int).Set(max)
+		n := numberedValue(e.Name, r.Prefix)
+		if r.Compact || n == nil || used[n.String()] {
+			if r.Compact {
+				next.Add(next, big.NewInt(1))
+				for used[next.String()] {
+					next.Add(next, big.NewInt(1))
+				}
+				n = new(big.Int).Set(next)
+			} else {
+				max.Add(max, big.NewInt(1))
+				n = new(big.Int).Set(max)
+			}
 		}
 		used[n.String()] = true
-		result = append(result, NumberingItem{Entry: e.ID, Old: e.Name, New: n.String() + strings.ToLower(filepath.Ext(e.Name)), Version: e.Version, Identity: e.Identity, Size: e.Size, Mtime: e.Mtime})
+		ext := filepath.Ext(e.Name)
+		if r.Lowercase {
+			ext = strings.ToLower(ext)
+		}
+		result = append(result, NumberingItem{Entry: e.ID, Old: e.Name, New: r.Prefix + padNumber(n, r.Padding) + ext, Version: e.Version, Identity: e.Identity, Size: e.Size, Mtime: e.Mtime})
 	}
 	return result
 }
@@ -158,12 +199,21 @@ func (l *Library) checkNumberingAvailable(id int64) error {
 	return nil
 }
 
-func (l *Library) PreviewNumbering(parent int64, media, query, sortBy string) (Numbering, error) {
+func (l *Library) PreviewNumbering(parent int64, media, query, sortBy string, settings domain.NumberingSettings) (Numbering, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	m, err := mediaOf(media)
 	if err != nil {
 		return Numbering{}, err
+	}
+	if err = domain.ValidateNumberingSettings(settings); err != nil {
+		return Numbering{}, err
+	}
+	rules, peerRules := settings.Image, settings.Audio
+	peer := numberingMedia["audio"]
+	if m.value == "audio" {
+		rules, peerRules = settings.Audio, settings.Image
+		peer = numberingMedia["image"]
 	}
 	if err = l.CheckAvailable(parent); err != nil {
 		return Numbering{}, err
@@ -213,24 +263,30 @@ func (l *Library) PreviewNumbering(parent int64, media, query, sortBy string) (N
 	if err != nil {
 		return Numbering{}, err
 	}
-	var selected, outside []Entry
+	var selected, outside, peers []Entry
 	indexed := map[string]bool{}
 	for _, c := range candidates {
 		e, err := l.Get(c.id)
 		if err != nil {
 			return Numbering{}, err
 		}
-		if !m.match(e.Name) {
+		sameClass := m.match(e.Name)
+		if !sameClass && !(settings.Shared && peer.match(e.Name)) {
 			continue
 		}
-		item := NumberingItem{Identity: e.Identity, Size: e.Size, Mtime: e.Mtime}
-		if !numberingMatch(filepath.Join(path, e.Name), item) {
-			return Numbering{}, fmt.Errorf("%s已变化，请刷新目录后重试", m.label)
+		if sameClass {
+			item := NumberingItem{Identity: e.Identity, Size: e.Size, Mtime: e.Mtime}
+			if !numberingMatch(filepath.Join(path, e.Name), item) {
+				return Numbering{}, fmt.Errorf("%s已变化，请刷新目录后重试", m.label)
+			}
 		}
 		indexed[e.Name] = true
-		if c.selected {
+		switch {
+		case !sameClass:
+			peers = append(peers, e)
+		case c.selected:
 			selected = append(selected, e)
-		} else {
+		default:
 			outside = append(outside, e)
 		}
 	}
@@ -239,7 +295,10 @@ func (l *Library) PreviewNumbering(parent int64, media, query, sortBy string) (N
 		return Numbering{}, err
 	}
 	for _, e := range disk {
-		if e.Type().IsRegular() && m.match(e.Name()) && !indexed[e.Name()] {
+		if !e.Type().IsRegular() || indexed[e.Name()] {
+			continue
+		}
+		if m.match(e.Name()) || (settings.Shared && peer.match(e.Name())) {
 			return Numbering{}, fmt.Errorf("%s索引不完整，请刷新目录后重试", m.label)
 		}
 	}
@@ -253,7 +312,7 @@ func (l *Library) PreviewNumbering(parent int64, media, query, sortBy string) (N
 	if len(selected) == 0 {
 		return Numbering{}, fmt.Errorf("当前筛选下没有可编号的%s", m.label)
 	}
-	b := Numbering{ID: numberingToken(), Parent: parent, Created: storage.Now(), Status: "preview", Fingerprint: before, Media: m.value, Items: numberingNames(selected, outside)}
+	b := Numbering{ID: numberingToken(), Parent: parent, Created: storage.Now(), Status: "preview", Fingerprint: before, Media: m.value, Items: numberingNames(selected, outside, peers, rules, peerRules.Prefix)}
 	return l.saveNumberingPreview(b, path)
 }
 

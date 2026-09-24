@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"video-rename/internal/domain"
 	"video-rename/internal/rename"
 )
 
@@ -30,7 +31,7 @@ func TestNumberingRules(t *testing.T) {
 			for _, s := range tc.outside {
 				outside = append(outside, Entry{Name: s})
 			}
-			got := numberingNames(selected, outside)
+			got := numberingNames(selected, outside, nil, domain.DefaultMediaNumberingRules(), "")
 			for i, g := range got {
 				if g.New != tc.want[i] {
 					t.Fatalf("%s => %s; want %s", g.Old, g.New, tc.want[i])
@@ -52,7 +53,7 @@ func numberedFixture(t *testing.T) (*Library, string, Numbering) {
 	}
 	put(t, filepath.Join(root, "folder", "nested.JPG"))
 	refresh(t, l, 1)
-	b, err := l.PreviewNumbering(1, "image", "", "name_asc")
+	b, err := l.PreviewNumbering(1, "image", "", "name_asc", domain.DefaultNumberingSettings())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,10 +67,10 @@ func TestAudioNumberingScopesToAudioFiles(t *testing.T) {
 		}
 	}
 	refresh(t, l, 1)
-	if _, err := l.PreviewNumbering(1, "video", "", "name_asc"); err == nil {
+	if _, err := l.PreviewNumbering(1, "video", "", "name_asc", domain.DefaultNumberingSettings()); err == nil {
 		t.Fatal("invalid media accepted")
 	}
-	b, err := l.PreviewNumbering(1, "audio", "", "name_asc")
+	b, err := l.PreviewNumbering(1, "audio", "", "name_asc", domain.DefaultNumberingSettings())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,9 +98,83 @@ func TestAudioNumberingScopesToAudioFiles(t *testing.T) {
 	if _, err = os.Stat(filepath.Join(root, "song.MP3")); err != nil {
 		t.Fatal(err)
 	}
-	images, err := l.PreviewNumbering(1, "image", "", "name_asc")
+	images, err := l.PreviewNumbering(1, "image", "", "name_asc", domain.DefaultNumberingSettings())
 	if err != nil || images.Total != 1 || images.Items[0].Old != "pic.jpg" {
 		t.Fatal(images, err)
+	}
+}
+func TestNumberingRuleOptions(t *testing.T) {
+	entries := func(names ...string) []Entry {
+		list := make([]Entry, len(names))
+		for i, n := range names {
+			list[i] = Entry{Name: n}
+		}
+		return list
+	}
+	names := func(selected, outside, peers []Entry, r domain.MediaNumberingRules, peerPrefix string) []string {
+		items := numberingNames(selected, outside, peers, r, peerPrefix)
+		got := make([]string, len(items))
+		for i, item := range items {
+			got[i] = item.New
+		}
+		return got
+	}
+	// Padding pads kept and fresh numbers alike.
+	padded := names(entries("5.jpg", "x.PNG"), nil, nil, domain.MediaNumberingRules{Padding: 3, Lowercase: true}, "")
+	if padded[0] != "005.jpg" || padded[1] != "006.png" {
+		t.Fatal(padded)
+	}
+	// Uppercase extensions survive when lowercase is off.
+	kept := names(entries("1.JPG"), nil, nil, domain.MediaNumberingRules{Padding: 1, Lowercase: false}, "")
+	if kept[0] != "1.JPG" {
+		t.Fatal(kept)
+	}
+	// Only prefix+digits names count as numbered once a prefix is set.
+	prefixed := names(entries("IMG_2.JPG", "2.png", "plain.jpg"), nil, nil, domain.MediaNumberingRules{Padding: 2, Lowercase: true, Prefix: "IMG_"}, "")
+	if prefixed[0] != "IMG_02.jpg" || prefixed[1] != "IMG_03.png" || prefixed[2] != "IMG_04.jpg" {
+		t.Fatal(prefixed)
+	}
+	// Compact mode renumbers from 1, stepping around reserved numbers.
+	compact := names(entries("9.jpg", "1.png", "x.gif"), entries("2.jpg"), nil, domain.MediaNumberingRules{Padding: 1, Lowercase: true, Compact: true}, "")
+	if compact[0] != "1.jpg" || compact[1] != "3.png" || compact[2] != "4.gif" {
+		t.Fatal(compact)
+	}
+	// A shared sequence reserves peer numbers parsed with the peer prefix.
+	shared := names(entries("a.jpg"), nil, entries("AUD_7.mp3"), domain.MediaNumberingRules{Padding: 1, Lowercase: true}, "AUD_")
+	if shared[0] != "8.jpg" {
+		t.Fatal(shared)
+	}
+}
+
+func TestNumberingSharedSequenceAcrossClasses(t *testing.T) {
+	l, root, _ := fixture(t)
+	for _, name := range []string{"1.jpg", "7.mp3", "song.mp3", "pic.jpg"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	refresh(t, l, 1)
+	settings := domain.DefaultNumberingSettings()
+	settings.Shared = true
+	b, err := l.PreviewNumbering(1, "image", "", "name_asc", settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Total != 2 || b.Items[len(b.Items)-1].New != "8.jpg" {
+		t.Fatal(b.Items)
+	}
+	audio, err := l.PreviewNumbering(1, "audio", "", "name_asc", settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if audio.Total != 2 || audio.Items[len(audio.Items)-1].New != "8.mp3" {
+		t.Fatal(audio.Items)
+	}
+	if err = domain.ValidateNumberingSettings(domain.NumberingSettings{Image: domain.MediaNumberingRules{Padding: 0, Lowercase: true}}); err == nil {
+		t.Fatal("invalid padding accepted")
+	}
+	if err = domain.ValidateNumberingSettings(domain.NumberingSettings{Image: domain.MediaNumberingRules{Padding: 1, Lowercase: true, Prefix: " a "}}); err == nil {
+		t.Fatal("padded prefix accepted")
 	}
 }
 func assertOriginals(t *testing.T, root string, b Numbering) {
@@ -180,7 +255,7 @@ func TestNumberingCrossPageOrderAndSearch(t *testing.T) {
 	}
 	put(t, filepath.Join(root, "8.jpg"))
 	refresh(t, l, 1)
-	b, err := l.PreviewNumbering(1, "image", "photo", "name_desc")
+	b, err := l.PreviewNumbering(1, "image", "photo", "name_desc", domain.DefaultNumberingSettings())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +263,7 @@ func TestNumberingCrossPageOrderAndSearch(t *testing.T) {
 		t.Fatal(b.Total, b.Items[0], b.Items[224])
 	}
 	for _, sort := range []string{"name_asc", "name_desc", "size_asc", "size_desc", "mtime_asc", "mtime_desc", "renamed_asc", "renamed_desc"} {
-		b, err = l.PreviewNumbering(1, "image", "photo", sort)
+		b, err = l.PreviewNumbering(1, "image", "photo", sort, domain.DefaultNumberingSettings())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -219,7 +294,7 @@ func TestNumberingPreflightProtection(t *testing.T) {
 			t.Fatal(err)
 		}
 		refresh(t, l, 1)
-		if _, err := l.PreviewNumbering(1, "image", "", "name_asc"); err == nil {
+		if _, err := l.PreviewNumbering(1, "image", "", "name_asc", domain.DefaultNumberingSettings()); err == nil {
 			t.Fatal("directory conflict accepted")
 		}
 	})
@@ -251,7 +326,7 @@ func TestNumberingPreflightProtection(t *testing.T) {
 			t.Fatal(err)
 		}
 		refresh(t, l, 1)
-		if _, err := l.PreviewNumbering(1, "image", "", "name_asc"); err == nil {
+		if _, err := l.PreviewNumbering(1, "image", "", "name_asc", domain.DefaultNumberingSettings()); err == nil {
 			t.Fatal("hard links accepted")
 		}
 	})

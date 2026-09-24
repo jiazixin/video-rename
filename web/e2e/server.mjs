@@ -24,6 +24,8 @@ const audioNumberingDir=join(media,'音频编号测试');mkdirSync(audioNumberin
 for(const name of ['2.MP3','song.flac','track.M4A'])writeFileSync(join(audioNumberingDir,name),name)
 writeFileSync(join(audioNumberingDir,'cover.png'),'untouched image')
 writeFileSync(join(audioNumberingDir,'clip.mp4'),'untouched video')
+const rulesDir=join(media,'编号规则测试');mkdirSync(rulesDir)
+for(const name of ['x.jpg','y.png'])writeFileSync(join(rulesDir,name),name)
 let modelCalls=0,notificationCalls=0,lastNotification=null
 const model=createServer(async(req,res)=>{if(req.url==='/notification-status'){res.setHeader('content-type','application/json');res.end(JSON.stringify({count:notificationCalls,last:lastNotification}));return};if(req.method==='GET'&&req.url==='/v1/models'){res.setHeader('content-type','application/json');res.end(JSON.stringify({data:[{id:'视觉模型 · 本地测试'},{id:'second-model'}]}));return};let raw='';for await(const chunk of req){raw+=chunk};const body=JSON.parse(raw);if(req.url==='/notify'){notificationCalls++;lastNotification=body;res.setHeader('content-type','application/json');res.end('{}');return};if(body.messages?.length!==2||body.messages[0].role!=='system'||body.messages[1].role!=='user'||!body.messages[0].content.includes('用于测试的独立提示词')){res.statusCode=400;res.end('Unexpected prompt or shared conversation');return};modelCalls++;res.setHeader('content-type','application/json');res.end(JSON.stringify({choices:[{message:{content:'山间晨雾与日出'},finish_reason:'stop'}]}))})
 await new Promise(resolve=>model.listen(0,'127.0.0.1',resolve))

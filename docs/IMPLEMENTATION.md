@@ -121,7 +121,7 @@ schema v10 增加 sampling_settings 单行设置与 runs.sampling_snapshot。int
 
 ## 图片与音频一键编号
 
-schema v11 增加 image_numberings 和 image_numbering_items；schema v16 增加 media 列区分图片与音频批次，两类共用同一套编号规则、移动日志与崩溃恢复机制，编号记录按类型分开查询。接口为 `POST /api/directories/{id}/numberings/preview`（body 指定 media）、`GET /api/directories/{id}/numberings?media=` 与 `/api/numberings/{id}` 下的 apply / restore-preview / recover。服务端复用目录排序表达式，读取完整当前目录索引，按搜索过滤所选类型文件，冻结预览中的文件身份、版本、原名、新名及目录指纹；确认时重新校验。编号为正整数，前导零规范化，0 和非纯数字名称进入续排；使用大整数避免长数字溢出。不同格式共用序号，未参与的编号文件保留其号码。硬链接重复参与时拒绝操作。
+schema v11 增加 image_numberings 和 image_numbering_items；schema v16 增加 media 列区分图片与音频批次，两类共用同一套移动日志与崩溃恢复机制，编号记录按类型分开查询。schema v17 在 system_settings.numbering 以 JSON 保存编号规则（最小位数、前缀、扩展名小写、紧凑重排、图片音频共用序号），空值回退到与历史行为一致的默认；`GET/PUT /api/numbering/settings` 读写，预览时读取当前规则并把最终文件名冻结进批次条目，应用与整批还原不依赖之后的规则修改。接口为 `POST /api/directories/{id}/numberings/preview`（body 指定 media）、`GET /api/directories/{id}/numberings?media=` 与 `/api/numberings/{id}` 下的 apply / restore-preview / recover。服务端复用目录排序表达式，读取完整当前目录索引，按搜索过滤所选类型文件，冻结预览中的文件身份、版本、原名、新名及目录指纹；确认时重新校验。编号为正整数，前导零规范化，0 和非纯数字名称进入续排；使用大整数避免长数字溢出。不同格式共用序号，未参与的编号文件保留其号码。硬链接重复参与时拒绝操作。
 
 修改项先全部转唯一临时名，再转最终名。每次移动前写入 pending_name，使用平台 no-replace 改名并同步目录后记录 current_name。最终在单一数据库事务中提交索引、原名到最终名的历史以及批次状态；临时名不出现在历史中。数据库提交结果不确定时先查持久状态，不盲目回滚。中断批次在启动时依据文件身份与 current/pending 证据做两阶段回滚；证据不一致或原名被外部文件占用时标记 review，阻止相关范围改名和扫描，用户可在编号记录中重试恢复。
 

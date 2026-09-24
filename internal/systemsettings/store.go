@@ -3,8 +3,10 @@ package systemsettings
 
 import (
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"video-rename/internal/domain"
 	"video-rename/internal/storage"
 )
 
@@ -44,5 +46,34 @@ func (s Store) Save(v Settings) error {
 		return err
 	}
 	_, err := s.DB.Exec("INSERT INTO system_settings(id,extract_workers,cache_gb,stability_seconds) VALUES(1,?,?,?) ON CONFLICT(id) DO UPDATE SET extract_workers=excluded.extract_workers,cache_gb=excluded.cache_gb,stability_seconds=excluded.stability_seconds", v.ExtractWorkers, v.CacheGB, v.StabilitySeconds)
+	return err
+}
+
+// Numbering returns the persisted numbering rules; empty or missing values
+// fall back to defaults, which match the behaviour before rules existed.
+func (s Store) Numbering() (domain.NumberingSettings, error) {
+	v := domain.DefaultNumberingSettings()
+	var raw string
+	err := s.DB.QueryRow("SELECT numbering FROM system_settings WHERE id=1").Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) || raw == "" {
+		return v, nil
+	}
+	if err != nil {
+		return v, err
+	}
+	if e := json.Unmarshal([]byte(raw), &v); e != nil {
+		return domain.DefaultNumberingSettings(), nil
+	}
+	return v, nil
+}
+func (s Store) SaveNumbering(v domain.NumberingSettings) error {
+	if err := domain.ValidateNumberingSettings(v); err != nil {
+		return err
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = s.DB.Exec("INSERT INTO system_settings(id,extract_workers,cache_gb,stability_seconds,numbering) VALUES(1,8,10,30,?) ON CONFLICT(id) DO UPDATE SET numbering=excluded.numbering", string(raw))
 	return err
 }

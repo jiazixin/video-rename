@@ -78,3 +78,27 @@ test('音频编号只处理音频、续排号码并支持整批还原',async({pa
  await page.getByRole('combobox',{name:'类型筛选',exact:true}).click();await page.getByRole('option',{name:'全部类型',exact:true}).click()
  await expect(page.getByText('song.flac',{exact:true})).toBeVisible();await expect(page.getByText('2.MP3',{exact:true})).toBeVisible()
 })
+
+test('编号规则设置位数后预览使用新规则',async({page})=>{
+ await page.goto('/');await page.getByLabel('用户名',{exact:true}).fill('admin');await page.getByLabel('密码',{exact:true}).fill('test-password-123');await page.getByRole('button',{name:'登录',exact:true}).click()
+ try{
+  await page.goto('/#settings/numbering')
+  await expect(page.getByRole('heading',{name:'图片编号规则'})).toBeVisible()
+  await page.getByLabel('图片编号最小位数',{exact:true}).fill('3')
+  await page.getByRole('button',{name:'保存编号规则',exact:true}).click()
+  await expect(page.getByText('编号规则已保存',{exact:false})).toBeVisible()
+  await page.goto('/#library')
+  await page.getByRole('button',{name:'编号规则测试',exact:true}).click()
+  await page.getByRole('combobox',{name:'类型筛选',exact:true}).click();await page.getByRole('option',{name:'图片',exact:true}).click()
+  await page.getByRole('button',{name:'一键编号',exact:true}).click()
+  const dialog=page.getByRole('dialog',{name:'图片编号预览',exact:true})
+  await expect(dialog.locator('tbody tr').nth(0)).toHaveText('x.jpg001.jpg')
+  await expect(dialog.locator('tbody tr').nth(1)).toHaveText('y.png002.png')
+  await dialog.getByRole('button',{name:'取消',exact:true}).click()
+ }finally{
+  await page.goto('/#settings/numbering').catch(()=>{})
+  await page.getByLabel('图片编号最小位数',{exact:true}).fill('1').catch(()=>{})
+  await page.getByRole('button',{name:'保存编号规则',exact:true}).click().catch(()=>{})
+  await page.waitForTimeout(500)
+ }
+})

@@ -96,6 +96,51 @@ func TestImageNumberingAPI(t *testing.T) {
 	}
 }
 
+func TestNumberingSettingsAPI(t *testing.T) {
+	root := t.TempDir()
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Workers: 1, Auth: config.AuthConfig{Username: "admin", Password: "test-password"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	handler := a.Handler()
+	loginReq := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"test-password"}`))
+	loginReq.Header.Set("Content-Type", "application/json")
+	login := httptest.NewRecorder()
+	handler.ServeHTTP(login, loginReq)
+	var session map[string]string
+	json.Unmarshal(login.Body.Bytes(), &session)
+	request := func(method, path, body string, token bool) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		for _, c := range login.Result().Cookies() {
+			r.AddCookie(c)
+		}
+		if token {
+			r.Header.Set("X-CSRF-Token", session["csrf"])
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	w := request("GET", "/api/numbering/settings", "", false)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"padding":1`) || !strings.Contains(w.Body.String(), `"lowercase":true`) {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if w = request("PUT", "/api/numbering/settings", `{"image":{"padding":3,"lowercase":true,"prefix":"IMG_","compact":false},"audio":{"padding":1,"lowercase":false},"shared":true}`, false); w.Code != 403 {
+		t.Fatal("no CSRF accepted", w.Code)
+	}
+	if w = request("PUT", "/api/numbering/settings", `{"image":{"padding":3,"lowercase":true,"prefix":"IMG_","compact":false},"audio":{"padding":1,"lowercase":false},"shared":true}`, true); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if w = request("GET", "/api/numbering/settings", "", false); w.Code != 200 || !strings.Contains(w.Body.String(), `"prefix":"IMG_"`) || !strings.Contains(w.Body.String(), `"shared":true`) {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if w = request("PUT", "/api/numbering/settings", `{"image":{"padding":0,"lowercase":true},"audio":{"padding":1,"lowercase":true},"shared":false}`, true); w.Code == 200 {
+		t.Fatal("invalid padding accepted")
+	}
+}
+
 func TestAudioNumberingAPI(t *testing.T) {
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "track.MP3"), []byte("audio"), 0600)

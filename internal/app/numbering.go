@@ -1,10 +1,36 @@
 package app
 
-import "net/http"
+import (
+	"net/http"
+	"video-rename/internal/domain"
+	"video-rename/internal/systemsettings"
+)
 
 // numberingRoutes serves both media classes; the batch journal records which
 // class a numbering belongs to, so apply/restore/recover only need the ID.
+// Previews always read the currently saved rules; confirmed batches replay
+// the names frozen at preview time, so later rule changes never mutate them.
 func (a *App) numberingRoutes(api *http.ServeMux) {
+	store := systemsettings.Store{DB: a.DB}
+	api.HandleFunc("GET /api/numbering/settings", func(w http.ResponseWriter, r *http.Request) {
+		s, err := store.Numbering()
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		send(w, 200, map[string]any{"settings": s})
+	})
+	api.HandleFunc("PUT /api/numbering/settings", func(w http.ResponseWriter, r *http.Request) {
+		var s domain.NumberingSettings
+		if !decode(w, r, &s) {
+			return
+		}
+		if err := store.SaveNumbering(s); err != nil {
+			failure(w, err)
+			return
+		}
+		send(w, 200, s)
+	})
 	api.HandleFunc("POST /api/directories/{id}/numberings/preview", func(w http.ResponseWriter, r *http.Request) {
 		var v struct {
 			Media string `json:"media"`
@@ -18,7 +44,12 @@ func (a *App) numberingRoutes(api *http.ServeMux) {
 			send(w, 400, map[string]string{"message": "无效的媒体类型"})
 			return
 		}
-		b, err := a.Library.PreviewNumbering(number(r.PathValue("id")), v.Media, v.Query, v.Sort)
+		settings, err := store.Numbering()
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		b, err := a.Library.PreviewNumbering(number(r.PathValue("id")), v.Media, v.Query, v.Sort, settings)
 		if err != nil {
 			failure(w, err)
 			return

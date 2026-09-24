@@ -141,6 +141,12 @@ INSERT INTO schema_migrations VALUES(16,datetime('now'));`); err != nil {
 			return err
 		}
 	}
+	if version < 17 {
+		if _, err = tx.Exec(`ALTER TABLE system_settings ADD COLUMN numbering TEXT NOT NULL DEFAULT '';
+INSERT INTO schema_migrations VALUES(17,datetime('now'));`); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
