@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
 	"net"
 	"net/http"
 	"net/url"
@@ -16,6 +18,16 @@ import (
 
 	"video-rename/internal/config"
 	"video-rename/internal/storage"
+)
+
+// Session expiry slides forward while the session is used: a fixed 12-hour
+// cap would force an active user back to the login page exactly 12 hours
+// after sign-in regardless of activity. Renewal runs at most once per
+// renewal margin and must re-issue the cookie, or the browser would drop
+// the session at the original MaxAge even though SQLite still accepts it.
+const (
+	sessionLifetime  = 12 * time.Hour
+	sessionRenewLeft = sessionLifetime / 2
 )
 
 type Auth struct {
@@ -114,6 +126,10 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 		var fingerprint string
 		if err == nil {
 			err = a.DB.QueryRow("SELECT csrf,expires,fingerprint FROM sessions WHERE token=?", hash(cookie.Value)).Scan(&csrf, &expiry, &fingerprint)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				fail(w, 500, "服务暂不可用")
+				return
+			}
 		}
 		if err != nil || expiry <= time.Now().Unix() || fingerprint != a.fingerprint {
 			fail(w, 401, "请先登录")
@@ -122,6 +138,11 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 		if r.Method != "GET" && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(csrf)) != 1 {
 			fail(w, 403, "请求已失效，请刷新页面")
 			return
+		}
+		if r.URL.Path != "/api/auth/logout" && expiry-time.Now().Unix() < int64(sessionRenewLeft/time.Second) {
+			if _, err = a.DB.Exec("UPDATE sessions SET expires=? WHERE token=? AND fingerprint=?", time.Now().Add(sessionLifetime).Unix(), hash(cookie.Value), a.fingerprint); err == nil {
+				http.SetCookie(w, &http.Cookie{Name: "vr_session", Value: cookie.Value, Path: "/", MaxAge: int(sessionLifetime / time.Second), HttpOnly: true, Secure: secureCookie(r), SameSite: http.SameSiteStrictMode})
+			}
 		}
 		if r.URL.Path == "/api/auth/session" && r.Method == "GET" {
 			write(w, 200, map[string]string{"username": a.Config.Username, "csrf": csrf})
@@ -170,7 +191,7 @@ func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	_, err = tx.Exec("DELETE FROM sessions WHERE expires<? OR fingerprint<>?", time.Now().Unix(), a.fingerprint)
 	if err == nil {
-		_, err = tx.Exec("INSERT INTO sessions VALUES(?,?,?,?)", hash(token), csrf, time.Now().Add(12*time.Hour).Unix(), a.fingerprint)
+		_, err = tx.Exec("INSERT INTO sessions VALUES(?,?,?,?)", hash(token), csrf, time.Now().Add(sessionLifetime).Unix(), a.fingerprint)
 	}
 	if err == nil {
 		err = tx.Commit()
@@ -179,7 +200,7 @@ func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
 		fail(w, 503, "登录暂不可用")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "vr_session", Value: token, Path: "/", MaxAge: 43200, HttpOnly: true, Secure: secureCookie(r), SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: "vr_session", Value: token, Path: "/", MaxAge: int(sessionLifetime / time.Second), HttpOnly: true, Secure: secureCookie(r), SameSite: http.SameSiteStrictMode})
 	write(w, 200, map[string]string{"username": a.Config.Username, "csrf": csrf})
 }
 

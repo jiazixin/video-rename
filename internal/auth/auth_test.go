@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"video-rename/internal/config"
 	"video-rename/internal/storage"
 )
@@ -60,6 +61,82 @@ func TestSessionCSRFAndLogout(t *testing.T) {
 	}
 	if w = call("/api/data", "GET", "", cookies[0], "", ""); w.Code != 401 {
 		t.Fatal("revoked cookie accepted")
+	}
+}
+
+func TestSessionSlidingRenewal(t *testing.T) {
+	db, e := storage.Open(filepath.Join(t.TempDir(), "db.sqlite"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	a := New(db, config.AuthConfig{Username: "admin", Password: "test-password-123"})
+	h := a.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	login := func() *http.Cookie {
+		r := httptest.NewRequest("POST", "http://example.test/api/auth/login", strings.NewReader(`{"username":"admin","password":"test-password-123"}`))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != 200 {
+			t.Fatalf("login: %d", w.Code)
+		}
+		return w.Result().Cookies()[0]
+	}
+	get := func(c *http.Cookie) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", "http://example.test/api/data", nil)
+		r.AddCookie(c)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	expires := func() int64 {
+		var expiry int64
+		if e := db.QueryRow("SELECT max(expires) FROM sessions").Scan(&expiry); e != nil {
+			t.Fatal(e)
+		}
+		return expiry
+	}
+	cookie := login()
+	// Fresh session keeps most of its lifetime: no renewal, no re-issued cookie.
+	fresh := expires()
+	if w := get(cookie); w.Code != 204 {
+		t.Fatal(w.Code)
+	}
+	if expires() != fresh {
+		t.Fatal("fresh session should not renew")
+	}
+	for _, c := range get(cookie).Result().Cookies() {
+		if c.Name == "vr_session" {
+			t.Fatal("fresh session should not re-issue cookie")
+		}
+	}
+	// Past half-life the next request slides expiry forward and refreshes the cookie.
+	if _, e := db.Exec("UPDATE sessions SET expires=?", time.Now().Add(time.Hour).Unix()); e != nil {
+		t.Fatal(e)
+	}
+	w := get(cookie)
+	if w.Code != 204 {
+		t.Fatal(w.Code)
+	}
+	if renewed := expires(); renewed < time.Now().Add(11*time.Hour).Unix() {
+		t.Fatalf("session not renewed: %d", renewed)
+	}
+	reissued := false
+	for _, c := range w.Result().Cookies() {
+		if c.Name == "vr_session" {
+			reissued = true
+			if c.MaxAge != int(12*time.Hour/time.Second) || !c.HttpOnly {
+				t.Fatalf("unexpected renewed cookie: %+v", c)
+			}
+		}
+	}
+	if !reissued {
+		t.Fatal("renewal must re-issue cookie")
+	}
+	// Transient storage failures must not masquerade as logged-out (401).
+	db.Close()
+	if w := get(cookie); w.Code != 500 {
+		t.Fatalf("storage failure should be 500, got %d", w.Code)
 	}
 }
 

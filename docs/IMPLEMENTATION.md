@@ -5,7 +5,7 @@
 ## 边界
 
 - `internal/app`：HTTP 路由、中间件装配、静态资源和生命周期。
-- `internal/auth`：随机令牌、哈希会话、12 小时过期、CSRF、同源校验、登录限流。
+- `internal/auth`：随机令牌、哈希会话、12 小时滑动过期（活跃自动续期）、CSRF、同源校验、登录限流。
 - `internal/storage`：SQLite schema、WAL、FULL 同步、单连接短写事务、实例锁。
 - `internal/library`：根约束、文件身份、目录索引、统一改名与恢复。
 - `internal/models`：模型配置、服务预设、密钥编辑、模型检测、不可变运行快照。
