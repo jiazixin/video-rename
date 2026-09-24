@@ -117,6 +117,7 @@ func (a *App) Handler() http.Handler {
 	api.HandleFunc("POST /api/logs/clear", a.clearHistory)
 	api.HandleFunc("POST /api/logs/retry", a.retryHistory)
 	api.HandleFunc("GET /api/entries/{id}/video", a.playback)
+	api.HandleFunc("GET /api/entries/{id}/audio", a.audioPlayback)
 	api.HandleFunc("GET /api/entries/{id}/image", a.imagePreview)
 	api.HandleFunc("GET /api/entries/{id}/image-neighbor", a.adjacentImage)
 	api.HandleFunc("GET /api/entries/status", a.entryStatus)

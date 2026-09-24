@@ -184,6 +184,40 @@ func TestPreparedRecovery(t *testing.T) {
 		t.Fatalf("bad recovery %+v", e)
 	}
 }
+func TestKindFilterAudioAndOther(t *testing.T) {
+	l, root, _ := fixture(t)
+	for _, name := range []string{"a.mp4", "b.jpg", "c.mp3", "d.flac", "e.txt"} {
+		put(t, filepath.Join(root, name))
+	}
+	if err := os.Mkdir(filepath.Join(root, "sub"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	refresh(t, l, 1)
+	names := func(kind string) string {
+		p, err := l.List(t.Context(), 1, 0, 100, 0, "", kind, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := ""
+		for _, e := range p.Items {
+			if got != "" {
+				got += ","
+			}
+			got += e.Name
+		}
+		return got
+	}
+	if got := names("audio"); got != "sub,c.mp3,d.flac" {
+		t.Fatalf("audio filter: %s", got)
+	}
+	if got := names("other"); got != "e.txt" {
+		t.Fatalf("other should exclude media and audio: %s", got)
+	}
+	if got := names("video"); got != "sub,a.mp4" {
+		t.Fatalf("video filter: %s", got)
+	}
+}
+
 func TestPagedDirectoryDoesNotRecurse(t *testing.T) {
 	l, root, _ := fixture(t)
 	for i := range 260 {

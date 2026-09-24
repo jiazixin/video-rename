@@ -52,7 +52,7 @@ npm --prefix web run test:e2e
 
 目录页多选按当前目录保存跨页 ID；本页全选 / 反选不加载其他页。自动命名复用运行 API，每批最多 100 个目标，服务端继续执行范围和重复校验。批量还原复用逐项恢复 API，保留失败项，不提供跨文件事务回滚。
 
-`GET /api/entries/{id}/video` 经过会话认证；library 以受根目录约束的文件描述符打开、核对文件身份和祖先路径，HTTP 层使用 ServeContent 提供 Range / seek，不把整段视频读入内存。不提供转码。播放器关闭时暂停、移除 src 并释放资源。共享 Modal 使用引用计数锁定页面滚动，最后一个弹窗关闭后恢复原有样式。
+`GET /api/entries/{id}/video`、`/audio` 与 `/image` 预览经过会话认证；library 以受根目录约束的文件描述符打开、核对文件身份和祖先路径，HTTP 层使用 ServeContent 提供 Range / seek，不把整段媒体文件读入内存。音频按扩展名固定 Content-Type，避免各平台探测不一致。不提供转码。播放器关闭时暂停、移除 src 并释放资源。共享 Modal 使用引用计数锁定页面滚动，最后一个弹窗关闭后恢复原有样式。
 
 ## 原位更新、处理标记与目录汇总
 

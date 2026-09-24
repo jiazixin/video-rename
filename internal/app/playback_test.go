@@ -51,6 +51,50 @@ func TestPlaybackRangeAndRestrictions(t *testing.T) {
 	}
 }
 
+func TestAudioPlaybackRestrictions(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "track.mp3"), []byte("audio fixture"), 0600)
+	os.WriteFile(filepath.Join(root, "notes.txt"), []byte("notes"), 0600)
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Workers: 1, Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	if err = a.Library.Refresh(t.Context(), 1); err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	a.DB.QueryRow("SELECT id FROM entries WHERE name='track.mp3'").Scan(&id)
+	request := func() *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", fmt.Sprintf("/api/entries/%d/audio", id), nil)
+		r.SetPathValue("id", fmt.Sprint(id))
+		w := httptest.NewRecorder()
+		a.audioPlayback(w, r)
+		return w
+	}
+	w := request()
+	if w.Header().Get("Content-Type") != "audio/mpeg" {
+		t.Fatalf("content type: %v", w.Header())
+	}
+	r := httptest.NewRequest("GET", fmt.Sprintf("/api/entries/%d/audio", id), nil)
+	r.SetPathValue("id", fmt.Sprint(id))
+	r.Header.Set("Range", "bytes=2-5")
+	w = httptest.NewRecorder()
+	a.audioPlayback(w, r)
+	if w.Code != 206 || w.Body.String() != "dio " {
+		t.Fatalf("range: %d %q", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	a.Handler().ServeHTTP(w, httptest.NewRequest("GET", fmt.Sprintf("/api/entries/%d/audio", id), nil))
+	if w.Code != 401 {
+		t.Fatal("unprotected audio", w.Code)
+	}
+	a.DB.QueryRow("SELECT id FROM entries WHERE name='notes.txt'").Scan(&id)
+	if w = request(); w.Code != 400 {
+		t.Fatal("served non-audio", w.Code)
+	}
+}
+
 func TestImagePreviewRestrictions(t *testing.T) {
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "photo.png"), []byte("image fixture"), 0600)

@@ -366,17 +366,22 @@ func (l *Library) ListOrdered(ctx context.Context, id int64, offset, limit int, 
 		}
 	}
 	filter := "(?='' OR kind=?)"
-	if kind == "video" || kind == "other" || kind == "image" {
+	if kind == "video" || kind == "audio" || kind == "other" || kind == "image" {
 		videoSQL := `(lower(name) LIKE '%.mp4' OR lower(name) LIKE '%.m4v' OR lower(name) LIKE '%.mkv' OR lower(name) LIKE '%.mov' OR lower(name) LIKE '%.avi' OR lower(name) LIKE '%.webm' OR lower(name) LIKE '%.flv' OR lower(name) LIKE '%.wmv' OR lower(name) LIKE '%.mpg' OR lower(name) LIKE '%.mpeg' OR lower(name) LIKE '%.ts' OR lower(name) LIKE '%.m2ts' OR lower(name) LIKE '%.mts' OR lower(name) LIKE '%.3gp' OR lower(name) LIKE '%.ogv' OR lower(name) LIKE '%.rmvb' OR lower(name) LIKE '%.asf' OR lower(name) LIKE '%.vob')`
 		imageSQL := `(lower(name) LIKE '%.jpg' OR lower(name) LIKE '%.jpeg' OR lower(name) LIKE '%.png' OR lower(name) LIKE '%.gif' OR lower(name) LIKE '%.webp' OR lower(name) LIKE '%.avif' OR lower(name) LIKE '%.bmp')`
+		audioSQL := `(lower(name) LIKE '%.mp3' OR lower(name) LIKE '%.m4a' OR lower(name) LIKE '%.m4b' OR lower(name) LIKE '%.aac' OR lower(name) LIKE '%.flac' OR lower(name) LIKE '%.wav' OR lower(name) LIKE '%.wave' OR lower(name) LIKE '%.ogg' OR lower(name) LIKE '%.oga' OR lower(name) LIKE '%.opus' OR lower(name) LIKE '%.wma' OR lower(name) LIKE '%.aiff' OR lower(name) LIKE '%.aif' OR lower(name) LIKE '%.caf')`
+		mediaSQL := videoSQL
 		if kind == "image" {
-			videoSQL = imageSQL
+			mediaSQL = imageSQL
+		}
+		if kind == "audio" {
+			mediaSQL = audioSQL
 		}
 		if kind == "other" {
-			videoSQL = "NOT (" + videoSQL + " OR " + imageSQL + ")"
+			mediaSQL = "NOT (" + videoSQL + " OR " + imageSQL + " OR " + audioSQL + ")"
 		}
-		filter = "(?<>'' AND ?<>'' AND kind='file' AND " + videoSQL + ")"
-		if kind == "video" || kind == "image" {
+		filter = "(?<>'' AND ?<>'' AND kind='file' AND " + mediaSQL + ")"
+		if kind != "other" {
 			filter = "(" + filter + " OR kind='directory')"
 		}
 	}
