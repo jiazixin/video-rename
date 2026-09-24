@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"video-rename/internal/domain"
 	"video-rename/internal/library"
 	"video-rename/internal/models"
+	"video-rename/internal/prompts"
 	"video-rename/internal/storage"
 	"video-rename/internal/systemsettings"
 )
@@ -244,7 +246,11 @@ func TestPromptSnapshotAndIsolation(t *testing.T) {
 		}
 	}
 	store := models.Store{DB: m.DB}
-	prompt, err := store.Save(models.Profile{ServerConfig: config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Workers: 1}, Title: "独立提示词", Body: "批次创建时的要求"})
+	libraryPrompt, err := (prompts.Store{DB: m.DB}).Save(prompts.Profile{Title: "独立提示词", Body: "批次创建时的要求"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt, err := store.Save(models.Profile{ServerConfig: config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Workers: 1}, Title: "独立提示词", PromptID: libraryPrompt.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +259,10 @@ func TestPromptSnapshotAndIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prompt.Body = "后续修改的要求"
+	libraryPrompt.Body = "后续修改的要求"
+	if _, err = (prompts.Store{DB: m.DB}).Save(libraryPrompt); err != nil {
+		t.Fatal(err)
+	}
 	prompt.BaseURL = "http://127.0.0.1:9999/v1"
 	prompt.Model = "new-model"
 	prompt.APIKey = "new-key"
@@ -283,7 +292,7 @@ func TestPromptSnapshotAndIsolation(t *testing.T) {
 		if cfg.Server.Model != "test-model" || cfg.Server.BaseURL != "http://127.0.0.1:8080/v1" || cfg.Server.Temperature != 0.2 || cfg.Server.APIKey != "" {
 			t.Error("model snapshot changed after queueing")
 		}
-		if cfg.Prompt != "批次创建时的要求" {
+		if !strings.HasPrefix(cfg.Prompt, "批次创建时的要求") || !strings.HasSuffix(cfg.Prompt, systemsettings.DefaultFixedPrompt) {
 			t.Errorf("snapshot changed: %s", cfg.Prompt)
 		}
 		if cfg == m.Config {
@@ -293,7 +302,7 @@ func TestPromptSnapshotAndIsolation(t *testing.T) {
 	}
 	m.Execute(t.Context(), id)
 	r, err := m.Get(id)
-	if err != nil || r.Done != 2 || calls.Load() != 2 || r.PromptBody != "批次创建时的要求" || r.ModelConfigTitle != "独立提示词" {
+	if err != nil || r.Done != 2 || calls.Load() != 2 || !strings.HasPrefix(r.PromptBody, "批次创建时的要求") || !strings.HasSuffix(r.PromptBody, systemsettings.DefaultFixedPrompt) || r.ModelConfigTitle != "独立提示词" {
 		t.Fatal(r, err, calls.Load())
 	}
 	request.Key = "next-prompt"
@@ -303,7 +312,7 @@ func TestPromptSnapshotAndIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	r, err = m.Get(next)
-	if err != nil || r.PromptBody != "后续修改的要求" {
+	if err != nil || !strings.HasPrefix(r.PromptBody, "后续修改的要求") || !strings.HasSuffix(r.PromptBody, systemsettings.DefaultFixedPrompt) {
 		t.Fatal(r, err)
 	}
 }
@@ -311,7 +320,11 @@ func TestPromptSnapshotAndIsolation(t *testing.T) {
 func TestGlobalDefaultUsedByNewRuns(t *testing.T) {
 	m, _ := setup(t)
 	store := models.Store{DB: m.DB}
-	p, err := store.Save(models.Profile{ServerConfig: config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}, Title: "全局默认测试", Body: "使用新默认"})
+	libraryPrompt, err := (prompts.Store{DB: m.DB}).Save(prompts.Profile{Title: "全局默认提示词", Body: "使用新默认"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := store.Save(models.Profile{ServerConfig: config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}, Title: "全局默认测试", PromptID: libraryPrompt.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +336,7 @@ func TestGlobalDefaultUsedByNewRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	r, err := m.Get(id)
-	if err != nil || r.ModelConfigID != p.ID || r.PromptBody != p.Body {
+	if err != nil || r.ModelConfigID != p.ID || r.PromptBody != libraryPrompt.Body+"\n\n"+systemsettings.DefaultFixedPrompt {
 		t.Fatal(r, err)
 	}
 	if err = store.SetDefault(1); err != nil {

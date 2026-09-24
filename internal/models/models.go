@@ -2,7 +2,9 @@
 package models
 
 import (
+	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -14,15 +16,17 @@ const DefaultBody = "你是一位视频标题编辑。结合整段视频的连�
 
 type Profile struct {
 	config.ServerConfig
-	Default   bool   `json:"is_default"`
-	ID        int64  `json:"id"`
-	Title     string `json:"title"`
-	Body      string `json:"body"`
-	Version   int64  `json:"version"`
-	Created   string `json:"created"`
-	Updated   string `json:"updated"`
-	HasAPIKey bool   `json:"has_api_key"`
-	Ready     bool   `json:"ready"`
+	Default     bool   `json:"is_default"`
+	ID          int64  `json:"id"`
+	Title       string `json:"title"`
+	PromptID    int64  `json:"prompt_id"`
+	PromptTitle string `json:"prompt_title"`
+	Body        string `json:"body"`
+	Version     int64  `json:"version"`
+	Created     string `json:"created"`
+	Updated     string `json:"updated"`
+	HasAPIKey   bool   `json:"has_api_key"`
+	Ready       bool   `json:"ready"`
 }
 type Store struct{ DB *storage.Store }
 
@@ -30,15 +34,20 @@ func DefaultSettings() config.ServerConfig {
 	return config.ServerConfig{Workers: 2, Provider: "custom", Protocol: "openai", Timeout: "180s", Temperature: 0.7, MaxTokens: 1024}
 }
 func (s Store) Seed() error {
-	_, err := s.DB.Exec("INSERT INTO model_configs(id,title,body,created,updated,is_default) SELECT 1,?,?,?,?,1 WHERE NOT EXISTS(SELECT 1 FROM model_configs)", "默认视频命名", DefaultBody, storage.Now(), storage.Now())
+	if _, err := s.DB.Exec("INSERT INTO prompts(title,body,created,updated) SELECT '默认提示词',?,?,? WHERE NOT EXISTS(SELECT 1 FROM prompts)", DefaultBody, storage.Now(), storage.Now()); err != nil {
+		return err
+	}
+	_, err := s.DB.Exec("INSERT INTO model_configs(id,title,prompt_id,created,updated,is_default) SELECT 1,'默认视频命名',(SELECT min(id) FROM prompts),?,?,1 WHERE NOT EXISTS(SELECT 1 FROM model_configs)", storage.Now(), storage.Now())
 	return err
 }
 
-const columns = "id,title,body,version,created,updated,is_default,settings,api_key"
+// columns resolves the referenced prompt via join: body and prompt_title are
+// read-only views of the library entry, never stored on the config row.
+const columns = "c.id,c.title,c.prompt_id,p.title,p.body,c.version,c.created,c.updated,c.is_default,c.settings,c.api_key"
 
 func (s Store) scan(row interface{ Scan(...any) error }) (p Profile, err error) {
 	var settings, secret string
-	err = row.Scan(&p.ID, &p.Title, &p.Body, &p.Version, &p.Created, &p.Updated, &p.Default, &settings, &secret)
+	err = row.Scan(&p.ID, &p.Title, &p.PromptID, &p.PromptTitle, &p.Body, &p.Version, &p.Created, &p.Updated, &p.Default, &settings, &secret)
 	if err != nil {
 		return
 	}
@@ -55,10 +64,10 @@ func (s Store) scan(row interface{ Scan(...any) error }) (p Profile, err error) 
 	return
 }
 func (s Store) Get(id int64) (Profile, error) {
-	return s.scan(s.DB.QueryRow("SELECT "+columns+" FROM model_configs WHERE id=?", id))
+	return s.scan(s.DB.QueryRow("SELECT "+columns+" FROM model_configs c LEFT JOIN prompts p ON p.id=c.prompt_id WHERE c.id=?", id))
 }
 func (s Store) List() ([]Profile, error) {
-	rows, err := s.DB.Query("SELECT " + columns + " FROM model_configs ORDER BY id")
+	rows, err := s.DB.Query("SELECT " + columns + " FROM model_configs c LEFT JOIN prompts p ON p.id=c.prompt_id ORDER BY c.id")
 	if err != nil {
 		return nil, err
 	}
@@ -73,11 +82,26 @@ func (s Store) List() ([]Profile, error) {
 	}
 	return out, rows.Err()
 }
+
+// resolve fills the read-only prompt fields from the library so validation
+// and snapshots always see the text the reference currently points at.
+func (s Store) resolve(p *Profile) error {
+	if p.PromptID <= 0 {
+		return fmt.Errorf("请选择提示词")
+	}
+	err := s.DB.QueryRow("SELECT title,body FROM prompts WHERE id=?", p.PromptID).Scan(&p.PromptTitle, &p.Body)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("请选择提示词")
+	}
+	return err
+}
 func (p *Profile) Validate() error {
 	p.Title = strings.TrimSpace(p.Title)
-	p.Body = strings.TrimSpace(p.Body)
-	if p.Title == "" || utf8.RuneCountInString(p.Title) > 80 || p.Body == "" || len(p.Body) > 16000 {
-		return fmt.Errorf("名称须为 1–80 字，提示词不能为空且不得超过 16000 字节")
+	if p.Title == "" || utf8.RuneCountInString(p.Title) > 80 {
+		return fmt.Errorf("名称须为 1–80 字")
+	}
+	if p.PromptID <= 0 || strings.TrimSpace(p.Body) == "" {
+		return fmt.Errorf("请选择提示词")
 	}
 	var c config.Config
 	if err := c.ApplyModel(p.ServerConfig, p.Body); err != nil {
@@ -90,6 +114,9 @@ func (p *Profile) Validate() error {
 	return nil
 }
 func (s Store) Save(p Profile) (Profile, error) {
+	if err := s.resolve(&p); err != nil {
+		return p, err
+	}
 	if err := p.Validate(); err != nil {
 		return p, err
 	}
@@ -114,7 +141,7 @@ func (s Store) Save(p Profile) (Profile, error) {
 		if n >= 200 {
 			return p, fmt.Errorf("最多保存 200 条模型配置")
 		}
-		res, err := tx.Exec("INSERT INTO model_configs(title,body,created,updated,settings,api_key) VALUES(?,?,?,?,?,?)", p.Title, p.Body, storage.Now(), storage.Now(), string(raw), secret)
+		res, err := tx.Exec("INSERT INTO model_configs(title,prompt_id,created,updated,settings,api_key) VALUES(?,?,?,?,?,?)", p.Title, p.PromptID, storage.Now(), storage.Now(), string(raw), secret)
 		if err != nil {
 			return p, err
 		}
@@ -126,7 +153,7 @@ func (s Store) Save(p Profile) (Profile, error) {
 			return p, err
 		}
 	} else {
-		res, err := s.DB.Exec("UPDATE model_configs SET title=?,body=?,settings=?,api_key=?,updated=?,version=version+1 WHERE id=? AND version=?", p.Title, p.Body, string(raw), secret, storage.Now(), p.ID, p.Version)
+		res, err := s.DB.Exec("UPDATE model_configs SET title=?,prompt_id=?,settings=?,api_key=?,updated=?,version=version+1 WHERE id=? AND version=?", p.Title, p.PromptID, string(raw), secret, storage.Now(), p.ID, p.Version)
 		if err != nil {
 			return p, err
 		}

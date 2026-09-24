@@ -63,7 +63,7 @@ func (a *App) modelRoutes(api *http.ServeMux) {
 		send(w, 200, out)
 	})
 	api.HandleFunc("GET /api/model-presets", func(w http.ResponseWriter, r *http.Request) {
-		send(w, 200, map[string]any{"presets": models.Presets, "default_prompt": models.DefaultBody})
+		send(w, 200, map[string]any{"presets": models.Presets})
 	})
 	api.HandleFunc("POST /api/model-configs/{id}/default", func(w http.ResponseWriter, r *http.Request) {
 		if err := store.SetDefault(number(r.PathValue("id"))); err != nil {

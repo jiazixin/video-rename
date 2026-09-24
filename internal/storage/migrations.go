@@ -147,7 +147,27 @@ INSERT INTO schema_migrations VALUES(17,datetime('now'));`); err != nil {
 			return err
 		}
 	}
+	if version < 18 {
+		if err = migratePromptLibrary(tx); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
+}
+
+// migratePromptLibrary splits the reusable prompt library out of model_configs
+// and adds the global fixed prompt. Each distinct body becomes one prompt row
+// titled after the lowest-id config that owned it, so existing configs keep
+// sending the same text while the run-time snapshots stay untouched.
+func migratePromptLibrary(tx *sql.Tx) error {
+	_, err := tx.Exec(`CREATE TABLE prompts(id INTEGER PRIMARY KEY,title TEXT NOT NULL,body TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1,created TEXT NOT NULL,updated TEXT NOT NULL);
+ALTER TABLE model_configs ADD COLUMN prompt_id INTEGER NOT NULL DEFAULT 0;
+INSERT INTO prompts(title,body,created,updated) SELECT (SELECT m2.title FROM model_configs m2 WHERE m2.body=m1.body ORDER BY m2.id LIMIT 1),m1.body,datetime('now'),datetime('now') FROM model_configs m1 GROUP BY m1.body;
+UPDATE model_configs SET prompt_id=(SELECT p.id FROM prompts p WHERE p.body=model_configs.body);
+ALTER TABLE model_configs DROP COLUMN body;
+ALTER TABLE system_settings ADD COLUMN fixed_prompt TEXT NOT NULL DEFAULT '';
+INSERT INTO schema_migrations VALUES(18,datetime('now'));`)
+	return err
 }
 
 // migrateTokenUsageRecords adds the per-request usage ledger. Existing run

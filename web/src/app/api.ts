@@ -26,7 +26,8 @@ export const size=(v:number)=>v>=1073741824?`${(v/1073741824).toFixed(1)} GB`:v>
 export const statusNames:Record<string,string>={queued:'排队中',scanning:'扫描与稳定性检查',running:'运行中',cancelling:'正在取消',completed:'已完成',partial_failure:'部分失败',failed:'失败',cancelled:'已取消',interrupted:'已中断',done:'已完成',skipped:'已跳过'}
 export const actionNames:Record<string,string>={manual:'手动命名',automatic:'自动命名',restore:'还原',recovery:'恢复核对',scan:'目录扫描',run:'运行',schedule:'计划触发',scheduler:'调度器'}
 
-export interface ModelProfile {workers:number;thinking:string;thinking_adapter:string;thinking_effort:string;thinking_budget:number;provider:string;protocol:string;base_url:string;model:string;timeout:string;temperature:number;max_tokens:number;omit_temperature:boolean;has_api_key:boolean;ready:boolean;is_default:boolean;id:number;title:string;body:string;version:number;created:string;updated:string}
+export interface ModelProfile {workers:number;thinking:string;thinking_adapter:string;thinking_effort:string;thinking_budget:number;provider:string;protocol:string;base_url:string;model:string;timeout:string;temperature:number;max_tokens:number;omit_temperature:boolean;has_api_key:boolean;ready:boolean;is_default:boolean;id:number;title:string;prompt_id:number;prompt_title:string;body:string;version:number;created:string;updated:string}
+export interface PromptProfile {id:number;title:string;body:string;version:number;created:string;updated:string}
 export interface UsageTotals {tokens:number;records:number;estimated_records:number;legacy_records:number;batches:number}
 export interface UsageBucket {from:string;to:string;tokens:number;records:number;estimated_records:number;legacy_records:number}
 export interface UsageModel {key:string;model:string;provider:string;protocol:string;tokens:number;records:number;estimated_records:number;legacy_records:number;batches:number}

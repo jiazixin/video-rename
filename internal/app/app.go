@@ -109,6 +109,7 @@ func number(s string) int64 { n, _ := strconv.ParseInt(s, 10, 64); return n }
 func (a *App) Handler() http.Handler {
 	api := http.NewServeMux()
 	a.modelRoutes(api)
+	a.promptRoutes(api)
 	a.notificationRoutes(api)
 	a.samplingRoutes(api)
 	a.systemSettingsRoutes(api)

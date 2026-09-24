@@ -43,7 +43,13 @@ func TestModelAPISecretsAndCSRF(t *testing.T) {
 	var auth map[string]string
 	json.Unmarshal(w.Body.Bytes(), &auth)
 	csrf = auth["csrf"]
-	data := map[string]any{"title": "private profile", "body": "title only", "provider": "custom", "protocol": "openai", "base_url": "http://localhost:8080/v1", "model": "vision", "temperature": 0, "max_tokens": 1024, "timeout": "10s", "api_key": "api-private-test-key"}
+	w = call("POST", "/api/prompts", map[string]any{"title": "测试提示词", "body": "title only"}, true)
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var created map[string]any
+	json.Unmarshal(w.Body.Bytes(), &created)
+	data := map[string]any{"title": "private profile", "prompt_id": created["id"], "provider": "custom", "protocol": "openai", "base_url": "http://localhost:8080/v1", "model": "vision", "temperature": 0, "max_tokens": 1024, "timeout": "10s", "api_key": "api-private-test-key"}
 	if w = call("POST", "/api/model-configs", data, false); w.Code != 403 {
 		t.Fatal("CSRF missing", w.Code)
 	}

@@ -19,7 +19,7 @@ func (s Store) Duplicate(id int64) (Profile, error) {
 	if count >= 200 {
 		return Profile{}, fmt.Errorf("最多保存 200 条模型配置")
 	}
-	res, err := tx.Exec(`INSERT INTO model_configs(title,body,created,updated,settings,api_key) SELECT substr(title,1,75)||' 副本',body,?,?,settings,api_key FROM model_configs WHERE id=?`, storage.Now(), storage.Now(), id)
+	res, err := tx.Exec(`INSERT INTO model_configs(title,prompt_id,created,updated,settings,api_key) SELECT substr(title,1,75)||' 副本',prompt_id,?,?,settings,api_key FROM model_configs WHERE id=?`, storage.Now(), storage.Now(), id)
 	if err != nil {
 		return Profile{}, err
 	}

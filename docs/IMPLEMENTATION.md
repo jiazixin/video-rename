@@ -158,3 +158,9 @@ schema v15 新增 token_usage_records 请求级用量账本：每条记录批次
 GET /api/usage/analytics 在登录保护下聚合账本：`[from,to)` 半开区间（RFC3339，from 可省略表示全部），timezone 为 IANA 名称，model/profile/source/run 过滤，sort 支持 tokens/recent，分页最大 100。聚合在单个读事务内完成，总量、趋势、模型、配置、来源和批次排行共用同一过滤口径；模型身份来自运行创建时的 config_summary 快照，不随当前配置修改变化。趋势按区间跨度自动选 15 分钟 / 小时 / 天 / 月 / 年分桶，天及以上按请求时区的本地日历对齐（含夏令时）；"全部"从首条记录起算，避免空桶跨越数十年。批次行带区间内用量与来自累计表的全期用量两个口径。
 
 前端 `web/src/features/usage/` 提供筛选行（预设区间、自定义日期时刻、模型 / 配置 / 来源 / 批次）、总览卡片、SVG 趋势图（悬停与方向键取值、完整数据表替代）、模型对比条、高消耗批次排行与分页明细；请求带中止与序号防迟到覆盖，错误提供重试。图表色 #0e8a5c / #0c7f52 已通过配色校验（浅色表面、色度与对比达标）。浏览器测试覆盖导航与直达、筛选参数往返、空态、错误重试与窄屏。
+
+## Prompt配置与提示词库
+
+schema v18 重建 `prompts` 表（v4 已把旧表改名 `model_configs`，名称可复用）：提示词成为独立实体（名称 1–80 字、正文 ≤16000 字节、上限 200 条、版本校验），`internal/prompts` 提供增删改查；删除前检查 `model_configs.prompt_id` 引用，被引用时返回 409 与数量。`model_configs` 新增 `prompt_id` 并删除 `body` 列，正文与提示词名称在读取时 LEFT JOIN 解析（API 的 `body`/`prompt_title` 为只读视图）；迁移把旧正文按内容去重回填为提示词条目，标题取同正文的最低 ID 配置，配置自动关联，历史运行快照不受影响。全局固定提示词存 `system_settings.fixed_prompt`（空值回退代码默认），`internal/systemsettings` 提供 `FixedPrompt`/`SaveFixedPrompt`，接口为 `GET /api/prompts`（返回 fixed_prompt + 列表）、`PUT /api/prompts/fixed` 与提示词的 POST/PATCH/DELETE；`/api/model-presets` 不再返回 default_prompt。
+
+运行创建时在 jobs 里把所选提示词正文与固定提示词拼为完整 system 文本，写入 `runs.prompt_body`、加密快照与 prompt_hash，真实反映发送内容；编辑提示词库正文影响引用配置之后创建的运行，进行中批次保持快照。vision 的 `protocolNote` 缩减为仅命名失败协议（NAMING_FAILED 检测依赖，保持硬编码追加），单行标题等输出格式要求移入默认固定提示词。前端新增 `web/src/features/prompts/`（固定提示词卡片 + 提示词库列表与编辑弹窗），系统设置页签「Prompt配置」位于「模型配置」左侧；模型配置表单的提示词 textarea 换为 SelectField 下拉（必选）并附所选提示词预览。浏览器测试覆盖页签直达、默认固定文案、提示词增删改、被引用删除保护、换绑后删除与固定提示词持久化。

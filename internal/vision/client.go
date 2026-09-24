@@ -24,8 +24,10 @@ import (
 	"video-rename/internal/domain"
 )
 
-// protocolNote 固定附加在业务 prompt 之后的输出协议要求。
-const protocolNote = "请只输出一行标题文本作为最终回答，不要输出解释、编号、引号或代码围栏。如果因安全限制或其他原因无法生成符合要求的标题，请仅输出四个字：命名失败。不要把拒绝说明、错误信息或占位文本作为标题。"
+// protocolNote 固定附加在业务 prompt（所选提示词 + 固定提示词）之后的输出协议
+// 要求。单行标题规则由系统设置中的固定提示词承载；这里只保留命名失败协议，
+// NAMING_FAILED 检测依赖它，不可移入页面编辑。
+const protocolNote = "如果因安全限制或其他原因无法生成符合要求的标题，请仅输出四个字：命名失败。不要把拒绝说明、错误信息或占位文本作为标题。"
 
 // Client 与 llama-server 通信的客户端。零值不可用,通过 New 构造。
 type Client struct {

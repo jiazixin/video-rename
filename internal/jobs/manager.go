@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -207,11 +208,19 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	}
 	cfg := *m.Config
 	cfg.Sampling, cfg.Images = frames.Sampling, frames.Images
-	if err = cfg.ApplyModel(prompt.ServerConfig, prompt.Body); err != nil {
-		return 0, fmt.Errorf("请完善模型配置: %w", err)
-	}
 	if err = prompt.Validate(); err != nil {
 		return 0, err
+	}
+	fixed, err := (systemsettings.Store{DB: m.DB}).FixedPrompt()
+	if err != nil {
+		return 0, err
+	}
+	// The fixed prompt rides below the selected prompt as a hard constraint;
+	// the snapshot stores the combined text so the run replays exactly what
+	// was sent, regardless of later edits to the library or the fixed part.
+	prompt.Body = strings.TrimRight(prompt.Body, "\n") + "\n\n" + strings.TrimRight(fixed, "\n")
+	if err = cfg.ApplyModel(prompt.ServerConfig, prompt.Body); err != nil {
+		return 0, fmt.Errorf("请完善模型配置: %w", err)
 	}
 	snapshot, err := (models.Store{DB: m.DB}).Snapshot(prompt)
 	if err != nil {

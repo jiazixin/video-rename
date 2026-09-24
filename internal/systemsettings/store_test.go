@@ -2,6 +2,7 @@ package systemsettings
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"video-rename/internal/storage"
 )
@@ -49,7 +50,7 @@ func TestVersionTwelveUpgradePreservesSettingsAndDefaultsWait(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec("INSERT INTO system_settings(id,extract_workers,cache_gb) VALUES(1,3,2); ALTER TABLE system_settings DROP COLUMN stability_seconds; ALTER TABLE events DROP COLUMN processing_log; ALTER TABLE image_numberings DROP COLUMN media; ALTER TABLE system_settings DROP COLUMN numbering; DROP TABLE token_usage_records; DELETE FROM schema_migrations WHERE version>=13"); err != nil {
+	if _, err = db.Exec("INSERT INTO system_settings(id,extract_workers,cache_gb) VALUES(1,3,2); ALTER TABLE system_settings DROP COLUMN stability_seconds; ALTER TABLE events DROP COLUMN processing_log; ALTER TABLE image_numberings DROP COLUMN media; ALTER TABLE system_settings DROP COLUMN numbering; ALTER TABLE system_settings DROP COLUMN fixed_prompt; DROP TABLE token_usage_records; DROP TABLE prompts; ALTER TABLE model_configs DROP COLUMN prompt_id; ALTER TABLE model_configs ADD COLUMN body TEXT NOT NULL DEFAULT ''; DELETE FROM schema_migrations WHERE version>=13"); err != nil {
 		db.Close()
 		t.Fatal(err)
 	}
@@ -62,5 +63,37 @@ func TestVersionTwelveUpgradePreservesSettingsAndDefaultsWait(t *testing.T) {
 	value, err := (Store{DB: db}).Get()
 	if err != nil || value.ExtractWorkers != 3 || value.CacheGB != 2 || value.StabilitySeconds != 30 {
 		t.Fatal(value, err)
+	}
+}
+
+func TestFixedPromptDefaultsValidationAndRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fixed.sqlite")
+	db, err := storage.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := Store{DB: db}
+	fixed, err := s.FixedPrompt()
+	if err != nil || fixed != DefaultFixedPrompt {
+		t.Fatal(fixed, err)
+	}
+	if _, err = s.SaveFixedPrompt("  "); err == nil {
+		t.Fatal("blank fixed prompt accepted")
+	}
+	if _, err = s.SaveFixedPrompt(strings.Repeat("字", 16001)); err == nil {
+		t.Fatal("oversized fixed prompt accepted")
+	}
+	saved, err := s.SaveFixedPrompt("只输出标题。")
+	if err != nil || saved != "只输出标题。" {
+		t.Fatal(saved, err)
+	}
+	db.Close()
+	db, err = storage.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if fixed, err = (Store{DB: db}).FixedPrompt(); err != nil || fixed != "只输出标题。" {
+		t.Fatal(fixed, err)
 	}
 }

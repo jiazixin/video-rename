@@ -6,9 +6,14 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"strings"
 	"video-rename/internal/domain"
 	"video-rename/internal/storage"
 )
+
+// DefaultFixedPrompt is the hard constraint appended below the selected
+// prompt on every model request; the page may replace the stored value.
+const DefaultFixedPrompt = "只输出一个最终标题，必须为单行纯文本。\n\n禁止输出任何解释、前缀、后缀、候选项、序号、引号、Markdown、标签或其他附加内容。\n禁止出现“标题：”“推荐标题：”“我为你生成的标题”等提示性文字。\n禁止输出实际换行以及 `\\n`、`\\r\\n`、`\\\\n` 等换行字符。\n\n除标题正文外，不得输出任何其他内容。"
 
 type Settings struct {
 	StabilitySeconds int   `json:"stability_seconds"`
@@ -76,4 +81,26 @@ func (s Store) SaveNumbering(v domain.NumberingSettings) error {
 	}
 	_, err = s.DB.Exec("INSERT INTO system_settings(id,extract_workers,cache_gb,stability_seconds,numbering) VALUES(1,8,10,30,?) ON CONFLICT(id) DO UPDATE SET numbering=excluded.numbering", string(raw))
 	return err
+}
+
+// FixedPrompt returns the stored hard-constraint suffix; empty or missing
+// values fall back to the default text, which matches the historical
+// protocol note appended to every request.
+func (s Store) FixedPrompt() (string, error) {
+	var v string
+	err := s.DB.QueryRow("SELECT fixed_prompt FROM system_settings WHERE id=1").Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) || v == "" {
+		return DefaultFixedPrompt, nil
+	}
+	return v, err
+}
+func (s Store) SaveFixedPrompt(v string) (string, error) {
+	v = strings.TrimSpace(v)
+	if v == "" || len(v) > 16000 {
+		return "", fmt.Errorf("固定提示词不能为空且不得超过 16000 字节")
+	}
+	if _, err := s.DB.Exec("INSERT INTO system_settings(id,extract_workers,cache_gb,stability_seconds,numbering,fixed_prompt) VALUES(1,8,10,30,'',?) ON CONFLICT(id) DO UPDATE SET fixed_prompt=excluded.fixed_prompt", v); err != nil {
+		return "", err
+	}
+	return s.FixedPrompt()
 }

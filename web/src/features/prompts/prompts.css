@@ -1,0 +1,14 @@
+.prompts-page{min-width:0}
+.prompts-fixed-card{grid-template-columns:minmax(200px,1fr) minmax(0,2.2fr);align-items:start}
+.prompts-fixed-controls{display:flex;flex-direction:column;gap:16px}
+.prompts-fixed-controls .processing-footer{margin-top:0}
+.prompts-library{padding:26px;display:flex;flex-direction:column;gap:18px;margin-top:20px}
+.prompts-library-head{display:flex;justify-content:space-between;align-items:flex-start;gap:20px}
+.prompts-library-head h2{font-size:17px;line-height:1.5;letter-spacing:-.2px;margin:6px 0}
+.prompts-library-head .eyebrow{color:#56816b;letter-spacing:1.5px;font-size:10px}
+.prompts-library-head .help{font-size:12px;line-height:1.75;color:#7a837d;margin:0}
+.prompts-library-head>button{flex-shrink:0}
+.prompts-library .panel{border-color:#dfe6e1;box-shadow:none}
+.prompt-card-actions{display:flex;gap:8px;flex-shrink:0}
+.prompt-form{display:flex;flex-direction:column;gap:16px}
+@media(max-width:760px){.prompts-fixed-card{grid-template-columns:1fr;gap:16px;padding:20px}.prompts-library{padding:20px}.prompts-library-head{flex-direction:column}}

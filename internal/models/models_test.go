@@ -6,8 +6,19 @@ import (
 	"strings"
 	"testing"
 	"video-rename/internal/config"
+	"video-rename/internal/prompts"
 	"video-rename/internal/storage"
 )
+
+// newPrompt creates a library entry so profiles have a reference to carry.
+func newPrompt(t *testing.T, s Store, title, body string) prompts.Profile {
+	t.Helper()
+	p, err := prompts.Store{DB: s.DB}.Save(prompts.Profile{Title: title, Body: body})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
 
 func TestDefaultSaveConflictAndRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.sqlite")
@@ -25,7 +36,15 @@ func TestDefaultSaveConflictAndRestart(t *testing.T) {
 	}
 	p.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}
 	old := p
-	p.Body = "页面更新要求"
+	lib := prompts.Store{DB: db}
+	seedPrompt, err := lib.Get(p.PromptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedPrompt.Body = "页面更新要求"
+	if _, err = lib.Save(seedPrompt); err != nil {
+		t.Fatal(err)
+	}
 	p, err = s.Save(p)
 	if err != nil {
 		t.Fatal(err)
@@ -36,10 +55,10 @@ func TestDefaultSaveConflictAndRestart(t *testing.T) {
 	if _, err = s.Save(Profile{ServerConfig: config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}, Title: " ", Body: "x"}); err == nil {
 		t.Fatal("blank title accepted")
 	}
-	if _, err = s.Save(Profile{ServerConfig: config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}, Title: "x", Body: " "}); err == nil {
-		t.Fatal("blank body accepted")
+	if _, err = s.Save(Profile{ServerConfig: config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}, Title: "x"}); err == nil {
+		t.Fatal("missing prompt accepted")
 	}
-	second, err := s.Save(Profile{ServerConfig: config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}, Title: "旅行", Body: "描述风景"})
+	second, err := s.Save(Profile{ServerConfig: config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}, Title: "旅行", PromptID: newPrompt(t, s, "风景提示词", "描述风景").ID})
 	if err != nil || second.ID == 1 {
 		t.Fatal(second, err)
 	}
@@ -83,7 +102,12 @@ func TestCredentialsHiddenEncryptedAndSnapshotIndependent(t *testing.T) {
 	settings.BaseURL = "http://localhost:8080/v1"
 	settings.Model = "vision-a"
 	settings.APIKey = "private-key-only-for-test"
-	p, err := s.Save(Profile{ServerConfig: settings, Title: "测试", Body: "旧提示词"})
+	lib := prompts.Store{DB: db}
+	libraryPrompt, err := lib.Save(prompts.Profile{Title: "测试提示词", Body: "旧提示词"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.Save(Profile{ServerConfig: settings, Title: "测试", PromptID: libraryPrompt.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,6 +138,10 @@ func TestCredentialsHiddenEncryptedAndSnapshotIndependent(t *testing.T) {
 	p.Model = "vision-b"
 	p.APIKey = "updated-key"
 	if _, err = s.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	libraryPrompt.Body = "新提示词"
+	if _, err = lib.Save(libraryPrompt); err != nil {
 		t.Fatal(err)
 	}
 	var cfg config.Config

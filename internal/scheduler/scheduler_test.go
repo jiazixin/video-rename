@@ -9,7 +9,9 @@ import (
 	"video-rename/internal/jobs"
 	"video-rename/internal/library"
 	"video-rename/internal/models"
+	"video-rename/internal/prompts"
 	"video-rename/internal/storage"
+	"video-rename/internal/systemsettings"
 )
 
 func TestRulePreview(t *testing.T) {
@@ -68,7 +70,11 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 	}
 	defer m.Cache.Close()
 	s := &Scheduler{DB: db, Jobs: m}
-	prompt, err := (models.Store{DB: db}).Save(models.Profile{ServerConfig: config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}, Title: "计划提示词", Body: "计划专属要求"})
+	libraryPrompt, err := (prompts.Store{DB: db}).Save(prompts.Profile{Title: "计划提示词", Body: "计划专属要求"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt, err := (models.Store{DB: db}).Save(models.Profile{ServerConfig: config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}, Title: "计划配置", PromptID: libraryPrompt.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +93,7 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 	db.QueryRow("SELECT count(*) FROM runs").Scan(&n)
 	var savedModelConfigID int64
 	var savedBody string
-	if err = db.QueryRow("SELECT model_config_id,prompt_body FROM runs LIMIT 1").Scan(&savedModelConfigID, &savedBody); err != nil || savedModelConfigID != prompt.ID || savedBody != prompt.Body {
+	if err = db.QueryRow("SELECT model_config_id,prompt_body FROM runs LIMIT 1").Scan(&savedModelConfigID, &savedBody); err != nil || savedModelConfigID != prompt.ID || savedBody != libraryPrompt.Body+"\n\n"+systemsettings.DefaultFixedPrompt {
 		t.Fatal(savedModelConfigID, savedBody, err)
 	}
 	if n != 1 {
