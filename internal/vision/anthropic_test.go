@@ -4,7 +4,6 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"video-rename/internal/config"
 )
@@ -26,7 +25,7 @@ func TestAnthropicMultiImageSystemAndParameters(t *testing.T) {
 		if err := json.UnmarshalRead(r.Body, &body); err != nil {
 			t.Error(err)
 		}
-		if !strings.Contains(body.System, "标题要求") || !strings.Contains(body.System, protocolNote) || len(body.Messages) != 1 || body.Messages[0].Role != "user" || len(body.Messages[0].Content) != 21 || body.Temperature != 0.8 || body.MaxTokens != 1024 {
+		if body.System != "标题要求" || len(body.Messages) != 1 || body.Messages[0].Role != "user" || len(body.Messages[0].Content) != 21 || body.Temperature != 0.8 || body.MaxTokens != 1024 {
 			t.Error("invalid payload")
 		}
 		for i, p := range body.Messages[0].Content {

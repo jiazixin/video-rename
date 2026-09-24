@@ -86,7 +86,7 @@ Web 运行的完整截图保存到 tmp-storage 的专属缓存目录。改名成
 
 程序使用 `POST {base_url}/chat/completions`，`Content-Type: application/json`，有 key 时设置 Bearer 鉴权。共享 HTTP client 和连接池。首版禁用自动重定向，避免路径配置错误和鉴权意外转发。
 
-模型参数来自页面所选配置的任务快照。OpenAI 兼容请求使用 system（提示词与输出协议）及一条 user（截图说明、时间与图片），图片用 data:image/jpeg;base64 内联，按时间递增排列。OpenAI 官方预设使用 max_completion_tokens，其余兼容服务使用 max_tokens；temperature 可关闭发送。Claude 使用顶层 system 与一条 user，图片为 base64 source。仅发送截图，不传原视频或本机路径。详细结构见 [模型请求](model-request.md)。
+模型参数来自页面所选配置的任务快照。OpenAI 兼容请求使用 system（所选提示词 + 固定提示词）及一条 user（截图说明、时间与图片），图片用 data:image/jpeg;base64 内联，按时间递增排列。OpenAI 官方预设使用 max_completion_tokens，其余兼容服务使用 max_tokens；temperature 可关闭发送。Claude 使用顶层 system 与一条 user，图片为 base64 source。仅发送截图，不传原视频或本机路径。详细结构见 [模型请求](model-request.md)。
 
 响应必须是有效 HTTP 2xx + 合法 JSON。读取 `choices[0].message.content`，要求非空字符串。忽略 reasoning 字段，拒绝 tool_calls 或空 choices；`finish_reason=length` 标记为 `MODEL_OUTPUT_TRUNCATED`，不将截断内容当标题。
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"video-rename/internal/config"
+	"video-rename/internal/systemsettings"
 )
 
 func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
@@ -56,14 +57,18 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 		t.Fatal("default fixed prompt missing", w.Code, w.Body.String())
 	}
 	var page struct {
-		FixedPrompt string `json:"fixed_prompt"`
-		Prompts     []struct {
+		FixedPrompt        string `json:"fixed_prompt"`
+		DefaultFixedPrompt string `json:"default_fixed_prompt"`
+		Prompts            []struct {
 			ID      int64  `json:"id"`
 			Title   string `json:"title"`
 			Version int64  `json:"version"`
 		} `json:"prompts"`
 	}
 	json.Unmarshal(w.Body.Bytes(), &page)
+	if page.DefaultFixedPrompt != systemsettings.DefaultFixedPrompt || !strings.Contains(page.DefaultFixedPrompt, "命名失败") {
+		t.Fatal("default fixed prompt missing from payload", w.Body.String())
+	}
 	if len(page.Prompts) != 1 || page.Prompts[0].Title != "默认提示词" {
 		t.Fatal("seed prompt missing", w.Body.String())
 	}

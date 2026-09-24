@@ -21,7 +21,9 @@ type NumberingSettings struct {
 	Shared bool                `json:"shared"` // one sequence shared by images and audio per directory
 }
 
-func DefaultMediaNumberingRules() MediaNumberingRules { return MediaNumberingRules{Padding: 1, Lowercase: true} }
+func DefaultMediaNumberingRules() MediaNumberingRules {
+	return MediaNumberingRules{Padding: 1, Lowercase: true}
+}
 func DefaultNumberingSettings() NumberingSettings {
 	return NumberingSettings{Image: DefaultMediaNumberingRules(), Audio: DefaultMediaNumberingRules()}
 }
@@ -29,7 +31,10 @@ func DefaultNumberingSettings() NumberingSettings {
 // ValidateNumberingSettings rejects values the numbering engine cannot apply
 // safely; generated names are still validated per item at preview time.
 func ValidateNumberingSettings(s NumberingSettings) error {
-	for _, class := range []struct{ name string; rules MediaNumberingRules }{
+	for _, class := range []struct {
+		name  string
+		rules MediaNumberingRules
+	}{
 		{"图片", s.Image}, {"音频", s.Audio},
 	} {
 		if class.rules.Padding < 1 || class.rules.Padding > 9 {

@@ -8,7 +8,8 @@ import (
 
 // promptRoutes serves the Prompt配置 tab: the global fixed prompt (a hard
 // constraint appended below the selected prompt at request time) plus the
-// reusable library that model configs reference by id.
+// reusable library that model configs reference by id. The list payload also
+// carries the built-in default fixed prompt so the page can restore it.
 func (a *App) promptRoutes(api *http.ServeMux) {
 	store := prompts.Store{DB: a.DB}
 	settings := systemsettings.Store{DB: a.DB}
@@ -24,7 +25,7 @@ func (a *App) promptRoutes(api *http.ServeMux) {
 			return
 		}
 		w.Header().Set("Cache-Control", "private, no-store")
-		send(w, 200, map[string]any{"fixed_prompt": fixed, "prompts": list})
+		send(w, 200, map[string]any{"fixed_prompt": fixed, "default_fixed_prompt": systemsettings.DefaultFixedPrompt, "prompts": list})
 	})
 	api.HandleFunc("PUT /api/prompts/fixed", func(w http.ResponseWriter, r *http.Request) {
 		var input struct {

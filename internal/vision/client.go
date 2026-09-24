@@ -24,11 +24,6 @@ import (
 	"video-rename/internal/domain"
 )
 
-// protocolNote 固定附加在业务 prompt（所选提示词 + 固定提示词）之后的输出协议
-// 要求。单行标题规则由系统设置中的固定提示词承载；这里只保留命名失败协议，
-// NAMING_FAILED 检测依赖它，不可移入页面编辑。
-const protocolNote = "如果因安全限制或其他原因无法生成符合要求的标题，请仅输出四个字：命名失败。不要把拒绝说明、错误信息或占位文本作为标题。"
-
 // Client 与 llama-server 通信的客户端。零值不可用,通过 New 构造。
 type Client struct {
 	settings        config.ServerConfig
@@ -171,7 +166,9 @@ func (c *Client) buildBody(prompt string, frames []domain.Frame) ([]byte, int, *
 		request := any(chatRequest{
 			Model: c.model,
 			Messages: []chatMessage{
-				{Role: "system", Content: strings.TrimRight(prompt, "\n") + "\n\n" + protocolNote},
+				// system 只发送业务 prompt（所选提示词 + 固定提示词）；
+				// 命名失败协议含在固定提示词默认值中，页面可编辑。
+				{Role: "system", Content: strings.TrimRight(prompt, "\n")},
 				{Role: "user", Content: c.contentParts(frames)},
 			},
 			Temperature: c.temperature,

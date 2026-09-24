@@ -78,6 +78,7 @@ func mediaLabel(value string) string {
 	}
 	return "文件"
 }
+
 // numberedValue reads the ordinal of a name shaped prefix+digits; names with
 // another shape carry no number and join the tail of the sequence.
 func numberedValue(name, prefix string) *big.Int {

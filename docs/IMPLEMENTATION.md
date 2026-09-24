@@ -68,7 +68,7 @@ GET /api/entries/status?ids=... 返回最多 300 个条目的当前状态（不�
 
 ## 固定命名失败协议
 
-模型请求统一在用户提示词后追加不可在页面编辑的输出协议（OpenAI 兼容和 Anthropic 均适用）：无法因安全限制或其他原因生成符合要求的标题时，仅返回“命名失败”。模型配置正文与已保存的用户提示词不改写。
+命名失败输出协议并入固定提示词默认值，「Prompt配置」页可编辑（OpenAI 兼容和 Anthropic 均适用）：无法因安全限制或其他原因生成符合要求的标题时，仅返回“命名失败”。模型请求除固定提示词外不追加任何页面不可见的硬编码文本；已保存自定义固定提示词的库不会自动获得该协议，需要时在页面补入。模型配置正文与已保存的用户提示词不改写。
 
 最终标题文本包含“命名失败”时，vision 返回非全局 NAMING_FAILED，不重试、不进入文件名清洗或改名。复用任务失败处理：保留原文件名、不写已处理标记，写入任务历史失败记录及脱敏请求/响应；其他视频继续处理。
 
@@ -171,6 +171,6 @@ schema v19 为 run_items 增加 started_ms / finished_ms（毫秒，0 表示未�
 
 ## Prompt配置与提示词库
 
-schema v18 重建 `prompts` 表（v4 已把旧表改名 `model_configs`，名称可复用）：提示词成为独立实体（名称 1–80 字、正文 ≤16000 字节、上限 200 条、版本校验），`internal/prompts` 提供增删改查；删除前检查 `model_configs.prompt_id` 引用，被引用时返回 409 与数量。`model_configs` 新增 `prompt_id` 并删除 `body` 列，正文与提示词名称在读取时 LEFT JOIN 解析（API 的 `body`/`prompt_title` 为只读视图）；迁移把旧正文按内容去重回填为提示词条目，标题取同正文的最低 ID 配置，配置自动关联，历史运行快照不受影响。全局固定提示词存 `system_settings.fixed_prompt`（空值回退代码默认），`internal/systemsettings` 提供 `FixedPrompt`/`SaveFixedPrompt`，接口为 `GET /api/prompts`（返回 fixed_prompt + 列表）、`PUT /api/prompts/fixed` 与提示词的 POST/PATCH/DELETE；`/api/model-presets` 不再返回 default_prompt。
+schema v18 重建 `prompts` 表（v4 已把旧表改名 `model_configs`，名称可复用）：提示词成为独立实体（名称 1–80 字、正文 ≤16000 字节、上限 200 条、版本校验），`internal/prompts` 提供增删改查；删除前检查 `model_configs.prompt_id` 引用，被引用时返回 409 与数量。`model_configs` 新增 `prompt_id` 并删除 `body` 列，正文与提示词名称在读取时 LEFT JOIN 解析（API 的 `body`/`prompt_title` 为只读视图）；迁移把旧正文按内容去重回填为提示词条目，标题取同正文的最低 ID 配置，配置自动关联，历史运行快照不受影响。全局固定提示词存 `system_settings.fixed_prompt`（空值回退代码默认），`internal/systemsettings` 提供 `FixedPrompt`/`SaveFixedPrompt`，接口为 `GET /api/prompts`（返回 fixed_prompt、内置默认值 default_fixed_prompt 与列表，页面据此提供「恢复默认」填入）、`PUT /api/prompts/fixed` 与提示词的 POST/PATCH/DELETE；`/api/model-presets` 不再返回 default_prompt。
 
-运行创建时在 jobs 里把所选提示词正文与固定提示词拼为完整 system 文本，写入 `runs.prompt_body`、加密快照与 prompt_hash，真实反映发送内容；编辑提示词库正文影响引用配置之后创建的运行，进行中批次保持快照。vision 的 `protocolNote` 缩减为仅命名失败协议（NAMING_FAILED 检测依赖，保持硬编码追加），单行标题等输出格式要求移入默认固定提示词。前端新增 `web/src/features/prompts/`（固定提示词卡片 + 提示词库列表与编辑弹窗），系统设置页签「Prompt配置」位于「模型配置」左侧；模型配置表单的提示词 textarea 换为 SelectField 下拉（必选）并附所选提示词预览。浏览器测试覆盖页签直达、默认固定文案、提示词增删改、被引用删除保护、换绑后删除与固定提示词持久化。
+运行创建时在 jobs 里把所选提示词正文与固定提示词拼为完整 system 文本，写入 `runs.prompt_body`、加密快照与 prompt_hash，真实反映发送内容；编辑提示词库正文影响引用配置之后创建的运行，进行中批次保持快照。vision 不再持有硬编码提示文本，命名失败协议与单行标题等输出格式要求都在默认固定提示词中（NAMING_FAILED 检测仍保留在 vision 的输出验证里）。前端新增 `web/src/features/prompts/`（固定提示词卡片 + 提示词库列表与编辑弹窗），系统设置页签「Prompt配置」位于「模型配置」左侧；模型配置表单的提示词 textarea 换为 SelectField 下拉（必选）并附所选提示词预览。浏览器测试覆盖页签直达、默认固定文案、提示词增删改、被引用删除保护、换绑后删除、固定提示词持久化与恢复默认填入。

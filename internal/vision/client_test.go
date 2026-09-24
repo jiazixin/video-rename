@@ -93,7 +93,7 @@ func TestTitleHappyPath(t *testing.T) {
 		t.Fatalf("expected system + user, got %d", len(msgs))
 	}
 	system := msgs[0].(map[string]any)
-	if system["role"] != "system" || system["content"] != cfg.Prompt+"\n\n"+protocolNote {
+	if system["role"] != "system" || system["content"] != cfg.Prompt {
 		t.Fatalf("wrong system prompt: %v", system)
 	}
 	user := msgs[1].(map[string]any)
@@ -528,7 +528,7 @@ func TestConsecutiveVideosDoNotShareConversation(t *testing.T) {
 		if len(body.Messages) != 2 || body.Messages[0].Role != "system" || body.Messages[1].Role != "user" {
 			t.Fatalf("history leaked: %+v", body.Messages)
 		}
-		if body.Messages[0].Content != marker+"\n\n"+protocolNote {
+		if body.Messages[0].Content != marker {
 			t.Fatal("wrong system context", body.Messages[0])
 		}
 		parts := body.Messages[1].Content.([]any)
@@ -589,8 +589,8 @@ func TestNamingFailureMarkerStopsWithoutRetry(t *testing.T) {
 					t.Fatal(err)
 				}
 				prompt := body["messages"].([]any)[0].(map[string]any)["content"].(string)
-				if !strings.Contains(prompt, "请仅输出四个字：命名失败") {
-					t.Error("missing fixed failure protocol")
+				if prompt != "自定义命名要求" {
+					t.Error("system prompt not sent verbatim:", prompt)
 				}
 				fmt.Fprint(w, okResponse(answer))
 			}))

@@ -17,7 +17,7 @@ type anthropicSource struct {
 	Data      string `json:"data"`
 }
 
-// Anthropic carries fixed instructions in top-level system, not a user message.
+// Anthropic carries the whole prompt in top-level system, not a user message.
 func (c *Client) anthropicRequest(prompt string, frames []domain.Frame) any {
 	parts := make([]anthropicPart, 0, 1+len(frames)*2)
 	for _, part := range c.contentParts(frames) {
@@ -34,7 +34,7 @@ func (c *Client) anthropicRequest(prompt string, frames []domain.Frame) any {
 		Temperature float64       `json:"temperature"`
 		MaxTokens   int           `json:"max_tokens"`
 		Stream      bool          `json:"stream"`
-	}{c.model, strings.TrimRight(prompt, "\n") + "\n\n" + protocolNote, []chatMessage{{Role: "user", Content: parts}}, c.temperature, c.maxTokens, false}
+	}{c.model, strings.TrimRight(prompt, "\n"), []chatMessage{{Role: "user", Content: parts}}, c.temperature, c.maxTokens, false}
 }
 func parseAnthropic(raw []byte, status int) (string, int, *httpJobError) {
 	var response struct {

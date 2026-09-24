@@ -2,6 +2,7 @@
 .prompts-fixed-card{grid-template-columns:minmax(200px,1fr) minmax(0,2.2fr);align-items:start}
 .prompts-fixed-controls{display:flex;flex-direction:column;gap:16px}
 .prompts-fixed-controls .processing-footer{margin-top:0}
+.prompts-fixed-actions{display:flex;gap:10px;flex-shrink:0}
 .prompts-library{padding:26px;display:flex;flex-direction:column;gap:18px;margin-top:20px}
 .prompts-library-head{display:flex;justify-content:space-between;align-items:flex-start;gap:20px}
 .prompts-library-head h2{font-size:17px;line-height:1.5;letter-spacing:-.2px;margin:6px 0}

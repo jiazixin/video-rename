@@ -13,7 +13,10 @@ import (
 
 // DefaultFixedPrompt is the hard constraint appended below the selected
 // prompt on every model request; the page may replace the stored value.
-const DefaultFixedPrompt = "只输出一个最终标题，必须为单行纯文本。\n\n禁止输出任何解释、前缀、后缀、候选项、序号、引号、Markdown、标签或其他附加内容。\n禁止出现“标题：”“推荐标题：”“我为你生成的标题”等提示性文字。\n禁止输出实际换行以及 `\\n`、`\\r\\n`、`\\\\n` 等换行字符。\n\n除标题正文外，不得输出任何其他内容。"
+// It carries the naming-failure output protocol: the client appends no
+// other hidden text, and ValidateTitle still maps a “命名失败” answer to
+// NAMING_FAILED.
+const DefaultFixedPrompt = "只输出一个最终标题，必须为单行纯文本。\n\n禁止输出任何解释、前缀、后缀、候选项、序号、引号、Markdown、标签或其他附加内容。\n禁止出现“标题：”“推荐标题：”“我为你生成的标题”等提示性文字。\n禁止输出实际换行以及 `\\n`、`\\r\\n`、`\\\\n` 等换行字符。\n\n除标题正文外，不得输出任何其他内容。\n\n如果因安全限制或其他原因无法生成符合要求的标题，请仅输出四个字：命名失败。不要把拒绝说明、错误信息或占位文本作为标题。"
 
 type Settings struct {
 	StabilitySeconds int   `json:"stability_seconds"`
@@ -84,8 +87,8 @@ func (s Store) SaveNumbering(v domain.NumberingSettings) error {
 }
 
 // FixedPrompt returns the stored hard-constraint suffix; empty or missing
-// values fall back to the default text, which matches the historical
-// protocol note appended to every request.
+// values fall back to the default text, which includes the naming-failure
+// output protocol.
 func (s Store) FixedPrompt() (string, error) {
 	var v string
 	err := s.DB.QueryRow("SELECT fixed_prompt FROM system_settings WHERE id=1").Scan(&v)

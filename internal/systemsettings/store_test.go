@@ -77,6 +77,9 @@ func TestFixedPromptDefaultsValidationAndRestart(t *testing.T) {
 	if err != nil || fixed != DefaultFixedPrompt {
 		t.Fatal(fixed, err)
 	}
+	if !strings.Contains(DefaultFixedPrompt, "请仅输出四个字：命名失败") {
+		t.Fatal("default fixed prompt lost the naming-failure protocol")
+	}
 	if _, err = s.SaveFixedPrompt("  "); err == nil {
 		t.Fatal("blank fixed prompt accepted")
 	}
