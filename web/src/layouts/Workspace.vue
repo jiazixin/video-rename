@@ -6,7 +6,8 @@ const props=defineProps<{page:string;model:string;ready:boolean}>()
 const emit=defineEmits<{navigate:[page:string]}>();const collapsed=ref(false),error=ref('')
 const groups=[
  {label:'工作台',items:[{id:'library',name:'文件目录',icon:FolderOpen}]},
- {label:'任务',items:[{id:'extractions',name:'抽帧记录',icon:Images},{id:'history',name:'运行记录',icon:ScrollText},{id:'plans',name:'计划管理',icon:Clock3},{id:'runs',name:'批次记录',icon:ListVideo}]},
+ {label:'任务记录',items:[{id:'extractions',name:'抽帧记录',icon:Images},{id:'history',name:'运行记录',icon:ScrollText}]},
+ {label:'运行管理',items:[{id:'plans',name:'计划管理',icon:Clock3},{id:'runs',name:'批次记录',icon:ListVideo}]},
  {label:'分析',items:[{id:'usage/tokens',name:'模型用量',icon:Coins},{id:'usage/analysis',name:'运行分析',icon:BarChart3}]},
  {label:'系统',items:[{id:'settings',name:'系统设置',icon:Settings2}]},
 ]
