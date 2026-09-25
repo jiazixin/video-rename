@@ -17,6 +17,7 @@ import (
 )
 
 type Plan struct {
+	Task          string   `json:"task"`
 	ModelConfigID int64    `json:"model_config_id"`
 	TargetNames   []string `json:"target_names,omitempty"`
 	ID            int64    `json:"id"`
@@ -77,14 +78,14 @@ func Preview(expression, zone string, now time.Time) ([]string, error) {
 }
 func scanPlan(row interface{ Scan(...any) error }) (p Plan, err error) {
 	var raw string
-	err = row.Scan(&p.ID, &p.Name, &raw, &p.Recursive, &p.Kind, &p.Expression, &p.Timezone, &p.Enabled, &p.Next, &p.Last, &p.Version, &p.ModelConfigID)
+	err = row.Scan(&p.ID, &p.Name, &raw, &p.Recursive, &p.Kind, &p.Expression, &p.Timezone, &p.Enabled, &p.Next, &p.Last, &p.Version, &p.ModelConfigID, &p.Task)
 	if err == nil {
 		err = json.Unmarshal([]byte(raw), &p.Targets)
 	}
 	return
 }
 
-const columns = "id,name,targets,recursive,kind,expression,timezone,enabled,next,last,version,model_config_id"
+const columns = "id,name,targets,recursive,kind,expression,timezone,enabled,next,last,version,model_config_id,task"
 
 func (s *Scheduler) List() ([]Plan, error) { return s.list(true) }
 func (s *Scheduler) list(withNames bool) ([]Plan, error) {
@@ -128,17 +129,27 @@ func (s *Scheduler) Save(p Plan) (Plan, error) {
 	if strings.TrimSpace(p.Name) == "" || len(p.Name) > 160 || len(p.Targets) == 0 || len(p.Targets) > 100 {
 		return p, fmt.Errorf("请填写名称并选择目录")
 	}
-	if p.ModelConfigID == 0 {
-		var err error
-		p.ModelConfigID, err = (models.Store{DB: s.DB}).DefaultID()
-		if err != nil {
-			return p, err
-		}
+	if p.Task == "" {
+		p.Task = "rename"
 	}
-	if profile, err := (models.Store{DB: s.DB}).Get(p.ModelConfigID); err != nil {
-		return p, fmt.Errorf("请选择有效的模型配置: %w", err)
-	} else if err = profile.Validate(); err != nil {
-		return p, fmt.Errorf("请完善模型配置: %w", err)
+	if p.Task != "rename" && p.Task != "extract" {
+		return p, fmt.Errorf("任务类型无效")
+	}
+	if p.Task == "extract" {
+		p.ModelConfigID = 0
+	} else {
+		if p.ModelConfigID == 0 {
+			var err error
+			p.ModelConfigID, err = (models.Store{DB: s.DB}).DefaultID()
+			if err != nil {
+				return p, err
+			}
+		}
+		if profile, err := (models.Store{DB: s.DB}).Get(p.ModelConfigID); err != nil {
+			return p, fmt.Errorf("请选择有效的模型配置: %w", err)
+		} else if err = profile.Validate(); err != nil {
+			return p, fmt.Errorf("请完善模型配置: %w", err)
+		}
 	}
 	switch p.Kind {
 	case "hourly", "daily", "weekly", "cron":
@@ -168,13 +179,13 @@ func (s *Scheduler) Save(p Plan) (Plan, error) {
 		if n >= 100 {
 			return p, fmt.Errorf("最多支持 100 条计划")
 		}
-		res, err := s.DB.Exec("INSERT INTO schedules(name,targets,recursive,kind,expression,timezone,enabled,next,model_config_id) VALUES(?,?,?,?,?,?,?,?,?)", p.Name, string(raw), p.Recursive, p.Kind, p.Expression, p.Timezone, p.Enabled, p.Next, p.ModelConfigID)
+		res, err := s.DB.Exec("INSERT INTO schedules(name,targets,recursive,kind,expression,timezone,enabled,next,model_config_id,task) VALUES(?,?,?,?,?,?,?,?,?,?)", p.Name, string(raw), p.Recursive, p.Kind, p.Expression, p.Timezone, p.Enabled, p.Next, p.ModelConfigID, p.Task)
 		if err != nil {
 			return p, err
 		}
 		p.ID, _ = res.LastInsertId()
 	} else {
-		res, err := s.DB.Exec("UPDATE schedules SET name=?,targets=?,recursive=?,kind=?,expression=?,timezone=?,enabled=?,next=?,model_config_id=?,version=version+1 WHERE id=? AND version=?", p.Name, string(raw), p.Recursive, p.Kind, p.Expression, p.Timezone, p.Enabled, p.Next, p.ModelConfigID, p.ID, p.Version)
+		res, err := s.DB.Exec("UPDATE schedules SET name=?,targets=?,recursive=?,kind=?,expression=?,timezone=?,enabled=?,next=?,model_config_id=?,task=?,version=version+1 WHERE id=? AND version=?", p.Name, string(raw), p.Recursive, p.Kind, p.Expression, p.Timezone, p.Enabled, p.Next, p.ModelConfigID, p.Task, p.ID, p.Version)
 		if err != nil {
 			return p, err
 		}
@@ -257,7 +268,7 @@ func (s *Scheduler) Tick(now time.Time) error {
 		if active > 0 {
 			message = "前次任务未结束，本次跳过"
 		} else {
-			_, e = s.Jobs.Create(jobs.Request{ModelConfigID: p.ModelConfigID, Targets: p.Targets, Recursive: p.Recursive, Key: fmt.Sprintf("plan:%d:%s", p.ID, wall)}, "schedule", p.ID)
+			_, e = s.Jobs.Create(jobs.Request{Task: p.Task, ModelConfigID: p.ModelConfigID, Targets: p.Targets, Recursive: p.Recursive, Key: fmt.Sprintf("plan:%d:%s", p.ID, wall)}, "schedule", p.ID)
 			if e != nil {
 				message = e.Error()
 				if er := s.Jobs.Library.Event("failure", "schedule", 0, 0, 0, "", "", message); er != nil {

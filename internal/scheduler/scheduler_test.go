@@ -124,6 +124,31 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 	if _, err = s.Save(p); err == nil {
 		t.Fatal("stale edit accepted")
 	}
+	// Switching a persisted plan to extraction must bypass model validation,
+	// survive reload, and pass the task type through the automatic trigger.
+	p, _ = s.Get(p.ID)
+	p.Task, p.ModelConfigID, p.Enabled = "extract", 999999, true
+	p, err = s.Save(p)
+	if err != nil || p.Task != "extract" || p.ModelConfigID != 0 {
+		t.Fatalf("extract plan: %+v %v", p, err)
+	}
+	if _, err = db.Exec("UPDATE runs SET status='cancelled'"); err != nil {
+		t.Fatal(err)
+	}
+	at, _ = time.Parse(time.RFC3339, p.Next)
+	if err = s.Tick(at.Add(2 * time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	// The prior wall-clock tick can already be deduplicated; trigger the next one.
+	p, _ = s.Get(p.ID)
+	at, _ = time.Parse(time.RFC3339, p.Next)
+	if err = s.Tick(at); err != nil {
+		t.Fatal(err)
+	}
+	var task string
+	if err = db.QueryRow("SELECT task,model_config_id,prompt_body FROM runs ORDER BY id DESC LIMIT 1").Scan(&task, &savedModelConfigID, &savedBody); err != nil || task != "extract" || savedModelConfigID != 0 || savedBody != "" {
+		t.Fatal(task, savedModelConfigID, savedBody, err)
+	}
 	if err = l.Refresh(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}

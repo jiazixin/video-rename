@@ -168,6 +168,11 @@ INSERT INTO schema_migrations VALUES(20,datetime('now'));`); err != nil {
 			return err
 		}
 	}
+	if version < 21 {
+		if _, err = tx.Exec(`ALTER TABLE schedules ADD COLUMN task TEXT NOT NULL DEFAULT 'rename'; INSERT INTO schema_migrations VALUES(21,datetime('now'));`); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 

@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"fmt"
+	"net/url"
 	"testing"
 )
 
@@ -75,5 +76,46 @@ func TestRunPagesFilterBeforePagination(t *testing.T) {
 				t.Fatalf("got %d unique runs, want %d", len(seen), filter.total)
 			}
 		})
+	}
+}
+
+func TestRunPageCombinedFiltersAndDurationBounds(t *testing.T) {
+	m, _ := setup(t)
+	for i, seconds := range []int{59, 60, 299, 300, 1799, 1800, 3599, 3600} {
+		_, err := m.DB.Exec(`INSERT INTO runs(source,targets,recursive,status,created,started,finished,request_key,model_config_id,model_config_title) VALUES('manual','[]',1,'partial_failure','2026-09-25T23:00:00Z','2026-09-26T00:00:00Z',datetime('2026-09-26T00:00:00Z',?),?,42,'同一模型的配置 A')`, fmt.Sprintf("+%d seconds", seconds), fmt.Sprintf("bounds-%d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A queued batch has no elapsed duration, even if its submission is old.
+	if _, err := m.DB.Exec(`INSERT INTO runs(source,targets,recursive,status,created,started,finished,request_key,model_config_id) VALUES('manual','[]',1,'partial_failure','2026-09-26T00:00:00Z','2026-09-26T00:00:00.900Z','2026-09-26T00:01:00.100Z','fractional',42)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.DB.Exec(`INSERT INTO runs(source,targets,recursive,status,created,request_key,model_config_id) VALUES('manual','[]',1,'queued','2026-09-26T00:00:00Z','queued',43)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		duration string
+		total    int
+	}{{"under1", 2}, {"1to5", 2}, {"5to30", 2}, {"30to60", 2}, {"over60", 1}} {
+		q := url.Values{"status": {"partial_failure"}, "profile": {"42"}, "from": {"2026-09-26T08:00:00+08:00"}, "to": {"2026-09-27T00:00:00Z"}, "duration": {tt.duration}}
+		page, err := m.ListPage(t.Context(), "manual", "rename", 99, 50, q)
+		if err != nil || page.Total != tt.total || len(page.Items) != tt.total || page.Page != 1 {
+			t.Fatalf("%s: %+v %v", tt.duration, page, err)
+		}
+		q.Set("profile", "43")
+		page, err = m.ListPage(t.Context(), "all", "", 1, 50, q)
+		if err != nil || page.Total != 0 {
+			t.Fatalf("configuration filter: %+v %v", page, err)
+		}
+	}
+	for _, q := range []url.Values{{"status": {"success"}}, {"profile": {"abc"}}, {"duration": {"invalid"}}, {"from": {"invalid"}}, {"from": {"2026-09-27T00:00:00Z"}, "to": {"2026-09-26T00:00:00Z"}}} {
+		if _, err := m.ListPage(t.Context(), "all", "", 1, 50, q); err == nil {
+			t.Fatalf("invalid filters accepted: %v", q)
+		}
+	}
+	page, err := m.ListPage(t.Context(), "all", "", 1, 50, url.Values{"to": {"2026-09-26T00:00:00Z"}})
+	if err != nil || page.Total != 0 {
+		t.Fatalf("exclusive end: %+v %v", page, err)
 	}
 }

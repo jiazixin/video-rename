@@ -246,7 +246,7 @@ func (a *App) Handler() http.Handler {
 				send(w, 400, map[string]string{"message": "任务类型无效"})
 				return
 			}
-			v, err := a.Jobs.ListPage(r.Context(), category, task, int(number(r.URL.Query().Get("page"))), int(number(r.URL.Query().Get("size"))))
+			v, err := a.Jobs.ListPage(r.Context(), category, task, int(number(r.URL.Query().Get("page"))), int(number(r.URL.Query().Get("size"))), r.URL.Query())
 			if err != nil {
 				failure(w, err)
 				return
@@ -342,7 +342,7 @@ func (a *App) Handler() http.Handler {
 			failure(w, err)
 			return
 		}
-		id, err := a.Jobs.Create(jobs.Request{ModelConfigID: p.ModelConfigID, Targets: p.Targets, Recursive: p.Recursive, Key: v.Key}, "manual", p.ID)
+		id, err := a.Jobs.Create(jobs.Request{Task: p.Task, ModelConfigID: p.ModelConfigID, Targets: p.Targets, Recursive: p.Recursive, Key: v.Key}, "manual", p.ID)
 		if err != nil {
 			failure(w, err)
 			return
