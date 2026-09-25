@@ -177,10 +177,7 @@ func (s *Service) enqueue(ctx context.Context) error {
 			}
 			return t.In(location).Format("2006-01-02 15:04:05 -07:00") + " (" + timezone + ")"
 		}
-		left := b.total - b.done - b.skipped - b.failed
-		if left < 0 {
-			left = 0
-		}
+		left := max(b.total-b.done-b.skipped-b.failed, 0)
 		title := fmt.Sprintf("video-rename · %s", labels[b.status])
 		body := fmt.Sprintf("批次编号：#%d\n视频总数：%d\n成功：%d\n失败：%d\n跳过：%d\n未完成：%d\n开始时间：%s\n完成时间：%s\n处理耗时：%s\n来源：%s\n目录：%s\n模型：%s\n提交时间：%s", b.id, b.total, b.done, b.failed, b.skipped, left, date(b.started), date(b.finished), duration, source, strings.Join(names, "、"), clip(b.model, 60), date(b.created))
 		_, err = s.DB.ExecContext(ctx, "INSERT OR IGNORE INTO notification_deliveries(kind,run,title,body,created,updated,next_attempt) VALUES(?,?,?,?,?,?,?)", b.kind, b.id, title, body, storage.Now(), storage.Now(), storage.Now())

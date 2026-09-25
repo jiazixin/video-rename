@@ -99,7 +99,7 @@ func addRun(t *testing.T, s *Service, status string, failed int) int64 {
 func TestQueueFilteringRetriesAndSecretPreservation(t *testing.T) {
 	s := service(t)
 	addRun(t, s, "completed", 0)
-	if err := s.Save(Input{Kind: "webhook", Enabled: true, Credentials: Credentials{Endpoint: "http://127.0.0.1/push?key=private"}}); err != nil {
+	if err := s.Save(Input{Kind: "webhook", Enabled: true, Endpoint: "http://127.0.0.1/push?key=private"}); err != nil {
 		t.Fatal(err)
 	}
 	list, err := s.List()
@@ -157,7 +157,7 @@ func TestQueueFilteringRetriesAndSecretPreservation(t *testing.T) {
 }
 func TestQueueSuccessIsDeduplicated(t *testing.T) {
 	s := service(t)
-	if err := s.Save(Input{Kind: "bark", Enabled: true, Credentials: Credentials{Endpoint: "http://127.0.0.1/device"}}); err != nil {
+	if err := s.Save(Input{Kind: "bark", Enabled: true, Endpoint: "http://127.0.0.1/device"}); err != nil {
 		t.Fatal(err)
 	}
 	addRun(t, s, "completed", 0)
@@ -175,7 +175,7 @@ func TestQueueSuccessIsDeduplicated(t *testing.T) {
 
 func TestNotificationRecoveryAttemptLimit(t *testing.T) {
 	s := service(t)
-	if err := s.Save(Input{Kind: "bark", Enabled: true, Credentials: Credentials{Endpoint: "http://127.0.0.1/device"}}); err != nil {
+	if err := s.Save(Input{Kind: "bark", Enabled: true, Endpoint: "http://127.0.0.1/device"}); err != nil {
 		t.Fatal(err)
 	}
 	addRun(t, s, "completed", 0)
@@ -218,7 +218,7 @@ func TestBarkBatchBodyThroughJSONEndpoint(t *testing.T) {
 		fmt.Fprint(w, `{"code":200}`)
 	}))
 	defer server.Close()
-	if err := s.Save(Input{Kind: "bark", Enabled: true, Credentials: Credentials{Endpoint: server.URL + "/bark/test-key/"}}); err != nil {
+	if err := s.Save(Input{Kind: "bark", Enabled: true, Endpoint: server.URL + "/bark/test-key/"}); err != nil {
 		t.Fatal(err)
 	}
 	addRun(t, s, "partial_failure", 1)
@@ -233,7 +233,7 @@ func TestBarkBatchBodyThroughJSONEndpoint(t *testing.T) {
 
 func TestNotificationTimezoneUsesDST(t *testing.T) {
 	s := service(t)
-	if err := s.Save(Input{Kind: "bark", Enabled: true, Credentials: Credentials{Endpoint: "http://127.0.0.1/device"}}); err != nil {
+	if err := s.Save(Input{Kind: "bark", Enabled: true, Endpoint: "http://127.0.0.1/device"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.DB.Exec("UPDATE notification_preferences SET timezone='America/New_York'"); err != nil {

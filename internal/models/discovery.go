@@ -36,7 +36,7 @@ func Discover(ctx context.Context, s config.ServerConfig, timeout time.Duration)
 	client := &http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	seen := map[string]bool{}
 	after := ""
-	for page := 0; page < 10; page++ {
+	for page := range 10 {
 		endpoint := s.BaseURL + "/models"
 		if s.Protocol == "anthropic" {
 			endpoint += "?limit=100"

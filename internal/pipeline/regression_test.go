@@ -187,7 +187,7 @@ func TestLogFailureStopsRemainingJobs(t *testing.T) {
 			defer srv.Close()
 			cfg := loadConfig(t, srv.URL)
 			videos := t.TempDir()
-			for i := 0; i < 20; i++ {
+			for i := range 20 {
 				name := fmt.Sprintf("v%02d.mp4", i)
 				if kind == "failure" && i == 0 {
 					name = "broken.mp4"

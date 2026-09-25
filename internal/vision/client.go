@@ -51,10 +51,7 @@ type Client struct {
 // 连接超时取 10s 与 server.timeout 的较小值。
 func New(cfg *config.Config) *Client {
 	timeout := cfg.TimeoutDuration
-	dialTimeout := 10 * time.Second
-	if timeout < dialTimeout {
-		dialTimeout = timeout
-	}
+	dialTimeout := min(timeout, 10*time.Second)
 	transport := &http.Transport{
 		DialContext:         (&net.Dialer{Timeout: dialTimeout}).DialContext,
 		MaxIdleConns:        32,
@@ -141,10 +138,7 @@ func (c *Client) Title(ctx context.Context, prompt string, frames []domain.Frame
 		// 退避:基数 min(15s, 2s × 2^(k−1)) 加 0.5–1 倍 jitter;
 		// Retry-After 是最小等待要求,与本地退避取较大值。
 		base := min(15*time.Second, (1<<uint(attempt-1))*2*time.Second)
-		wait := time.Duration(float64(base) * (0.5 + 0.5*c.jitter()))
-		if rerr.RetryAfter > wait {
-			wait = rerr.RetryAfter
-		}
+		wait := max(rerr.RetryAfter, time.Duration(float64(base)*(0.5+0.5*c.jitter())))
 		if wait > 15*time.Second {
 			lastErr.Message += fmt.Sprintf("; Retry-After %v 超过 15s 上限,停止重试", rerr.RetryAfter)
 			return domain.TitleResult{Attempts: attempt, FramesSent: sent}, &lastErr.JobError
@@ -312,7 +306,7 @@ func (c *Client) doOnce(ctx context.Context, body []byte, capture ...*domain.Mod
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return "", 0, &httpJobError{JobError: domain.JobError{Code: domain.CodeAPIHTTPError, Message: fmt.Sprintf("构造请求失败: %v", err)}}
+		return "", 0, &httpJobError{Code: domain.CodeAPIHTTPError, Message: fmt.Sprintf("构造请求失败: %v", err)}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.protocol == "anthropic" {
@@ -343,7 +337,7 @@ func (c *Client) doOnce(ctx context.Context, body []byte, capture ...*domain.Mod
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			return c.errorForStatus(resp, nil)
 		}
-		return "", resp.StatusCode, &httpJobError{JobError: domain.JobError{Code: domain.CodeAPIResponseTooLarge, Message: fmt.Sprintf("响应体超过 %d 字节上限", c.responseLimit)}}
+		return "", resp.StatusCode, &httpJobError{Code: domain.CodeAPIResponseTooLarge, Message: fmt.Sprintf("响应体超过 %d 字节上限", c.responseLimit)}
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
@@ -362,24 +356,24 @@ func (c *Client) doOnce(ctx context.Context, body []byte, capture ...*domain.Mod
 	}
 	var cr chatResponse
 	if err := json.Unmarshal(raw, &cr); err != nil {
-		return "", resp.StatusCode, &httpJobError{JobError: domain.JobError{Code: domain.CodeAPIResponseInvalid, Message: "响应 JSON 格式或字段类型无效"}}
+		return "", resp.StatusCode, &httpJobError{Code: domain.CodeAPIResponseInvalid, Message: "响应 JSON 格式或字段类型无效"}
 	}
 	if len(cr.Choices) == 0 {
 		msg := "choices 为空"
 		if cr.Error != nil && cr.Error.Message != "" {
 			msg += "; 服务端错误: " + cr.Error.Message
 		}
-		return "", resp.StatusCode, &httpJobError{JobError: domain.JobError{Code: domain.CodeAPIResponseInvalid, Message: msg}}
+		return "", resp.StatusCode, &httpJobError{Code: domain.CodeAPIResponseInvalid, Message: msg}
 	}
 	choice := cr.Choices[0]
 	if len(choice.Message.ToolCalls) > 0 {
-		return "", resp.StatusCode, &httpJobError{JobError: domain.JobError{Code: domain.CodeAPIResponseInvalid, Message: "响应包含 tool_calls,不是文本标题"}}
+		return "", resp.StatusCode, &httpJobError{Code: domain.CodeAPIResponseInvalid, Message: "响应包含 tool_calls,不是文本标题"}
 	}
 	if choice.FinishReason == "length" {
-		return "", resp.StatusCode, &httpJobError{JobError: domain.JobError{Code: domain.CodeModelOutputTruncated, Message: "模型输出因长度截断,不作为标题"}}
+		return "", resp.StatusCode, &httpJobError{Code: domain.CodeModelOutputTruncated, Message: "模型输出因长度截断,不作为标题"}
 	}
 	if strings.TrimSpace(choice.Message.Content) == "" {
-		return "", resp.StatusCode, &httpJobError{JobError: domain.JobError{Code: domain.CodeAPIResponseInvalid, Message: "message.content 为空"}}
+		return "", resp.StatusCode, &httpJobError{Code: domain.CodeAPIResponseInvalid, Message: "message.content 为空"}
 	}
 	if _, validationErr := ValidateTitle(choice.Message.Content); validationErr != nil {
 		return "", resp.StatusCode, &httpJobError{JobError: *validationErr}
@@ -390,11 +384,11 @@ func (c *Client) doOnce(ctx context.Context, body []byte, capture ...*domain.Mod
 // errorForStatus 将非 2xx 响应映射为可重试/不可重试错误。
 func (c *Client) errorForStatus(resp *http.Response, raw []byte) (string, int, *httpJobError) {
 	summary := responseDiagnostic(raw)
-	e := &httpJobError{JobError: domain.JobError{
+	e := &httpJobError{
 		Code:       domain.CodeAPIHTTPError,
 		HTTPStatus: resp.StatusCode,
 		StderrTail: summary,
-	}}
+	}
 	switch resp.StatusCode {
 	case 408, 429, 500, 502, 503, 504:
 		e.Code = domain.CodeAPIRateLimited // 429;其余在最终失败时改写
@@ -442,16 +436,19 @@ func parseRetryAfter(v string) time.Duration {
 // 错误文本可能包含请求头或重定向 URL，诊断仅输出固定分类。
 func transportError(ctx context.Context, err error, status int) *httpJobError {
 	if ctx.Err() != nil {
-		return &httpJobError{JobError: domain.JobError{Code: domain.CodeCancelled, HTTPStatus: status, Message: "请求被取消"}}
+		return &httpJobError{Code: domain.CodeCancelled, HTTPStatus: status, Message: "请求被取消"}
 	}
 	code, message := domain.CodeAPIHTTPError, "HTTP 传输失败"
 	if isTimeoutErr(err) {
 		code, message = domain.CodeAPITimeout, "HTTP 请求或响应体读取超时"
 	}
-	return &httpJobError{JobError: domain.JobError{Code: code, HTTPStatus: status, Message: message}, RetryableFlag: true}
+	return &httpJobError{Code: code, HTTPStatus: status, Message: message, RetryableFlag: true}
 }
 
 func isTimeoutErr(err error) bool {
-	var netErr net.Error
-	return errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout())
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	netErr, ok := errors.AsType[net.Error](err)
+	return ok && netErr.Timeout()
 }

@@ -1,5 +1,5 @@
 // Isolated browser-test fixture: never reads or mutates user media or configuration.
-import { mkdtempSync,mkdirSync,writeFileSync,rmSync } from 'node:fs'
+import { mkdtempSync,mkdirSync,writeFileSync,rmSync,copyFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join,resolve } from 'node:path'
 import { spawn,execFileSync } from 'node:child_process'
@@ -14,6 +14,10 @@ writeFileSync(join(media,'已占用名称.mp4'),'conflict fixture')
 writeFileSync(join(media,'2026 · 旅行记录','IMG_20260901.mp4'),'nested fixture')
 for(let i=0;i<230;i++)writeFileSync(join(media,'分页测试',`片段_${String(i).padStart(4,'0')}.mp4`),'fixture')
 execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','color=c=green:s=320x240:r=10','-t','3','-c:v','mpeg4',join(media,'自动命名测试','clip.mp4')])
+const extractionDir=join(media,'独立抽帧测试');mkdirSync(join(extractionDir,'子目录'),{recursive:true})
+copyFileSync(join(media,'自动命名测试','clip.mp4'),join(extractionDir,'prepared.mp4'))
+copyFileSync(join(media,'自动命名测试','clip.mp4'),join(extractionDir,'子目录','nested.mp4'))
+writeFileSync(join(extractionDir,'broken.mp4'),'invalid video for extraction diagnostics')
 writeFileSync(join(media,'取消测试','pending.mp4'),'cancellation fixture')
 execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','color=c=green:s=320x240:r=10','-t','30','-c:v','libvpx',join(media,'preview.webm')])
 const numberingDir=join(media,'图片编号测试');mkdirSync(numberingDir)

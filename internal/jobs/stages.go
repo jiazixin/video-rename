@@ -77,14 +77,11 @@ func (l *limiter) acquire(ctx context.Context, key int64, fallback int, read fun
 func (m *Manager) modelSlot(ctx context.Context, id int64, fallback int) (func(), int, error) {
 	return m.modelSlots.acquire(ctx, id, fallback, func() (int, error) { return (models.Store{DB: m.DB}).Workers(ctx, id) })
 }
-func (m *Manager) analyze(ctx context.Context, run Run, cfg *config.Config, job domain.VideoJob, probe, ffmpeg string, extracted func()) (string, *framecache.Lease, error) {
+func (m *Manager) analyze(ctx context.Context, run Run, entry int64, cfg *config.Config, job domain.VideoJob, probe, ffmpeg string, extracted func()) (string, *framecache.Lease, error) {
 	var lease *framecache.Lease
 	if m.Analyze == nil {
 		var err error
-		reserve := int64(cfg.Sampling.MaxFrames)*(1<<20) + (32 << 20) + 65536
-		lease, err = m.Cache.Acquire(ctx, framecache.Key(job, cfg), reserve, func(work string) (domain.FrameSet, error) {
-			return m.Prepare(ctx, cfg, job, probe, ffmpeg, work)
-		})
+		lease, err = m.prepareFrames(ctx, run, entry, cfg, job, probe, ffmpeg)
 		if err != nil {
 			return "", nil, err
 		}

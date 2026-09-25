@@ -30,6 +30,7 @@ import (
 )
 
 type Run struct {
+	Task             string         `json:"task"`
 	TargetNames      []string       `json:"target_names,omitempty"`
 	RequestConfig    jsontext.Value `json:"request_config,omitempty"`
 	ModelConfigID    int64          `json:"model_config_id"`
@@ -54,6 +55,7 @@ type Run struct {
 	Plan             int64          `json:"plan"`
 }
 type Request struct {
+	Task          string  `json:"task"`
 	ModelConfigID int64   `json:"model_config_id"`
 	Targets       []int64 `json:"targets"`
 	Recursive     bool    `json:"recursive"`
@@ -84,6 +86,9 @@ func New(db *storage.Store, l *library.Library, cfg *config.Config) (*Manager, e
 		return nil, err
 	}
 	if _, err := db.Exec("UPDATE runs SET status='interrupted',finished=?,error='服务重启，前次运行已中断' WHERE status IN ('queued','scanning','running','cancelling')", storage.Now()); err != nil {
+		return nil, err
+	}
+	if err := recoverExtractions(db); err != nil {
 		return nil, err
 	}
 	settings, err := (systemsettings.Store{DB: db}).Get()
@@ -138,6 +143,15 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	if len(r.Targets) == 0 || len(r.Targets) > 100 || len(r.Key) < 8 || len(r.Key) > 180 {
 		return 0, fmt.Errorf("请选择 1–100 个目录或文件，并提供请求键")
 	}
+	if r.Task == "" {
+		r.Task = "rename"
+	}
+	if r.Task != "rename" && r.Task != "extract" {
+		return 0, fmt.Errorf("请选择重命名或抽帧任务")
+	}
+	if r.Task == "extract" {
+		r.ModelConfigID = 0
+	}
 	// Normalize scopes without scanning them. Overlapping recursive targets are redundant.
 	slices.Sort(r.Targets)
 	normalized := make([]int64, 0, len(r.Targets))
@@ -154,7 +168,7 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 		}
 	}
 	r.Targets = normalized
-	if r.ModelConfigID == 0 {
+	if r.Task == "rename" && r.ModelConfigID == 0 {
 		var err error
 		r.ModelConfigID, err = (models.Store{DB: m.DB}).DefaultID()
 		if err != nil {
@@ -165,11 +179,12 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	var old int64
 	var oldTargets string
 	var oldRecursive bool
-	err := m.DB.QueryRow("SELECT id,targets,recursive,model_config_id FROM runs WHERE request_key=?", r.Key).Scan(&old, &oldTargets, &oldRecursive, &oldModelConfigID)
+	var oldTask string
+	err := m.DB.QueryRow("SELECT id,targets,recursive,model_config_id,task FROM runs WHERE request_key=?", r.Key).Scan(&old, &oldTargets, &oldRecursive, &oldModelConfigID, &oldTask)
 	if err == nil {
 		current, _ := json.Marshal(r.Targets)
-		if oldTargets != string(current) || oldRecursive != r.Recursive || oldModelConfigID != r.ModelConfigID {
-			return 0, fmt.Errorf("请求键已被不同的运行范围或模型配置使用")
+		if oldTargets != string(current) || oldRecursive != r.Recursive || oldModelConfigID != r.ModelConfigID || oldTask != r.Task {
+			return 0, fmt.Errorf("请求键已被不同的运行范围、任务类型或模型配置使用")
 		}
 		return old, nil
 	}
@@ -194,10 +209,6 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 			return 0, err
 		}
 	}
-	prompt, err := (models.Store{DB: m.DB}).Get(r.ModelConfigID)
-	if err != nil {
-		return 0, fmt.Errorf("请选择有效的模型配置: %w", err)
-	}
 	frames, err := (sampling.Store{DB: m.DB}).Get()
 	if err != nil {
 		return 0, err
@@ -208,23 +219,31 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	}
 	cfg := *m.Config
 	cfg.Sampling, cfg.Images = frames.Sampling, frames.Images
-	if err = prompt.Validate(); err != nil {
-		return 0, err
-	}
-	fixed, err := (systemsettings.Store{DB: m.DB}).FixedPrompt()
-	if err != nil {
-		return 0, err
-	}
-	// The fixed prompt rides below the selected prompt as a hard constraint;
-	// the snapshot stores the combined text so the run replays exactly what
-	// was sent, regardless of later edits to the library or the fixed part.
-	prompt.Body = strings.TrimRight(prompt.Body, "\n") + "\n\n" + strings.TrimRight(fixed, "\n")
-	if err = cfg.ApplyModel(prompt.ServerConfig, prompt.Body); err != nil {
-		return 0, fmt.Errorf("请完善模型配置: %w", err)
-	}
-	snapshot, err := (models.Store{DB: m.DB}).Snapshot(prompt)
-	if err != nil {
-		return 0, err
+	var prompt models.Profile
+	var snapshot string
+	if r.Task == "rename" {
+		prompt, err = (models.Store{DB: m.DB}).Get(r.ModelConfigID)
+		if err != nil {
+			return 0, fmt.Errorf("请选择有效的模型配置: %w", err)
+		}
+		if err = prompt.Validate(); err != nil {
+			return 0, err
+		}
+		fixed, err := (systemsettings.Store{DB: m.DB}).FixedPrompt()
+		if err != nil {
+			return 0, err
+		}
+		// The fixed prompt rides below the selected prompt as a hard constraint;
+		// the snapshot stores the combined text so the run replays exactly what
+		// was sent, regardless of later edits to the library or the fixed part.
+		prompt.Body = strings.TrimRight(prompt.Body, "\n") + "\n\n" + strings.TrimRight(fixed, "\n")
+		if err = cfg.ApplyModel(prompt.ServerConfig, prompt.Body); err != nil {
+			return 0, fmt.Errorf("请完善模型配置: %w", err)
+		}
+		snapshot, err = (models.Store{DB: m.DB}).Snapshot(prompt)
+		if err != nil {
+			return 0, err
+		}
 	}
 	raw, _ := json.Marshal(r.Targets)
 	roles := []string{"system", "user"}
@@ -238,6 +257,9 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 		tokenParameter = "max_completion_tokens"
 	}
 	summary, _ := json.Marshal(map[string]any{"model": cfg.Server.Model, "provider": cfg.Server.Provider, "base_url": cfg.Server.BaseURL, "protocol": cfg.Server.Protocol, "omit_temperature": cfg.Server.OmitTemperature, "thinking": cfg.Server.Thinking, "thinking_adapter": cfg.Server.ThinkingAdapter, "thinking_effort": cfg.Server.ThinkingEffort, "thinking_budget": cfg.Server.ThinkingBudget, "prompt_hash": cfg.PromptHash(), "sampling": cfg.Sampling, "images": cfg.Images, "workers": cfg.Workers, "temperature": cfg.Server.Temperature, "max_tokens": cfg.Server.MaxTokens, "token_parameter": tokenParameter, "stream": false, "message_roles": roles, "system_location": systemLocation})
+	if r.Task == "extract" {
+		summary, _ = json.Marshal(map[string]any{"sampling": cfg.Sampling, "images": cfg.Images})
+	}
 	tx, err := m.DB.Begin()
 	if err != nil {
 		return 0, err
@@ -250,7 +272,7 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	if count >= 20 {
 		return 0, fmt.Errorf("任务队列已满，请稍后重试")
 	}
-	res, err := tx.Exec("INSERT INTO runs(source,targets,recursive,status,created,request_key,plan,config_summary,model_config_id,model_config_title,prompt_body,model_snapshot,sampling_snapshot) VALUES(?,?,?,'queued',?,?,?,?,?,?,?,?,?)", source, string(raw), r.Recursive, storage.Now(), r.Key, plan, string(summary), prompt.ID, prompt.Title, prompt.Body, snapshot, string(frameSnapshot))
+	res, err := tx.Exec("INSERT INTO runs(source,targets,recursive,status,created,request_key,plan,config_summary,model_config_id,model_config_title,prompt_body,model_snapshot,sampling_snapshot,task) VALUES(?,?,?,'queued',?,?,?,?,?,?,?,?,?,?)", source, string(raw), r.Recursive, storage.Now(), r.Key, plan, string(summary), prompt.ID, prompt.Title, prompt.Body, snapshot, string(frameSnapshot), r.Task)
 	if err != nil {
 		return 0, err
 	}
@@ -258,11 +280,11 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	return id, tx.Commit()
 }
 
-const runColumns = "r.id,r.source,r.targets,r.recursive,r.status,r.created,r.finished,r.discovered,r.done,r.skipped,r.failed,r.error,r.plan,r.model_config_id,r.model_config_title,r.prompt_body,r.config_summary,r.started,COALESCE(u.token_count,0),COALESCE(u.token_records,0),COALESCE(u.token_estimated_records,0)"
+const runColumns = "r.id,r.source,r.targets,r.recursive,r.status,r.created,r.finished,r.discovered,r.done,r.skipped,r.failed,r.error,r.plan,r.model_config_id,r.model_config_title,r.prompt_body,r.config_summary,r.started,COALESCE(u.token_count,0),COALESCE(u.token_records,0),COALESCE(u.token_estimated_records,0),r.task"
 
 func scanRun(row interface{ Scan(...any) error }) (r Run, err error) {
 	var raw, summary string
-	err = row.Scan(&r.ID, &r.Source, &raw, &r.Recursive, &r.Status, &r.Created, &r.Finished, &r.Discovered, &r.Done, &r.Skipped, &r.Failed, &r.Error, &r.Plan, &r.ModelConfigID, &r.ModelConfigTitle, &r.PromptBody, &summary, &r.Started, &r.TokenCount, &r.TokenRecords, &r.TokenEstimated)
+	err = row.Scan(&r.ID, &r.Source, &raw, &r.Recursive, &r.Status, &r.Created, &r.Finished, &r.Discovered, &r.Done, &r.Skipped, &r.Failed, &r.Error, &r.Plan, &r.ModelConfigID, &r.ModelConfigTitle, &r.PromptBody, &summary, &r.Started, &r.TokenCount, &r.TokenRecords, &r.TokenEstimated, &r.Task)
 	if err == nil {
 		err = json.Unmarshal([]byte(raw), &r.Targets)
 		if jsontext.Value(summary).IsValid() {
@@ -370,9 +392,13 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 	}
 	fail := func(e error) {
 		_, _ = m.DB.Exec("UPDATE runs SET status='failed',error=?,finished=? WHERE id=?", e.Error(), storage.Now(), id)
-		_ = m.Library.Event("failure", "run", 0, 0, id, "", "", e.Error())
+		if r.Task == "extract" {
+			m.extractionFailure(r, 0, strings.Join(r.TargetNames, "、"), e)
+		} else {
+			_ = m.Library.Event("failure", "run", 0, 0, id, "", "", e.Error())
+		}
 	}
-	if r.PromptBody == "" {
+	if r.Task != "extract" && r.PromptBody == "" {
 		fail(fmt.Errorf("任务没有模型配置快照，请重新创建任务"))
 		return
 	}
@@ -388,14 +414,16 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 		return
 	}
 	runConfig.Sampling, runConfig.Images = frames.Sampling, frames.Images
-	var snapshot string
-	if err = m.DB.QueryRow("SELECT model_snapshot FROM runs WHERE id=?", id).Scan(&snapshot); err != nil {
-		fail(err)
-		return
-	}
-	if err = (models.Store{DB: m.DB}).ApplySnapshot(snapshot, &runConfig); err != nil {
-		fail(err)
-		return
+	if r.Task != "extract" {
+		var snapshot string
+		if err = m.DB.QueryRow("SELECT model_snapshot FROM runs WHERE id=?", id).Scan(&snapshot); err != nil {
+			fail(err)
+			return
+		}
+		if err = (models.Store{DB: m.DB}).ApplySnapshot(snapshot, &runConfig); err != nil {
+			fail(err)
+			return
+		}
 	}
 	settings, err := (systemsettings.Store{DB: m.DB}).Get()
 	if err != nil {
@@ -404,7 +432,7 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 	}
 	stableDelay := time.Duration(settings.StabilitySeconds) * time.Second
 	for _, target := range r.Targets {
-		if err = m.scan(ctx, id, target, r.Recursive); err != nil {
+		if err = m.scan(ctx, r, target); err != nil {
 			if ctx.Err() != nil {
 				break
 			}
@@ -460,7 +488,8 @@ type item struct {
 	Mtime     string
 }
 
-func (m *Manager) scan(ctx context.Context, run, id int64, recursive bool) error {
+func (m *Manager) scan(ctx context.Context, batch Run, id int64) error {
+	run := batch.ID
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -479,7 +508,7 @@ func (m *Manager) scan(ctx context.Context, run, id int64, recursive bool) error
 		n, _ := res.RowsAffected()
 		if n > 0 {
 			_, err = m.DB.Exec("UPDATE runs SET discovered=discovered+1 WHERE id=?", run)
-			if err == nil && e.Processed != "" {
+			if err == nil && e.Processed != "" && batch.Task != "extract" {
 				_, err = m.DB.Exec("UPDATE run_items SET status='skipped',message='已处理，跳过',finished_ms=? WHERE run=? AND identity=?", time.Now().UnixMilli(), run, e.Identity)
 				if err == nil {
 					_, err = m.DB.Exec("UPDATE runs SET skipped=skipped+1 WHERE id=?", run)
@@ -492,7 +521,9 @@ func (m *Manager) scan(ctx context.Context, run, id int64, recursive bool) error
 		return nil
 	}
 	if err = m.Library.Refresh(ctx, id); err != nil {
-		if er := m.Library.Event("failure", "scan", id, 0, run, m.Library.Relative(id), "", err.Error()); er != nil {
+		if batch.Task == "extract" {
+			m.extractionFailure(batch, id, m.Library.DisplayPath(id), err)
+		} else if er := m.Library.Event("failure", "scan", id, 0, run, m.Library.Relative(id), "", err.Error()); er != nil {
 			return er
 		}
 		_, er := m.DB.Exec("UPDATE runs SET failed=failed+1 WHERE id=?", run)
@@ -508,27 +539,27 @@ func (m *Manager) scan(ctx context.Context, run, id int64, recursive bool) error
 			id   int64
 			kind string
 		}
-		batch := []child{}
+		children := []child{}
 		for rows.Next() {
 			var c child
 			if err = rows.Scan(&c.id, &c.kind); err != nil {
 				rows.Close()
 				return err
 			}
-			batch = append(batch, c)
+			children = append(children, c)
 		}
 		err = rows.Err()
 		rows.Close()
 		if err != nil {
 			return err
 		}
-		if len(batch) == 0 {
+		if len(children) == 0 {
 			return nil
 		}
-		for _, c := range batch {
+		for _, c := range children {
 			after = c.id
-			if c.kind == "file" || recursive && c.kind == "directory" {
-				if err = m.scan(ctx, run, c.id, recursive); err != nil {
+			if c.kind == "file" || batch.Recursive && c.kind == "directory" {
+				if err = m.scan(ctx, batch, c.id); err != nil {
 					return err
 				}
 			}
@@ -541,6 +572,7 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.C
 		return
 	}
 	committed := false
+	extractionLogged := false
 	finish := func(status, msg string) {
 		_, _ = m.DB.Exec("UPDATE run_items SET status=?,message=?,finished_ms=? WHERE id=?", status, msg, time.Now().UnixMilli(), it.ID)
 		column := "done"
@@ -555,7 +587,7 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.C
 		}
 	}
 	e, err := m.Library.Get(it.Entry)
-	if err == nil && e.Processed != "" {
+	if err == nil && e.Processed != "" && batch.Task != "extract" {
 		finish("skipped", "已处理，跳过")
 		return
 	}
@@ -568,6 +600,9 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.C
 		snap, err = domain.StatSnapshot(p)
 	}
 	if err == nil && (library.Identity(snap) != it.Identity || snap.Size != it.Size || snap.ModTime.UTC().Format(time.RFC3339Nano) != it.Mtime) {
+		if batch.Task == "extract" {
+			m.extractionFailure(batch, it.Entry, m.Library.DisplayPath(it.Entry), fmt.Errorf("文件尚不稳定，留待下次运行"))
+		}
 		finish("skipped", "文件尚不稳定，留待下次运行")
 		return
 	}
@@ -580,27 +615,40 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.C
 	if err == nil {
 		probe, ffmpeg, te := m.Tools()
 		err = te
+		if te != nil {
+			m.extractionFailure(batch, it.Entry, m.Library.DisplayPath(it.Entry), te)
+			extractionLogged = true
+		}
 		if err == nil {
-			var title string
-			var exchange domain.ModelDiagnostics
-			var lease *framecache.Lease
-			title, lease, err = m.analyze(domain.WithModelDiagnostics(ctx, &exchange), batch, cfg, domain.VideoJob{Path: p, Snapshot: snap, JobID: fmt.Sprint(it.ID)}, probe, ffmpeg, extracted)
-			request, response := exchange.Request, exchange.Response
-			if err != nil {
-				var diagnostic *domain.JobError
-				if errors.As(err, &diagnostic) {
-					request, response = diagnostic.RawRequest, diagnostic.RawResponse
+			if batch.Task == "extract" {
+				var lease *framecache.Lease
+				lease, err = m.prepareFrames(ctx, batch, it.Entry, cfg, domain.VideoJob{Path: p, Snapshot: snap, JobID: fmt.Sprint(it.ID)}, probe, ffmpeg)
+				extractionLogged = true
+				extracted()
+				if lease != nil {
+					lease.Release(false)
 				}
-			}
-			if err := tokenusage.Record(m.DB, run, it.ID, request, response, time.Now()); err != nil {
-				slog.Error("记录 token 用量失败", "run", run, "item", it.ID, "error", err)
-			}
-			if lease != nil {
-				defer func() { lease.Release(committed) }()
-			}
-			if err == nil && ctx.Err() == nil {
-				_, err = m.Library.AutoCommit(e.ID, snap, title, fmt.Sprintf("run:%d:item:%d", run, it.ID), run, exchange)
-				committed = err == nil
+			} else {
+				var title string
+				var exchange domain.ModelDiagnostics
+				var lease *framecache.Lease
+				title, lease, err = m.analyze(domain.WithModelDiagnostics(ctx, &exchange), batch, it.Entry, cfg, domain.VideoJob{Path: p, Snapshot: snap, JobID: fmt.Sprint(it.ID)}, probe, ffmpeg, extracted)
+				request, response := exchange.Request, exchange.Response
+				if err != nil {
+					if diagnostic, ok := errors.AsType[*domain.JobError](err); ok {
+						request, response = diagnostic.RawRequest, diagnostic.RawResponse
+					}
+				}
+				if err := tokenusage.Record(m.DB, run, it.ID, request, response, time.Now()); err != nil {
+					slog.Error("记录 token 用量失败", "run", run, "item", it.ID, "error", err)
+				}
+				if lease != nil {
+					defer func() { lease.Release(committed) }()
+				}
+				if err == nil && ctx.Err() == nil {
+					_, err = m.Library.AutoCommit(e.ID, snap, title, fmt.Sprintf("run:%d:item:%d", run, it.ID), run, exchange)
+					committed = err == nil
+				}
 			}
 		}
 	}
@@ -609,12 +657,17 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.C
 		return
 	}
 	if err != nil {
-		rel, _ := filepath.Rel(m.Library.Root, p)
-		var diagnostic *domain.JobError
-		if errors.As(err, &diagnostic) && (diagnostic.RawRequest != "" || diagnostic.RawResponse != "" || diagnostic.ProcessingLog != "" || diagnostic.StderrTail != "") {
-			_, _ = m.DB.Exec("INSERT INTO events(category,action,entry,run,old_path,message,created,raw_request,raw_response,processing_log) VALUES('failure','automatic',?,?,?,?,?,?,?,?)", it.Entry, run, rel, err.Error(), storage.Now(), diagnostic.RawRequest, diagnostic.RawResponse, diagnostic.ProcessingLog+diagnostic.StderrTail)
+		if batch.Task == "extract" {
+			if !extractionLogged {
+				m.extractionFailure(batch, it.Entry, m.Library.DisplayPath(it.Entry), err)
+			}
 		} else {
-			_ = m.Library.Event("failure", "automatic", it.Entry, 0, run, rel, "", err.Error())
+			rel, _ := filepath.Rel(m.Library.Root, p)
+			if diagnostic, ok := errors.AsType[*domain.JobError](err); ok && (diagnostic.RawRequest != "" || diagnostic.RawResponse != "" || diagnostic.ProcessingLog != "" || diagnostic.StderrTail != "") {
+				_, _ = m.DB.Exec("INSERT INTO events(category,action,entry,run,old_path,message,created,raw_request,raw_response,processing_log) VALUES('failure','automatic',?,?,?,?,?,?,?,?)", it.Entry, run, rel, err.Error(), storage.Now(), diagnostic.RawRequest, diagnostic.RawResponse, diagnostic.ProcessingLog+diagnostic.StderrTail)
+			} else {
+				_ = m.Library.Event("failure", "automatic", it.Entry, 0, run, rel, "", err.Error())
+			}
 		}
 		finish("failed", err.Error())
 		var je *domain.JobError

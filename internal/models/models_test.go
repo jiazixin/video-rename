@@ -52,13 +52,13 @@ func TestDefaultSaveConflictAndRestart(t *testing.T) {
 	if _, err = s.Save(old); err == nil {
 		t.Fatal("stale edit accepted")
 	}
-	if _, err = s.Save(Profile{ServerConfig: config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}, Title: " ", Body: "x"}); err == nil {
+	if _, err = s.Save(Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: " ", Body: "x"}); err == nil {
 		t.Fatal("blank title accepted")
 	}
-	if _, err = s.Save(Profile{ServerConfig: config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}, Title: "x"}); err == nil {
+	if _, err = s.Save(Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: "x"}); err == nil {
 		t.Fatal("missing prompt accepted")
 	}
-	second, err := s.Save(Profile{ServerConfig: config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}, Title: "旅行", PromptID: newPrompt(t, s, "风景提示词", "描述风景").ID})
+	second, err := s.Save(Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: "旅行", PromptID: newPrompt(t, s, "风景提示词", "描述风景").ID})
 	if err != nil || second.ID == 1 {
 		t.Fatal(second, err)
 	}

@@ -108,10 +108,10 @@ type ParsedSizeRule struct {
 // defaultDurationRules 默认时长分档。
 func defaultDurationRules() []DurationRule {
 	return []DurationRule{
-		{strPtr("30s"), 3},
-		{strPtr("2m"), 5},
-		{strPtr("10m"), 8},
-		{strPtr("30m"), 10},
+		{new("30s"), 3},
+		{new("2m"), 5},
+		{new("10m"), 8},
+		{new("30m"), 10},
 		{nil, 12},
 	}
 }
@@ -119,9 +119,9 @@ func defaultDurationRules() []DurationRule {
 // defaultSizeRules 默认大小分档。
 func defaultSizeRules() []SizeRule {
 	return []SizeRule{
-		{int64Ptr(50), 3},
-		{int64Ptr(200), 5},
-		{int64Ptr(1024), 8},
+		{new(int64(50)), 3},
+		{new(int64(200)), 5},
+		{new(int64(1024)), 8},
 		{nil, 12},
 	}
 }
@@ -146,9 +146,6 @@ func defaults() *Config {
 		Logging: LoggingConfig{Dir: "./logs"},
 	}
 }
-
-func strPtr(s string) *string { return &s }
-func int64Ptr(v int64) *int64 { return &v }
 
 // Load 读取并校验配置文件。任何校验失败均返回错误,错误信息汇总全部问题。
 // 相对 logging.dir 以配置文件所在目录解析。

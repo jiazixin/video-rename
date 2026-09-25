@@ -226,13 +226,7 @@ func percentile(sorted []int64, fraction float64) int64 {
 	if len(sorted) == 0 {
 		return 0
 	}
-	index := int(math.Ceil(fraction*float64(len(sorted)))) - 1
-	if index < 0 {
-		index = 0
-	}
-	if index >= len(sorted) {
-		index = len(sorted) - 1
-	}
+	index := min(max(int(math.Ceil(fraction*float64(len(sorted))))-1, 0), len(sorted)-1)
 	return sorted[index]
 }
 

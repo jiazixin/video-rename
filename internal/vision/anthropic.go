@@ -45,13 +45,13 @@ func parseAnthropic(raw []byte, status int) (string, int, *httpJobError) {
 		StopReason string `json:"stop_reason"`
 	}
 	invalid := func(message string) (string, int, *httpJobError) {
-		return "", status, &httpJobError{JobError: domain.JobError{Code: domain.CodeAPIResponseInvalid, Message: message}}
+		return "", status, &httpJobError{Code: domain.CodeAPIResponseInvalid, Message: message}
 	}
 	if json.Unmarshal(raw, &response) != nil {
 		return invalid("响应 JSON 格式或字段类型无效")
 	}
 	if response.StopReason == "max_tokens" {
-		return "", status, &httpJobError{JobError: domain.JobError{Code: domain.CodeModelOutputTruncated, Message: "模型输出因长度截断,不作为标题"}}
+		return "", status, &httpJobError{Code: domain.CodeModelOutputTruncated, Message: "模型输出因长度截断,不作为标题"}
 	}
 	if response.StopReason != "end_turn" && response.StopReason != "stop_sequence" {
 		return invalid("模型未正常完成文本回答")

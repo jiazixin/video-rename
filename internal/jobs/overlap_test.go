@@ -53,14 +53,12 @@ func TestQueuedScopeVisibleAndRejectsOtherBatch(t *testing.T) {
 	var wg sync.WaitGroup
 	successes := make(chan int64, 2)
 	for _, key := range []string{"parallel-one", "parallel-two"} {
-		wg.Add(1)
-		go func(key string) {
-			defer wg.Done()
+		wg.Go(func() {
 			id, err := m.Create(Request{Targets: []int64{b}, Key: key}, "manual", 0)
 			if err == nil {
 				successes <- id
 			}
-		}(key)
+		})
 	}
 	wg.Wait()
 	close(successes)

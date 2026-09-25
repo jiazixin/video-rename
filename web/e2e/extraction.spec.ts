@@ -1,0 +1,147 @@
+import {test,expect,type Page} from '@playwright/test'
+import {readFileSync} from 'node:fs'
+
+async function login(page:Page){
+ await page.goto('/')
+ await page.getByLabel('用户名',{exact:true}).fill('admin')
+ await page.getByLabel('密码',{exact:true}).fill('test-password-123')
+ await page.getByRole('button',{name:'登录',exact:true}).click()
+ await expect(page.getByRole('heading',{name:'文件目录.'})).toBeVisible()
+}
+async function submitRun(page:Page){
+ const response=page.waitForResponse(r=>r.url().endsWith('/api/runs')&&r.request().method()==='POST')
+ await page.getByRole('dialog').getByRole('button',{name:'抽帧',exact:true}).click()
+ const result=await response
+ expect(result.ok()).toBeTruthy()
+ const {id}=await result.json()
+ await expect(page.getByRole('dialog')).toHaveCount(0)
+ await expect.poll(async()=> (await(await page.request.get(`/api/runs/${id}`)).json()).status,{timeout:30000}).toMatch(/^(completed|partial_failure)$/)
+ return id as number
+}
+
+test('三个独立抽帧入口、真实缓存复用及统一成功失败记录',async({page})=>{
+ await login(page)
+ const {csrf}=await(await page.request.get('/api/auth/session')).json()
+ const headers={'X-CSRF-Token':csrf}
+ const {settings}=await(await page.request.get('/api/system/settings')).json()
+ expect((await page.request.put('/api/system/settings',{headers,data:{...settings,stability_seconds:0}})).ok()).toBeTruthy()
+ try{
+  await page.getByRole('button',{name:'独立抽帧测试',exact:true}).click()
+  await expect(page.getByText('prepared.mp4',{exact:true})).toBeVisible()
+  const directory=Number(new URL(page.url()).hash.split('/')[1])
+  const entries=await(await page.request.get(`/api/directories/${directory}/entries?limit=100`)).json()
+  const file=entries.items.find((e:any)=>e.name==='prepared.mp4')
+  expect((await page.request.post('/api/entries/processed',{headers,data:{targets:[file.id],marked:true}})).ok()).toBeTruthy()
+  const extract=page.getByRole('button',{name:'抽帧此目录',exact:true})
+  expect(await extract.evaluate(el=>el.nextElementSibling?.textContent?.trim())).toBe('刷新')
+  // A visible search filter must not restrict a directory extraction.
+  await page.getByLabel('搜索当前目录').fill('prepared')
+  await expect(page.locator('tbody tr')).toHaveCount(1)
+  await extract.click()
+  await expect(page.getByRole('dialog').getByRole('combobox',{name:'模型配置'})).toHaveCount(0)
+  await expect(page.getByLabel('包含子目录',{exact:true})).toBeChecked()
+  await page.getByLabel('包含子目录',{exact:true}).uncheck()
+  const first=await submitRun(page)
+  const firstRun=await(await page.request.get(`/api/runs/${first}`)).json()
+  expect(firstRun).toMatchObject({task:'extract',done:1,failed:1,discovered:2,model_config_id:0,token_records:0})
+  const firstLog=await(await page.request.get(`/api/extractions?run=${first}`)).json()
+  expect(firstLog.success.items[0]).toMatchObject({source:'manual',cached:false,entry:file.id})
+  expect(firstLog.success.items[0].frames).toBeGreaterThan(0)
+  expect(firstLog.failure.items[0].message).toBeTruthy()
+  const current=await(await page.request.get(`/api/entries/status?ids=${file.id}`)).json()
+  expect(current[0]).toMatchObject({name:'prepared.mp4',processed:'marked'})
+  expect(current[0].restore_id||0).toBe(0)
+
+  await page.getByRole('button',{name:'刷新',exact:true}).click()
+  await page.getByRole('button',{name:'多选',exact:true}).click()
+  await expect(page.locator('.batch-toolbar button')).toHaveText(['全选','反选','清空','抽帧','命名','标记','取消标记','还原'])
+  await page.getByLabel('选择 prepared.mp4',{exact:true}).check()
+  await page.locator('.batch-toolbar').getByRole('button',{name:'抽帧',exact:true}).click()
+  const second=await submitRun(page)
+  const secondLog=await(await page.request.get(`/api/extractions?run=${second}`)).json()
+  expect(secondLog.success.items).toHaveLength(1)
+  expect(secondLog.success.items[0].cached).toBe(true)
+  await page.screenshot({path:'test-results/extraction-library.png',fullPage:true})
+
+  await page.getByRole('button',{name:'运行计划',exact:true}).click()
+  await expect(page.getByRole('button',{name:'重命名',exact:true})).toBeVisible()
+  await page.getByRole('button',{name:'抽帧',exact:true}).click()
+  await expect(page.getByRole('dialog',{name:'手动抽帧'})).toBeVisible()
+  await expect(page.getByRole('dialog').getByRole('combobox',{name:'模型配置'})).toHaveCount(0)
+  await page.getByLabel('选择 独立抽帧测试',{exact:true}).check()
+  await page.setViewportSize({width:390,height:844})
+  expect(await page.getByRole('dialog').evaluate(el=>el.scrollWidth<=el.clientWidth)).toBeTruthy()
+  await page.screenshot({path:'test-results/extraction-dialog-mobile.png',fullPage:true})
+  await page.setViewportSize({width:1440,height:1000})
+  const third=await submitRun(page)
+  const thirdRun=await(await page.request.get(`/api/runs/${third}`)).json()
+  expect(thirdRun).toMatchObject({task:'extract',done:2,failed:1,discovered:3})
+  const runRow=page.locator('.run-entry').filter({has:page.locator('.run-id',{hasText:`#${third}`})})
+  await expect(runRow).toContainText('抽帧')
+  await expect(runRow.getByRole('button',{name:'还原批次',exact:true})).toHaveCount(0)
+
+  // Naming the same video must consume the retained frames, without another FFmpeg pass.
+  expect((await page.request.post('/api/entries/processed',{headers,data:{targets:[file.id],marked:false}})).ok()).toBeTruthy()
+  const prompt=await(await page.request.post('/api/prompts',{headers,data:{title:'抽帧链路提示词',body:'用于测试的独立提示词：只输出标题'}})).json()
+  const {modelURL}=JSON.parse(readFileSync('test-results/fixture.json','utf8'))
+  const profileResponse=await page.request.post('/api/model-configs',{headers,data:{title:'抽帧链路模型',prompt_id:prompt.id,provider:'custom',protocol:'openai',base_url:modelURL,model:'视觉模型 · 本地测试',timeout:'10s',workers:1,max_tokens:1024,temperature:0.7}})
+  expect(profileResponse.ok()).toBeTruthy()
+  const profile=await profileResponse.json()
+  const renameResponse=await page.request.post('/api/runs',{headers,data:{task:'rename',targets:[file.id],model_config_id:profile.id,key:'extraction-e2e-rename'}})
+  expect(renameResponse.ok()).toBeTruthy()
+  const renamed=await renameResponse.json()
+  await expect.poll(async()=> (await(await page.request.get(`/api/runs/${renamed.id}`)).json()).status,{timeout:30000}).toBe('completed')
+  const automatic=await(await page.request.get(`/api/extractions?run=${renamed.id}`)).json()
+  expect(automatic.success.items[0]).toMatchObject({cached:true,source:'automatic'})
+  expect(automatic.success.items[0].started).toBeTruthy()
+  expect(automatic.success.items[0].finished).toBeTruthy()
+  expect(automatic.success.items[0].duration_ms).toBeGreaterThanOrEqual(0)
+
+  await page.getByRole('button',{name:'任务历史',exact:true}).click()
+  await expect(page.locator('.log-tabs button')).toHaveText(['成功记录','失败记录','抽帧记录'])
+  await page.getByRole('button',{name:'抽帧记录',exact:true}).click()
+  const success=page.getByRole('region',{name:'抽帧成功',exact:true}),failure=page.getByRole('region',{name:'抽帧失败',exact:true})
+  await expect(success).toContainText('复用缓存')
+  await expect(success).toContainText('自动抽帧')
+  await expect(failure).toContainText('broken.mp4')
+  expect((await success.boundingBox())!.y).toBeLessThan((await failure.boundingBox())!.y)
+  await page.screenshot({path:'test-results/extraction-history.png',fullPage:true})
+  await failure.getByRole('button',{name:'详细原因',exact:true}).first().click()
+  await expect(page.getByRole('dialog').locator('pre')).toContainText('moov atom not found')
+  await page.context().grantPermissions(['clipboard-read','clipboard-write'])
+  await page.getByRole('button',{name:'复制详情',exact:true}).click()
+  expect(await page.evaluate(()=>navigator.clipboard.readText())).toContain('moov atom not found')
+  await page.screenshot({path:'test-results/extraction-failure-detail.png',fullPage:true})
+ }finally{
+  expect((await page.request.put('/api/system/settings',{headers,data:settings})).ok()).toBeTruthy()
+ }
+})
+
+test('抽帧历史独立分页、无批次、窄屏与清除',async({page})=>{
+ await login(page)
+ const item={id:10,run:0,entry:0,path:'目录/无批次.mp4',source:'manual',status:'success',started:'2026-09-26T01:00:00Z',finished:'2026-09-26T01:00:02Z',duration_ms:2000,cached:false,frames:5,message:''}
+ let cleared=false
+ await page.route('**/api/extractions?*',route=>{
+  const params=new URL(route.request().url()).searchParams
+  const second=params.get('success_before')==='10'
+  return route.fulfill({json:{success:{items:cleared?[]:[{...item,path:second?'目录/第二页.mp4':item.path}],total:cleared?0:51,next:cleared||second?0:10},failure:{items:cleared?[]:[{...item,id:11,status:'failure',path:'目录/失败.mp4',message:'EXTRACT_FAILED: decoder unavailable'}],total:cleared?0:1,next:0},running:0}})
+ })
+ await page.route('**/api/extractions/clear',route=>{expect(route.request().postDataJSON()).toEqual({all:true});cleared=true;return route.fulfill({json:{message:'已清除 52 条抽帧记录'}})})
+ await page.getByRole('button',{name:'任务历史',exact:true}).click()
+ await page.getByRole('button',{name:'抽帧记录',exact:true}).click()
+ const success=page.getByRole('region',{name:'抽帧成功',exact:true}),failure=page.getByRole('region',{name:'抽帧失败',exact:true})
+ await expect(success.locator('tbody tr td').nth(3)).toHaveText('—')
+ await page.getByRole('button',{name:'下一页抽帧成功',exact:true}).click()
+ await expect(success).toContainText('第二页.mp4')
+ await expect(failure).toContainText('失败.mp4')
+ await expect(page.getByRole('button',{name:'上一页抽帧失败',exact:true})).toBeDisabled()
+ await page.getByRole('button',{name:'上一页抽帧成功',exact:true}).click()
+ await expect(success).toContainText('无批次.mp4')
+ await page.setViewportSize({width:390,height:844})
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy()
+ await page.screenshot({path:'test-results/extraction-history-mobile.png',fullPage:true})
+ await page.getByRole('button',{name:'清除记录',exact:true}).click()
+ await page.getByRole('button',{name:'确认清除',exact:true}).click()
+ await expect(success).toContainText('暂无抽帧成功记录')
+ await expect(failure).toContainText('暂无抽帧失败记录')
+})

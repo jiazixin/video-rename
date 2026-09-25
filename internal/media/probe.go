@@ -133,9 +133,8 @@ func (p *Prober) Probe(ctx context.Context, job domain.VideoJob) (domain.VideoMe
 		}
 	}
 	if runErr != nil {
-		var exitErr *exec.ExitError
 		exitCode := 0
-		if errors.As(runErr, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](runErr); ok {
 			exitCode = exitErr.ExitCode()
 		}
 		je := &domain.JobError{

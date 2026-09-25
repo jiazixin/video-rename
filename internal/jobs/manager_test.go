@@ -250,7 +250,7 @@ func TestPromptSnapshotAndIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prompt, err := store.Save(models.Profile{ServerConfig: config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Workers: 1}, Title: "独立提示词", PromptID: libraryPrompt.ID})
+	prompt, err := store.Save(models.Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Workers: 1, Title: "独立提示词", PromptID: libraryPrompt.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +324,7 @@ func TestGlobalDefaultUsedByNewRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := store.Save(models.Profile{ServerConfig: config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}, Title: "全局默认测试", PromptID: libraryPrompt.ID})
+	p, err := store.Save(models.Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: "全局默认测试", PromptID: libraryPrompt.ID})
 	if err != nil {
 		t.Fatal(err)
 	}

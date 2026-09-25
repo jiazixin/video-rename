@@ -27,8 +27,8 @@ func mapErrno(err error, oldpath, newpath string) *domain.JobError {
 	if err == nil {
 		return nil
 	}
-	var errno syscall.Errno
-	if !errors.As(err, &errno) {
+	errno, ok := errors.AsType[syscall.Errno](err)
+	if !ok {
 		return &domain.JobError{Code: domain.CodeRenameFailed, Message: err.Error()}
 	}
 	switch {

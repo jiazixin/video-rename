@@ -4,7 +4,11 @@ import "net/http"
 
 // logBatches includes all batches represented in history, beyond the current page.
 func (a *App) logBatches(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.DB.QueryContext(r.Context(), "SELECT DISTINCT run FROM events WHERE run>0 AND category IN ('success','failure') ORDER BY run DESC")
+	query := "SELECT DISTINCT run FROM events WHERE run>0 AND category IN ('success','failure') ORDER BY run DESC"
+	if r.URL.Query().Get("category") == "extraction" {
+		query = "SELECT DISTINCT run FROM extraction_records WHERE run>0 ORDER BY run DESC"
+	}
+	rows, err := a.DB.QueryContext(r.Context(), query)
 	if err != nil {
 		failure(w, err)
 		return

@@ -56,3 +56,5 @@
 @media(max-width:600px){.run-tabs{gap:16px}.run-tabs button{flex:1;min-width:0;font-size:12px;line-height:1.6}.run-tabs button svg{flex-shrink:0}.run-entry{grid-template-columns:32px 16px minmax(0,1fr);padding:10px 14px 9px 8px}.run-day-label{padding:12px 14px 7px 10px}.run-progress{gap:8px}.run-foot .run-actions{margin-left:auto}}
 
 .row-actions.run-actions{gap:8px;white-space:nowrap}
+.run-section>.pagination{flex-wrap:wrap;gap:10px}
+@media(max-width:600px){.run-section>.pagination>.subtle{flex-basis:100%;max-width:none}.run-section>.pagination .select-field{flex-basis:100%}}

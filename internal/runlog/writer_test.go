@@ -103,11 +103,9 @@ func TestConcurrentWrites(t *testing.T) {
 	defer w.Close()
 	var wg sync.WaitGroup
 	for i := range 32 {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
+		wg.Go(func() {
 			_ = w.Success(Event{JobID: "j", ElapsedMS: int64(i)})
-		}(i)
+		})
 	}
 	wg.Wait()
 	lines := readLines(t, filepath.Join(w.Dir(), "success.jsonl"))

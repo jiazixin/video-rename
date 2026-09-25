@@ -3,6 +3,7 @@ package jobs
 import (
 	"encoding/json/v2"
 	"fmt"
+	"slices"
 )
 
 // All callers create batches through Create's mutex, including scheduled runs.
@@ -57,10 +58,8 @@ func (m *Manager) checkOverlap(request Request) error {
 		var t target
 		if err := m.DB.QueryRow("SELECT id,parent,kind,identity FROM entries WHERE id=? AND present=1", id).Scan(&t.id, &t.parent, &t.kind, &t.identity); err != nil {
 			for _, s := range scopes {
-				for _, other := range s.targets {
-					if other == id {
-						return fmt.Errorf("批次 #%d 的目标状态不可用，请等待结束或取消后重试", s.id)
-					}
+				if slices.Contains(s.targets, id) {
+					return fmt.Errorf("批次 #%d 的目标状态不可用，请等待结束或取消后重试", s.id)
 				}
 			}
 			return err

@@ -175,8 +175,7 @@ func (l *Library) AutoCommit(id int64, snap domain.Snapshot, title, key string, 
 			return Operation{}, je
 		}
 		o, err := l.commit(e, filepath.Base(res.Target), "automatic", fmt.Sprintf("%s:%d", key, i), 0, run, diagnostics...)
-		var re *domain.JobError
-		if errors.As(err, &re) && re.Code == domain.CodeRenameConflict {
+		if re, ok := errors.AsType[*domain.JobError](err); ok && re.Code == domain.CodeRenameConflict {
 			alloc.Release(filepath.Dir(p), filepath.Base(res.Target))
 			continue
 		}

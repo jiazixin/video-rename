@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -123,8 +124,8 @@ func (l *Library) Path(id int64) (string, error) {
 		return "", fmt.Errorf("媒体根目录不可用或挂载已变化")
 	}
 	p := l.Root
-	for i := len(chain) - 1; i >= 0; i-- {
-		p = filepath.Join(p, chain[i].Name)
+	for _, entry := range slices.Backward(chain) {
+		p = filepath.Join(p, entry.Name)
 		st, err := os.Lstat(p)
 		if err != nil {
 			return "", err
@@ -136,7 +137,7 @@ func (l *Library) Path(id int64) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if Identity(s) != chain[i].Identity {
+		if Identity(s) != entry.Identity {
 			return "", fmt.Errorf("文件身份已变化，请刷新目录")
 		}
 	}
@@ -285,10 +286,7 @@ func (l *Library) StartRefresh(ctx context.Context, id int64) {
 		return
 	}
 	l.refreshing[id] = true
-	l.refreshWG.Add(1)
-	l.refreshMu.Unlock()
-	go func() {
-		defer l.refreshWG.Done()
+	l.refreshWG.Go(func() {
 		defer func() { l.refreshMu.Lock(); delete(l.refreshing, id); l.refreshMu.Unlock() }()
 		select {
 		case l.scanSlots <- struct{}{}:
@@ -297,7 +295,8 @@ func (l *Library) StartRefresh(ctx context.Context, id int64) {
 			return
 		}
 		_ = l.Refresh(ctx, id)
-	}()
+	})
+	l.refreshMu.Unlock()
 }
 
 type Page struct {

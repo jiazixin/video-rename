@@ -218,10 +218,7 @@ func (e *Extractor) extractPoint(ctx context.Context, job domain.VideoJob, meta 
 	if int64(frame.Bytes) > e.imageLimit() {
 		nw := evenFloor(float64(frame.Width) * 0.75)
 		nh := evenFloor(float64(frame.Height) * 0.75)
-		q := e.Images.JPEGQuality + 3
-		if q > 15 {
-			q = 15
-		}
+		q := min(e.Images.JPEGQuality+3, 15)
 		re := out + ".re.jpg"
 		rerr := runFFmpeg(ctx, e.FFmpegPath, []string{
 			"-nostdin", "-hide_banner", "-loglevel", "error",
@@ -263,8 +260,7 @@ func runFFmpeg(ctx context.Context, path string, args []string) error {
 		if ctx.Err() != nil {
 			return fmt.Errorf("%v (stderr: %s)", ctx.Err(), tail)
 		}
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 			return fmt.Errorf("ffmpeg 退出码 %d (stderr: %s)", exitErr.ExitCode(), tail)
 		}
 		return fmt.Errorf("%v (stderr: %s)", err, tail)

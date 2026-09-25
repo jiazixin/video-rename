@@ -234,3 +234,15 @@ npm run test:e2e -- workspace.spec.ts --grep '返回目录恢复|批次记录按
 - **升级路径实测**：用 HEAD（693f488）旧版二进制 + 真实 FFmpeg 抽帧 + 本地 OpenAI 兼容假模型生成 v18 生产形态数据库（2 批次：3 改名 + 3 跳过、255 token、3 操作、3 标记），新版二进制原地升级后 schema v19、`run_items` 新增计时列（旧行 0）、runs / items / token / operations / marks 计数逐项一致；升级前已留整目录备份。
 - **指标数值实测**（同一环境，`from` 缺省取全部）：升级后旧数据 `avg_batch_ms`=16252 与 SQL 直查 (32499.824+5.372)/2 精确一致，`legacy_items`=6 按批次完成时间回退归属，分桶 / 散点 / 配置汇总吻合；新版再跑 1 个真实批次（1 改名 + 3 跳过）后 `timed_items`=1、逐项耗时 1307ms（> 模型 1.2s 延迟，与 SQL `finished_ms-started_ms` 相等），P50=P95=1307、耗时分布「5 秒内=1」、`avg_batch_ms`=21276 与三批次 SQL 均值一致。
 - 局限：模型侧为本地假服务（协议与真实 OpenAI 兼容服务一致，未调用云端真实模型）；stock sqlite3 CLI 不识别应用注册的 NATURAL_NAME 排序规则，完整性以应用成功打开、迁移与查询为准。
+
+### 2026-09-26 独立抽帧与统一抽帧记录
+
+范围：本次未提交工作区中的 schema v20、jobs 抽帧任务与阶段记录、抽帧历史 API、目录 / 多选 / 运行入口、历史页签及配套测试和文档。
+
+- `npm --prefix web run check`、`npm --prefix web run build`、`go build -o bin/video-rename ./cmd/video-rename` 通过。
+- `go test ./...`、`go test -race ./...`、`go vet ./...` 通过；全量测试中发现的两处旧版数据库回退夹具已同步移除 v20 的表与列。最终新增跨页 / 递归 / 参数快照用例及错误类型风格调整后，`go test ./internal/jobs`、`go test -race ./internal/jobs`、`go vet ./...` 复验通过，服务二进制再次构建。
+- `go test -tags=integration ./internal/media/` 通过，使用真实 FFmpeg。
+- 浏览器全量 `npm --prefix web run test:e2e` 首轮 55 / 56 通过；用量页签测试的“累计 token”匹配到统计卡片和两个表头，修正为卡片范围选择器。随后 `npm --prefix web run test:e2e -- extraction.spec.ts usage-analysis.spec.ts` 7 / 7 通过。所有 56 个用例均已验证通过（含针对修正的复测，不表示修正后又执行了一次全量命令）。
+- 新增验证：无模型或提示词的抽帧、原名和处理标记保留、超过目录分页的处理、递归选项、抽帧参数快照、同键任务类型隔离和范围互斥、抽帧后重命名复用缓存、手动 / 自动失败日志、取消与重启中断、日志独立分页 / 搜索 / 批次 / 日期 / 鉴权 / 清除。
+- 浏览器使用临时媒体、真实 FFmpeg 与本地假模型，覆盖三个抽帧入口、搜索不缩小目录抽帧范围、缓存命中与自动抽帧来源、损坏视频详细诊断及复制、成功在上失败在下、无批次“—”、390px 窄屏溢出检查。截图输出在 `web/test-results/extraction-*.png`。
+- 未执行 scale 标签的大规模索引测试、云端真实模型联调或部署重启；测试未操作用户真实媒体。

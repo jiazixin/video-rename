@@ -50,10 +50,7 @@ func (s *Sampler) Plan(duration time.Duration, sizeBytes int64) (plan domain.Fra
 	if !isFinite(l) || l <= 0 {
 		return plan, fmt.Errorf("有效采样窗口非正: %v", l)
 	}
-	n := min(n0, s.Cfg.MaxFrames, max(1, int(math.Floor(l))))
-	if n < 1 {
-		n = 1
-	}
+	n := max(min(n0, s.Cfg.MaxFrames, max(1, int(math.Floor(l)))), 1)
 	plan.Duration = duration
 	plan.BaseN = n0
 	plan.TargetN = n

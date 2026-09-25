@@ -115,6 +115,9 @@ func (a *App) Handler() http.Handler {
 	a.systemSettingsRoutes(api)
 	a.numberingRoutes(api)
 	api.HandleFunc("GET /api/logs/{id}/diagnostics", a.logDiagnostics)
+	api.HandleFunc("GET /api/extractions", a.extractions)
+	api.HandleFunc("GET /api/extractions/{id}", a.extractionDetail)
+	api.HandleFunc("POST /api/extractions/clear", a.clearExtractions)
 	api.HandleFunc("POST /api/logs/clear", a.clearHistory)
 	api.HandleFunc("POST /api/logs/retry", a.retryHistory)
 	api.HandleFunc("GET /api/entries/{id}/video", a.playback)
@@ -233,6 +236,19 @@ func (a *App) Handler() http.Handler {
 		send(w, 202, map[string]int64{"id": id})
 	})
 	api.HandleFunc("GET /api/runs", func(w http.ResponseWriter, r *http.Request) {
+		if category := r.URL.Query().Get("category"); category != "" {
+			if category != "manual" && category != "automatic" {
+				send(w, 400, map[string]string{"message": "运行分类无效"})
+				return
+			}
+			v, err := a.Jobs.ListPage(r.Context(), category, int(number(r.URL.Query().Get("page"))), int(number(r.URL.Query().Get("size"))))
+			if err != nil {
+				failure(w, err)
+				return
+			}
+			send(w, 200, v)
+			return
+		}
 		v, err := a.Jobs.List(number(r.URL.Query().Get("before")))
 		if err != nil {
 			failure(w, err)

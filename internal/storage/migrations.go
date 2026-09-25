@@ -159,6 +159,15 @@ INSERT INTO schema_migrations VALUES(19,datetime('now'));`); err != nil {
 			return err
 		}
 	}
+	if version < 20 {
+		if _, err = tx.Exec(`ALTER TABLE runs ADD COLUMN task TEXT NOT NULL DEFAULT 'rename';
+CREATE TABLE extraction_records(id INTEGER PRIMARY KEY,run INTEGER NOT NULL DEFAULT 0,entry INTEGER NOT NULL DEFAULT 0,path TEXT NOT NULL,source TEXT NOT NULL,status TEXT NOT NULL,started TEXT NOT NULL,finished TEXT NOT NULL DEFAULT '',duration_ms INTEGER NOT NULL DEFAULT 0,cached INTEGER NOT NULL DEFAULT 0,frames INTEGER NOT NULL DEFAULT 0,message TEXT NOT NULL DEFAULT '',processing_log TEXT NOT NULL DEFAULT '');
+CREATE INDEX extraction_page ON extraction_records(status,id DESC);
+CREATE INDEX extraction_run ON extraction_records(run,id DESC);
+INSERT INTO schema_migrations VALUES(20,datetime('now'));`); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
