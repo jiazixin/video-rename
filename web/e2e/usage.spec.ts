@@ -31,17 +31,30 @@ function fixture(){
  }
 }
 
-test('导航包含用量分析并直达路由',async({page})=>{
+test('分组导航独立入口、刷新与前进后退',async({page})=>{
  await login(page)
  const nav=page.locator('.sidebar nav button')
- await expect(nav.filter({hasText:'运行计划'})).toBeVisible()
- const names=await nav.allInnerTexts()
- expect(names.indexOf('用量分析')).toBeGreaterThan(names.indexOf('运行计划'))
- expect(names.indexOf('系统设置')).toBeGreaterThan(names.indexOf('用量分析'))
- await page.goto('/#usage')
- await expect(page.getByRole('heading',{name:'用量分析.'})).toBeVisible()
- await page.getByRole('button',{name:'用量分析',exact:true}).click()
- await expect(page.locator('.topbar strong')).toHaveText('用量分析')
+ await expect(nav).toHaveText(['文件目录','抽帧记录','运行记录','计划管理','批次记录','模型用量','运行分析','系统设置'])
+ await expect(page.locator('.sidebar-caption')).toHaveText(['任务记录','运行管理','统计分析'])
+ await expect(page.getByText('工作空间',{exact:true})).toHaveCount(0)
+ await expect(page.getByText('本地媒体库',{exact:true})).toHaveCount(0)
+ for(const name of ['抽帧记录','运行记录','计划管理','批次记录','模型用量','运行分析']){
+  await page.getByRole('button',{name,exact:true}).click()
+  await expect(page.locator('.topbar strong')).toHaveText(name)
+  await expect(page.getByRole('heading',{name:name+'.',exact:true})).toBeVisible()
+  await expect(page.getByRole('button',{name,exact:true})).toHaveAttribute('aria-current','page')
+ }
+ await page.reload()
+ await expect(page.locator('.topbar strong')).toHaveText('运行分析')
+ await page.goBack()
+ await expect(page.locator('.topbar strong')).toHaveText('模型用量')
+ await page.goForward()
+ await expect(page.locator('.topbar strong')).toHaveText('运行分析')
+ await page.setViewportSize({width:390,height:600})
+ await page.getByRole('button',{name:'抽帧记录',exact:true}).click()
+ await expect(page.getByRole('heading',{name:'抽帧记录.'})).toBeVisible()
+ await page.getByRole('button',{name:'系统设置',exact:true}).click()
+ await expect(page.locator('.topbar strong')).toHaveText('系统设置')
 })
 
 test('用量总览、趋势数据表与模型对比',async({page})=>{

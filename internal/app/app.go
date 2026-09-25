@@ -237,11 +237,16 @@ func (a *App) Handler() http.Handler {
 	})
 	api.HandleFunc("GET /api/runs", func(w http.ResponseWriter, r *http.Request) {
 		if category := r.URL.Query().Get("category"); category != "" {
-			if category != "manual" && category != "automatic" {
+			if category != "all" && category != "manual" && category != "automatic" {
 				send(w, 400, map[string]string{"message": "运行分类无效"})
 				return
 			}
-			v, err := a.Jobs.ListPage(r.Context(), category, int(number(r.URL.Query().Get("page"))), int(number(r.URL.Query().Get("size"))))
+			task := r.URL.Query().Get("task")
+			if task != "" && task != "rename" && task != "extract" {
+				send(w, 400, map[string]string{"message": "任务类型无效"})
+				return
+			}
+			v, err := a.Jobs.ListPage(r.Context(), category, task, int(number(r.URL.Query().Get("page"))), int(number(r.URL.Query().Get("size"))))
 			if err != nil {
 				failure(w, err)
 				return

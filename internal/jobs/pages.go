@@ -12,14 +12,16 @@ type RunPage struct {
 	Size  int   `json:"size"`
 }
 
-// ListPage counts and reads one category in a single database snapshot.
-func (m *Manager) ListPage(ctx context.Context, category string, page, size int) (RunPage, error) {
+// ListPage counts and reads matching runs in a single database snapshot.
+func (m *Manager) ListPage(ctx context.Context, category, task string, page, size int) (RunPage, error) {
 	out := RunPage{Items: []Run{}, Page: max(page, 1), Size: size}
 	if size != 50 && size != 100 && size != 200 {
 		out.Size = 50
 	}
 	var where string
 	switch category {
+	case "all":
+		where = "1=1"
 	case "manual":
 		where = "r.source<>'schedule' AND r.plan=0"
 	case "automatic":
@@ -27,16 +29,26 @@ func (m *Manager) ListPage(ctx context.Context, category string, page, size int)
 	default:
 		return out, fmt.Errorf("运行分类无效")
 	}
+	var args []any
+	switch task {
+	case "":
+	case "rename", "extract":
+		where += " AND r.task=?"
+		args = append(args, task)
+	default:
+		return out, fmt.Errorf("任务类型无效")
+	}
 	tx, err := m.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return out, err
 	}
 	defer tx.Rollback()
-	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM runs r WHERE "+where).Scan(&out.Total); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM runs r WHERE "+where, args...).Scan(&out.Total); err != nil {
 		return out, err
 	}
 	out.Page = min(out.Page, max(1, (out.Total+out.Size-1)/out.Size))
-	rows, err := tx.QueryContext(ctx, "SELECT "+runColumns+" FROM runs r LEFT JOIN run_token_usage u ON u.run=r.id WHERE "+where+" ORDER BY r.id DESC LIMIT ? OFFSET ?", out.Size, (out.Page-1)*out.Size)
+	args = append(args, out.Size, (out.Page-1)*out.Size)
+	rows, err := tx.QueryContext(ctx, "SELECT "+runColumns+" FROM runs r LEFT JOIN run_token_usage u ON u.run=r.id WHERE "+where+" ORDER BY r.id DESC LIMIT ? OFFSET ?", args...)
 	if err != nil {
 		return out, err
 	}

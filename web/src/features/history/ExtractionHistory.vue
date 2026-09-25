@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {computed,onMounted,onUnmounted,ref} from 'vue'
-import {AlertCircle,CheckCircle2,ChevronLeft,ChevronRight,Copy,Search} from 'lucide-vue-next'
+import {AlertCircle,CheckCircle2,ChevronLeft,ChevronRight,Copy,Search,RefreshCw,Trash2} from 'lucide-vue-next'
 import {api,time,datePart,clockPart} from '../../app/api'
 import DateField from '../../components/DateField.vue'
 import SelectField from '../../components/SelectField.vue'
@@ -11,6 +11,7 @@ type Group={items:RecordItem[];total:number;next:number}
 type Report={success:Group;failure:Group;running:number}
 type Category='success'|'failure'
 const groups=[{id:'success' as Category,label:'抽帧成功'},{id:'failure' as Category,label:'抽帧失败'}]
+const category=ref<Category>('success')
 const report=ref<Report>({success:{items:[],total:0,next:0},failure:{items:[],total:0,next:0},running:0})
 const busy=ref(false),error=ref(''),message=ref(''),q=ref(''),run=ref(''),from=ref(''),to=ref(''),limit=ref(50),batches=ref<number[]>([])
 const before=ref({success:0,failure:0}),pages=ref<Record<Category,number[]>>({success:[],failure:[]})
@@ -42,22 +43,23 @@ async function clear(){clearing.value=true;clearError.value='';try{const result=
 const timer=setInterval(()=>{if(!busy.value&&document.visibilityState==='visible')load()},3000)
 onMounted(load)
 onUnmounted(()=>{seq++;detailSeq++;controller?.abort();clearInterval(timer);clearTimeout(debounce)})
-defineExpose({busy,reset,openClear})
 </script>
 
 <template>
-<div class="extraction-history">
+<section>
+ <div class="page-heading"><div><h1>抽帧记录<span class="title-dot">.</span></h1><p>查看视频抽帧结果、缓存复用情况与失败原因。</p></div><div class="history-heading-actions"><button @click="openClear"><Trash2 :size="16"/>清除记录</button><button :disabled="busy" @click="reset"><RefreshCw :size="16" :class="{spin:busy}"/>刷新</button></div></div>
+ <div class="log-tabs" aria-label="抽帧记录状态"><button :class="{active:category==='success'}" :aria-pressed="category==='success'" @click="category='success'"><CheckCircle2 :size="18"/>成功记录</button><button :class="{active:category==='failure'}" :aria-pressed="category==='failure'" @click="category='failure'"><AlertCircle :size="18"/>失败记录</button></div>
+ <div class="extraction-history">
  <div v-if="error" role="alert" class="notice error">{{error}}<button @click="load">重试</button></div>
  <div v-if="message" role="status" class="notice success">{{message}}<button @click="message=''">关闭</button></div>
  <div class="panel filterbar extraction-filters">
   <div class="search-input"><Search :size="16"/><input v-model="q" aria-label="搜索抽帧记录" placeholder="搜索视频名称或失败原因…" @input="search"/></div>
   <SelectField v-model="run" label="抽帧批次" :options="batchOptions" @change="reset"/>
   <DateField v-model="from" label="起始日期" :max="to" @change="reset"/><span class="subtle">至</span><DateField v-model="to" label="结束日期" :min="from" @change="reset"/>
-  <SelectField v-model="limit" label="抽帧每页条目数" :options="[{value:50,label:'50 项 / 页'},{value:100,label:'100 项 / 页'},{value:200,label:'200 项 / 页'}]" @change="reset"/>
+  <div class="filter-spacer"/><span class="subtle">共 {{report[category].total}} 项 · {{report[category].items.length}} 项 / 当前页</span>
  </div>
  <p class="help extraction-hint">手动抽帧与重命名过程中的自动抽帧统一记录；有效缓存复用会单独标注。<span v-if="report.running" role="status">当前 {{report.running}} 项正在抽帧，完成后自动更新。</span></p>
- <section v-for="group in groups" :key="group.id" class="panel extraction-group" :aria-label="group.label">
-  <header class="extraction-heading"><h2><CheckCircle2 v-if="group.id==='success'" :size="18"/><AlertCircle v-else :size="18"/>{{group.label}} <span class="count">{{report[group.id].total}}</span></h2><span class="subtle">{{report[group.id].items.length}} 项 / 当前页</span></header>
+  <section v-for="group in groups.filter(g=>g.id===category)" :key="group.id" class="panel extraction-group" :aria-label="group.label">
   <div class="table-scroll"><table class="extraction-table">
    <thead><tr><th>开始时间</th><th>结束时间</th><th>总耗时</th><th>批次</th><th>来源</th><th>目录</th><th>文件名</th><th>{{group.id==='success'?'抽帧结果':'失败原因'}}</th></tr></thead>
    <tbody><tr v-for="row in report[group.id].items" :key="row.id">
@@ -67,9 +69,10 @@ defineExpose({busy,reset,openClear})
     <td v-if="group.id==='success'"><span>{{row.cached?'复用缓存':'抽帧完成'}} · {{row.frames}} 帧</span></td><td v-else class="extraction-reason"><p>{{row.message||'抽帧失败'}}</p><button class="text-button" @click="inspect(row)">详细原因</button></td>
    </tr></tbody>
   </table><div v-if="!report[group.id].items.length" class="empty compact">{{busy?'正在读取抽帧记录…':`暂无${group.label}记录`}}</div></div>
-  <div class="pagination"><span class="subtle">按记录从新到旧</span><button :disabled="busy||!pages[group.id].length" :aria-label="`上一页${group.label}`" @click="previous(group.id)"><ChevronLeft :size="16"/></button><span>{{pages[group.id].length+1}}</span><button :disabled="busy||!report[group.id].next" :aria-label="`下一页${group.label}`" @click="next(group.id)"><ChevronRight :size="16"/></button></div>
+   <div class="pagination"><span class="subtle">按时间从新到旧</span><SelectField v-model="limit" label="抽帧每页条目数" :options="[{value:50,label:'50 项 / 页'},{value:100,label:'100 项 / 页'},{value:200,label:'200 项 / 页'}]" @change="reset"/><button :disabled="busy||!pages[group.id].length" :aria-label="`上一页${group.label}`" @click="previous(group.id)"><ChevronLeft :size="16"/></button><span>{{pages[group.id].length+1}}</span><button :disabled="busy||!report[group.id].next" :aria-label="`下一页${group.label}`" @click="next(group.id)"><ChevronRight :size="16"/></button></div>
  </section>
 </div>
+</section>
 <Modal v-if="selected" title="抽帧失败详情" wide @close="selected=undefined;detailSeq++">
  <dl class="detail-list"><dt>文件</dt><dd>{{selected.path}}</dd><dt>批次</dt><dd>{{selected.run?`#${selected.run}`:'—'}}</dd><dt>开始时间</dt><dd>{{time(selected.started)}}</dd><dt>结束时间</dt><dd>{{time(selected.finished)}}</dd><dt>总耗时</dt><dd>{{duration(selected.duration_ms)}}</dd><dt>失败原因</dt><dd>{{selected.message}}</dd></dl>
  <p v-if="detailBusy" role="status">正在读取详细原因…</p><div v-if="detailError" class="notice error" role="alert">{{detailError}}<button @click="inspect(selected)">重试</button></div><pre v-if="diagnostics" class="extraction-diagnostics">{{diagnostics}}</pre><p v-else-if="!detailBusy&&!detailError" class="help">{{selected.message}}</p>

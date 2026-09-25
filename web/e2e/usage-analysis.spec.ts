@@ -31,12 +31,12 @@ function fixture(){
  }
 }
 
-test('默认打开模型用量页签并可切换数据分析',async({page})=>{
+test('默认打开模型用量并可从侧栏切换运行分析',async({page})=>{
  await login(page)
  await page.goto('/#usage')
- await expect(page.getByRole('heading',{name:'用量分析.'})).toBeVisible()
+ await expect(page.getByRole('heading',{name:'模型用量.'})).toBeVisible()
  await expect(page.locator('.usage-kpi').getByText('累计 token',{exact:true})).toBeVisible()
- await page.getByRole('button',{name:'数据分析',exact:true}).click()
+ await page.getByRole('button',{name:'运行分析',exact:true}).click()
  await expect(page.getByText('批次成功率',{exact:true})).toBeVisible()
  await expect(page.locator('.analysis-kpis .usage-kpi')).toHaveCount(10)
  await page.goto('/#usage/analysis')

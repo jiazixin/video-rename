@@ -74,9 +74,9 @@ GET /api/entries/status?ids=... 返回最多 300 个条目的当前状态（不�
 
 ## 运行页面分区
 
-运行记录通过 `GET /api/runs?category=manual|automatic&page=1&size=50` 获取分类分页，返回 `items/total/page/size`。先按来源与计划关联过滤，再在同一数据库快照内统计和取页；每页支持 50 / 100 / 200 条，页码越界收敛至最后一页。无 category 的列表接口继续供既有游标调用使用。页面显示总批次、页码和当前页条数；手动、自动分别保存页码与条数设置，轮询和刷新保留当前页，切页与分类请求通过序号防止迟到响应覆盖。
+批次记录通过 `GET /api/runs?category=all|manual|automatic&task=rename|extract&page=1&size=50` 获取分页，返回 `items/total/page/size`。task 留空表示全部任务。先按来源、计划关联及任务类型过滤，再在同一数据库快照内统计和取页；每页支持 50 / 100 / 200 条，页码越界收敛至最后一页。无 category 的列表接口继续供既有游标调用使用。页面显示总批次、页码和当前页条数；全部、手动、自动分别保存页码与条数设置，任务类型切换重置页码，轮询和刷新保留当前页，切页与筛选请求通过序号防止迟到响应覆盖。
 
-运行计划页沿用任务历史的按钮切换样式：左侧“手动计划和运行记录”（默认选中，一次性运行入口及手动运行记录），右侧“自动计划和运行记录”（新建/编辑计划、计划卡片及计划运行记录）；每次仅展示选中分类。source=schedule 或 plan>0 的运行归自动区，包含计划卡片上的立即运行；其余归手动区。记录按批次编号倒序分页，不改变调度行为。
+侧栏「运行管理」下的「计划管理」和「批次记录」分别使用 `#plans` 与 `#runs`。Runs.vue 按 view 分别展示计划卡片或批次列表，切换时重新挂载，仅请求所属页面的数据。批次页默认全部来源，提供手动运行 / 计划触发和任务类型筛选；右上角创建命名或抽帧任务。source=schedule 或 plan>0 的运行归计划触发，包含计划卡片上的立即运行；其余归手动运行。记录按批次编号倒序分页，不改变调度行为。
 
 运行中批次的预计剩余时间是纯前端估算（Runs.vue 的 trackEta），不新增接口或轮询频率：每次既有 3 秒轮询用已处理增量（done+skipped+failed）计算瞬时速率并做 EMA 平滑（α=0.3），无增量的轮询保留上次有效速率；首次看到 running 状态的轮询作为基线，回退平均速率与预热均基于该基线的差值，避免扫描期瞬时跳过项抬高速度。预热条件为处理差值达到 warmup 阈值（总数≤2 恒不显示；3–10 取 max(2, ⌈总数/2⌉)；>10 取 10）、running 超 5 秒且存在有效速率，满足前显示“预计时间计算中…”。批次离开 running 状态即停止估算并清理状态；移动端窄屏隐藏剩余时间片段。
 
@@ -156,7 +156,7 @@ schema v20 为 `runs` 增加 `task`（`rename` / `extract`，旧批次及省略�
 - `GET /api/logs/batches?category=extraction`：列出抽帧记录中的非零批次。
 - `POST /api/extractions/clear`：`{all:true}` 清除已结束记录；沿用 CSRF 与同源校验，保留进行中记录和缓存。
 
-前端入口为当前目录刷新左侧、跨页多选工具栏、运行页手动区；抽帧弹窗无需模型，默认递归。`features/history/ExtractionHistory.vue` 在“抽帧记录”页签展示上成功 / 下失败两张表，日期、耗时、批次（0 显示“—”）、来源、文件名与错误明细；支持独立分页、轮询、筛选、复制与清除。回归覆盖无模型运行、请求幂等、标记保持、抽帧后命名复用、手动 / 自动失败记录和取消中断；`web/e2e/extraction.spec.ts` 使用真实 FFmpeg 与本地假模型验证三个入口和复用，并检查窄屏布局与无批次显示。
+前端入口为当前目录刷新左侧、跨页多选工具栏、批次记录页的“新建抽帧任务”；抽帧弹窗无需模型，默认递归。`features/history/ExtractionHistory.vue` 为侧栏“抽帧记录”独立页面（`#extractions`），成功/失败按钮沿用运行记录样式，一次显示一种结果，切换保留各自分页。展示日期、耗时、批次（0 显示“—”）、来源、文件名与错误明细；支持轮询、筛选、复制与清除。回归覆盖无模型运行、请求幂等、标记保持、抽帧后命名复用、手动 / 自动失败记录和取消中断；`web/e2e/extraction.spec.ts` 使用真实 FFmpeg 与本地假模型验证三个入口和复用，并检查窄屏布局与无批次显示。
 
 ### 可配置的稳定性等待
 
@@ -178,13 +178,13 @@ GET /api/usage/analytics 在登录保护下聚合账本：`[from,to)` 半开区�
 
 前端 `web/src/features/usage/` 提供筛选行（预设区间、自定义日期时刻、模型 / 配置 / 来源 / 批次）、总览卡片、SVG 趋势图（悬停与方向键取值、完整数据表替代）、模型对比条、高消耗批次排行与分页明细；请求带中止与序号防迟到覆盖，错误提供重试。图表色 #0e8a5c / #0c7f52 已通过配色校验（浅色表面、色度与对比达标）。浏览器测试覆盖导航与直达、筛选参数往返、空态、错误重试与窄屏。
 
-## 数据分析页签
+## 运行分析
 
 schema v19 为 run_items 增加 started_ms / finished_ms（毫秒，0 表示未记录）：jobs 在置 running 时写 started_ms，finish()、扫描期跳过与取消批量置状态时写 finished_ms；扫描前跳过的项只有完成时刻、不进耗时统计。旧数据不回填。
 
 `internal/runstats` 聚合批次性能（结构与 tokenusage 平行：单读事务 + Go 内聚合 + 相同分桶粒度）：批次按实际开始（缺失用提交时间）归属 `[from,to)` 半开区间；批次耗时 = finished − started；逐项耗时 = finished_ms − started_ms（仅 done / failed 计入，cancelled 排除）；条目完成时刻优先 finished_ms，缺失回退批次 finished 并计入 legacy_items；P50 / P95 为 nearest-rank 分位；失败原因按首行截断 100 字符归组。`GET /api/runs/analytics`（字面路由优先于 `/api/runs/{id}` 通配）提供 from / to / timezone / profile / source / sort（recent / duration / size）/ page / size 参数，风格与 usage 接口一致。
 
-前端页签 `#usage/tokens|analysis` 由 App.vue 解析（默认 tokens）。`Usage.vue` 变为壳组件，原正文移入 `UsageTokens.vue` 行为不变；`UsageAnalysis.vue` 提供 10 格指标卡、批次耗时趋势、处理结果趋势（成功 #0e8a5c / 跳过 #2468af / 失败 #b14545，CVD 与对比校验通过）、吞吐趋势 + 耗时分布（单色顺序色带 ordinal 校验通过）并排、模型配置性能比较、`AnalysisScatter` 散点（最近点拾取 + 方向键）、失败分析与分页批次明细；图表组件 `AnalysisLine` / `AnalysisHistogram` / `AnalysisScatter` 沿用 UsageTrend 的悬停 / 键盘 / 数据表惯例，样式在 `analysis.css`。浏览器测试覆盖页签切换与 hash 直达、指标渲染、图表交互、排序筛选参数、空态、错误重试与窄屏截图。
+侧栏「统计分析」分组提供 `#usage/tokens|analysis` 独立入口，由 App.vue 解析（默认 tokens）。`Usage.vue` 为页面标题和内容壳组件，按路由展示模型用量或运行分析，不再提供重复的页内导航；`UsageAnalysis.vue` 提供 10 格指标卡、批次耗时趋势、处理结果趋势（成功 #0e8a5c / 跳过 #2468af / 失败 #b14545，CVD 与对比校验通过）、吞吐趋势 + 耗时分布（单色顺序色带 ordinal 校验通过）并排、模型配置性能比较、`AnalysisScatter` 散点（最近点拾取 + 方向键）、失败分析与分页批次明细；图表组件 `AnalysisLine` / `AnalysisHistogram` / `AnalysisScatter` 沿用 UsageTrend 的悬停 / 键盘 / 数据表惯例，样式在 `analysis.css`。浏览器测试覆盖侧栏切换与 hash 直达、指标渲染、图表交互、排序筛选参数、空态、错误重试与窄屏截图。
 
 ## Prompt配置与提示词库
 
