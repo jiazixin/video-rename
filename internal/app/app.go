@@ -178,6 +178,24 @@ func (a *App) Handler() http.Handler {
 		a.Library.StartRefresh(a.ctx, number(r.PathValue("id")))
 		send(w, 202, map[string]bool{"ok": true})
 	})
+	api.HandleFunc("DELETE /api/entries/{id}", func(w http.ResponseWriter, r *http.Request) {
+		var v struct {
+			Version   int64 `json:"version"`
+			Confirmed bool  `json:"confirmed"`
+		}
+		if !decode(w, r, &v) {
+			return
+		}
+		if !v.Confirmed {
+			failure(w, fmt.Errorf("请先确认永久删除"))
+			return
+		}
+		if err := a.Library.Delete(number(r.PathValue("id")), v.Version); err != nil {
+			failure(w, err)
+			return
+		}
+		send(w, 200, map[string]bool{"ok": true})
+	})
 	api.HandleFunc("POST /api/entries/{id}/rename", func(w http.ResponseWriter, r *http.Request) {
 		var v struct {
 			Name    string `json:"name"`
