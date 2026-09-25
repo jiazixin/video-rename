@@ -1,0 +1,53 @@
+import {test,expect} from '@playwright/test'
+
+test('编号规则分类草稿、实时示例、保存与响应式布局',async({page})=>{
+ let settings={image:{padding:1,prefix:'',lowercase:true,compact:false},audio:{padding:1,prefix:'',lowercase:true,compact:false},shared:false}
+ let fail=false
+ await page.route('**/api/numbering/settings',async route=>{
+  if(route.request().method()==='PUT'){
+   if(fail)return route.fulfill({status:500,json:{message:'保存失败，请重试'}})
+   settings=route.request().postDataJSON()
+   return route.fulfill({json:settings})
+  }
+  return route.fulfill({json:{settings}})
+ })
+ await page.goto('/')
+ await page.getByLabel('用户名',{exact:true}).fill('admin')
+ await page.getByLabel('密码',{exact:true}).fill('test-password-123')
+ await page.getByRole('button',{name:'登录',exact:true}).click()
+ await page.goto('/#settings/numbering')
+ const picker=page.getByRole('group',{name:'编号媒体类型'})
+ const save=page.getByRole('button',{name:'保存编号规则',exact:true})
+ await expect(save).toBeDisabled()
+ await page.getByLabel('图片编号前缀',{exact:true}).fill('IMG_')
+ await page.getByLabel('图片编号最小位数',{exact:true}).fill('3')
+ await expect(page.getByLabel('文件名格式示例')).toContainText('IMG_001.jpg')
+ await picker.getByRole('button',{name:'音频',exact:true}).click()
+ await page.getByLabel('音频编号前缀',{exact:true}).fill('AUD_')
+ await page.getByRole('radio',{name:'连续重新编号',exact:false}).check()
+ await page.getByRole('switch',{name:'音频扩展名转小写',exact:true}).focus()
+ await page.keyboard.press('Space')
+ await expect(page.getByLabel('文件名格式示例')).toContainText('AUD_1.MP3')
+ await page.getByRole('switch',{name:'图片与音频共用序号',exact:true}).check()
+ await picker.getByRole('button',{name:'图片',exact:true}).click()
+ await expect(page.getByLabel('图片编号前缀',{exact:true})).toHaveValue('IMG_')
+ await expect(page.getByRole('radio',{name:'保留已有编号',exact:false})).toBeChecked()
+ await expect(page.getByText('有未保存的修改',{exact:true})).toBeVisible()
+ await page.screenshot({path:'test-results/numbering-settings-desktop.png',fullPage:true})
+ fail=true
+ await save.click()
+ await expect(page.getByRole('alert')).toContainText('保存失败')
+ await expect(page.getByLabel('图片编号前缀',{exact:true})).toHaveValue('IMG_')
+ fail=false
+ await save.click()
+ await expect(save).toBeDisabled()
+ expect(settings.audio).toEqual({padding:1,prefix:'AUD_',lowercase:false,compact:true})
+ expect(settings.shared).toBeTruthy()
+ await page.reload()
+ await expect(page.getByLabel('图片编号前缀',{exact:true})).toHaveValue('IMG_')
+ await page.setViewportSize({width:390,height:844})
+ await picker.getByRole('button',{name:'音频',exact:true}).click()
+ await expect(page.getByLabel('音频编号前缀',{exact:true})).toHaveValue('AUD_')
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy()
+ await page.screenshot({path:'test-results/numbering-settings-mobile.png',fullPage:true})
+})

@@ -1,0 +1,14 @@
+.action-extract{--action-ink:#28649b;--action-bg:#edf5fc;--action-border:#c6dcef;--action-hover:#dfedfa}
+.action-name{--action-ink:#7251a1;--action-bg:#f5f0fc;--action-border:#ddcfee;--action-hover:#ece2f8}
+.action-mark{--action-ink:#287452;--action-bg:#edf7f0;--action-border:#cde6d6;--action-hover:#dfeee4}
+.action-unmark{--action-ink:#896018;--action-bg:#fff8e9;--action-border:#ebdbb3;--action-hover:#f9edcf}
+button.library-action{color:var(--action-ink);background:var(--action-bg);border-color:var(--action-border)}
+button.library-action:hover:not(:disabled){color:var(--action-ink);background:var(--action-hover);border-color:var(--action-ink)}
+button.library-action:focus-visible{outline:2px solid var(--action-ink);outline-offset:3px}
+button.library-action:disabled{filter:grayscale(.65);opacity:.45}
+.row-actions button.library-action{background:transparent;border-color:transparent;color:var(--action-ink)}
+.directory-run-actions{display:flex;align-items:center;gap:8px}
+.directory-run-actions button{white-space:nowrap;min-height:34px}
+.directory-summary .directory-run-actions{margin-right:6px}
+.batch-divider{width:1px;height:20px;background:var(--line);margin:0 4px;flex-shrink:0}
+@media(max-width:600px){.directory-summary .directory-run-actions{flex-basis:100%;margin-right:0;flex-wrap:wrap}.directory-run-actions button{flex:1;padding:7px 9px;font-size:11px}.batch-divider{display:none}.directory-mark-actions{flex-wrap:wrap}.library-action svg{flex-shrink:0}}

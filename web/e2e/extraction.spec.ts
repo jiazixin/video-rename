@@ -32,8 +32,8 @@ test('三个独立抽帧入口、真实缓存复用及统一成功失败记录',
   const entries=await(await page.request.get(`/api/directories/${directory}/entries?limit=100`)).json()
   const file=entries.items.find((e:any)=>e.name==='prepared.mp4')
   expect((await page.request.post('/api/entries/processed',{headers,data:{targets:[file.id],marked:true}})).ok()).toBeTruthy()
-  const extract=page.getByRole('button',{name:'抽帧此目录',exact:true})
-  expect(await extract.evaluate(el=>el.nextElementSibling?.textContent?.trim())).toBe('刷新')
+  const extract=page.getByRole('button',{name:'抽帧当前目录',exact:true})
+  expect(await extract.evaluate(el=>el.nextElementSibling?.textContent?.trim())).toBe('命名当前目录')
   // A visible search filter must not restrict a directory extraction.
   await page.getByLabel('搜索当前目录').fill('prepared')
   await expect(page.locator('tbody tr')).toHaveCount(1)
@@ -54,7 +54,7 @@ test('三个独立抽帧入口、真实缓存复用及统一成功失败记录',
 
   await page.getByRole('button',{name:'刷新',exact:true}).click()
   await page.getByRole('button',{name:'多选',exact:true}).click()
-  await expect(page.locator('.batch-toolbar button')).toHaveText(['全选','反选','清空','抽帧','命名','标记','取消标记','还原'])
+  await expect(page.locator('.batch-toolbar button')).toHaveText(['全选','反选','清空','抽帧','命名','标记已处理','取消标记','还原'])
   await page.getByLabel('选择 prepared.mp4',{exact:true}).check()
   await page.locator('.batch-toolbar').getByRole('button',{name:'抽帧',exact:true}).click()
   const second=await submitRun(page)

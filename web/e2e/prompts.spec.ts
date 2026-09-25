@@ -6,9 +6,9 @@ test('固定提示词与提示词库的新增、编辑、引用保护和持久�
  let original=''
  try{
   await page.goto('/#settings/prompts')
-  await expect(page.getByRole('heading',{name:'所有请求共用的输出约束'})).toBeVisible()
+  await expect(page.getByRole('heading',{name:'固定提示词',exact:true})).toBeVisible()
   original=await fixed.inputValue()
-  await expect(fixed).toHaveValue(/只输出一个最终标题/)
+  await expect(fixed).toHaveValue(/标题正文不少于25个中文字符/)
   await expect(page.getByRole('heading',{name:'默认提示词',exact:true})).toBeVisible()
   await page.getByRole('button',{name:'新增提示词',exact:true}).click()
   await page.getByLabel('提示词名称',{exact:true}).fill('下拉绑定提示词')
@@ -49,8 +49,7 @@ test('固定提示词与提示词库的新增、编辑、引用保护和持久�
   await page.reload()
   await expect(fixed).toHaveValue('测试固定约束：只输出一行。')
   await page.getByRole('button',{name:'恢复默认',exact:true}).click()
-  await expect(fixed).toHaveValue(/只输出一个最终标题/)
-  await expect(fixed).toHaveValue(/请仅输出四个字：命名失败/)
+  await expect(fixed).toHaveValue('输出要求：\n标题正文不少于25个中文字符，建议控制在30至50个中文字符\n最终响应只能包含一个完整的中文标题正文。\n必须单行输出。\n除标题正文之外不输出任何其他内容。')
   await expect(page.getByRole('button',{name:'保存固定提示词',exact:true})).toBeEnabled()
   await page.setViewportSize({width:390,height:844})
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true)
@@ -58,7 +57,8 @@ test('固定提示词与提示词库的新增、编辑、引用保护和持久�
  }finally{
   await page.goto('/#settings/prompts').catch(()=>{})
   if(original)await fixed.fill(original).catch(()=>{})
-  await page.getByRole('button',{name:'保存固定提示词',exact:true}).click().catch(()=>{})
+  const save=page.getByRole('button',{name:'保存固定提示词',exact:true})
+  if(await save.isEnabled())await save.click()
   await page.waitForTimeout(300)
  }
 })

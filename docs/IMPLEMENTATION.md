@@ -68,7 +68,7 @@ GET /api/entries/status?ids=... 返回最多 300 个条目的当前状态（不�
 
 ## 固定命名失败协议
 
-命名失败输出协议并入固定提示词默认值，「Prompt配置」页可编辑（OpenAI 兼容和 Anthropic 均适用）：无法因安全限制或其他原因生成符合要求的标题时，仅返回“命名失败”。模型请求除固定提示词外不追加任何页面不可见的硬编码文本；已保存自定义固定提示词的库不会自动获得该协议，需要时在页面补入。模型配置正文与已保存的用户提示词不改写。
+固定提示词默认要求标题不少于 25 个中文字符、建议 30–50 个中文字符，仅输出一个完整的单行中文标题。默认文本不再包含命名失败输出协议；已有自定义文本保留，恢复默认并保存后采用新值。模型请求除固定提示词外不追加页面不可见的硬编码文本。
 
 最终标题文本包含“命名失败”时，vision 返回非全局 NAMING_FAILED，不重试、不进入文件名清洗或改名。复用任务失败处理：保留原文件名、不写已处理标记，写入任务历史失败记录及脱敏请求/响应；其他视频继续处理。
 
@@ -124,6 +124,8 @@ schema v9 保存 notification_preferences.timezone。认证完成后浏览器提
 schema v10 增加 sampling_settings 单行设置与 runs.sampling_snapshot。internal/sampling 读写全局参数，复用 config.FrameSettings 校验；GET/PUT /api/sampling 复用认证、CSRF 和严格 JSON 解码。创建批次读取设置并记录快照，执行时校验并恢复派生采样表，图片参数也进入快照。YAML sampling/images 字段移除，不导入、不兼容。前端 features/sampling 提供规则表及基础表单，沿用 SelectField。
 
 ## 图片与音频一键编号
+
+系统设置的编号规则页使用图片 / 音频切换，分别编辑命名前缀、最小位数、编号方式与扩展名大小写，并实时显示文件名格式示例（实际号码以编号预览为准）。共用序号独立放在公共设置中；切换类型保留未保存草稿，底部统一保存两种类型并显示修改状态。详细匹配与保留号码语义收在“规则说明”，窄屏采用单列布局。
 
 schema v11 增加 image_numberings 和 image_numbering_items；schema v16 增加 media 列区分图片与音频批次，两类共用同一套移动日志与崩溃恢复机制，编号记录按类型分开查询。schema v17 在 system_settings.numbering 以 JSON 保存编号规则（最小位数、前缀、扩展名小写、紧凑重排、图片音频共用序号），空值回退到与历史行为一致的默认；`GET/PUT /api/numbering/settings` 读写，预览时读取当前规则并把最终文件名冻结进批次条目，应用与整批还原不依赖之后的规则修改。接口为 `POST /api/directories/{id}/numberings/preview`（body 指定 media）、`GET /api/directories/{id}/numberings?media=` 与 `/api/numberings/{id}` 下的 apply / restore-preview / recover。服务端复用目录排序表达式，读取完整当前目录索引，按搜索过滤所选类型文件，冻结预览中的文件身份、版本、原名、新名及目录指纹；确认时重新校验。编号为正整数，前导零规范化，0 和非纯数字名称进入续排；使用大整数避免长数字溢出。不同格式共用序号，未参与的编号文件保留其号码。硬链接重复参与时拒绝操作。
 
@@ -188,4 +190,4 @@ schema v19 为 run_items 增加 started_ms / finished_ms（毫秒，0 表示未�
 
 schema v18 重建 `prompts` 表（v4 已把旧表改名 `model_configs`，名称可复用）：提示词成为独立实体（名称 1–80 字、正文 ≤16000 字节、上限 200 条、版本校验），`internal/prompts` 提供增删改查；删除前检查 `model_configs.prompt_id` 引用，被引用时返回 409 与数量。`model_configs` 新增 `prompt_id` 并删除 `body` 列，正文与提示词名称在读取时 LEFT JOIN 解析（API 的 `body`/`prompt_title` 为只读视图）；迁移把旧正文按内容去重回填为提示词条目，标题取同正文的最低 ID 配置，配置自动关联，历史运行快照不受影响。全局固定提示词存 `system_settings.fixed_prompt`（空值回退代码默认），`internal/systemsettings` 提供 `FixedPrompt`/`SaveFixedPrompt`，接口为 `GET /api/prompts`（返回 fixed_prompt、内置默认值 default_fixed_prompt 与列表，页面据此提供「恢复默认」填入）、`PUT /api/prompts/fixed` 与提示词的 POST/PATCH/DELETE；`/api/model-presets` 不再返回 default_prompt。
 
-运行创建时在 jobs 里把所选提示词正文与固定提示词拼为完整 system 文本，写入 `runs.prompt_body`、加密快照与 prompt_hash，真实反映发送内容；编辑提示词库正文影响引用配置之后创建的运行，进行中批次保持快照。vision 不再持有硬编码提示文本，命名失败协议与单行标题等输出格式要求都在默认固定提示词中（NAMING_FAILED 检测仍保留在 vision 的输出验证里）。前端新增 `web/src/features/prompts/`（固定提示词卡片 + 提示词库列表与编辑弹窗），系统设置页签「Prompt配置」位于「模型配置」左侧；模型配置表单的提示词 textarea 换为 SelectField 下拉（必选）并附所选提示词预览。浏览器测试覆盖页签直达、默认固定文案、提示词增删改、被引用删除保护、换绑后删除、固定提示词持久化与恢复默认填入。
+运行创建时在 jobs 里把所选提示词正文与固定提示词拼为完整 system 文本，写入 `runs.prompt_body`、加密快照与 prompt_hash；编辑提示词库正文影响之后创建的运行，进行中批次保持快照。vision 保留 NAMING_FAILED 检测，不追加硬编码提示文本。默认字数要求作为提示词发送，不新增本地字数校验。`web/src/features/prompts/` 提供固定提示词卡片、提示词库与编辑弹窗，页面说明采用简短文案；模型配置通过下拉框选择提示词。浏览器测试覆盖提示词增删改、引用保护、持久化与恢复默认。

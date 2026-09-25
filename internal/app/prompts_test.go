@@ -53,7 +53,7 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 		t.Fatal("missing CSRF accepted", w.Code)
 	}
 	w = call("GET", "/api/prompts", nil, true)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "只输出一个最终标题") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "标题正文不少于25个中文字符") {
 		t.Fatal("default fixed prompt missing", w.Code, w.Body.String())
 	}
 	var page struct {
@@ -66,7 +66,7 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 		} `json:"prompts"`
 	}
 	json.Unmarshal(w.Body.Bytes(), &page)
-	if page.DefaultFixedPrompt != systemsettings.DefaultFixedPrompt || !strings.Contains(page.DefaultFixedPrompt, "命名失败") {
+	if page.DefaultFixedPrompt != systemsettings.DefaultFixedPrompt || page.FixedPrompt != page.DefaultFixedPrompt {
 		t.Fatal("default fixed prompt missing from payload", w.Body.String())
 	}
 	if len(page.Prompts) != 1 || page.Prompts[0].Title != "默认提示词" {
