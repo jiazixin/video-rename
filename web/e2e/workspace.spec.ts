@@ -72,6 +72,53 @@ test('状态颜色、每页居中和日志日历',async({page})=>{
  await page.screenshot({path:'test-results/status-colors.png',fullPage:true,animations:'disabled'})
 })
 
+for(const count of [1,2])test(`多选 ${count} 项后迟到的目录刷新不移动勾选行`,async({page})=>{
+ await login(page)
+ await page.getByRole('button',{name:'分页测试',exact:true}).click()
+ await expect(page.locator('tbody tr')).toHaveCount(100)
+ const directory=Number(new URL(page.url()).hash.split('/')[1])
+ const snapshot=await(await page.request.get(`/api/directories/${directory}/entries?limit=100`)).json()
+ let releaseRefresh!:()=>void,refreshStarted!:()=>void
+ const delayed=new Promise<void>(resolve=>{releaseRefresh=resolve})
+ const started=new Promise<void>(resolve=>{refreshStarted=resolve})
+ let requests=0
+ // The initial index has not included its first file yet. Its complete,
+ // naturally sorted page arrives only after the user has selected files.
+ await page.route(`**/api/directories/${directory}/entries?*`,async route=>{
+  if(++requests===1){await route.fulfill({json:{...snapshot,items:snapshot.items.slice(1),refreshing:true}});return}
+  refreshStarted();await delayed
+  await route.fulfill({json:{...snapshot,refreshing:false}})
+ })
+ await page.reload()
+ await expect(page.locator('tbody tr')).toHaveCount(99)
+ await page.getByRole('button',{name:'多选',exact:true}).click()
+ await page.route('**/api/runs/999',route=>route.fulfill({json:{id:999,status:'completed'}}))
+ await page.route('**/api/runs',async route=>{
+  if(route.request().method()!=='POST'){await route.continue();return}
+  expect(route.request().postDataJSON().targets).toEqual(snapshot.items.slice(1,count+1).map((e:any)=>e.id))
+  await route.fulfill({json:{id:999}})
+ })
+ try{
+  for(let i=1;i<=count;i++)await page.getByLabel(`选择 片段_000${i}.mp4`,{exact:true}).check()
+  await started
+  await page.getByRole('button',{name:'命名',exact:true}).click()
+  const refreshed=page.waitForResponse(r=>r.url().includes(`/api/directories/${directory}/entries?`))
+  releaseRefresh();await refreshed
+  await expect(page.getByRole('dialog')).toContainText(`处理选中的 ${count} 个条目`)
+  await expect(page.locator('tbody tr').first().getByRole('checkbox')).toBeChecked()
+  await expect(page.locator('tbody tr').first()).toContainText('片段_0001.mp4')
+  await expect(page.locator('tbody input:checked')).toHaveCount(count)
+  const updated=page.waitForResponse(r=>r.url().includes('/api/entries/status?'))
+  await page.getByRole('button',{name:'重命名',exact:true}).click()
+  await updated
+  await expect(page.locator('.batch-toolbar strong')).toHaveText(`已选 ${count} 项`)
+  await expect(page.locator('tbody input:checked')).toHaveCount(count)
+  await page.getByRole('button',{name:'刷新',exact:true}).click()
+  await expect(page.locator('tbody tr').first()).toContainText('片段_0000.mp4')
+  await expect(page.locator('tbody input:checked')).toHaveCount(count)
+ }finally{releaseRefresh()}
+})
+
 test('弹窗锁滚动、多选反选、批量还原和视频播放',async({page})=>{
  await login(page)
  await page.getByRole('button',{name:'分页测试',exact:true}).click()

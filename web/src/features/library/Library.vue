@@ -149,7 +149,30 @@ async function syncEntries(){
   if(trackedRuns.size||entries.some(e=>e.task_status||e.progress?.active))scheduleSync()
  }catch(e){if(n===seq&&request===statusSeq&&!disposed){error.value=`状态更新失败：${(e as Error).message}`;scheduleSync()}}
 }
-async function load(quiet=false){const n=++seq;clearTimeout(timer);busy.value=!quiet;error.value='';try{const params=new URLSearchParams({offset:String(offset.value),limit:String(limit.value),q:q.value,kind:kind.value,sort:sort.value,generation:offset.value>0?page.value?.generation||'0':'0'});const p=await api<Page>(`/directories/${dir.value}/entries?${params}`);if(n!==seq)return;page.value=p;if(inlineEntry.value&&!p.items.some(e=>e.id===inlineEntry.value?.id))cancelInlineRename();await restorePosition(n,p);if(n!==seq)return;for(const e of p.items)if(chosen.value.has(e.id))chosen.value.set(e.id,e);if(p.refreshing)timer=setTimeout(()=>load(true),1500);else if(trackedRuns.size||p.directory.task_status||p.directory.progress?.active||p.items.some(e=>e.task_status||e.progress?.active))scheduleSync()}catch(e){if(n===seq)error.value=(e as Error).message}finally{if(n===seq)busy.value=false}}
+async function load(quiet=false){
+ const n=++seq;clearTimeout(timer);busy.value=!quiet;error.value=''
+ try{
+  const params=new URLSearchParams({offset:String(offset.value),limit:String(limit.value),q:q.value,kind:kind.value,sort:sort.value,generation:offset.value>0?page.value?.generation||'0':'0'})
+  const p=await api<Page>(`/directories/${dir.value}/entries?${params}`)
+  if(n!==seq)return
+  // Check selection when the response arrives: the user may have selected
+  // rows while this background request was in flight. Keep those rows in
+  // place; a newer index may move them to another page, not delete them.
+  if(quiet&&chosen.value.size&&page.value){
+   const latest=new Map(p.items.map(e=>[e.id,e]))
+   const visible=new Set(page.value.items.map(e=>e.id))
+   const rows=page.value.items.map(e=>latest.get(e.id)||e)
+   p.items=[...rows,...p.items.filter(e=>!visible.has(e.id)).slice(0,Math.max(0,limit.value-rows.length))]
+   p.generation='0'
+  }
+  page.value=p
+  if(inlineEntry.value&&!p.items.some(e=>e.id===inlineEntry.value?.id))cancelInlineRename()
+  await restorePosition(n,p);if(n!==seq)return
+  for(const e of p.items)if(chosen.value.has(e.id))chosen.value.set(e.id,e)
+  if(p.refreshing)timer=setTimeout(()=>load(true),1500)
+  else if(trackedRuns.size||p.directory.task_status||p.directory.progress?.active||p.items.some(e=>e.task_status||e.progress?.active))scheduleSync()
+ }catch(e){if(n===seq)error.value=(e as Error).message}finally{if(n===seq)busy.value=false}
+}
 type DirectoryPosition={offset:number;cursors:number[];q:string;kind:string;sort:string;limit:number;scrollY:number;anchor?:number;snapshot?:Page}
 const positions=new Map<number,DirectoryPosition>()
 const listRoot=ref<HTMLElement>(),returnAnchor=ref<number>()
