@@ -204,6 +204,9 @@ func (l *Library) checkNumberingAvailable(id int64) error {
 func (l *Library) PreviewNumbering(parent int64, media, query, sortBy string, settings domain.NumberingSettings) (Numbering, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.isRefreshing(parent) {
+		return Numbering{}, fmt.Errorf("目录正在索引，请等待索引完成后重试")
+	}
 	m, err := mediaOf(media)
 	if err != nil {
 		return Numbering{}, err

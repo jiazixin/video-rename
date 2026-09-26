@@ -305,6 +305,12 @@ func (l *Library) StartRefresh(ctx context.Context, id int64) {
 	l.refreshMu.Unlock()
 }
 
+func (l *Library) isRefreshing(id int64) bool {
+	l.refreshMu.Lock()
+	defer l.refreshMu.Unlock()
+	return l.refreshing[id]
+}
+
 type Page struct {
 	Total       int     `json:"total"`
 	Items       []Entry `json:"items"`
