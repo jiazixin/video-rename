@@ -395,7 +395,9 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 		if r.Task == "extract" {
 			m.extractionFailure(r, 0, strings.Join(r.TargetNames, "、"), e)
 		} else {
-			_ = m.Library.Event("failure", "run", 0, 0, id, "", "", e.Error())
+			if logErr := m.recordFailure("run", 0, id, "", e); logErr != nil {
+				slog.Error("保存批次失败诊断失败", "run", id, "error", logErr)
+			}
 		}
 	}
 	if r.Task != "extract" && r.PromptBody == "" {
@@ -523,7 +525,7 @@ func (m *Manager) scan(ctx context.Context, batch Run, id int64) error {
 	if err = m.Library.Refresh(ctx, id); err != nil {
 		if batch.Task == "extract" {
 			m.extractionFailure(batch, id, m.Library.DisplayPath(id), err)
-		} else if er := m.Library.Event("failure", "scan", id, 0, run, m.Library.Relative(id), "", err.Error()); er != nil {
+		} else if er := m.recordFailure("scan", id, run, m.Library.DisplayPath(id), err); er != nil {
 			return er
 		}
 		_, er := m.DB.Exec("UPDATE runs SET failed=failed+1 WHERE id=?", run)
@@ -663,10 +665,8 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.C
 			}
 		} else {
 			rel, _ := filepath.Rel(m.Library.Root, p)
-			if diagnostic, ok := errors.AsType[*domain.JobError](err); ok && (diagnostic.RawRequest != "" || diagnostic.RawResponse != "" || diagnostic.ProcessingLog != "" || diagnostic.StderrTail != "") {
-				_, _ = m.DB.Exec("INSERT INTO events(category,action,entry,run,old_path,message,created,raw_request,raw_response,processing_log) VALUES('failure','automatic',?,?,?,?,?,?,?,?)", it.Entry, run, rel, err.Error(), storage.Now(), diagnostic.RawRequest, diagnostic.RawResponse, diagnostic.ProcessingLog+diagnostic.StderrTail)
-			} else {
-				_ = m.Library.Event("failure", "automatic", it.Entry, 0, run, rel, "", err.Error())
+			if logErr := m.recordFailure("automatic", it.Entry, run, rel, err); logErr != nil {
+				slog.Error("保存视频失败诊断失败", "run", run, "entry", it.Entry, "error", logErr)
 			}
 		}
 		finish("failed", err.Error())

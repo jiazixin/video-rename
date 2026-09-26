@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,56 @@ import (
 	"video-rename/internal/config"
 	"video-rename/internal/domain"
 )
+
+func TestDirectoryScanFailurePersistsDiagnostics(t *testing.T) {
+	m, root := setup(t)
+	path := filepath.Join(root, "folder")
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Library.Refresh(t.Context(), 1); err != nil {
+		t.Fatal(err)
+	}
+	var entry int64
+	if err := m.DB.QueryRow("SELECT id FROM entries WHERE name='folder'").Scan(&entry); err != nil {
+		t.Fatal(err)
+	}
+	id, err := m.Create(Request{Targets: []int64{entry}, Recursive: true, Key: "scan-diagnostics"}, "manual", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.DB.Exec("UPDATE entries SET identity='999:888' WHERE id=?", entry); err != nil {
+		t.Fatal(err)
+	}
+	m.Execute(t.Context(), id)
+	var message, detail, oldPath string
+	if err := m.DB.QueryRow("SELECT message,processing_log,old_path FROM events WHERE run=? AND action='scan'", id).Scan(&message, &detail, &oldPath); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(message, "文件身份已变化") || !strings.Contains(oldPath, "folder") {
+		t.Fatalf("message=%s path=%s", message, oldPath)
+	}
+	for _, want := range []string{path, "999 →", "888 →", "类型：directory"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("missing %q: %s", want, detail)
+		}
+	}
+}
+
+func TestRunFailurePreservesWrappedDiagnostics(t *testing.T) {
+	m, _ := setup(t)
+	cause := &domain.JobError{Code: domain.CodeSourceChanged, Message: "changed", ProcessingLog: "source evidence", RawRequest: "request", RawResponse: "response", StderrTail: "stderr"}
+	if err := m.recordFailure("run", 0, 0, "", fmt.Errorf("scan failed: %w", cause)); err != nil {
+		t.Fatal(err)
+	}
+	var message, detail, request, response string
+	if err := m.DB.QueryRow("SELECT message,processing_log,raw_request,raw_response FROM events WHERE action='run'").Scan(&message, &detail, &request, &response); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(message, "scan failed:") || detail != "source evidencestderr" || request != "request" || response != "response" {
+		t.Fatalf("lost diagnostic: %q %q %q %q", message, detail, request, response)
+	}
+}
 
 func TestSourceChangeWhileWaitingPersistsDiagnostics(t *testing.T) {
 	m, root := setup(t)

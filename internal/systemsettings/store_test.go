@@ -67,6 +67,9 @@ func TestVersionTwelveUpgradePreservesSettingsAndDefaultsWait(t *testing.T) {
 }
 
 func TestFixedPromptDefaultsValidationAndRestart(t *testing.T) {
+	if !strings.Contains(DefaultFixedPrompt, "只回复“命名失败”四个字") || !strings.Contains(DefaultFixedPrompt, "此时不适用上述标题字数要求") {
+		t.Fatal("默认固定提示词必须包含命名失败协议及字数例外")
+	}
 	path := filepath.Join(t.TempDir(), "fixed.sqlite")
 	db, err := storage.Open(path)
 	if err != nil {
