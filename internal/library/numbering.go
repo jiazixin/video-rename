@@ -357,6 +357,23 @@ func numberingMatch(path string, i NumberingItem) bool {
 	s, err := domain.StatSnapshot(path)
 	return err == nil && Identity(s) == i.Identity && s.Size == i.Size && stamp(s) == i.Mtime
 }
+
+func numberingChangedName(path string, changed map[string]bool, name string) bool {
+	if changed[name] {
+		return true
+	}
+	target, err := os.Lstat(filepath.Join(path, name))
+	if err != nil {
+		return false
+	}
+	for old := range changed {
+		candidate, err := os.Lstat(filepath.Join(path, old))
+		if err == nil && os.SameFile(target, candidate) {
+			return true
+		}
+	}
+	return false
+}
 func (l *Library) saveNumberingPreview(b Numbering, path string) (Numbering, error) {
 	label := mediaLabel(b.Media)
 	changed := map[string]bool{}
@@ -386,7 +403,7 @@ func (l *Library) saveNumberingPreview(b Numbering, path string) (Numbering, err
 		}
 		if _, err := os.Lstat(filepath.Join(path, i.New)); err == nil {
 			// Case-only aliases are safe because all changed files first move to temp names.
-			if !changed[i.New] && !numberingMatch(filepath.Join(path, i.New), *i) {
+			if !numberingChangedName(path, changed, i.New) && !numberingMatch(filepath.Join(path, i.New), *i) {
 				return Numbering{}, fmt.Errorf("目标 %s 被未参与本次操作的文件或目录占用", i.New)
 			}
 		} else if !os.IsNotExist(err) {
