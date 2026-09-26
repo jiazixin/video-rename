@@ -6,6 +6,7 @@ import (
 	"cmp"
 	"database/sql"
 	"encoding/json/v2"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -580,7 +581,7 @@ type failureAcc struct {
 
 func sortedProfiles(profiles map[int64]*ProfilePerf) []ProfilePerf {
 	out := make([]ProfilePerf, 0, len(profiles))
-	for _, profile := range profiles {
+	for profile := range maps.Values(profiles) {
 		out = append(out, *profile)
 	}
 	slices.SortFunc(out, func(a, b ProfilePerf) int {
@@ -594,7 +595,7 @@ func sortedProfiles(profiles map[int64]*ProfilePerf) []ProfilePerf {
 
 func sortedFailures(groups map[string]*failureAcc, limit int) []FailureGroup {
 	out := make([]FailureGroup, 0, len(groups))
-	for _, group := range groups {
+	for group := range maps.Values(groups) {
 		out = append(out, FailureGroup{Message: group.message, Count: group.count, LastAt: time.UnixMilli(group.lastMs).UTC().Format(time.RFC3339)})
 	}
 	slices.SortFunc(out, func(a, b FailureGroup) int {

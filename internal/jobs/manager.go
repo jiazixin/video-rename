@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -115,7 +116,7 @@ func New(db *storage.Store, l *library.Library, cfg *config.Config) (*Manager, e
 func (m *Manager) Busy(id int64) bool {
 	m.mu.Lock()
 	var targets []int64
-	for _, r := range m.active {
+	for r := range maps.Values(m.active) {
 		targets = append(targets, r.targets...)
 	}
 	m.mu.Unlock()
@@ -670,8 +671,7 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.C
 			}
 		}
 		finish("failed", err.Error())
-		var je *domain.JobError
-		if (errors.As(err, &je) && je.Global) || m.Library.Halted() {
+		if je, ok := errors.AsType[*domain.JobError](err); (ok && je.Global) || m.Library.Halted() {
 			m.mu.Lock()
 			if r, ok := m.active[run]; ok {
 				r.cancel()

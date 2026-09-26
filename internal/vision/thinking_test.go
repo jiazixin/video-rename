@@ -2,6 +2,7 @@ package vision
 
 import (
 	"encoding/json/v2"
+	"maps"
 	"testing"
 	"video-rename/internal/config"
 )
@@ -34,7 +35,7 @@ func TestThinkingRequestBody(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			for k := range expected {
+			for k := range maps.Keys(expected) {
 				if fields[k] == nil {
 					t.Fatalf("missing %s", k)
 				}

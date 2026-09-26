@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -151,7 +152,7 @@ func validKey(key string) bool {
 func (c *Cache) signal() { close(c.changed); c.changed = make(chan struct{}) }
 func (c *Cache) used() int64 {
 	var n int64
-	for _, r := range c.entries {
+	for r := range maps.Values(c.entries) {
 		n += r.Bytes
 	}
 	return n
@@ -197,7 +198,7 @@ func (c *Cache) remove(r *record) error {
 }
 func (c *Cache) pruneLocked(now time.Time, need int64) error {
 	all := make([]*record, 0, len(c.entries))
-	for _, r := range c.entries {
+	for r := range maps.Values(c.entries) {
 		if r.pins == 0 {
 			all = append(all, r)
 		}

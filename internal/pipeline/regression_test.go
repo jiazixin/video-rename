@@ -281,7 +281,7 @@ func TestGlobalFailureWithInFlightJob(t *testing.T) {
 			makeJPEG(t, fixture, 320, 180)
 			secondStarted := make(chan struct{})
 			stoppedNotice := make(chan struct{})
-			var once sync.Once
+			notifyStopped := sync.OnceFunc(func() { close(stoppedNotice) })
 			var calls atomic.Int32
 			var cancelledRequest atomic.Bool
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -327,7 +327,7 @@ func TestGlobalFailureWithInFlightJob(t *testing.T) {
 			opts.FFmpegPath = fakeFFmpegScript(t, work, fixture)
 			opts.Stderr = notifyWriter(func(p []byte) (int, error) {
 				if strings.Contains(string(p), "全局故障,") {
-					once.Do(func() { close(stoppedNotice) })
+					notifyStopped()
 				}
 				return len(p), nil
 			})

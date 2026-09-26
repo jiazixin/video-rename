@@ -417,10 +417,7 @@ func reportOptions(tx *sql.Tx) (ReportOptions, error) {
 	if err = rows.Err(); err != nil {
 		return ReportOptions{}, err
 	}
-	out := ReportOptions{Models: []OptionModel{}, Profiles: []OptionProfile{}}
-	for _, model := range models {
-		out.Models = append(out.Models, model)
-	}
+	out := ReportOptions{Models: slices.Collect(maps.Values(models)), Profiles: []OptionProfile{}}
 	slices.SortFunc(out.Models, func(a, b OptionModel) int {
 		if c := cmp.Compare(a.Model, b.Model); c != 0 {
 			return c
@@ -436,7 +433,7 @@ func reportOptions(tx *sql.Tx) (ReportOptions, error) {
 
 func sortedModels(models map[string]*ModelGroup) []ModelGroup {
 	out := make([]ModelGroup, 0, len(models))
-	for _, model := range models {
+	for model := range maps.Values(models) {
 		out = append(out, *model)
 	}
 	slices.SortFunc(out, func(a, b ModelGroup) int {
@@ -450,7 +447,7 @@ func sortedModels(models map[string]*ModelGroup) []ModelGroup {
 
 func sortedProfiles(profiles map[int64]*ProfileGroup) []ProfileGroup {
 	out := make([]ProfileGroup, 0, len(profiles))
-	for _, profile := range profiles {
+	for profile := range maps.Values(profiles) {
 		out = append(out, *profile)
 	}
 	slices.SortFunc(out, func(a, b ProfileGroup) int {
@@ -464,7 +461,7 @@ func sortedProfiles(profiles map[int64]*ProfileGroup) []ProfileGroup {
 
 func sortedSources(sources map[string]*SourceGroup) []SourceGroup {
 	out := make([]SourceGroup, 0, len(sources))
-	for _, source := range sources {
+	for source := range maps.Values(sources) {
 		out = append(out, *source)
 	}
 	slices.SortFunc(out, func(a, b SourceGroup) int {
@@ -477,10 +474,7 @@ func sortedSources(sources map[string]*SourceGroup) []SourceGroup {
 }
 
 func sortedBatches(batches map[int64]*batchAcc, sortKey string) []*batchAcc {
-	out := make([]*batchAcc, 0, len(batches))
-	for _, batch := range batches {
-		out = append(out, batch)
-	}
+	out := slices.Collect(maps.Values(batches))
 	slices.SortFunc(out, func(a, b *batchAcc) int {
 		if sortKey == "recent" {
 			if c := cmp.Compare(b.last, a.last); c != 0 {

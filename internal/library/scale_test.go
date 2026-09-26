@@ -39,7 +39,7 @@ func TestScaleDirectoryPagination(t *testing.T) {
 	durations := []time.Duration{}
 	cursor := 0
 	var generation int64
-	for i := range 30 {
+	for range 30 {
 		start = time.Now()
 		p, err := l.List(t.Context(), dir.ID, cursor, 100, generation, "", "", false)
 		if err != nil {

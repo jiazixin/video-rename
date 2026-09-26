@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -84,11 +85,9 @@ func mediaLabel(value string) string {
 // another shape carry no number and join the tail of the sequence.
 func numberedValue(name, prefix string) *big.Int {
 	base := strings.TrimSuffix(name, filepath.Ext(name))
-	if prefix != "" {
-		if !strings.HasPrefix(base, prefix) {
-			return nil
-		}
-		base = base[len(prefix):]
+	base, found := strings.CutPrefix(base, prefix)
+	if !found {
+		return nil
 	}
 	if base == "" {
 		return nil
@@ -366,7 +365,7 @@ func numberingChangedName(path string, changed map[string]bool, name string) boo
 	if err != nil {
 		return false
 	}
-	for old := range changed {
+	for old := range maps.Keys(changed) {
 		candidate, err := os.Lstat(filepath.Join(path, old))
 		if err == nil && os.SameFile(target, candidate) {
 			return true

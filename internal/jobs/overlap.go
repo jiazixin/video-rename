@@ -3,6 +3,7 @@ package jobs
 import (
 	"encoding/json/v2"
 	"fmt"
+	"maps"
 	"slices"
 )
 
@@ -54,7 +55,7 @@ func (m *Manager) checkOverlap(request Request) error {
 		}
 	}
 	entries := make(map[int64]target, len(unique))
-	for id := range unique {
+	for id := range maps.Keys(unique) {
 		var t target
 		if err := m.DB.QueryRow("SELECT id,parent,kind,identity FROM entries WHERE id=? AND present=1", id).Scan(&t.id, &t.parent, &t.kind, &t.identity); err != nil {
 			for _, s := range scopes {

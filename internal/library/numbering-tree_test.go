@@ -2,6 +2,7 @@ package library
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,7 +23,7 @@ func TestNumberingTreeIndexesEveryLevelAndRestores(t *testing.T) {
 		"child/deep/photo.JPG": "child/deep/1.jpg", "child/deep/song.MP3": "child/deep/1.mp3",
 		"sibling/photo.JPG": "sibling/1.jpg", "clip.mp4": "clip.mp4", "notes.txt": "notes.txt",
 	}
-	for name := range files {
+	for name := range maps.Keys(files) {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -64,7 +65,7 @@ func TestNumberingTreeIndexesEveryLevelAndRestores(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for original := range files {
+	for original := range maps.Keys(files) {
 		if _, err := os.Stat(filepath.Join(root, original)); err != nil {
 			t.Fatal(err)
 		}
@@ -94,7 +95,7 @@ func TestNumberingTreeSharedRulesAndChangedDirectory(t *testing.T) {
 	if _, err := l.ApplyNumbering(batches[0].ID); err == nil {
 		t.Fatal("accepted changes after preview")
 	}
-	for name := range want {
+	for name := range maps.Keys(want) {
 		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
 			t.Fatal(err)
 		}

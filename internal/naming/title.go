@@ -5,6 +5,7 @@ package naming
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 	"unicode"
 
@@ -82,7 +83,7 @@ func CleanTitle(raw, ext string) (string, *domain.JobError) {
 
 // hasReservedPrefix 判断 "CON.xxx" 形式。
 func hasReservedPrefix(upper string) bool {
-	for name := range windowsReserved {
+	for name := range maps.Keys(windowsReserved) {
 		if strings.HasPrefix(upper, name+".") {
 			return true
 		}
