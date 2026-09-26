@@ -12,6 +12,7 @@ type DirectoryContents struct {
 	Directories int `json:"directories"`
 	Videos      int `json:"videos"`
 	Images      int `json:"images"`
+	Audio       int `json:"audio"`
 }
 
 func (l *Library) directoryContents(id int64) (*DirectoryContents, error) {
@@ -41,6 +42,8 @@ func (l *Library) directoryContents(id int64) (*DirectoryContents, error) {
 			contents.Videos++
 		case kind == "file" && IsImage(name):
 			contents.Images++
+		case kind == "file" && IsAudio(name):
+			contents.Audio++
 		}
 	}
 	return contents, rows.Err()

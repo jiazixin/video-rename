@@ -7,8 +7,8 @@ button.library-action:hover:not(:disabled){color:var(--action-ink);background:va
 button.library-action:focus-visible{outline:2px solid var(--action-ink);outline-offset:3px}
 button.library-action:disabled{filter:grayscale(.65);opacity:.45}
 .row-actions button.library-action{background:transparent;border-color:transparent;color:var(--action-ink)}
-.directory-run-actions{display:flex;align-items:center;gap:8px}
-.directory-run-actions button{white-space:nowrap;min-height:34px}
-.directory-summary .directory-run-actions{margin-right:6px}
+.directory-mark-actions{align-items:center;justify-content:flex-end;gap:8px;margin-top:0}
+.directory-refresh-summary{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-left:auto;min-width:0;flex-wrap:wrap}
+.directory-refresh-summary>button{flex-shrink:0}
 .batch-divider{width:1px;height:20px;background:var(--line);margin:0 4px;flex-shrink:0}
-@media(max-width:600px){.directory-summary .directory-run-actions{flex-basis:100%;margin-right:0;flex-wrap:wrap}.directory-run-actions button{flex:1;padding:7px 9px;font-size:11px}.batch-divider{display:none}.directory-mark-actions{flex-wrap:wrap}.library-action svg{flex-shrink:0}}
+@media(max-width:600px){.batch-divider{display:none}.directory-mark-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%}.directory-mark-actions button{min-height:44px;padding:7px 9px;font-size:11px}.directory-refresh-summary{width:100%;gap:8px;justify-content:flex-start}.directory-refresh-summary>button{margin-left:auto;min-height:44px}.library-action svg{flex-shrink:0}}

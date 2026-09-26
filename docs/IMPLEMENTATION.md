@@ -66,7 +66,7 @@ GET /api/entries/status?ids=... 返回最多 300 个条目的当前状态（不�
 
 目录 progress 汇总 SQLite 中当前可达的完整子树：total、processed、unknown（未完整索引/扫描失败目录）、active。手动与自动命名、手动状态标记均计入 processed。unknown 非零时不宣称全部已处理；汇总不触发全库磁盘扫描，外部变更在目录扫描后反映。
 
-目录内容列与递归处理进度分别计算：只读取 `directory_state` 当前完整 generation 对应的 `directory_items`，统计该目录的直接子目录、视频和图片；未索引或扫描报错时返回空统计状态，前端显示“待统计”。扫描进行中保留上一次完整索引的数字，完成后由目录列表刷新更新。
+目录内容列与递归处理进度分别计算：只读取 `directory_state` 当前完整 generation 对应的 `directory_items`，统计该目录的直接子目录、视频、图片和音频（`contents.audio`）；未索引或扫描报错时返回空统计状态，前端显示“目录内容待统计”。扫描进行中保留上一次完整索引的数字，完成后由目录列表刷新更新。`DirectoryContents.vue` 统一呈现目录行与刷新按钮前的横向统计条，使用图标、类型标签及等宽数字；统计不受分页、搜索或类型筛选影响。
 
 ## 固定命名失败协议
 

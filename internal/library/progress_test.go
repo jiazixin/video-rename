@@ -54,10 +54,11 @@ func TestDirectoryContentsUseLastCompleteDirectIndex(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(directory, "nested"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"clip.MP4", "photo.JPG", "notes.txt"} {
+	for _, name := range []string{"clip.MP4", "photo.JPG", "song.MP3", "recording.flac", "notes.txt"} {
 		put(t, filepath.Join(directory, name))
 	}
 	put(t, filepath.Join(directory, "nested", "deeper.mp4"))
+	put(t, filepath.Join(directory, "nested", "deeper.mp3"))
 	refresh(t, l, 1)
 	album := entry(t, l, 1, "album")
 	get := func() *DirectoryContents {
@@ -72,15 +73,16 @@ func TestDirectoryContentsUseLastCompleteDirectIndex(t *testing.T) {
 		t.Fatalf("unindexed directory has counts: %+v", c)
 	}
 	refresh(t, l, album.ID)
-	if c := get(); c == nil || c.Directories != 1 || c.Videos != 1 || c.Images != 1 {
+	if c := get(); c == nil || c.Directories != 1 || c.Videos != 1 || c.Images != 1 || c.Audio != 2 {
 		t.Fatalf("direct counts: %+v", c)
 	}
 	put(t, filepath.Join(directory, "new.webp"))
-	if c := get(); c == nil || c.Images != 1 {
+	put(t, filepath.Join(directory, "new.wav"))
+	if c := get(); c == nil || c.Images != 1 || c.Audio != 2 {
 		t.Fatalf("counts changed before refresh: %+v", c)
 	}
 	refresh(t, l, album.ID)
-	if c := get(); c == nil || c.Images != 2 {
+	if c := get(); c == nil || c.Images != 2 || c.Audio != 3 {
 		t.Fatalf("refreshed counts: %+v", c)
 	}
 }
