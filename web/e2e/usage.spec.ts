@@ -97,6 +97,29 @@ test('用量总览、趋势数据表与模型对比',async({page})=>{
  await page.screenshot({path:'test-results/usage-desktop.png',fullPage:true,animations:'disabled'})
 })
 
+test('趋势悬停沿时间轴顺序移动且同一时间点附近保持稳定',async({page})=>{
+ await login(page)
+ await page.route('**/api/usage/analytics*',route=>route.fulfill({json:fixture()}))
+ await page.goto('/#usage')
+ const svg=page.locator('.usage-trend svg')
+ await expect(svg).toBeVisible()
+ const bounds=(await svg.boundingBox())!
+ const plotWidth=bounds.width-62-18
+ for(const i of [0,1,2,3,2,1,0]){
+  for(const offset of [-0.1,0,0.1]){
+   const x=Math.max(0,Math.min(plotWidth,plotWidth*(i+offset)/3))
+   await page.mouse.move(bounds.x+62+x,bounds.y+100)
+   await expect(page.locator('.trend-tooltip strong')).toHaveText(`${[0,1200,0,3500][i]!.toLocaleString()} token`)
+   await expect(page.locator('.crosshair')).toHaveAttribute('x1',String(62+plotWidth*i/3))
+  }
+ }
+ await svg.focus()
+ await page.keyboard.press('ArrowRight')
+ await expect(page.locator('.trend-tooltip strong')).toHaveText('1,200 token')
+ await page.keyboard.press('Escape')
+ await expect(page.locator('.trend-tooltip')).toHaveCount(0)
+})
+
 test('高消耗批次、明细、筛选与分页请求',async({page})=>{
  await login(page)
  const data=fixture()

@@ -21,11 +21,10 @@ const types=[
 </template>
 
 <style scoped>
-.directory-contents{display:inline-flex;align-items:center;gap:0;max-width:100%;padding:6px 2px;border:1px solid #e4e7eb;border-radius:8px;background:#f8fafb;vertical-align:middle}
-.content-stat{display:inline-flex;align-items:center;gap:5px;padding:0 9px;white-space:nowrap;font-size:11px;line-height:18px;color:#60646c}
-.content-stat+.content-stat{border-left:1px solid #e0e5e9}
+.directory-contents{display:inline-grid;grid-template-columns:repeat(2,max-content);align-items:center;gap:3px 12px;max-width:100%;vertical-align:middle}
+.content-stat{display:flex;align-items:center;gap:4px;white-space:nowrap;font-size:11px;line-height:18px;color:#60646c}
+.content-stat strong{margin-left:auto}
 .content-stat strong{font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;color:#303940}
 .directories svg{color:#657b6c}.videos svg{color:#366ba0}.images svg{color:#785ba0}.audio svg{color:#896018}
 .contents-pending{font-size:11px;color:var(--steel);white-space:nowrap}
-@media(max-width:600px){.directory-contents{flex-wrap:wrap;row-gap:6px}.content-stat{padding:0 7px}}
 </style>

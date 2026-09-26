@@ -12,7 +12,7 @@ const maxY=computed(()=>niceCeil(Math.max(1,...props.points.map(p=>p.ms))))
 const yTicks=computed(()=>{const out:number[]=[];for(let i=0;i<=4;i++)out.push(maxY.value*i/4);return out.reverse()})
 const xTicks=computed(()=>{const out:number[]=[];for(let i=0;i<=4;i++)out.push(maxX.value*i/4);return out})
 const placed=computed(()=>{const{w,h}=inner();return props.points.map((p,i)=>({...p,i,x:pad.left+(p.items/maxX.value)*w,y:pad.top+h-(p.ms/maxY.value)*h}))})
-function pick(event:PointerEvent){const rect=(event.currentTarget as SVGRectElement).getBoundingClientRect();const x=event.clientX-rect.left,y=event.clientY-rect.top;let best=-1,bestDist=Infinity;for(const p of placed.value){const d=(p.x-x)**2+(p.y-y)**2;if(d<bestDist){bestDist=d;best=p.i}}active.value=best}
+function pick(event:PointerEvent){const rect=(event.currentTarget as SVGRectElement).getBoundingClientRect();const x=pad.left+(event.clientX-rect.left)*inner().w/rect.width,y=pad.top+(event.clientY-rect.top)*inner().h/rect.height;let best=-1,bestDist=Infinity;for(const p of placed.value){const d=(p.x-x)**2+(p.y-y)**2;if(d<bestDist){bestDist=d;best=p.i}}active.value=best}
 function keys(event:KeyboardEvent){if(event.key==='Escape'){active.value=-1;return}if(event.key!=='ArrowLeft'&&event.key!=='ArrowRight')return;event.preventDefault();if(!props.points.length)return;active.value=active.value<0?event.key==='ArrowLeft'?props.points.length-1:0:Math.max(0,Math.min(props.points.length-1,active.value+(event.key==='ArrowRight'?1:-1)))}
 const tooltipStyle=computed(()=>{const p=placed.value[active.value];if(!p)return {};return {left:`${Math.max(0,Math.min(width.value-210,p.x-105))}px`,top:`${Math.max(0,p.y-84)}px`}})
 function resize(){const el=box.value;if(el)width.value=Math.max(320,el.clientWidth)}
