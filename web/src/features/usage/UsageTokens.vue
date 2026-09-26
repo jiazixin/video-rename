@@ -34,6 +34,9 @@ function rangeTimes():{from?:string;to:string}|string{
  return {from:from.toISOString(),to:now.toISOString()}
 }
 async function load(){
+ const mine=++seq
+ controller?.abort()
+ loading.value=false
  const range=rangeTimes()
  if(typeof range==='string'){error.value=range;return}
  const params=new URLSearchParams({to:range.to,timezone})
@@ -44,9 +47,7 @@ async function load(){
  if(run.value)params.set('run',String(run.value))
  params.set('sort',sort.value)
  params.set('page',String(page.value))
- controller?.abort()
  controller=new AbortController()
- const mine=++seq
  loading.value=true
  try{
   const data=await api<UsageReport>(`/usage/analytics?${params.toString()}`,'GET',undefined,controller.signal)
@@ -62,7 +63,7 @@ function reset(){preset.value='24h';fromDate.value=fromTime.value=toDate.value=t
 function focusBatch(id:number){run.value=id;page.value=1}
 watch([preset,model,profile,source,run,sort],()=>{page.value=1;load()})
 watch(page,()=>load())
-onUnmounted(()=>controller?.abort())
+onUnmounted(()=>{seq++;controller?.abort()})
 load()
 const totals=computed(()=>report.value?.totals)
 const average=computed(()=>totals.value&&totals.value.records?totals.value.tokens/totals.value.records:0)
@@ -105,7 +106,6 @@ const hasData=computed(()=>!!totals.value&&totals.value.records>0)
   </div>
   <p class="help usage-notes">
    {{rangeText}} · 按{{intervalNames[report.range.interval]||report.range.interval}}分桶（{{report.range.timezone}}）。
-   <template v-if="totals?.legacy_records">其中 {{totals.legacy_records.toLocaleString()}} 条为升级前的批次汇总，按批次时间归属，无法精确到请求时刻。</template>
    文字粗估不含图片 token；未记录的内部重试和模型测试不计入。
   </p>
   <div class="usage-stack">
@@ -115,8 +115,8 @@ const hasData=computed(()=>!!totals.value&&totals.value.records>0)
    <details class="usage-table-toggle">
     <summary>数据表</summary>
     <div class="table-scroll"><table class="usage-trend-table">
-     <thead><tr><th>时间段</th><th>token</th><th>请求</th><th>粗估</th><th>历史汇总</th></tr></thead>
-     <tbody><tr v-for="b in report.trend" :key="b.from"><td class="date-cell"><span class="date-time-range"><DateTime :value="b.from"/><span>至</span><DateTime :value="b.to"/></span></td><td>{{b.tokens.toLocaleString()}}</td><td>{{b.records.toLocaleString()}}</td><td>{{b.estimated_records||'—'}}</td><td>{{b.legacy_records||'—'}}</td></tr></tbody>
+     <thead><tr><th>时间段</th><th>token</th><th>请求</th><th>粗估</th></tr></thead>
+     <tbody><tr v-for="b in report.trend" :key="b.from"><td class="date-cell"><span class="date-time-range"><DateTime :value="b.from"/><span>至</span><DateTime :value="b.to"/></span></td><td>{{b.tokens.toLocaleString()}}</td><td>{{b.records.toLocaleString()}}</td><td>{{b.estimated_records||'—'}}</td></tr></tbody>
     </table></div>
    </details>
   </div>
@@ -166,7 +166,7 @@ const hasData=computed(()=>!!totals.value&&totals.value.records>0)
      <td><span class="table-model" :title="[b.provider,b.protocol,b.model].filter(Boolean).join(' · ')">{{b.model||'未记录模型'}}</span></td>
      <td class="subtle">{{b.source==='manual'?'手动':'自动计划'}}</td>
      <td><StatusBadge :status="b.status">{{statusNames[b.status]||b.status}}</StatusBadge></td>
-     <td>{{b.records.toLocaleString()}}<template v-if="b.legacy_records"> <small class="subtle">含汇总 {{b.legacy_records}}</small></template></td>
+     <td>{{b.records.toLocaleString()}}</td>
      <td class="run-tokens" :title="b.tokens.toLocaleString()">{{tokens(b.tokens)}}</td>
      <td class="subtle run-tokens" :title="`批次累计 ${b.lifetime_tokens.toLocaleString()} token / ${b.lifetime_records} 条`">{{tokens(b.lifetime_tokens)}}</td>
      <td class="subtle date-cell"><DateTime :value="b.last_recorded_at"/></td>

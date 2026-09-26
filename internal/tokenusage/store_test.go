@@ -60,12 +60,12 @@ func TestRecordWritesLedgerAndAggregateOnce(t *testing.T) {
 	if tokens != 120 || records != 1 || estimated != 0 {
 		t.Fatal("aggregate mismatch", tokens, records, estimated)
 	}
-	var ledgerTokens, ledgerRecords, ledgerEstimated, legacy int
-	if err := db.QueryRow("SELECT tokens,records,estimated_records,legacy FROM token_usage_records WHERE run=7 AND item=101").Scan(&ledgerTokens, &ledgerRecords, &ledgerEstimated, &legacy); err != nil {
+	var ledgerTokens, ledgerRecords, ledgerEstimated int
+	if err := db.QueryRow("SELECT tokens,records,estimated_records FROM token_usage_records WHERE run=7 AND item=101").Scan(&ledgerTokens, &ledgerRecords, &ledgerEstimated); err != nil {
 		t.Fatal(err)
 	}
-	if ledgerTokens != 120 || ledgerRecords != 1 || ledgerEstimated != 0 || legacy != 0 {
-		t.Fatal("ledger mismatch", ledgerTokens, ledgerRecords, ledgerEstimated, legacy)
+	if ledgerTokens != 120 || ledgerRecords != 1 || ledgerEstimated != 0 {
+		t.Fatal("ledger mismatch", ledgerTokens, ledgerRecords, ledgerEstimated)
 	}
 	var recordedAt int64
 	if err := db.QueryRow("SELECT recorded_at FROM token_usage_records WHERE item=101").Scan(&recordedAt); err != nil || recordedAt != at.UnixMilli() {

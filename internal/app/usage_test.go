@@ -26,7 +26,7 @@ func usageApp(t *testing.T) *App {
 	if _, err := a.DB.Exec(`INSERT INTO run_items(id,run,entry,identity,size,mtime) VALUES(1,1,500,'i',1,'m')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.DB.Exec(`INSERT INTO token_usage_records(run,item,recorded_at,tokens,records,estimated_records,legacy) VALUES(1,1,?,?,1,0,0)`, base.UnixMilli(), int64(120)); err != nil {
+	if _, err := a.DB.Exec(`INSERT INTO token_usage_records(run,item,recorded_at,tokens,records,estimated_records) VALUES(1,1,?,?,1,0)`, base.UnixMilli(), int64(120)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.DB.Exec(`INSERT INTO run_token_usage(run,token_count,token_records,token_estimated_records) VALUES(1,120,1,0)`); err != nil {

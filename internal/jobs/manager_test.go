@@ -450,3 +450,36 @@ func TestRunItemsRecordProcessingTiming(t *testing.T) {
 		t.Fatalf("scan skip should record only completion: started=%d finished=%d", started, finished)
 	}
 }
+
+func TestRestartFinalizesPendingItems(t *testing.T) {
+	m, root := setup(t)
+	if err := os.WriteFile(filepath.Join(root, "clip.mp4"), []byte("video"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	id, err := m.Create(Request{Task: "extract", Targets: []int64{1}, Key: "restart-test"}, "manual", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := m.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = m.scan(t.Context(), run, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = m.DB.Exec("UPDATE runs SET status='running' WHERE id=?; UPDATE run_items SET status='running',started_ms=123 WHERE run=?", id, id); err != nil {
+		t.Fatal(err)
+	}
+	if err = interruptRuns(m.DB); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	var finished int64
+	if err = m.DB.QueryRow("SELECT status,finished_ms FROM run_items WHERE run=?", id).Scan(&status, &finished); err != nil || status != "cancelled" || finished <= 123 {
+		t.Fatal(status, finished, err)
+	}
+	run, err = m.Get(id)
+	if err != nil || run.Status != "interrupted" {
+		t.Fatal(run, err)
+	}
+}

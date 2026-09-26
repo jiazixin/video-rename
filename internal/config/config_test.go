@@ -62,11 +62,6 @@ func TestLoadMinimalAppliesDefaults(t *testing.T) {
 		t.Errorf("images 默认值异常: %+v", cfg.Images)
 	}
 
-	// logging.dir 默认 ./logs,相对配置文件目录解析
-	want := filepath.Join(cfg.ConfigDir, "logs")
-	if cfg.ResolvedLoggingDir != want {
-		t.Errorf("logging 目录 = %q, 期望 %q", cfg.ResolvedLoggingDir, want)
-	}
 }
 
 func TestLoadFullExample(t *testing.T) {
@@ -216,36 +211,6 @@ func TestImagesValidation(t *testing.T) {
 	}
 }
 
-func TestLoggingDirResolution(t *testing.T) {
-	dir := t.TempDir()
-	sub := filepath.Join(dir, "sub")
-	if err := os.Mkdir(sub, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(sub, "config.yaml")
-	if err := os.WriteFile(path, []byte(minimalYAML+"logging:\n  dir: \"../out\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.ResolvedLoggingDir != filepath.Join(dir, "out") {
-		t.Errorf("相对目录解析错误: %q", cfg.ResolvedLoggingDir)
-	}
-	// 绝对路径保持
-	if err := os.WriteFile(path, []byte(minimalYAML+"logging:\n  dir: \"/tmp/vr-logs\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err = Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.ResolvedLoggingDir != "/tmp/vr-logs" {
-		t.Errorf("绝对目录应保持: %q", cfg.ResolvedLoggingDir)
-	}
-}
-
 func TestMissingFileAndEmptyPath(t *testing.T) {
 	if _, err := Load(""); err == nil {
 		t.Error("空路径应报错")
@@ -306,5 +271,11 @@ func TestMediaPathConfigKey(t *testing.T) {
 	}
 	if _, err := loadTemp(t, "path: /srv/videos\n", "config.yaml"); err == nil {
 		t.Fatal("旧 path 字段应被拒绝")
+	}
+}
+
+func TestRejectMultipleConfigurationDocuments(t *testing.T) {
+	if _, err := loadTemp(t, "port: 8790\n---\nport: 9999\n", "config.yaml"); err == nil {
+		t.Fatal("second configuration document silently ignored")
 	}
 }

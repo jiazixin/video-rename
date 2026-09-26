@@ -10,7 +10,7 @@ export function key(): string {
 }
 export async function api<T=any>(path:string,method='GET',body?:unknown,signal?:AbortSignal):Promise<T>{
  const response=await fetch(`/api${path}`,{method,signal,headers:{'Content-Type':'application/json',...(session.value?{'X-CSRF-Token':session.value.csrf}:{})},credentials:'same-origin',...(body===undefined?{}:{body:JSON.stringify(body)})})
- const data=await response.json().catch((error)=>{if(signal?.aborted)throw error;return {message:'服务响应异常'}})
+ const data=await response.json().catch((error)=>{if(signal?.aborted)throw error;throw new Error('服务响应异常，请重试')})
  if(!response.ok){if(response.status===401)session.value=null;throw new Error(data.message||'请求失败')}
  return data
 }
@@ -28,14 +28,14 @@ export const actionNames:Record<string,string>={manual:'手动命名',automatic:
 
 export interface ModelProfile {workers:number;thinking:string;thinking_adapter:string;thinking_effort:string;thinking_budget:number;provider:string;protocol:string;base_url:string;model:string;timeout:string;temperature:number;max_tokens:number;omit_temperature:boolean;has_api_key:boolean;ready:boolean;is_default:boolean;id:number;title:string;prompt_id:number;prompt_title:string;body:string;version:number;created:string;updated:string}
 export interface PromptProfile {id:number;title:string;body:string;version:number;created:string;updated:string}
-export interface UsageTotals {tokens:number;records:number;estimated_records:number;legacy_records:number;batches:number}
-export interface UsageBucket {from:string;to:string;tokens:number;records:number;estimated_records:number;legacy_records:number}
-export interface UsageModel {key:string;model:string;provider:string;protocol:string;tokens:number;records:number;estimated_records:number;legacy_records:number;batches:number}
-export interface UsageProfile {id:number;title:string;tokens:number;records:number;estimated_records:number;legacy_records:number;batches:number}
-export interface UsageSource {key:string;tokens:number;records:number;estimated_records:number;legacy_records:number;batches:number}
-export interface UsageBatch {id:number;model:string;provider:string;protocol:string;profile_id:number;profile_title:string;source:string;status:string;created:string;started:string;finished:string;tokens:number;records:number;estimated_records:number;legacy_records:number;lifetime_tokens:number;lifetime_records:number;last_recorded_at:string}
+export interface UsageTotals {tokens:number;records:number;estimated_records:number;batches:number}
+export interface UsageBucket {from:string;to:string;tokens:number;records:number;estimated_records:number}
+export interface UsageModel {key:string;model:string;provider:string;protocol:string;tokens:number;records:number;estimated_records:number;batches:number}
+export interface UsageProfile {id:number;title:string;tokens:number;records:number;estimated_records:number;batches:number}
+export interface UsageSource {key:string;tokens:number;records:number;estimated_records:number;batches:number}
+export interface UsageBatch {id:number;model:string;provider:string;protocol:string;profile_id:number;profile_title:string;source:string;status:string;created:string;started:string;finished:string;tokens:number;records:number;estimated_records:number;lifetime_tokens:number;lifetime_records:number;last_recorded_at:string}
 export interface UsageReport {range:{from:string;to:string;timezone:string;interval:string};totals:UsageTotals;trend:UsageBucket[];models:UsageModel[];profiles:UsageProfile[];sources:UsageSource[];top_batches:UsageBatch[];batches:{items:UsageBatch[];total:number;page:number;size:number};options:{models:{key:string;model:string;provider:string;protocol:string}[];profiles:{id:number;title:string}[]}}
-export interface AnalysisTotals {batches:number;completed:number;partial_failure:number;failed_batches:number;cancelled:number;interrupted:number;active:number;done:number;skipped:number;failed:number;timed_items:number;legacy_items:number;avg_batch_ms:number;avg_item_ms:number;p50_item_ms:number;p95_item_ms:number;throughput_per_hour:number}
+export interface AnalysisTotals {batches:number;completed:number;partial_failure:number;failed_batches:number;cancelled:number;interrupted:number;active:number;done:number;skipped:number;failed:number;timed_items:number;avg_batch_ms:number;avg_item_ms:number;p50_item_ms:number;p95_item_ms:number;throughput_per_hour:number}
 export interface AnalysisBucket {from:string;to:string;finished_batches:number;avg_batch_ms:number;done:number;skipped:number;failed:number}
 export interface AnalysisDist {label:string;count:number}
 export interface AnalysisProfile {id:number;title:string;model:string;provider:string;protocol:string;batches:number;done:number;skipped:number;failed:number;avg_item_ms:number;p50_item_ms:number;p95_item_ms:number;throughput_per_hour:number}

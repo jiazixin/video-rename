@@ -66,6 +66,7 @@ func (a *App) runsAnalytics(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			v.Profile = parsed
+			v.ProfileSet = true
 		},
 		"page": func(value string) {
 			parsed, err := strconv.Atoi(value)

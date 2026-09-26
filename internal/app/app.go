@@ -106,6 +106,19 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 func number(s string) int64 { n, _ := strconv.ParseInt(s, 10, 64); return n }
+
+// creationOrUpdateID keeps malformed PATCH paths from becoming creates (ID 0).
+func creationOrUpdateID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	if r.Method == http.MethodPost {
+		return 0, true
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		send(w, http.StatusBadRequest, map[string]string{"message": "记录编号无效"})
+		return 0, false
+	}
+	return id, true
+}
 func (a *App) Handler() http.Handler {
 	api := http.NewServeMux()
 	a.modelRoutes(api)
@@ -316,7 +329,11 @@ func (a *App) Handler() http.Handler {
 		if !decode(w, r, &p) {
 			return
 		}
-		p.ID = number(r.PathValue("id"))
+		id, ok := creationOrUpdateID(w, r)
+		if !ok {
+			return
+		}
+		p.ID = id
 		v, err := a.Scheduler.Save(p)
 		if err != nil {
 			failure(w, err)

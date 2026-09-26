@@ -6,8 +6,10 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 	_ "time/tzdata"
+	"unicode/utf8"
 
 	"video-rename/internal/jobs"
 	"video-rename/internal/models"
@@ -33,6 +35,7 @@ type Plan struct {
 	Version       int64    `json:"version"`
 }
 type Scheduler struct {
+	mu   sync.Mutex
 	DB   *storage.Store
 	Jobs *jobs.Manager
 }
@@ -126,7 +129,10 @@ func (s *Scheduler) Get(id int64) (Plan, error) {
 	return p, err
 }
 func (s *Scheduler) Save(p Plan) (Plan, error) {
-	if strings.TrimSpace(p.Name) == "" || len(p.Name) > 160 || len(p.Targets) == 0 || len(p.Targets) > 100 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p.Name = strings.TrimSpace(p.Name)
+	if p.Name == "" || utf8.RuneCountInString(p.Name) > 80 || len(p.Targets) == 0 || len(p.Targets) > 100 {
 		return p, fmt.Errorf("请填写名称并选择目录")
 	}
 	if p.Task == "" {
@@ -171,21 +177,35 @@ func (s *Scheduler) Save(p Plan) (Plan, error) {
 	}
 	p.Next = next[0]
 	raw, _ := json.Marshal(p.Targets)
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return p, err
+	}
+	defer tx.Rollback()
+	if p.Task == "rename" {
+		var exists bool
+		if err = tx.QueryRow("SELECT EXISTS(SELECT 1 FROM model_configs WHERE id=?)", p.ModelConfigID).Scan(&exists); err != nil {
+			return p, err
+		}
+		if !exists {
+			return p, fmt.Errorf("模型配置已删除，请重新选择")
+		}
+	}
 	if p.ID == 0 {
 		var n int
-		if err = s.DB.QueryRow("SELECT count(*) FROM schedules").Scan(&n); err != nil {
+		if err = tx.QueryRow("SELECT count(*) FROM schedules").Scan(&n); err != nil {
 			return p, err
 		}
 		if n >= 100 {
 			return p, fmt.Errorf("最多支持 100 条计划")
 		}
-		res, err := s.DB.Exec("INSERT INTO schedules(name,targets,recursive,kind,expression,timezone,enabled,next,model_config_id,task) VALUES(?,?,?,?,?,?,?,?,?,?)", p.Name, string(raw), p.Recursive, p.Kind, p.Expression, p.Timezone, p.Enabled, p.Next, p.ModelConfigID, p.Task)
+		res, err := tx.Exec("INSERT INTO schedules(name,targets,recursive,kind,expression,timezone,enabled,next,model_config_id,task) VALUES(?,?,?,?,?,?,?,?,?,?)", p.Name, string(raw), p.Recursive, p.Kind, p.Expression, p.Timezone, p.Enabled, p.Next, p.ModelConfigID, p.Task)
 		if err != nil {
 			return p, err
 		}
 		p.ID, _ = res.LastInsertId()
 	} else {
-		res, err := s.DB.Exec("UPDATE schedules SET name=?,targets=?,recursive=?,kind=?,expression=?,timezone=?,enabled=?,next=?,model_config_id=?,task=?,version=version+1 WHERE id=? AND version=?", p.Name, string(raw), p.Recursive, p.Kind, p.Expression, p.Timezone, p.Enabled, p.Next, p.ModelConfigID, p.Task, p.ID, p.Version)
+		res, err := tx.Exec("UPDATE schedules SET name=?,targets=?,recursive=?,kind=?,expression=?,timezone=?,enabled=?,next=?,model_config_id=?,task=?,version=version+1 WHERE id=? AND version=?", p.Name, string(raw), p.Recursive, p.Kind, p.Expression, p.Timezone, p.Enabled, p.Next, p.ModelConfigID, p.Task, p.ID, p.Version)
 		if err != nil {
 			return p, err
 		}
@@ -194,15 +214,22 @@ func (s *Scheduler) Save(p Plan) (Plan, error) {
 			return p, fmt.Errorf("计划已被修改，请刷新")
 		}
 	}
+	if err = tx.Commit(); err != nil {
+		return p, err
+	}
 	return s.Get(p.ID)
 }
 func (s *Scheduler) Delete(id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	_, err := s.DB.Exec("DELETE FROM schedules WHERE id=?", id)
 	return err
 }
 
 // ResetNext deliberately does not catch up missed runs on service restart.
 func (s *Scheduler) ResetNext(now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	plans, err := s.list(false)
 	if err != nil {
 		return err
@@ -219,6 +246,8 @@ func (s *Scheduler) ResetNext(now time.Time) error {
 	return nil
 }
 func (s *Scheduler) Tick(now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	plans, err := s.list(false)
 	if err != nil {
 		return err

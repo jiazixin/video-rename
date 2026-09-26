@@ -49,7 +49,6 @@ type ReportTotals struct {
 	Tokens           int64 `json:"tokens"`
 	Records          int64 `json:"records"`
 	EstimatedRecords int64 `json:"estimated_records"`
-	LegacyRecords    int64 `json:"legacy_records"`
 	Batches          int64 `json:"batches"`
 }
 type TrendBucket struct {
@@ -58,7 +57,6 @@ type TrendBucket struct {
 	Tokens           int64  `json:"tokens"`
 	Records          int64  `json:"records"`
 	EstimatedRecords int64  `json:"estimated_records"`
-	LegacyRecords    int64  `json:"legacy_records"`
 }
 type ModelGroup struct {
 	Key              string `json:"key"`
@@ -68,7 +66,6 @@ type ModelGroup struct {
 	Tokens           int64  `json:"tokens"`
 	Records          int64  `json:"records"`
 	EstimatedRecords int64  `json:"estimated_records"`
-	LegacyRecords    int64  `json:"legacy_records"`
 	Batches          int64  `json:"batches"`
 }
 type ProfileGroup struct {
@@ -77,7 +74,6 @@ type ProfileGroup struct {
 	Tokens           int64  `json:"tokens"`
 	Records          int64  `json:"records"`
 	EstimatedRecords int64  `json:"estimated_records"`
-	LegacyRecords    int64  `json:"legacy_records"`
 	Batches          int64  `json:"batches"`
 }
 type SourceGroup struct {
@@ -85,7 +81,6 @@ type SourceGroup struct {
 	Tokens           int64  `json:"tokens"`
 	Records          int64  `json:"records"`
 	EstimatedRecords int64  `json:"estimated_records"`
-	LegacyRecords    int64  `json:"legacy_records"`
 	Batches          int64  `json:"batches"`
 }
 type Batch struct {
@@ -103,7 +98,6 @@ type Batch struct {
 	Tokens           int64  `json:"tokens"`
 	Records          int64  `json:"records"`
 	EstimatedRecords int64  `json:"estimated_records"`
-	LegacyRecords    int64  `json:"legacy_records"`
 	LifetimeTokens   int64  `json:"lifetime_tokens"`
 	LifetimeRecords  int64  `json:"lifetime_records"`
 	LastRecordedAt   string `json:"last_recorded_at"`
@@ -139,10 +133,10 @@ type runMeta struct {
 
 // batchAcc accumulates one run's in-range usage while scanning the ledger.
 type batchAcc struct {
-	id                                       int64
-	meta                                     runMeta
-	status, created, started, finished       string
-	tokens, records, estimated, legacy, last int64
+	id                                 int64
+	meta                               runMeta
+	status, created, started, finished string
+	tokens, records, estimated, last   int64
 }
 
 func modelKey(provider, protocol, model string) string {
@@ -188,7 +182,7 @@ func Analytics(db *storage.Store, q AnalyticsQuery) (*Report, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT r.run,r.recorded_at,r.tokens,r.records,r.estimated_records,r.legacy,u.source,u.plan,u.config_summary,u.model_config_id,u.model_config_title,u.status,u.created,u.started,u.finished
+	rows, err := tx.Query(`SELECT r.run,r.recorded_at,r.tokens,r.records,r.estimated_records,u.source,u.plan,u.config_summary,u.model_config_id,u.model_config_title,u.status,u.created,u.started,u.finished
 FROM token_usage_records r JOIN runs u ON u.id=r.run
 WHERE r.recorded_at>=? AND r.recorded_at<? ORDER BY r.recorded_at,r.id`, q.From, q.To)
 	if err != nil {
@@ -201,14 +195,14 @@ WHERE r.recorded_at>=? AND r.recorded_at<? ORDER BY r.recorded_at,r.id`, q.From,
 	sources := map[string]*SourceGroup{}
 	batches := map[int64]*batchAcc{}
 	type sample struct {
-		at, tokens, records, estimated, legacy int64
+		at, tokens, records, estimated int64
 	}
 	var samples []sample
 	var totals ReportTotals
 	for rows.Next() {
-		var run, recordedAt, tokens, records, estimated, legacy, plan, profileID int64
+		var run, recordedAt, tokens, records, estimated, plan, profileID int64
 		var source, summary, profileTitle, status, created, started, finished string
-		if err = rows.Scan(&run, &recordedAt, &tokens, &records, &estimated, &legacy, &source, &plan, &summary, &profileID, &profileTitle, &status, &created, &started, &finished); err != nil {
+		if err = rows.Scan(&run, &recordedAt, &tokens, &records, &estimated, &source, &plan, &summary, &profileID, &profileTitle, &status, &created, &started, &finished); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -220,10 +214,7 @@ WHERE r.recorded_at>=? AND r.recorded_at<? ORDER BY r.recorded_at,r.id`, q.From,
 		totals.Tokens += tokens
 		totals.Records += counted
 		totals.EstimatedRecords += estimated
-		if legacy > 0 {
-			totals.LegacyRecords += counted
-		}
-		samples = append(samples, sample{at: recordedAt, tokens: tokens, records: counted, estimated: estimated, legacy: legacy})
+		samples = append(samples, sample{at: recordedAt, tokens: tokens, records: counted, estimated: estimated})
 		model := models[meta.key]
 		if model == nil {
 			model = &ModelGroup{Key: meta.key, Model: meta.model, Provider: meta.provider, Protocol: meta.protocol}
@@ -257,17 +248,9 @@ WHERE r.recorded_at>=? AND r.recorded_at<? ORDER BY r.recorded_at,r.id`, q.From,
 		origin.Tokens += tokens
 		origin.Records += counted
 		origin.EstimatedRecords += estimated
-		if legacy > 0 {
-			model.LegacyRecords += counted
-			profile.LegacyRecords += counted
-			origin.LegacyRecords += counted
-		}
 		batch.tokens += tokens
 		batch.records += counted
 		batch.estimated += estimated
-		if legacy > 0 {
-			batch.legacy += counted
-		}
 		if recordedAt > batch.last {
 			batch.last = recordedAt
 		}
@@ -301,9 +284,6 @@ WHERE r.recorded_at>=? AND r.recorded_at<? ORDER BY r.recorded_at,r.id`, q.From,
 		bucket.Tokens += s.tokens
 		bucket.Records += s.records
 		bucket.EstimatedRecords += s.estimated
-		if s.legacy > 0 {
-			bucket.LegacyRecords += s.records
-		}
 	}
 	options, err := reportOptions(tx)
 	if err != nil {
@@ -328,14 +308,15 @@ WHERE r.recorded_at>=? AND r.recorded_at<? ORDER BY r.recorded_at,r.id`, q.From,
 	ordered := sortedBatches(batches, q.Sort)
 	report.Batches.Total = len(ordered)
 	displayed := map[int64]bool{}
-	for i, acc := range ordered {
+	for i, acc := range sortedBatches(batches, "tokens") {
 		if i == 10 {
 			break
 		}
 		report.TopBatches = append(report.TopBatches, newBatch(acc))
 		displayed[acc.id] = true
 	}
-	start := (q.Page - 1) * q.Size
+	report.Batches.Page = min(q.Page, max(1, (len(ordered)+q.Size-1)/q.Size))
+	start := (report.Batches.Page - 1) * q.Size
 	for i := start; i < len(ordered) && i < start+q.Size; i++ {
 		if !displayed[ordered[i].id] {
 			displayed[ordered[i].id] = true
@@ -358,7 +339,7 @@ WHERE r.recorded_at>=? AND r.recorded_at<? ORDER BY r.recorded_at,r.id`, q.From,
 }
 
 func newBatch(acc *batchAcc) Batch {
-	return Batch{ID: acc.id, Model: acc.meta.model, Provider: acc.meta.provider, Protocol: acc.meta.protocol, ProfileID: acc.meta.profileID, ProfileTitle: acc.meta.profileTitle, Source: acc.meta.source, Status: acc.status, Created: acc.created, Started: acc.started, Finished: acc.finished, Tokens: acc.tokens, Records: acc.records, EstimatedRecords: acc.estimated, LegacyRecords: acc.legacy, LastRecordedAt: time.UnixMilli(acc.last).UTC().Format(time.RFC3339)}
+	return Batch{ID: acc.id, Model: acc.meta.model, Provider: acc.meta.provider, Protocol: acc.meta.protocol, ProfileID: acc.meta.profileID, ProfileTitle: acc.meta.profileTitle, Source: acc.meta.source, Status: acc.status, Created: acc.created, Started: acc.started, Finished: acc.finished, Tokens: acc.tokens, Records: acc.records, EstimatedRecords: acc.estimated, LastRecordedAt: time.UnixMilli(acc.last).UTC().Format(time.RFC3339)}
 }
 
 // lifetimeUsage reads the run aggregates for the displayed batches. They cover
@@ -557,7 +538,7 @@ func (b bucketing) series(from, to int64, trend map[int64]*TrendBucket) []TrendB
 	for cursor, guard := b.start(from), 0; cursor <= end && guard < 2000; cursor, guard = b.next(cursor), guard+1 {
 		bucket := TrendBucket{From: time.UnixMilli(cursor).In(b.loc).Format(time.RFC3339), To: time.UnixMilli(b.next(cursor)).In(b.loc).Format(time.RFC3339)}
 		if filled, ok := trend[cursor]; ok {
-			bucket.Tokens, bucket.Records, bucket.EstimatedRecords, bucket.LegacyRecords = filled.Tokens, filled.Records, filled.EstimatedRecords, filled.LegacyRecords
+			bucket.Tokens, bucket.Records, bucket.EstimatedRecords = filled.Tokens, filled.Records, filled.EstimatedRecords
 		}
 		out = append(out, bucket)
 	}

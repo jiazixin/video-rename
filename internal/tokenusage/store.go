@@ -26,7 +26,7 @@ func Record(db *storage.Store, run, item int64, request, response string, at tim
 		return err
 	}
 	defer tx.Rollback()
-	inserted, err := tx.Exec(`INSERT INTO token_usage_records(run,item,recorded_at,tokens,records,estimated_records,legacy) VALUES(?,?,?,?,1,?,0) ON CONFLICT(item) DO NOTHING`, run, item, at.UnixMilli(), tokens, rough)
+	inserted, err := tx.Exec(`INSERT INTO token_usage_records(run,item,recorded_at,tokens,records,estimated_records) VALUES(?,?,?,?,1,?) ON CONFLICT(item) DO NOTHING`, run, item, at.UnixMilli(), tokens, rough)
 	if err != nil {
 		return err
 	}

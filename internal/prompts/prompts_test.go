@@ -70,7 +70,7 @@ func TestDeleteGuardedByModelConfigs(t *testing.T) {
 	if err = s.Delete(p.ID, p.Version); err == nil || !strings.Contains(err.Error(), "1 个模型配置") {
 		t.Fatal("referenced prompt deleted", err)
 	}
-	if _, err = db.Exec("UPDATE model_configs SET prompt_id=0"); err != nil {
+	if _, err = db.Exec("DELETE FROM model_configs"); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.Delete(p.ID, p.Version); err != nil {

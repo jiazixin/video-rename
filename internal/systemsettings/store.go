@@ -60,21 +60,24 @@ func (s Store) Save(v Settings) error {
 }
 
 // Numbering returns the persisted numbering rules; empty or missing values
-// fall back to defaults, which match the behaviour before rules existed.
+// use the defaults until the user saves rules.
 func (s Store) Numbering() (domain.NumberingSettings, error) {
 	v := domain.DefaultNumberingSettings()
 	var raw string
 	err := s.DB.QueryRow("SELECT numbering FROM system_settings WHERE id=1").Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) || raw == "" {
+	if errors.Is(err, sql.ErrNoRows) {
 		return v, nil
 	}
 	if err != nil {
 		return v, err
 	}
-	if e := json.Unmarshal([]byte(raw), &v); e != nil {
-		return domain.DefaultNumberingSettings(), nil
+	if raw == "" {
+		return v, nil
 	}
-	return v, nil
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return v, fmt.Errorf("编号设置无效: %w", err)
+	}
+	return v, domain.ValidateNumberingSettings(v)
 }
 func (s Store) SaveNumbering(v domain.NumberingSettings) error {
 	if err := domain.ValidateNumberingSettings(v); err != nil {
@@ -94,7 +97,13 @@ func (s Store) SaveNumbering(v domain.NumberingSettings) error {
 func (s Store) FixedPrompt() (string, error) {
 	var v string
 	err := s.DB.QueryRow("SELECT fixed_prompt FROM system_settings WHERE id=1").Scan(&v)
-	if errors.Is(err, sql.ErrNoRows) || v == "" {
+	if errors.Is(err, sql.ErrNoRows) {
+		return DefaultFixedPrompt, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if v == "" {
 		return DefaultFixedPrompt, nil
 	}
 	return v, err

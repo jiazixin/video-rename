@@ -16,7 +16,7 @@ function fixture(){
  const scatterRows=rows.map(b=>({run:b.id,items:b.discovered,ms:b.duration_ms,status:b.status,source:b.source,profile_title:b.profile_title}))
  return {
   range:{from:new Date(now-24*hour).toISOString(),to:new Date(now).toISOString(),timezone:'Asia/Shanghai',interval:'hour'},
-  totals:{batches:3,completed:2,partial_failure:1,failed_batches:0,cancelled:1,interrupted:0,active:0,done:8,skipped:2,failed:1,timed_items:6,legacy_items:2,avg_batch_ms:1_800_000,avg_item_ms:45_000,p50_item_ms:40_000,p95_item_ms:70_000,throughput_per_hour:0.46},
+  totals:{batches:3,completed:2,partial_failure:1,failed_batches:0,cancelled:1,interrupted:0,active:0,done:8,skipped:2,failed:1,timed_items:6,avg_batch_ms:1_800_000,avg_item_ms:45_000,p50_item_ms:40_000,p95_item_ms:70_000,throughput_per_hour:0.46},
   trend:[bucket(0,0,0,0,0,0),bucket(1,1,600_000,2,1,0),bucket(2,0,0,1,0,0),bucket(3,1,1_800_000,3,0,1),bucket(4,1,3_600_000,2,1,0),bucket(5,0,0,0,0,0)],
   distribution:[{label:'5 秒内',count:1},{label:'5–15 秒',count:2},{label:'15–30 秒',count:1},{label:'30–60 秒',count:2},{label:'1–2 分钟',count:0},{label:'2–5 分钟',count:0},{label:'5–10 分钟',count:0},{label:'10 分钟以上',count:0}],
   profiles:[
@@ -53,7 +53,7 @@ test('指标卡、趋势图与散点渲染',async({page})=>{
  await expect(page.locator('.analysis-kpis .usage-kpi').first()).toContainText('50.0%')
  await expect(page.locator('.analysis-kpis .usage-kpi').nth(2)).toContainText('30m')
  await expect(page.locator('.analysis-kpis .usage-kpi').nth(4)).toContainText('0.5')
- await expect(page.getByText('其中 2 项来自升级前的批次',{exact:false})).toBeVisible()
+ await expect(page.getByText('升级前的批次',{exact:false})).toHaveCount(0)
  await expect(page.locator('.analysis-line svg')).toHaveCount(3)
  await expect(page.locator('.analysis-legend')).toHaveCount(1)
  await expect(page.locator('.analysis-legend-item')).toHaveCount(3)
@@ -107,7 +107,7 @@ test('空区间显示无数据而不是伪造零值',async({page})=>{
  const hour=3600_000,now=Date.now()
  await page.route('**/api/runs/analytics*',route=>route.fulfill({json:{
   range:{from:new Date(now-24*hour).toISOString(),to:new Date(now).toISOString(),timezone:'Asia/Shanghai',interval:'hour'},
-  totals:{batches:0,completed:0,partial_failure:0,failed_batches:0,cancelled:0,interrupted:0,active:0,done:0,skipped:0,failed:0,timed_items:0,legacy_items:0,avg_batch_ms:0,avg_item_ms:0,p50_item_ms:0,p95_item_ms:0,throughput_per_hour:0},
+  totals:{batches:0,completed:0,partial_failure:0,failed_batches:0,cancelled:0,interrupted:0,active:0,done:0,skipped:0,failed:0,timed_items:0,avg_batch_ms:0,avg_item_ms:0,p50_item_ms:0,p95_item_ms:0,throughput_per_hour:0},
   trend:Array.from({length:24},(_,i)=>({from:new Date(now-(24-i)*hour).toISOString(),to:new Date(now-(23-i)*hour).toISOString(),finished_batches:0,avg_batch_ms:0,done:0,skipped:0,failed:0})),
   distribution:[{label:'5 秒内',count:0},{label:'5–15 秒',count:0},{label:'15–30 秒',count:0},{label:'30–60 秒',count:0},{label:'1–2 分钟',count:0},{label:'2–5 分钟',count:0},{label:'5–10 分钟',count:0},{label:'10 分钟以上',count:0}],
   profiles:[],scatter:[],failures:[],batch_failures:[],
@@ -134,4 +134,35 @@ test('接口错误显示重试而不是空数据',async({page})=>{
  await page.getByRole('button',{name:'重试'}).click()
  await expect(page.getByRole('cell',{name:'vision-a',exact:true}).first()).toBeVisible()
  expect(recovered).toBe(true)
+})
+
+
+test('无效自定义区间会中止上一请求并保留校验提示',async({page})=>{
+ await login(page)
+ let release!:()=>void
+ const gate=new Promise<void>(resolve=>{release=resolve})
+ await page.route('**/api/runs/analytics*',async route=>{await gate;await route.fulfill({json:fixture()})})
+ const started=page.waitForRequest(req=>req.url().includes('/api/runs/analytics'))
+ await page.goto('/#usage/analysis')
+ await started
+ const aborted=page.waitForEvent('requestfailed',req=>req.url().includes('/api/runs/analytics'))
+ await page.getByRole('combobox',{name:'时间范围',exact:true}).click()
+ await page.getByRole('option',{name:'自定义',exact:true}).click()
+ try{
+  await aborted
+  await expect(page.getByRole('alert')).toContainText('请选择自定义区间的起止日期')
+  await expect(page.locator('.usage-kpi')).toHaveCount(0)
+ }finally{release()}
+})
+
+test('非法 JSON 响应显示错误并可重试',async({page})=>{
+ await login(page)
+ let malformed=true
+ await page.route('**/api/runs/analytics*',route=>malformed?route.fulfill({status:200,contentType:'text/html',body:'<html>broken response</html>'}):route.fulfill({json:fixture()}))
+ await page.goto('/#usage/analysis')
+ await expect(page.getByRole('alert')).toContainText('服务响应异常，请重试')
+ malformed=false
+ await page.getByRole('button',{name:'重试',exact:true}).click()
+ await expect(page.getByRole('alert')).toHaveCount(0)
+ await expect(page.locator('.usage-kpi').first()).toBeVisible()
 })

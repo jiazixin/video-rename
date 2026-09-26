@@ -8,11 +8,8 @@ import (
 	"strings"
 )
 
-// ValidateService resolves deployment paths. Media-only tests may still load Config.
+// ValidateService validates deployment settings and resolves filesystem paths.
 func (c *Config) ValidateService() error {
-	if c.LegacyLogging {
-		return fmt.Errorf("logging 已移除，业务日志固定保存到 storage 目录中的 SQLite")
-	}
 	if net.ParseIP(c.Listen) == nil {
 		return fmt.Errorf("listen 必须为 IP 地址")
 	}

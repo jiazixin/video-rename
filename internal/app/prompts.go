@@ -46,7 +46,11 @@ func (a *App) promptRoutes(api *http.ServeMux) {
 		if !decode(w, r, &p) {
 			return
 		}
-		p.ID = number(r.PathValue("id"))
+		id, ok := creationOrUpdateID(w, r)
+		if !ok {
+			return
+		}
+		p.ID = id
 		out, err := store.Save(p)
 		if err != nil {
 			failure(w, err)

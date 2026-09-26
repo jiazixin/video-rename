@@ -86,7 +86,7 @@ func New(db *storage.Store, l *library.Library, cfg *config.Config) (*Manager, e
 	if err := (models.Store{DB: db}).Seed(); err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec("UPDATE runs SET status='interrupted',finished=?,error='服务重启，前次运行已中断' WHERE status IN ('queued','scanning','running','cancelling')", storage.Now()); err != nil {
+	if err := interruptRuns(db); err != nil {
 		return nil, err
 	}
 	if err := recoverExtractions(db); err != nil {
@@ -112,6 +112,23 @@ func New(db *storage.Store, l *library.Library, cfg *config.Config) (*Manager, e
 	m := &Manager{DB: db, Library: l, Config: cfg, active: map[int64]activeRun{}, Cache: cache, Prepare: pipeline.Prepare, Infer: pipeline.Infer}
 	l.Busy = m.Busy
 	return m, nil
+}
+
+func interruptRuns(db *storage.Store) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := time.Now()
+	if _, err = tx.Exec(`UPDATE run_items SET status='cancelled',message='服务重启，处理已中断',finished_ms=?
+WHERE status IN ('queued','running') AND run IN (SELECT id FROM runs WHERE status IN ('queued','scanning','running','cancelling'))`, now.UnixMilli()); err != nil {
+		return err
+	}
+	if _, err = tx.Exec("UPDATE runs SET status='interrupted',finished=?,error='服务重启，前次运行已中断' WHERE status IN ('queued','scanning','running','cancelling')", now.UTC().Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (m *Manager) Busy(id int64) bool {
 	m.mu.Lock()

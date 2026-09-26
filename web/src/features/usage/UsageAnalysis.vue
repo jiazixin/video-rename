@@ -12,7 +12,7 @@ import AnalysisScatter from './AnalysisScatter.vue'
 import './analysis.css'
 type Preset='1h'|'3h'|'6h'|'12h'|'24h'|'today'|'7d'|'30d'|'all'|'custom'
 const preset=ref<Preset>('24h'),fromDate=ref(''),fromTime=ref(''),toDate=ref(''),toTime=ref('')
-const profile=ref(0),source=ref(''),sort=ref<'recent'|'duration'|'size'>('recent'),page=ref(1)
+const profile=ref(-1),source=ref(''),sort=ref<'recent'|'duration'|'size'>('recent'),page=ref(1)
 const report=ref<AnalysisReport>(),error=ref(''),loading=ref(false)
 let seq=0,controller:AbortController|undefined
 const timezone=Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -43,17 +43,18 @@ function rangeTimes():{from?:string;to:string}|string{
  return {from:from.toISOString(),to:now.toISOString()}
 }
 async function load(){
+ const mine=++seq
+ controller?.abort()
+ loading.value=false
  const range=rangeTimes()
  if(typeof range==='string'){error.value=range;return}
  const params=new URLSearchParams({to:range.to,timezone})
  if(range.from)params.set('from',range.from)
- if(profile.value)params.set('profile',String(profile.value))
+ if(profile.value>=0)params.set('profile',String(profile.value))
  if(source.value)params.set('source',source.value)
  params.set('sort',sort.value)
  params.set('page',String(page.value))
- controller?.abort()
  controller=new AbortController()
- const mine=++seq
  loading.value=true
  try{
   const data=await api<AnalysisReport>(`/runs/analytics?${params.toString()}`,'GET',undefined,controller.signal)
@@ -65,10 +66,10 @@ async function load(){
  }
 }
 function refresh(){page.value=1;load()}
-function reset(){preset.value='24h';fromDate.value=fromTime.value=toDate.value=toTime.value='';profile.value=0;source.value='';sort.value='recent';page.value=1;load()}
+function reset(){preset.value='24h';fromDate.value=fromTime.value=toDate.value=toTime.value='';profile.value=-1;source.value='';sort.value='recent';page.value=1;load()}
 watch([preset,profile,source,sort],()=>{page.value=1;load()})
 watch(page,()=>load())
-onUnmounted(()=>controller?.abort())
+onUnmounted(()=>{seq++;controller?.abort()})
 load()
 const totals=computed(()=>report.value?.totals)
 const terminal=computed(()=>{const t=totals.value;return t?t.completed+t.partial_failure+t.failed_batches+t.cancelled+t.interrupted:0})
@@ -76,7 +77,7 @@ const attempted=computed(()=>{const t=totals.value;return t?t.done+t.failed:0})
 const outcomes=computed(()=>{const t=totals.value;return t?t.done+t.skipped+t.failed:0})
 const finishedBatches=computed(()=>report.value?report.value.trend.reduce((sum,b)=>sum+b.finished_batches,0):0)
 const rangeText=computed(()=>report.value?`${time(report.value.range.from)} 至 ${time(report.value.range.to)}`:'')
-const profileOptions=computed(()=>[{value:0,label:'全部配置'},...(report.value?.options.profiles.map(p=>({value:p.id,label:p.title||`配置 #${p.id}`}))||[])])
+const profileOptions=computed(()=>[{value:-1,label:'全部配置'},...(report.value?.options.profiles.map(p=>({value:p.id,label:p.id===0?'无模型配置（抽帧）':p.title||`配置 #${p.id}`}))||[])])
 const totalPages=computed(()=>report.value?Math.max(1,Math.ceil(report.value.batches.total/report.value.batches.size)):1)
 const durationBands=computed(()=>(report.value?.distribution||[]).map((band,i)=>({...band,color:DURATION_RAMP[i%DURATION_RAMP.length]})))
 function bucketHours(bucket:{from:string;to:string}){return Math.max((Date.parse(bucket.to)-Date.parse(bucket.from))/3600_000,1/3600)}
@@ -124,7 +125,6 @@ const hasBatches=computed(()=>!!totals.value&&totals.value.batches>0)
   </div>
   <p class="help usage-notes">
    {{rangeText}} · 按{{intervalNames[report.range.interval]||report.range.interval}}分桶（{{report.range.timezone}}）。
-   <template v-if="totals?.legacy_items">其中 {{totals.legacy_items.toLocaleString()}} 项来自升级前的批次，按批次完成时间近似归属，无逐项耗时。</template>
    批次耗时按实际开始至结束计算；逐项耗时自本版本起记录。
   </p>
   <div class="usage-stack">

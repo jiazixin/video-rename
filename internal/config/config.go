@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -59,11 +60,6 @@ type ImagesConfig struct {
 	JPEGQuality  int `yaml:"jpeg_quality" json:"jpeg_quality"`
 }
 
-// LoggingConfig 日志目录。
-type LoggingConfig struct {
-	Dir string `yaml:"dir"`
-}
-
 // Config 完整配置。带 yaml 标签的字段参与解码;
 // 派生字段(yaml:"-")由 Load 在校验时填充。
 type AuthConfig struct {
@@ -72,25 +68,22 @@ type AuthConfig struct {
 }
 
 type Config struct {
-	LegacyLogging bool           `yaml:"-"`
-	Listen        string         `yaml:"listen"`
-	Port          int            `yaml:"port"`
-	Path          string         `yaml:"media-path"`
-	TempStorage   string         `yaml:"tmp-storage"`
-	Storage       string         `yaml:"storage"`
-	Auth          AuthConfig     `yaml:"auth"`
-	Server        ServerConfig   `yaml:"-"`
-	Prompt        string         `yaml:"-"` // Runtime task snapshot; never read from YAML.
-	Workers       int            `yaml:"-"`
-	Sampling      SamplingConfig `yaml:"-"`
-	Images        ImagesConfig   `yaml:"-"`
-	Logging       LoggingConfig  `yaml:"logging"`
+	Listen      string         `yaml:"listen"`
+	Port        int            `yaml:"port"`
+	Path        string         `yaml:"media-path"`
+	TempStorage string         `yaml:"tmp-storage"`
+	Storage     string         `yaml:"storage"`
+	Auth        AuthConfig     `yaml:"auth"`
+	Server      ServerConfig   `yaml:"-"`
+	Prompt      string         `yaml:"-"` // Runtime task snapshot; never read from YAML.
+	Workers     int            `yaml:"-"`
+	Sampling    SamplingConfig `yaml:"-"`
+	Images      ImagesConfig   `yaml:"-"`
 
 	// 以下为校验后填充的派生值。
-	Endpoint           string        `yaml:"-"`
-	TimeoutDuration    time.Duration `yaml:"-"`
-	ResolvedLoggingDir string        `yaml:"-"`
-	ConfigDir          string        `yaml:"-"` // 配置文件所在目录的绝对路径
+	Endpoint        string        `yaml:"-"`
+	TimeoutDuration time.Duration `yaml:"-"`
+	ConfigDir       string        `yaml:"-"` // 配置文件所在目录的绝对路径
 }
 
 // ParsedDurationRule 解析后的时长档位。
@@ -143,12 +136,10 @@ func defaults() *Config {
 			MaxDimension: 768,
 			JPEGQuality:  4,
 		},
-		Logging: LoggingConfig{Dir: "./logs"},
 	}
 }
 
 // Load 读取并校验配置文件。任何校验失败均返回错误,错误信息汇总全部问题。
-// 相对 logging.dir 以配置文件所在目录解析。
 func Load(path string) (*Config, error) {
 	if path == "" {
 		return nil, errors.New("配置文件路径为空")
@@ -165,9 +156,6 @@ func Load(path string) (*Config, error) {
 	if err := unmarshalStrict(data, cfg); err != nil {
 		return nil, fmt.Errorf("配置解析失败: %w", err)
 	}
-	var keys map[string]yaml.Node
-	_ = yaml.Unmarshal(data, &keys)
-	_, cfg.LegacyLogging = keys["logging"]
 	cfg.ConfigDir = filepath.Dir(abs)
 	if errs := cfg.validate(); len(errs) > 0 {
 		return nil, fmt.Errorf("配置校验失败: %s", strings.Join(errs, "; "))
@@ -189,7 +177,13 @@ func unmarshalStrict(data []byte, cfg *Config) error {
 	}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
-	return dec.Decode(cfg)
+	if err := dec.Decode(cfg); err != nil {
+		return err
+	}
+	if err := dec.Decode(new(yaml.Node)); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("配置文件只能包含一个 YAML 文档")
+	}
+	return nil
 }
 
 // checkDuplicateKeys 递归检查 YAML 映射中的重复 key。
@@ -236,16 +230,6 @@ func (c *Config) validate() []string {
 
 	errs = append(errs, c.validateSampling()...)
 
-	// logging
-	if strings.TrimSpace(c.Logging.Dir) == "" {
-		errs = append(errs, "logging.dir 必须非空")
-	} else {
-		dir := c.Logging.Dir
-		if !filepath.IsAbs(dir) {
-			dir = filepath.Join(c.ConfigDir, dir)
-		}
-		c.ResolvedLoggingDir = filepath.Clean(dir)
-	}
 	return errs
 }
 

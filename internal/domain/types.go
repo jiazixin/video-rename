@@ -1,5 +1,5 @@
 // Package domain 定义各模块之间交换的共享任务数据、状态与错误码。
-// 模块职责边界见 docs/plans/2026-09-17-video-rename-design.md:
+// 模块职责边界见 docs/DESIGN.md:
 // 媒体模块不访问 HTTP,模型模块不改文件,命名模块不执行 rename。
 package domain
 
@@ -8,39 +8,12 @@ import (
 	"time"
 )
 
-// Stage 标识任务结束时所处的处理阶段。
-type Stage string
-
-const (
-	StageDiscovery Stage = "discovery"
-	StageProbe     Stage = "probe"
-	StageExtract   Stage = "extract"
-	StageInference Stage = "inference"
-	StageNaming    Stage = "naming"
-	StageCommit    Stage = "rename"
-)
-
-// Status 任务最终状态;每个纳入清单的任务恰好有一个最终结果。
-type Status string
-
-const (
-	StatusRenamed   Status = "renamed"
-	StatusPreviewed Status = "previewed"
-	StatusUnchanged Status = "unchanged"
-	StatusFailed    Status = "failed"
-	StatusCancelled Status = "cancelled"
-)
-
-// ErrorCode 错误码,分类与 docs/operations.md 第 6 节保持一致。
+// ErrorCode 为媒体、模型与文件操作的错误分类。
 type ErrorCode string
 
 const (
 	// 启动/扫描
-	CodeConfigInvalid   ErrorCode = "CONFIG_INVALID"
-	CodeToolNotFound    ErrorCode = "TOOL_NOT_FOUND"
-	CodeInputNotFound   ErrorCode = "INPUT_NOT_FOUND"
-	CodeDiscoveryFailed ErrorCode = "DISCOVERY_FAILED"
-	CodeLogWriteFailed  ErrorCode = "LOG_WRITE_FAILED"
+	CodeToolNotFound ErrorCode = "TOOL_NOT_FOUND"
 
 	// 探测
 	CodeProbeExecFailed      ErrorCode = "PROBE_EXEC_FAILED"
@@ -77,8 +50,7 @@ const (
 	CodeRenameFailed            ErrorCode = "RENAME_FAILED"
 
 	// 生命周期
-	CodeJobTimeout ErrorCode = "JOB_TIMEOUT"
-	CodeCancelled  ErrorCode = "CANCELLED"
+	CodeCancelled ErrorCode = "CANCELLED"
 )
 
 // JobError 携带错误码以及媒体进程或 HTTP 上下文信息。
@@ -185,7 +157,7 @@ type FailedPoint struct {
 }
 
 // FrameSet 一个视频的抽帧结果。TempDir 指向私有临时目录,
-// 调用方负责生命周期；Web 交给可重用缓存，旧流水线在任务结束时清理。
+// 调用方负责生命周期，由可重用缓存管理。
 type FrameSet struct {
 	Plan    FramePlan
 	Frames  []Frame

@@ -20,13 +20,14 @@ import (
 // history. Filters apply to every dimension so tiles, trend and tables always
 // describe the same slice.
 type AnalysisQuery struct {
-	From, To int64
-	Location *time.Location
-	Profile  int64
-	Source   string // "", manual or scheduled
-	Sort     string // recent (default), duration or size
-	Page     int
-	Size     int
+	From, To   int64
+	Location   *time.Location
+	Profile    int64
+	ProfileSet bool   // distinguishes profile 0 (extraction) from no filter
+	Source     string // "", manual or scheduled
+	Sort       string // recent (default), duration or size
+	Page       int
+	Size       int
 }
 
 type Report struct {
@@ -59,7 +60,6 @@ type ReportTotals struct {
 	Skipped           int64   `json:"skipped"`
 	Failed            int64   `json:"failed"`
 	TimedItems        int64   `json:"timed_items"`
-	LegacyItems       int64   `json:"legacy_items"`
 	AvgBatchMs        int64   `json:"avg_batch_ms"`
 	AvgItemMs         int64   `json:"avg_item_ms"`
 	P50ItemMs         int64   `json:"p50_item_ms"`
@@ -245,7 +245,7 @@ func average(values []int64) int64 {
 // Analytics aggregates batch performance inside one read transaction so every
 // dimension of the report sees the same snapshot. Batches belong to the range
 // by their actual start (created as fallback); items are attributed to their
-// own finished timestamp when recorded, otherwise to the batch finish.
+// own recorded finish timestamp.
 func Analytics(db *storage.Store, q AnalysisQuery) (*Report, error) {
 	if q.Location == nil {
 		q.Location = time.UTC
@@ -288,10 +288,10 @@ func Analytics(db *storage.Store, q AnalysisQuery) (*Report, error) {
 			r.startMs = parseMs(r.created)
 		}
 		r.finishedMs = parseMs(r.finished)
-		if r.startMs > 0 && r.finishedMs > r.startMs {
-			r.durationMs = r.finishedMs - r.startMs
+		if started := parseMs(r.started); started > 0 && r.finishedMs > started {
+			r.durationMs = r.finishedMs - started
 		}
-		if (q.Profile > 0 && r.profileID != q.Profile) || (q.Source != "" && r.source != q.Source) {
+		if ((q.ProfileSet || q.Profile > 0) && r.profileID != q.Profile) || (q.Source != "" && r.source != q.Source) {
 			continue
 		}
 		if r.startMs < q.From || r.startMs >= q.To {
@@ -442,10 +442,6 @@ func Analytics(db *storage.Store, q AnalysisQuery) (*Report, error) {
 		}
 		if it.status == "done" || it.status == "skipped" || it.status == "failed" {
 			at := it.finishedMsItem
-			if at == 0 {
-				at = r.finishedMs // legacy batches predate per-item timing
-				totals.LegacyItems++
-			}
 			if at > 0 {
 				key := buckets.start(at)
 				acc := trend[key]
@@ -555,7 +551,8 @@ func Analytics(db *storage.Store, q AnalysisQuery) (*Report, error) {
 	}
 	ordered := sortedRuns(selected, q.Sort)
 	report.Batches.Total = len(ordered)
-	startIndex := (q.Page - 1) * q.Size
+	report.Batches.Page = min(q.Page, max(1, (len(ordered)+q.Size-1)/q.Size))
+	startIndex := (report.Batches.Page - 1) * q.Size
 	for i := startIndex; i < len(ordered) && i < startIndex+q.Size; i++ {
 		r := ordered[i]
 		var avg int64
@@ -635,7 +632,7 @@ func sortedRuns(runs []*runRow, sortKey string) []*runRow {
 // reportOptions lists model profiles that ever created a run so the page can
 // offer filters even when the current range shows no batches for them.
 func reportOptions(tx *sql.Tx) (ReportOptions, error) {
-	rows, err := tx.Query(`SELECT DISTINCT model_config_id,model_config_title FROM runs ORDER BY model_config_id`)
+	rows, err := tx.Query(`SELECT model_config_id,model_config_title FROM runs WHERE id IN (SELECT MAX(id) FROM runs GROUP BY model_config_id) ORDER BY model_config_id`)
 	if err != nil {
 		return ReportOptions{}, err
 	}

@@ -81,7 +81,11 @@ func (a *App) modelRoutes(api *http.ServeMux) {
 			send(w, 400, map[string]string{"message": "并发任务数须在 1–32 之间"})
 			return
 		}
-		input.ID = number(r.PathValue("id"))
+		id, ok := creationOrUpdateID(w, r)
+		if !ok {
+			return
+		}
+		input.ID = id
 		if err := store.ResolveKey(&input.Profile, input.APIKeyInput); err != nil {
 			failure(w, err)
 			return

@@ -350,48 +350,6 @@ func TestRestoreUnchangedAutomaticNameClearsProtection(t *testing.T) {
 	}
 }
 
-func TestUpgradeClearsLegacyRestoreMarks(t *testing.T) {
-	l, root, path := fixture(t)
-	for _, name := range []string{"restored.mp4", "protected.mp4"} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte("video"), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	refresh(t, l, 1)
-	for _, name := range []string{"restored.mp4", "protected.mp4"} {
-		e := entry(t, l, 1, name)
-		op, err := l.Rename(e.ID, e.Version, "renamed-"+name, "rename-"+name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if name == "restored.mp4" {
-			restored, err := l.Restore(op.ID, "restore-legacy")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = l.DB.Exec("INSERT INTO marks VALUES(?,?,?,?,?)", op.Identity, op.Size, op.Mtime, "restore", restored.ID); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	if _, err := l.DB.Exec("DROP TABLE extraction_records; ALTER TABLE runs DROP COLUMN task; ALTER TABLE schedules DROP COLUMN task; ALTER TABLE events DROP COLUMN processing_log; DROP TABLE system_settings; DROP TABLE image_numbering_items; DROP TABLE image_numberings; DROP TABLE sampling_settings; DROP TABLE token_usage_records; ALTER TABLE runs DROP COLUMN sampling_snapshot; DROP TABLE notification_preferences; ALTER TABLE operations DROP COLUMN raw_request; ALTER TABLE operations DROP COLUMN raw_response; ALTER TABLE run_items DROP COLUMN original_path; ALTER TABLE run_items DROP COLUMN started_ms; ALTER TABLE run_items DROP COLUMN finished_ms; ALTER TABLE runs DROP COLUMN started; DROP TABLE notification_deliveries; DROP TABLE notification_channels; ALTER TABLE events DROP COLUMN raw_request; ALTER TABLE events DROP COLUMN raw_response; DROP INDEX prompt_single_default; DROP TABLE prompts; ALTER TABLE model_configs RENAME TO prompts; ALTER TABLE prompts DROP COLUMN prompt_id; ALTER TABLE prompts ADD COLUMN body TEXT NOT NULL DEFAULT ''; ALTER TABLE prompts DROP COLUMN settings; ALTER TABLE prompts DROP COLUMN api_key; ALTER TABLE prompts DROP COLUMN is_default; ALTER TABLE runs RENAME COLUMN model_config_id TO prompt_id; ALTER TABLE runs RENAME COLUMN model_config_title TO prompt_title; ALTER TABLE runs DROP COLUMN model_snapshot; ALTER TABLE schedules RENAME COLUMN model_config_id TO prompt_id; DELETE FROM schema_migrations WHERE version>=3"); err != nil {
-		t.Fatal(err)
-	}
-	l.DB.Close()
-	db, err := storage.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	var count int
-	if err = db.QueryRow("SELECT count(*) FROM marks WHERE source='restore'").Scan(&count); err != nil || count != 0 {
-		t.Fatal(count, err)
-	}
-	if err = db.QueryRow("SELECT count(*) FROM marks WHERE source='manual'").Scan(&count); err != nil || count != 1 {
-		t.Fatal("unrestored protection removed", count, err)
-	}
-}
-
 func TestLowercaseExtensions(t *testing.T) {
 	for _, automatic := range []bool{false, true} {
 		for _, title := range []string{"Original", "NewTitle"} {

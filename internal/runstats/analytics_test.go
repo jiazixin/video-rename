@@ -58,7 +58,7 @@ func seedBatch2(t *testing.T, db *storage.Store, b seedBatch) {
 	}
 }
 
-// seededDashboard covers every metric: timed and legacy items, all batch
+// seededDashboard covers every metric: timed and untimed items, all batch
 // statuses, a batch outside the range and a profile only visible in options.
 func seededDashboard(t *testing.T, db *storage.Store, base time.Time) {
 	t.Helper()
@@ -80,20 +80,20 @@ func seededDashboard(t *testing.T, db *storage.Store, base time.Time) {
 	seedBatch2(t, db, seedBatch{id: 3, source: "manual", profile: 1, title: "配置一", status: "cancelled",
 		created: at(base.Add(time.Hour)), started: at(base.Add(130 * time.Minute)), finished: at(base.Add(140 * time.Minute)),
 		discovered: 1, failed: 1,
-		items: []seedItem{{status: "failed", message: "取消前失败"}}})
+		items: []seedItem{{status: "failed", message: "取消前失败", finished: base.Add(140 * time.Minute).UnixMilli()}}})
 	seedBatch2(t, db, seedBatch{id: 4, source: "manual", profile: 1, title: "配置一", status: "failed", err: "全局依赖故障",
 		created: at(base.Add(time.Hour)), started: at(base.Add(150 * time.Minute)), finished: at(base.Add(151 * time.Minute)),
 		discovered: 1, failed: 1,
-		items: []seedItem{{status: "failed", message: "模型返回命名失败"}}})
+		items: []seedItem{{status: "failed", message: "模型返回命名失败", finished: base.Add(151 * time.Minute).UnixMilli()}}})
 	// Outside the requested range: fully excluded.
 	seedBatch2(t, db, seedBatch{id: 5, source: "manual", profile: 3, title: "配置三", status: "completed",
 		created: at(base.Add(-time.Hour)), started: at(base.Add(-time.Hour)), finished: at(base.Add(-30 * time.Minute)),
 		discovered: 1, done: 1, items: []seedItem{{status: "done"}}})
-	// Legacy batch predating per-item timing: outcomes fall back to the batch finish.
+	// Items completed before processing starts do not contribute processing durations.
 	seedBatch2(t, db, seedBatch{id: 6, source: "manual", profile: 1, title: "配置一", status: "completed",
 		created: at(base.Add(10 * time.Minute)), started: at(base.Add(30 * time.Minute)), finished: at(base.Add(40 * time.Minute)),
 		discovered: 2, done: 2,
-		items: []seedItem{{status: "done"}, {status: "done"}}})
+		items: []seedItem{{status: "done", finished: base.Add(40 * time.Minute).UnixMilli()}, {status: "done", finished: base.Add(40 * time.Minute).UnixMilli()}}})
 }
 
 func TestAnalyticsTotalsRatesAndPercentiles(t *testing.T) {
@@ -112,7 +112,7 @@ func TestAnalyticsTotalsRatesAndPercentiles(t *testing.T) {
 	if totals.Done != 5 || totals.Skipped != 1 || totals.Failed != 3 {
 		t.Fatal("item outcomes", totals)
 	}
-	if totals.TimedItems != 4 || totals.LegacyItems != 4 {
+	if totals.TimedItems != 4 {
 		t.Fatal("timing attribution", totals)
 	}
 	if totals.AvgBatchMs != 1_332_000 { // (3.6M+1.8M+0.6M+0.06M+0.6M)h / 5
@@ -151,7 +151,7 @@ func TestAnalyticsTrendDistributionAndFailures(t *testing.T) {
 	}
 	first := byHour[9]
 	if first.FinishedBatches != 1 || first.AvgBatchMs != 600_000 || first.Done != 2 || first.Skipped != 1 {
-		t.Fatal("09:00 bucket (legacy batch + scan skip)", first)
+		t.Fatal("09:00 bucket (completed items + scan skip)", first)
 	}
 	second := byHour[10]
 	if second.Done != 1 || second.Failed != 1 || second.FinishedBatches != 0 {
@@ -281,5 +281,37 @@ func TestAnalyticsEmptyRangeKeepsFrame(t *testing.T) {
 	}
 	if len(report.Distribution) == 0 || report.Distribution[0].Count != 0 {
 		t.Fatal("distribution frame", report.Distribution)
+	}
+}
+
+func TestQueuedCancellationAndRenamedProfiles(t *testing.T) {
+	db := analyticsDB(t)
+	base := time.Date(2026, 9, 27, 0, 0, 0, 0, time.UTC)
+	seedBatch2(t, db, seedBatch{id: 1, source: "manual", profile: 1, title: "旧名", status: "cancelled", created: at(base), finished: at(base.Add(time.Hour))})
+	seedBatch2(t, db, seedBatch{id: 2, source: "manual", profile: 1, title: "新名", status: "completed", created: at(base), started: at(base), finished: at(base.Add(time.Minute))})
+	report, err := Analytics(db, AnalysisQuery{To: base.Add(2 * time.Hour).UnixMilli(), Page: int(^uint(0) >> 1), Size: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Totals.AvgBatchMs != 60_000 || len(report.Scatter) != 1 {
+		t.Fatal("queue time counted as processing", report.Totals, report.Scatter)
+	}
+	if len(report.Options.Profiles) != 1 || report.Options.Profiles[0].Title != "新名" {
+		t.Fatal("profile option duplicated", report.Options)
+	}
+	if report.Batches.Page != 1 || len(report.Batches.Items) != 2 {
+		t.Fatal("invalid pagination", report.Batches)
+	}
+}
+
+func TestFilterExtractionWithoutModel(t *testing.T) {
+	db := analyticsDB(t)
+	base := time.Date(2026, 9, 27, 0, 0, 0, 0, time.UTC)
+	for _, id := range []int64{1, 2} {
+		seedBatch2(t, db, seedBatch{id: id, profile: id - 1, source: "manual", status: "queued", created: at(base)})
+	}
+	report, err := Analytics(db, AnalysisQuery{To: base.Add(time.Hour).UnixMilli(), ProfileSet: true, Profile: 0})
+	if err != nil || report.Totals.Batches != 1 || report.Batches.Items[0].ProfileID != 0 {
+		t.Fatal(report, err)
 	}
 }

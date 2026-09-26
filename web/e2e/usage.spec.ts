@@ -10,20 +10,20 @@ async function login(page:any){
 
 function fixture(){
  const hour=3600_000,now=Date.now()
- const bucket=(i:number,tokens:number,records:number,estimated:number,legacy:number)=>({from:new Date(now-(5-i)*hour).toISOString(),to:new Date(now-(4-i)*hour).toISOString(),tokens,records,estimated_records:estimated,legacy_records:legacy})
- const batch=(id:number,tokens:number,records:number,model:string,source:string)=>({id,model,provider:'custom',protocol:'openai',profile_id:1,profile_title:'默认视频命名',source,status:'completed',created:new Date(now-5*hour).toISOString(),started:new Date(now-5*hour).toISOString(),finished:new Date(now-2*hour).toISOString(),tokens,records,estimated_records:0,legacy_records:0,lifetime_tokens:tokens,lifetime_records:records,last_recorded_at:new Date(now-2*hour).toISOString()})
+ const bucket=(i:number,tokens:number,records:number,estimated:number)=>({from:new Date(now-(5-i)*hour).toISOString(),to:new Date(now-(4-i)*hour).toISOString(),tokens,records,estimated_records:estimated})
+ const batch=(id:number,tokens:number,records:number,model:string,source:string)=>({id,model,provider:'custom',protocol:'openai',profile_id:1,profile_title:'默认视频命名',source,status:'completed',created:new Date(now-5*hour).toISOString(),started:new Date(now-5*hour).toISOString(),finished:new Date(now-2*hour).toISOString(),tokens,records,estimated_records:0,lifetime_tokens:tokens,lifetime_records:records,last_recorded_at:new Date(now-2*hour).toISOString()})
  return {
   range:{from:new Date(now-24*hour).toISOString(),to:new Date(now).toISOString(),timezone:'Asia/Shanghai',interval:'hour'},
-  totals:{tokens:4700,records:5,estimated_records:1,legacy_records:1,batches:2},
-  trend:[bucket(0,0,0,0,0),bucket(1,1200,1,0,0),bucket(2,0,0,0,0),bucket(3,3500,4,1,1)],
+  totals:{tokens:4700,records:5,estimated_records:1,batches:2},
+  trend:[bucket(0,0,0,0),bucket(1,1200,1,0),bucket(2,0,0,0),bucket(3,3500,4,1)],
   models:[
-   {key:'custom|openai|vision-a',model:'vision-a',provider:'custom',protocol:'openai',tokens:3500,records:4,estimated_records:1,legacy_records:1,batches:1},
-   {key:'custom|openai|vision-b',model:'vision-b',provider:'custom',protocol:'openai',tokens:1200,records:1,estimated_records:0,legacy_records:0,batches:1}
+   {key:'custom|openai|vision-a',model:'vision-a',provider:'custom',protocol:'openai',tokens:3500,records:4,estimated_records:1,batches:1},
+   {key:'custom|openai|vision-b',model:'vision-b',provider:'custom',protocol:'openai',tokens:1200,records:1,estimated_records:0,batches:1}
   ],
-  profiles:[{id:1,title:'默认视频命名',tokens:4700,records:5,estimated_records:1,legacy_records:1,batches:2}],
+  profiles:[{id:1,title:'默认视频命名',tokens:4700,records:5,estimated_records:1,batches:2}],
   sources:[
-   {key:'manual',tokens:3500,records:4,estimated_records:1,legacy_records:1,batches:1},
-   {key:'scheduled',tokens:1200,records:1,estimated_records:0,legacy_records:0,batches:1}
+   {key:'manual',tokens:3500,records:4,estimated_records:1,batches:1},
+   {key:'scheduled',tokens:1200,records:1,estimated_records:0,batches:1}
   ],
   top_batches:[batch(31,3500,4,'vision-a','manual'),batch(12,1200,1,'vision-b','scheduled')],
   batches:{items:[batch(31,3500,4,'vision-a','manual'),batch(12,1200,1,'vision-b','scheduled')],total:2,page:1,size:20},
@@ -35,7 +35,7 @@ test('分组导航独立入口、刷新与前进后退',async({page})=>{
  await login(page)
  const nav=page.locator('.sidebar nav button')
  await expect(nav).toHaveText(['文件目录','抽帧记录','运行记录','计划管理','批次记录','模型用量','运行分析','系统设置'])
- await expect(page.locator('.sidebar-caption')).toHaveText(['工作台','任务','分析','系统'])
+ await expect(page.locator('.sidebar-caption')).toHaveText(['工作台','任务记录','运行管理','分析','系统'])
  await expect(page.getByText('工作空间',{exact:true})).toHaveCount(0)
  await expect(page.getByText('本地媒体库',{exact:true})).toHaveCount(0)
  await page.route('**/api/system',route=>route.fulfill({json:{model:'/models/Qwen3-VL-8B-Instruct-long-model-name.gguf',ready:true,message:''}}))
@@ -84,7 +84,7 @@ test('用量总览、趋势数据表与模型对比',async({page})=>{
  await page.goto('/#usage')
  await expect(page.locator('.usage-kpi').first()).toContainText('4.7K')
  await expect(page.getByText('已记录请求',{exact:true})).toBeVisible()
- await expect(page.getByText('其中 1 条为升级前的批次汇总',{exact:false})).toBeVisible()
+ await expect(page.getByText('升级前的批次汇总',{exact:false})).toHaveCount(0)
  await expect(page.locator('.usage-model')).toHaveCount(2)
  await expect(page.locator('.usage-model').first()).toContainText('vision-a')
  await expect(page.locator('.usage-model').last()).toContainText('vision-b')
@@ -173,8 +173,8 @@ test('空区间显示无数据而不是伪造零值',async({page})=>{
  const hour=3600_000,now=Date.now()
  await page.route('**/api/usage/analytics*',route=>route.fulfill({json:{
   range:{from:new Date(now-24*hour).toISOString(),to:new Date(now).toISOString(),timezone:'Asia/Shanghai',interval:'hour'},
-  totals:{tokens:0,records:0,estimated_records:0,legacy_records:0,batches:0},
-  trend:Array.from({length:24},(_,i)=>({from:new Date(now-(24-i)*hour).toISOString(),to:new Date(now-(23-i)*hour).toISOString(),tokens:0,records:0,estimated_records:0,legacy_records:0})),
+  totals:{tokens:0,records:0,estimated_records:0,batches:0},
+  trend:Array.from({length:24},(_,i)=>({from:new Date(now-(24-i)*hour).toISOString(),to:new Date(now-(23-i)*hour).toISOString(),tokens:0,records:0,estimated_records:0})),
   models:[],profiles:[],sources:[],top_batches:[],
   batches:{items:[],total:0,page:1,size:20},
   options:{models:[],profiles:[]}
@@ -199,4 +199,35 @@ test('接口错误显示重试而不是空数据',async({page})=>{
  await page.getByRole('button',{name:'重试'}).click()
  await expect(page.getByRole('cell',{name:'vision-a',exact:true}).first()).toBeVisible()
  expect(recovered).toBe(true)
+})
+
+
+test('无效自定义区间会中止上一请求并保留校验提示',async({page})=>{
+ await login(page)
+ let release!:()=>void
+ const gate=new Promise<void>(resolve=>{release=resolve})
+ await page.route('**/api/usage/analytics*',async route=>{await gate;await route.fulfill({json:fixture()})})
+ const started=page.waitForRequest(req=>req.url().includes('/api/usage/analytics'))
+ await page.goto('/#usage')
+ await started
+ const aborted=page.waitForEvent('requestfailed',req=>req.url().includes('/api/usage/analytics'))
+ await page.getByRole('combobox',{name:'时间范围',exact:true}).click()
+ await page.getByRole('option',{name:'自定义',exact:true}).click()
+ try{
+  await aborted
+  await expect(page.getByRole('alert')).toContainText('请选择自定义区间的起止日期')
+  await expect(page.locator('.usage-kpi')).toHaveCount(0)
+ }finally{release()}
+})
+
+test('非法 JSON 响应显示错误并可重试',async({page})=>{
+ await login(page)
+ let malformed=true
+ await page.route('**/api/usage/analytics*',route=>malformed?route.fulfill({status:200,contentType:'text/html',body:'<html>broken response</html>'}):route.fulfill({json:fixture()}))
+ await page.goto('/#usage')
+ await expect(page.getByRole('alert')).toContainText('服务响应异常，请重试')
+ malformed=false
+ await page.getByRole('button',{name:'重试',exact:true}).click()
+ await expect(page.getByRole('alert')).toHaveCount(0)
+ await expect(page.locator('.usage-kpi').first()).toBeVisible()
 })

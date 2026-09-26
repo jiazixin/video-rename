@@ -3,6 +3,7 @@ package scheduler
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 	"video-rename/internal/config"
@@ -78,9 +79,17 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := s.Save(Plan{ModelConfigID: prompt.ID, Name: "test", Targets: []int64{1}, Recursive: true, Kind: "cron", Expression: "* * * * *", Timezone: "Asia/Shanghai", Enabled: true})
+	p, err := s.Save(Plan{ModelConfigID: prompt.ID, Name: "  " + strings.Repeat("计", 80) + "  ", Targets: []int64{1}, Recursive: true, Kind: "cron", Expression: "* * * * *", Timezone: "Asia/Shanghai", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if p.Name != strings.Repeat("计", 80) {
+		t.Fatalf("plan name was not trimmed: %q", p.Name)
+	}
+	tooLong := p
+	tooLong.Name += "划"
+	if _, err := s.Save(tooLong); err == nil {
+		t.Fatal("accepted plan name longer than 80 characters")
 	}
 	at, _ := time.Parse(time.RFC3339, p.Next)
 	if err = s.Tick(at); err != nil {

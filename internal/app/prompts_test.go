@@ -52,6 +52,11 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 	if w = call("POST", "/api/prompts", map[string]any{"title": "旅行", "body": "描述旅行风景"}, false); w.Code != 403 {
 		t.Fatal("missing CSRF accepted", w.Code)
 	}
+	for _, path := range []string{"/api/prompts/not-a-number", "/api/prompts/0", "/api/model-configs/0", "/api/schedules/0"} {
+		if w = call("PATCH", path, map[string]any{}, true); w.Code != 400 {
+			t.Fatal("invalid update path accepted", path, w.Code, w.Body.String())
+		}
+	}
 	w = call("GET", "/api/prompts", nil, true)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "标题正文不少于25个中文字符") {
 		t.Fatal("default fixed prompt missing", w.Code, w.Body.String())

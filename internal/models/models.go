@@ -203,8 +203,14 @@ func (s Store) SetDefault(id int64) error {
 	if _, err = tx.Exec("UPDATE model_configs SET is_default=0 WHERE is_default=1"); err != nil {
 		return err
 	}
-	if _, err = tx.Exec("UPDATE model_configs SET is_default=1 WHERE id=?", id); err != nil {
+	res, err := tx.Exec("UPDATE model_configs SET is_default=1 WHERE id=? AND version=?", id, p.Version)
+	if err != nil {
 		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n != 1 {
+		return fmt.Errorf("模型配置已修改或删除，请刷新后重试")
 	}
 	return tx.Commit()
 }

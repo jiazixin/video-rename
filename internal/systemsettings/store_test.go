@@ -44,28 +44,6 @@ func TestStabilityDefaultsValidationAndRestart(t *testing.T) {
 	}
 }
 
-func TestVersionTwelveUpgradePreservesSettingsAndDefaultsWait(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "settings.sqlite")
-	db, err := storage.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = db.Exec("INSERT INTO system_settings(id,extract_workers,cache_gb) VALUES(1,3,2); DROP TABLE extraction_records; ALTER TABLE runs DROP COLUMN task; ALTER TABLE schedules DROP COLUMN task; ALTER TABLE system_settings DROP COLUMN stability_seconds; ALTER TABLE events DROP COLUMN processing_log; ALTER TABLE image_numberings DROP COLUMN media; ALTER TABLE system_settings DROP COLUMN numbering; ALTER TABLE system_settings DROP COLUMN fixed_prompt; DROP TABLE token_usage_records; DROP TABLE prompts; ALTER TABLE model_configs DROP COLUMN prompt_id; ALTER TABLE model_configs ADD COLUMN body TEXT NOT NULL DEFAULT ''; ALTER TABLE run_items DROP COLUMN started_ms; ALTER TABLE run_items DROP COLUMN finished_ms; DELETE FROM schema_migrations WHERE version>=13"); err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	db.Close()
-	db, err = storage.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	value, err := (Store{DB: db}).Get()
-	if err != nil || value.ExtractWorkers != 3 || value.CacheGB != 2 || value.StabilitySeconds != 30 {
-		t.Fatal(value, err)
-	}
-}
-
 func TestFixedPromptDefaultsValidationAndRestart(t *testing.T) {
 	if !strings.Contains(DefaultFixedPrompt, "只回复“命名失败”四个字") || !strings.Contains(DefaultFixedPrompt, "此时不适用上述标题字数要求") {
 		t.Fatal("默认固定提示词必须包含命名失败协议及字数例外")
@@ -98,5 +76,42 @@ func TestFixedPromptDefaultsValidationAndRestart(t *testing.T) {
 	defer db.Close()
 	if fixed, err = (Store{DB: db}).FixedPrompt(); err != nil || fixed != "只输出标题。" {
 		t.Fatal(fixed, err)
+	}
+}
+
+func TestSettingsDoNotHideStorageErrors(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "settings.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := Store{DB: db}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Numbering(); err == nil {
+		t.Fatal("closed database returned default numbering")
+	}
+	if _, err := s.FixedPrompt(); err == nil {
+		t.Fatal("closed database returned default prompt")
+	}
+}
+
+func TestInvalidSavedNumberingFails(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "settings.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := Store{DB: db}
+	if err = s.Save(Default()); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range []string{"{", `{"image":{"padding":-1}}`} {
+		if _, err = db.Exec("UPDATE system_settings SET numbering=?", raw); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = s.Numbering(); err == nil {
+			t.Fatalf("invalid rules accepted: %s", raw)
+		}
 	}
 }

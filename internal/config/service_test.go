@@ -28,13 +28,9 @@ func TestServiceConfiguration(t *testing.T) {
 		t.Fatal("database inside library")
 	}
 }
-func TestLegacyLoggingRejectedByService(t *testing.T) {
-	cfg, err := loadTemp(t, minimalYAML+"logging:\n  dir: ./logs\n", "cfg.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = cfg.ValidateService(); err == nil || !strings.Contains(err.Error(), "logging") {
-		t.Fatal(err)
+func TestLoggingIsNotDeploymentConfiguration(t *testing.T) {
+	if _, err := loadTemp(t, minimalYAML+"logging:\n  dir: ./logs\n", "cfg.yaml"); err == nil || !strings.Contains(err.Error(), "logging") {
+		t.Fatal("unsupported configuration accepted", err)
 	}
 }
 

@@ -19,7 +19,7 @@ func analyticsDB(t *testing.T) *storage.Store {
 	return db
 }
 
-func seedUsage(t *testing.T, db *storage.Store, run int64, source string, plan int64, summary string, profileID int64, title string, rows [][4]int64) {
+func seedUsage(t *testing.T, db *storage.Store, run int64, source string, plan int64, summary string, profileID int64, title string, rows [][3]int64) {
 	t.Helper()
 	if _, err := db.Exec(`INSERT INTO runs(id,source,targets,recursive,status,created,started,finished,request_key,plan,config_summary,model_config_id,model_config_title) VALUES(?,?,'[]',1,'completed','2026-09-01T00:00:00Z','2026-09-01T00:00:00Z','2026-09-01T01:00:00Z',?,?,?,?,?)`, run, source, storage.Now(), plan, summary, profileID, title); err != nil {
 		t.Fatal(err)
@@ -29,12 +29,12 @@ func seedUsage(t *testing.T, db *storage.Store, run int64, source string, plan i
 	}
 	var lifetime, estimatedCount int64
 	for i, row := range rows {
-		// row is recorded_at(ms), tokens, estimated(0/1), legacy(0/1); records is 1.
+		// row is recorded_at(ms), tokens, estimated(0/1); records is 1.
 		item := run*1000 + int64(i)
 		if _, err := db.Exec(`INSERT INTO run_items(id,run,entry,identity,size,mtime) VALUES(?,?,1,?,1,'m')`, item, run, fmt.Sprint("identity-", item)); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.Exec(`INSERT INTO token_usage_records(run,item,recorded_at,tokens,records,estimated_records,legacy) VALUES(?,?,?,?,1,?,?)`, run, item, row[0], row[1], row[2], row[3]); err != nil {
+		if _, err := db.Exec(`INSERT INTO token_usage_records(run,item,recorded_at,tokens,records,estimated_records) VALUES(?,?,?,?,1,?)`, run, item, row[0], row[1], row[2]); err != nil {
 			t.Fatal(err)
 		}
 		lifetime += row[1]
@@ -47,14 +47,14 @@ func seedUsage(t *testing.T, db *storage.Store, run int64, source string, plan i
 
 var hour = int64(time.Hour / time.Millisecond)
 
-func TestAnalyticsHalfOpenRangeAndLegacySplit(t *testing.T) {
+func TestAnalyticsHalfOpenRangeAndEstimates(t *testing.T) {
 	db := analyticsDB(t)
 	base := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
-	seedUsage(t, db, 1, "manual", 0, `{"model":"vision-a","provider":"custom","protocol":"openai"}`, 1, "配置一", [][4]int64{
-		{base.UnixMilli() + 2*hour, 100, 0, 0},
+	seedUsage(t, db, 1, "manual", 0, `{"model":"vision-a","provider":"custom","protocol":"openai"}`, 1, "配置一", [][3]int64{
+		{base.UnixMilli() + 2*hour, 100, 0},
 	})
-	seedUsage(t, db, 2, "schedule", 3, `{"model":"vision-b","provider":"zhipu","protocol":"openai"}`, 2, "配置二", [][4]int64{
-		{base.UnixMilli() + 3*hour, 40, 1, 1},
+	seedUsage(t, db, 2, "schedule", 3, `{"model":"vision-b","provider":"zhipu","protocol":"openai"}`, 2, "配置二", [][3]int64{
+		{base.UnixMilli() + 3*hour, 40, 1},
 	})
 	from := base.Add(2 * time.Hour).UnixMilli()
 	to := base.Add(3 * time.Hour).UnixMilli() // exactly on the record: excluded
@@ -62,7 +62,7 @@ func TestAnalyticsHalfOpenRangeAndLegacySplit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Totals.Tokens != 100 || report.Totals.Records != 1 || report.Totals.LegacyRecords != 0 {
+	if report.Totals.Tokens != 100 || report.Totals.Records != 1 {
 		t.Fatal("range totals", report.Totals)
 	}
 	if len(report.Models) != 1 || report.Models[0].Model != "vision-a" {
@@ -74,19 +74,19 @@ func TestAnalyticsHalfOpenRangeAndLegacySplit(t *testing.T) {
 	if got := report.Batches.Items[0].LifetimeTokens; got != 100 {
 		t.Fatal("lifetime tokens", got)
 	}
-	// Widen the range: the scheduled legacy row joins and stays marked legacy.
+	// Widen the range: the scheduled estimate joins and stays marked estimated.
 	report, err = Analytics(db, AnalyticsQuery{From: from, To: base.Add(4 * time.Hour).UnixMilli(), Location: time.UTC})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Totals.Tokens != 140 || report.Totals.Records != 2 || report.Totals.EstimatedRecords != 1 || report.Totals.LegacyRecords != 1 {
+	if report.Totals.Tokens != 140 || report.Totals.Records != 2 || report.Totals.EstimatedRecords != 1 {
 		t.Fatal("widened totals", report.Totals)
 	}
 	if len(report.Sources) != 2 {
 		t.Fatal("sources", report.Sources)
 	}
 	for _, group := range report.Sources {
-		if group.Key == "scheduled" && (group.Tokens != 40 || group.LegacyRecords != 1) {
+		if group.Key == "scheduled" && (group.Tokens != 40 || group.EstimatedRecords != 1) {
 			t.Fatal("scheduled group", group)
 		}
 	}
@@ -95,9 +95,9 @@ func TestAnalyticsHalfOpenRangeAndLegacySplit(t *testing.T) {
 func TestAnalyticsFiltersAndInvariants(t *testing.T) {
 	db := analyticsDB(t)
 	base := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
-	seedUsage(t, db, 1, "manual", 0, `{"model":"a","provider":"p1","protocol":"openai"}`, 1, "一", [][4]int64{{base.UnixMilli(), 10, 0, 0}})
-	seedUsage(t, db, 2, "manual", 0, `{"model":"b","provider":"p2","protocol":"openai"}`, 1, "一", [][4]int64{{base.UnixMilli(), 20, 0, 0}})
-	seedUsage(t, db, 3, "schedule", 1, `{"model":"a","provider":"p1","protocol":"openai"}`, 2, "二", [][4]int64{{base.UnixMilli(), 30, 1, 0}})
+	seedUsage(t, db, 1, "manual", 0, `{"model":"a","provider":"p1","protocol":"openai"}`, 1, "一", [][3]int64{{base.UnixMilli(), 10, 0}})
+	seedUsage(t, db, 2, "manual", 0, `{"model":"b","provider":"p2","protocol":"openai"}`, 1, "一", [][3]int64{{base.UnixMilli(), 20, 0}})
+	seedUsage(t, db, 3, "schedule", 1, `{"model":"a","provider":"p1","protocol":"openai"}`, 2, "二", [][3]int64{{base.UnixMilli(), 30, 1}})
 	report, err := Analytics(db, AnalyticsQuery{From: 0, To: base.Add(24 * time.Hour).UnixMilli(), Location: time.UTC, Model: modelKey("p1", "openai", "a")})
 	if err != nil {
 		t.Fatal(err)
@@ -149,7 +149,7 @@ func TestAnalyticsPaginationSortingAndDayBoundaries(t *testing.T) {
 	local := time.Date(2026, 9, 23, 6, 0, 0, 0, shanghai)
 	for i := int64(1); i <= 60; i++ {
 		tokens := i * 10
-		seedUsage(t, db, i, "manual", 0, `{"model":"m","provider":"p","protocol":"openai"}`, 1, "一", [][4]int64{{local.UnixMilli(), tokens, 0, 0}})
+		seedUsage(t, db, i, "manual", 0, `{"model":"m","provider":"p","protocol":"openai"}`, 1, "一", [][3]int64{{local.UnixMilli(), tokens, 0}})
 	}
 	// A seven-day window picks day buckets aligned to Shanghai midnights.
 	report, err := Analytics(db, AnalyticsQuery{From: time.Date(2026, 9, 20, 0, 0, 0, 0, shanghai).UnixMilli(), To: time.Date(2026, 9, 27, 0, 0, 0, 0, shanghai).UnixMilli(), Location: shanghai, Size: 20})
@@ -208,5 +208,21 @@ func TestAnalyticsEmptyRangeKeepsFrame(t *testing.T) {
 	}
 	if len(report.Batches.Items) != 0 || report.Batches.Total != 0 {
 		t.Fatal("batches on empty", report.Batches)
+	}
+}
+
+func TestTopUsageIndependentOfPageSortAndHugePage(t *testing.T) {
+	db := analyticsDB(t)
+	seedUsage(t, db, 1, "manual", 0, `{}`, 1, "高消耗", [][3]int64{{1000, 900, 0}})
+	seedUsage(t, db, 2, "manual", 0, `{}`, 1, "较新", [][3]int64{{2000, 10, 0}})
+	report, err := Analytics(db, AnalyticsQuery{To: 3000, Sort: "recent", Page: int(^uint(0) >> 1), Size: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.TopBatches[0].ID != 1 {
+		t.Fatal("ranking followed detail sort", report.TopBatches)
+	}
+	if report.Batches.Page != 1 || report.Batches.Items[0].ID != 2 {
+		t.Fatal("invalid detail pagination", report.Batches)
 	}
 }

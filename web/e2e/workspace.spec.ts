@@ -2,7 +2,21 @@ import { test,expect } from '@playwright/test'
 import {readFileSync} from 'node:fs'
 import {mockRunPages} from './run-pages'
 const modelURL=()=>JSON.parse(readFileSync('test-results/fixture.json','utf8')).modelURL
-test.beforeAll(async({request})=>{const login=await request.post('/api/auth/login',{data:{username:'admin',password:'test-password-123'}});const session=await login.json();const prompt=await(await request.post('/api/prompts',{headers:{'X-CSRF-Token':session.csrf},data:{title:'测试提示词',body:'用于测试的独立提示词：只输出标题'}})).json();const profiles=await(await request.get('/api/model-configs')).json();const response=await request.patch('/api/model-configs/1',{headers:{'X-CSRF-Token':session.csrf},data:{title:'默认视频命名',prompt_id:prompt.id,version:profiles.find((p:any)=>p.id===1).version,provider:'custom',protocol:'openai',base_url:modelURL(),model:'视觉模型 · 本地测试',timeout:'10s',temperature:0.7,max_tokens:1024,api_key:'test-fixture-key'}});expect(response.ok()).toBeTruthy()})
+test.beforeAll(async({request})=>{
+ const login=await request.post('/api/auth/login',{data:{username:'admin',password:'test-password-123'}})
+ const session=await login.json(),headers={'X-CSRF-Token':session.csrf}
+ // Playwright restarts the worker after a failure; setup must not duplicate shared data.
+ const library=await(await request.get('/api/prompts')).json()
+ let prompt=library.prompts.find((p:any)=>p.title==='测试提示词')
+ if(!prompt){
+  const response=await request.post('/api/prompts',{headers,data:{title:'测试提示词',body:'用于测试的独立提示词：只输出标题'}})
+  expect(response.ok()).toBeTruthy()
+  prompt=await response.json()
+ }
+ const profiles=await(await request.get('/api/model-configs')).json()
+ const response=await request.patch('/api/model-configs/1',{headers,data:{title:'默认视频命名',prompt_id:prompt.id,version:profiles.find((p:any)=>p.id===1).version,provider:'custom',protocol:'openai',base_url:modelURL(),model:'视觉模型 · 本地测试',timeout:'10s',temperature:0.7,max_tokens:1024,api_key:'test-fixture-key'}})
+ expect(response.ok()).toBeTruthy()
+})
 // Reproduce LAN HTTP browsers: randomUUID is restricted to secure contexts.
 test.beforeEach(async ({page}) => {
  await page.addInitScript(() => {
@@ -214,7 +228,7 @@ test('运行记录文件名分列、省略与操作颜色',async({page})=>{
 
  test('名称左对齐与下拉面板中轴对齐',async({page})=>{
  await login(page)
- expect(await page.locator('.file-table th,.file-table td').evaluateAll(es=>es.every(e=>getComputedStyle(e).textAlign===(e.classList.contains('filename-cell')?'left':'center')))).toBe(true)
+ expect(await page.locator('.file-table th,.file-table td').evaluateAll(es=>es.every(e=>getComputedStyle(e).textAlign===(e.classList.contains('filename-cell')?'left':e.classList.contains('align-right')?'right':'center')))).toBe(true)
  for(const label of ['类型筛选','每页条目数']){
   const combo=page.getByRole('combobox',{name:label});const outer=await combo.boundingBox(),inner=await combo.locator('span').boundingBox()
   expect(Math.abs(outer!.x+outer!.width/2-inner!.x-inner!.width/2)).toBeLessThan(1)
