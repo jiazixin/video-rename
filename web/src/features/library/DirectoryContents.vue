@@ -12,12 +12,12 @@ const types=[
 
 <template>
  <div v-if="contents" class="directory-contents" role="group" aria-label="目录内容（仅直接子项）" title="最近完整索引的直接子项数量，包含全部分页，不受搜索和类型筛选影响">
-  <span v-for="type in types" :key="type.key" class="content-stat" :class="type.key">
+  <span v-for="type in types" :key="type.key" class="content-stat" :class="type.key" :title="`${type.label}：${contents[type.key].toLocaleString()}`" :aria-label="`${type.label}：${contents[type.key].toLocaleString()}`">
    <component :is="type.icon" :size="14" aria-hidden="true"/>
-   <span>{{type.label}}</span><strong>{{contents[type.key].toLocaleString()}}</strong>
+   <strong>{{contents[type.key].toLocaleString()}}</strong>
   </span>
  </div>
- <span v-else class="contents-pending">目录内容待统计</span>
+ <span v-else class="contents-pending" title="目录内容待统计">待统计</span>
 </template>
 
 <style scoped>

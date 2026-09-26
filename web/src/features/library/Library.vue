@@ -13,6 +13,7 @@ import SelectField from '../../components/SelectField.vue'
 import VideoPlayer from './VideoPlayer.vue'
 import AudioPlayer from './AudioPlayer.vue'
 import MediaNumbering from './MediaNumbering.vue'
+import DirectoryNumbering from './DirectoryNumbering.vue'
 defineProps<{ready:boolean}>();const emit=defineEmits<{run:[]}>()
 const multi=ref(false),chosen=ref(new Map<number,Entry>()),batch=ref(''),batchError=ref(''),batchProgress=ref(''),playing=ref<Entry>()
 const preview=ref<Entry>(),imageError=ref(false),imageBusy=ref(false),galleryError=ref('')
@@ -277,7 +278,11 @@ function deactivate(){
 onActivated(activate);onDeactivated(deactivate);onUnmounted(()=>{deactivate();disposed=true})
 </script>
 <template><section ref="listRoot">
-<div class="page-heading"><div><h1>文件目录<span class="title-dot">.</span></h1></div><div class="heading-actions directory-mark-actions"><button class="library-action action-extract" :disabled="busy||!page||!!page.directory.task_status" @click="open(page!.directory,'extract')"><Images :size="16"/>抽帧当前目录</button><button class="library-action action-name" :disabled="!ready||!page||!!page.directory.task_status" @click="open(page!.directory,'auto')"><Sparkles :size="16"/>重命名当前目录</button><button class="library-action action-mark" title="将当前目录及子目录中的现有视频标记为已处理，自动命名会跳过" :disabled="!page" @click="openMark([page!.directory],true)"><CircleCheck :size="16"/>标记已处理</button><button class="library-action action-unmark" title="清除当前目录及子目录中视频的已处理标记，允许再次自动命名；文件名不变" :disabled="!page" @click="openMark([page!.directory],false)"><CircleMinus :size="16"/>取消标记</button></div></div>
+<div class="page-heading"><div><h1>文件目录<span class="title-dot">.</span></h1></div><div class="heading-actions directory-mark-actions">
+ <div class="directory-action-row"><button class="library-action action-extract" aria-label="抽帧当前目录" :disabled="busy||!page||!!page.directory.task_status" @click="open(page!.directory,'extract')"><Images :size="16"/>抽帧</button><button class="library-action action-name" aria-label="重命名当前目录" :disabled="!ready||!page||!!page.directory.task_status" @click="open(page!.directory,'auto')"><Sparkles :size="16"/>重命名</button><DirectoryNumbering :directory="dir" :disabled="busy||!page||!!page.directory.task_status" @changed="preview=undefined;chosen.clear();syncEntries()"/></div>
+ <div class="directory-action-row"><button class="library-action action-mark" title="将当前目录及子目录中的现有视频标记为已处理，自动命名会跳过" :disabled="!page" @click="openMark([page!.directory],true)"><CircleCheck :size="16"/>标记</button><button class="library-action action-unmark" title="清除当前目录及子目录中视频的已处理标记，允许再次自动命名；文件名不变" :disabled="!page" @click="openMark([page!.directory],false)"><CircleMinus :size="16"/>取消标记</button></div>
+ <p class="directory-action-hint">作用于当前目录及所有子目录</p>
+</div></div>
 <div v-if="notice" class="notice success" role="status">{{notice}}<button @click="notice=''">关闭</button></div><div v-if="error" class="notice error" role="alert">{{error}}<button @click="enter(1)">返回媒体库</button><button @click="offset=0;cursors=[];load()">返回第一页重试</button></div>
 <div class="panel file-panel">
 <div class="panel-toolbar directory-toolbar"><div class="breadcrumbs"><button @click="enter(1)"><Home :size="15"/>媒体库</button><template v-for="crumb in page?.breadcrumbs.filter(x=>x.id!==1)" :key="crumb.id"><ChevronRight :size="13"/><button @click="enter(crumb.id)">{{crumb.name}}</button></template></div><div class="directory-summary"><DirectoryStatus v-if="page?.directory.progress" :entry="page.directory"/><div class="directory-refresh-summary"><DirectoryContents :contents="page?.directory.contents"/><button :disabled="busy" @click="refresh"><RefreshCw :size="16" :class="{spin:busy}"/>刷新</button></div></div></div>
@@ -324,6 +329,6 @@ onActivated(activate);onDeactivated(deactivate);onUnmounted(()=>{deactivate();di
 .inline-rename-field span{padding-right:8px;white-space:nowrap;color:var(--ash)}
 .inline-rename small{display:block;margin-top:5px;color:#b44444;overflow-wrap:anywhere}
 .file-table{min-width:1120px}
-.file-table .contents-cell{min-width:120px;white-space:nowrap;font-size:11px}
+.file-table .contents-cell{min-width:76px;white-space:nowrap;font-size:11px}
 .directory-summary>button+button{margin-left:0}
 </style>

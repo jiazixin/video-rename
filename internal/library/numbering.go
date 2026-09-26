@@ -63,6 +63,7 @@ type mediaClass struct {
 var numberingMedia = map[string]mediaClass{
 	"image": {"image", "图片", IsImage},
 	"audio": {"audio", "音频", IsAudio},
+	"mixed": {"mixed", "图片和音频", func(name string) bool { return IsImage(name) || IsAudio(name) }},
 }
 
 func mediaOf(value string) (mediaClass, error) {
@@ -313,8 +314,36 @@ func (l *Library) PreviewNumbering(parent int64, media, query, sortBy string, se
 	if len(selected) == 0 {
 		return Numbering{}, fmt.Errorf("当前筛选下没有可编号的%s", m.label)
 	}
-	b := Numbering{ID: numberingToken(), Parent: parent, Created: storage.Now(), Status: "preview", Fingerprint: before, Media: m.value, Items: numberingNames(selected, outside, peers, rules, peerRules.Prefix)}
+	items := numberingNames(selected, outside, peers, rules, peerRules.Prefix)
+	if media == "mixed" {
+		items = mixedNumberingNames(selected, settings)
+	}
+	b := Numbering{ID: numberingToken(), Parent: parent, Created: storage.Now(), Status: "preview", Fingerprint: before, Media: m.value, Items: items}
 	return l.saveNumberingPreview(b, path)
+}
+
+// Plan both classes together so they share one fingerprint and rollback journal.
+func mixedNumberingNames(entries []Entry, settings domain.NumberingSettings) []NumberingItem {
+	var images, audio []Entry
+	for _, e := range entries {
+		if IsImage(e.Name) {
+			images = append(images, e)
+		} else {
+			audio = append(audio, e)
+		}
+	}
+	var peers []Entry
+	if settings.Shared {
+		peers = audio
+	}
+	items := numberingNames(images, nil, peers, settings.Image, settings.Audio.Prefix)
+	peers = nil
+	if settings.Shared {
+		for _, item := range items {
+			peers = append(peers, Entry{Name: item.New})
+		}
+	}
+	return append(items, numberingNames(audio, nil, peers, settings.Audio, settings.Image.Prefix)...)
 }
 
 func numberingMatch(path string, i NumberingItem) bool {

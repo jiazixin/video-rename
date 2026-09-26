@@ -12,6 +12,27 @@ import (
 // the names frozen at preview time, so later rule changes never mutate them.
 func (a *App) numberingRoutes(api *http.ServeMux) {
 	store := systemsettings.Store{DB: a.DB}
+	api.HandleFunc("POST /api/directories/{id}/numberings/tree-preview", func(w http.ResponseWriter, r *http.Request) {
+		settings, err := store.Numbering()
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		batches, err := a.Library.PreviewNumberingTree(r.Context(), number(r.PathValue("id")), settings)
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		send(w, 200, batches)
+	})
+	api.HandleFunc("GET /api/directories/{id}/numberings/tree", func(w http.ResponseWriter, r *http.Request) {
+		batches, err := a.Library.NumberingTreeHistory(number(r.PathValue("id")))
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		send(w, 200, batches)
+	})
 	api.HandleFunc("GET /api/numbering/settings", func(w http.ResponseWriter, r *http.Request) {
 		s, err := store.Numbering()
 		if err != nil {

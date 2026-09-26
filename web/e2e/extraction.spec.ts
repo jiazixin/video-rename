@@ -32,8 +32,8 @@ test('三个独立抽帧入口、真实缓存复用及统一成功失败记录',
   const entries=await(await page.request.get(`/api/directories/${directory}/entries?limit=100`)).json()
   const file=entries.items.find((e:any)=>e.name==='prepared.mp4')
   expect((await page.request.post('/api/entries/processed',{headers,data:{targets:[file.id],marked:true}})).ok()).toBeTruthy()
-  const extract=page.getByRole('button',{name:'抽帧当前目录',exact:true})
-   expect(await extract.evaluate(el=>el.nextElementSibling?.textContent?.trim())).toBe('重命名当前目录')
+   const extract=page.locator('.directory-mark-actions').getByRole('button',{name:'抽帧当前目录',exact:true})
+    expect(await extract.evaluate(el=>el.nextElementSibling?.textContent?.trim())).toBe('重命名')
   // A visible search filter must not restrict a directory extraction.
   await page.getByLabel('搜索当前目录').fill('prepared')
   await expect(page.locator('tbody tr')).toHaveCount(1)
