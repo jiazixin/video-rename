@@ -138,7 +138,13 @@ func (l *Library) Path(id int64) (string, error) {
 			return "", err
 		}
 		if Identity(s) != entry.Identity {
-			return "", fmt.Errorf("文件身份已变化，请刷新目录")
+			var before domain.Snapshot
+			_, parseErr := fmt.Sscanf(entry.Identity, "%d:%d", &before.Dev, &before.Ino)
+			before.Size = entry.Size
+			before.ModTime, _ = time.Parse(time.RFC3339Nano, entry.Mtime)
+			diagnostic := domain.SourceChangedError("文件身份已变化，请刷新目录", "路径及祖先目录身份校验（仅设备号与 inode 参与判定）", p, before, s)
+			diagnostic.ProcessingLog += fmt.Sprintf("条目：%d\n类型：%s\n索引身份：%q\n索引身份解析错误：%v\n目录大小或修改时间变化本身不会触发此次身份错误。\n", entry.ID, entry.Kind, entry.Identity, parseErr)
+			return "", diagnostic
 		}
 	}
 	return p, nil

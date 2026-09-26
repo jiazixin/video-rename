@@ -5,6 +5,7 @@ import {api,time,statusNames,type UsageReport} from '../../app/api'
 import SelectField from '../../components/SelectField.vue'
 import DateField from '../../components/DateField.vue'
 import StatusBadge from '../../components/StatusBadge.vue'
+import DateTime from '../../components/DateTime.vue'
 import UsageTrend from './UsageTrend.vue'
 import './usage.css'
 type Preset='1h'|'3h'|'6h'|'12h'|'24h'|'today'|'7d'|'30d'|'all'|'custom'
@@ -115,7 +116,7 @@ const hasData=computed(()=>!!totals.value&&totals.value.records>0)
     <summary>数据表</summary>
     <div class="table-scroll"><table class="usage-trend-table">
      <thead><tr><th>时间段</th><th>token</th><th>请求</th><th>粗估</th><th>历史汇总</th></tr></thead>
-     <tbody><tr v-for="b in report.trend" :key="b.from"><td class="date-cell">{{time(b.from)}} – {{time(b.to)}}</td><td>{{b.tokens.toLocaleString()}}</td><td>{{b.records.toLocaleString()}}</td><td>{{b.estimated_records||'—'}}</td><td>{{b.legacy_records||'—'}}</td></tr></tbody>
+     <tbody><tr v-for="b in report.trend" :key="b.from"><td class="date-cell"><span class="date-time-range"><DateTime :value="b.from"/><span>至</span><DateTime :value="b.to"/></span></td><td>{{b.tokens.toLocaleString()}}</td><td>{{b.records.toLocaleString()}}</td><td>{{b.estimated_records||'—'}}</td><td>{{b.legacy_records||'—'}}</td></tr></tbody>
     </table></div>
    </details>
   </div>
@@ -168,7 +169,7 @@ const hasData=computed(()=>!!totals.value&&totals.value.records>0)
      <td>{{b.records.toLocaleString()}}<template v-if="b.legacy_records"> <small class="subtle">含汇总 {{b.legacy_records}}</small></template></td>
      <td class="run-tokens" :title="b.tokens.toLocaleString()">{{tokens(b.tokens)}}</td>
      <td class="subtle run-tokens" :title="`批次累计 ${b.lifetime_tokens.toLocaleString()} token / ${b.lifetime_records} 条`">{{tokens(b.lifetime_tokens)}}</td>
-     <td class="subtle date-cell"><time :datetime="b.last_recorded_at" :title="time(b.last_recorded_at)">{{time(b.last_recorded_at)}}</time></td>
+     <td class="subtle date-cell"><DateTime :value="b.last_recorded_at"/></td>
     </tr></tbody>
    </table></div>
    <div v-else class="empty compact">当前筛选没有批次用量记录</div>

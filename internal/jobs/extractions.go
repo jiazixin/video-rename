@@ -45,7 +45,7 @@ func (m *Manager) prepareFrames(ctx context.Context, run Run, entry int64, cfg *
 		var current domain.Snapshot
 		current, err = domain.StatSnapshot(job.Path)
 		if err == nil && !current.Same(job.Snapshot) {
-			err = fmt.Errorf("视频在抽帧期间发生变化，请重新抽帧")
+			err = domain.SourceChangedError("视频在抽帧期间发生变化，请重新抽帧", "抽帧完成后核验原视频", job.Path, job.Snapshot, current)
 		}
 		if err != nil {
 			lease.Release(true)

@@ -66,7 +66,7 @@ GET /api/entries/status?ids=... 返回最多 300 个条目的当前状态（不�
 
 目录 progress 汇总 SQLite 中当前可达的完整子树：total、processed、unknown（未完整索引/扫描失败目录）、active。手动与自动命名、手动状态标记均计入 processed。unknown 非零时不宣称全部已处理；汇总不触发全库磁盘扫描，外部变更在目录扫描后反映。
 
-目录内容列与递归处理进度分别计算：只读取 `directory_state` 当前完整 generation 对应的 `directory_items`，统计该目录的直接子目录、视频、图片和音频（`contents.audio`）；未索引或扫描报错时返回空统计状态，前端显示“待统计”。扫描进行中保留上一次完整索引的数字，完成后由目录列表刷新更新。`DirectoryContents.vue` 统一呈现目录行与刷新按钮前的两行两列紧凑统计，仅显示图标及等宽数字，类型名称由悬停提示与无障碍标签提供，不使用横向长条边框和分隔线；统计不受分页、搜索或类型筛选影响。
+目录内容列与递归处理进度分别计算：只读取 `directory_state` 当前完整 generation 对应的 `directory_items`，统计该目录的直接子目录、视频、图片和音频（`contents.audio`）；未索引或扫描报错时返回空统计状态，前端显示“待统计”。扫描进行中保留上一次完整索引的数字，完成后由目录列表刷新更新。`DirectoryContents.vue` 在目录行中呈现两行两列紧凑统计，仅显示图标及等宽数字，类型名称由悬停提示与无障碍标签提供；刷新按钮前使用 `inline` 模式，单行显示图标、类型文字和数量。统计不受分页、搜索或类型筛选影响。
 
 ## 递归目录编号
 
@@ -97,6 +97,8 @@ schema v8 为 operations 添加脱敏请求/响应，并为 run_items 添加 ori
 协议参考：[企业微信机器人](https://developer.work.weixin.qq.com/document/path/91770)、[Telegram sendMessage](https://core.telegram.org/bots/api#sendmessage)、[钉钉加签](https://open.dingtalk.com/document/robots/customize-robot-security-settings)、[Bark](https://github.com/Finb/Bark/blob/master/README.zh.md)。渠道真实凭据未联调，自动测试使用本地模拟服务。
 
 ## 目录排序与时间
+
+日期时间列统一复用 `web/src/components/DateTime.vue`：日期在上、时间在下，间距由 `theme.css` 的 `--date-time-gap: 4px` 控制。组件仅负责展示，保留浏览器本地时区和完整时间的悬停/无障碍信息；空值及无效值显示“—”。具体 UI 约定见 [设计说明](DESIGN.md#当前-ui-约定日期时间)。
 
 名称使用 SQLite NATURAL_NAME 排序规则，逐段比较数字，支持超长数字和确定性的同值排序；目录始终在前。大小、文件修改时间、重命名时间支持升降序，同值按自然名称与 ID 排序，游标采用同一排序组合，切换排序回到第一页。目录大小显示“—”，大小排序下目录按名称排列。
 

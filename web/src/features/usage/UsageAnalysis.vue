@@ -5,6 +5,7 @@ import {api,time,statusNames,type AnalysisReport} from '../../app/api'
 import SelectField from '../../components/SelectField.vue'
 import DateField from '../../components/DateField.vue'
 import StatusBadge from '../../components/StatusBadge.vue'
+import DateTime from '../../components/DateTime.vue'
 import AnalysisLine from './AnalysisLine.vue'
 import AnalysisHistogram from './AnalysisHistogram.vue'
 import AnalysisScatter from './AnalysisScatter.vue'
@@ -134,7 +135,7 @@ const hasBatches=computed(()=>!!totals.value&&totals.value.batches>0)
     <summary>数据表</summary>
     <div class="table-scroll"><table class="usage-trend-table">
      <thead><tr><th>时间段</th><th>结束批次</th><th>平均耗时</th></tr></thead>
-     <tbody><tr v-for="b in report.trend" :key="b.from"><td class="date-cell">{{time(b.from)}} – {{time(b.to)}}</td><td>{{b.finished_batches||'—'}}</td><td>{{b.avg_batch_ms?duration(b.avg_batch_ms):'—'}}</td></tr></tbody>
+     <tbody><tr v-for="b in report.trend" :key="b.from"><td class="date-cell"><span class="date-time-range"><DateTime :value="b.from"/><span>至</span><DateTime :value="b.to"/></span></td><td>{{b.finished_batches||'—'}}</td><td>{{b.avg_batch_ms?duration(b.avg_batch_ms):'—'}}</td></tr></tbody>
     </table></div>
    </details>
   </div>
@@ -145,7 +146,7 @@ const hasBatches=computed(()=>!!totals.value&&totals.value.batches>0)
     <summary>数据表</summary>
     <div class="table-scroll"><table class="usage-trend-table">
      <thead><tr><th>时间段</th><th>成功</th><th>跳过</th><th>失败</th></tr></thead>
-     <tbody><tr v-for="b in report.trend" :key="b.from"><td class="date-cell">{{time(b.from)}} – {{time(b.to)}}</td><td>{{b.done.toLocaleString()}}</td><td>{{b.skipped.toLocaleString()}}</td><td>{{b.failed.toLocaleString()}}</td></tr></tbody>
+     <tbody><tr v-for="b in report.trend" :key="b.from"><td class="date-cell"><span class="date-time-range"><DateTime :value="b.from"/><span>至</span><DateTime :value="b.to"/></span></td><td>{{b.done.toLocaleString()}}</td><td>{{b.skipped.toLocaleString()}}</td><td>{{b.failed.toLocaleString()}}</td></tr></tbody>
     </table></div>
    </details>
   </div>
@@ -157,7 +158,7 @@ const hasBatches=computed(()=>!!totals.value&&totals.value.batches>0)
      <summary>数据表</summary>
      <div class="table-scroll"><table class="usage-trend-table">
       <thead><tr><th>时间段</th><th>处理项</th><th>吞吐</th></tr></thead>
-      <tbody><tr v-for="b in report.trend" :key="b.from"><td class="date-cell">{{time(b.from)}} – {{time(b.to)}}</td><td>{{(b.done+b.skipped+b.failed).toLocaleString()}}</td><td>{{rate((b.done+b.skipped+b.failed)/bucketHours(b))}} 个/小时</td></tr></tbody>
+      <tbody><tr v-for="b in report.trend" :key="b.from"><td class="date-cell"><span class="date-time-range"><DateTime :value="b.from"/><span>至</span><DateTime :value="b.to"/></span></td><td>{{(b.done+b.skipped+b.failed).toLocaleString()}}</td><td>{{rate((b.done+b.skipped+b.failed)/bucketHours(b))}} 个/小时</td></tr></tbody>
      </table></div>
     </details>
    </div>
@@ -225,7 +226,7 @@ const hasBatches=computed(()=>!!totals.value&&totals.value.batches>0)
      <td>{{b.done.toLocaleString()}}</td>
      <td class="subtle">{{b.skipped.toLocaleString()}}</td>
      <td :class="{'error-text':b.failed>0}">{{b.failed.toLocaleString()}}</td>
-     <td class="subtle date-cell"><time :datetime="b.started||b.created" :title="time(b.started||b.created)">{{time(b.started||b.created)}}</time></td>
+     <td class="subtle date-cell"><DateTime :value="b.started||b.created"/></td>
      <td>{{duration(b.duration_ms)}}</td>
      <td class="subtle">{{duration(b.avg_item_ms)}}</td>
     </tr></tbody>

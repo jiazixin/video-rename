@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import {computed,onMounted,onUnmounted,ref} from 'vue'
 import {AlertCircle,CheckCircle2,ChevronLeft,ChevronRight,Copy,Search,RefreshCw,Trash2} from 'lucide-vue-next'
-import {api,time,datePart,clockPart} from '../../app/api'
+import {api} from '../../app/api'
+import DateTime from '../../components/DateTime.vue'
 import DateField from '../../components/DateField.vue'
 import SelectField from '../../components/SelectField.vue'
 import Modal from '../../components/Modal.vue'
@@ -63,7 +64,7 @@ onUnmounted(()=>{seq++;detailSeq++;controller?.abort();clearInterval(timer);clea
   <div class="table-scroll"><table class="extraction-table">
    <thead><tr><th>开始时间</th><th>结束时间</th><th>总耗时</th><th>批次</th><th>来源</th><th>目录</th><th>文件名</th><th>{{group.id==='success'?'抽帧结果':'失败原因'}}</th></tr></thead>
    <tbody><tr v-for="row in report[group.id].items" :key="row.id">
-    <td v-for="(stamp,index) in [row.started,row.finished]" :key="index" class="subtle date-cell"><time v-if="stamp" :datetime="stamp" :title="time(stamp)" class="stacked-date-time"><span>{{datePart(stamp)}}</span><span>{{clockPart(stamp)}}</span></time><span v-else>—</span></td>
+    <td v-for="(stamp,index) in [row.started,row.finished]" :key="index" class="subtle date-cell"><DateTime :value="stamp"/></td>
     <td class="mono">{{duration(row.duration_ms)}}</td><td>{{row.run?`#${row.run}`:'—'}}</td><td><span class="action-badge" :data-action="row.source">{{row.source==='manual'?'手动抽帧':'自动抽帧'}}</span></td>
     <td><span class="log-directory" :title="pathParts(row.path).directory">{{pathParts(row.path).directory}}</span></td><td><span class="history-filename" :title="pathParts(row.path).name">{{pathParts(row.path).name}}</span></td>
     <td v-if="group.id==='success'"><span>{{row.cached?'复用缓存':'抽帧完成'}} · {{row.frames}} 帧</span></td><td v-else class="extraction-reason"><p>{{row.message||'抽帧失败'}}</p><button class="text-button" @click="inspect(row)">详细原因</button></td>
@@ -74,7 +75,7 @@ onUnmounted(()=>{seq++;detailSeq++;controller?.abort();clearInterval(timer);clea
 </div>
 </section>
 <Modal v-if="selected" title="抽帧失败详情" wide @close="selected=undefined;detailSeq++">
- <dl class="detail-list"><dt>文件</dt><dd>{{selected.path}}</dd><dt>批次</dt><dd>{{selected.run?`#${selected.run}`:'—'}}</dd><dt>开始时间</dt><dd>{{time(selected.started)}}</dd><dt>结束时间</dt><dd>{{time(selected.finished)}}</dd><dt>总耗时</dt><dd>{{duration(selected.duration_ms)}}</dd><dt>失败原因</dt><dd>{{selected.message}}</dd></dl>
+ <dl class="detail-list"><dt>文件</dt><dd>{{selected.path}}</dd><dt>批次</dt><dd>{{selected.run?`#${selected.run}`:'—'}}</dd><dt>开始时间</dt><dd><DateTime :value="selected.started"/></dd><dt>结束时间</dt><dd><DateTime :value="selected.finished"/></dd><dt>总耗时</dt><dd>{{duration(selected.duration_ms)}}</dd><dt>失败原因</dt><dd>{{selected.message}}</dd></dl>
  <p v-if="detailBusy" role="status">正在读取详细原因…</p><div v-if="detailError" class="notice error" role="alert">{{detailError}}<button @click="inspect(selected)">重试</button></div><pre v-if="diagnostics" class="extraction-diagnostics">{{diagnostics}}</pre><p v-else-if="!detailBusy&&!detailError" class="help">{{selected.message}}</p>
  <div class="modal-actions"><button :disabled="detailBusy" @click="copy"><Copy :size="15"/>复制详情</button><button class="primary" @click="selected=undefined;detailSeq++">关闭</button></div>
 </Modal>

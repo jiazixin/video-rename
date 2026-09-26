@@ -161,8 +161,11 @@ func (l *Library) AutoCommit(id int64, snap domain.Snapshot, title, key string, 
 		return Operation{}, err
 	}
 	cur, err := domain.StatSnapshot(p)
-	if err != nil || !cur.Same(snap) {
-		return Operation{}, fmt.Errorf("源文件在分析期间发生变化")
+	if err != nil {
+		return Operation{}, fmt.Errorf("分析后读取源文件失败：%w", err)
+	}
+	if !cur.Same(snap) {
+		return Operation{}, domain.SourceChangedError("源文件在分析期间发生变化", "模型返回后、提交改名前", p, snap, cur)
 	}
 	clean, je := naming.CleanTitle(title, filepath.Ext(e.Name))
 	if je != nil {
