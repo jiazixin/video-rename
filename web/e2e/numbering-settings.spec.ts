@@ -19,6 +19,8 @@ test('编号规则分类草稿、实时示例、保存与响应式布局',async(
  const picker=page.getByRole('group',{name:'编号媒体类型'})
  const save=page.getByRole('button',{name:'保存编号规则',exact:true})
  await expect(save).toBeDisabled()
+ await expect(page.locator('.numbering-toggle').first()).toHaveCSS('flex-direction','row')
+ await expect(page.locator('.method-option').first()).toHaveCSS('flex-direction','row')
  await page.getByLabel('图片编号前缀',{exact:true}).fill('IMG_')
  await page.getByLabel('图片编号最小位数',{exact:true}).fill('3')
  await expect(page.getByLabel('文件名格式示例')).toContainText('IMG_001.jpg')

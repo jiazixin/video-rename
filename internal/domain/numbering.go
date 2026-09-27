@@ -22,7 +22,7 @@ type NumberingSettings struct {
 }
 
 func DefaultMediaNumberingRules() MediaNumberingRules {
-	return MediaNumberingRules{Padding: 1, Lowercase: true}
+	return MediaNumberingRules{Padding: 1, Lowercase: true, Compact: true}
 }
 func DefaultNumberingSettings() NumberingSettings {
 	return NumberingSettings{Image: DefaultMediaNumberingRules(), Audio: DefaultMediaNumberingRules()}

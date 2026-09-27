@@ -149,3 +149,25 @@ func TestRetryAndRetentionSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestNumberingDefaultsAndSavedChoice(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "numbering.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store := Store{DB: db}
+	rules, err := store.Numbering()
+	if err != nil || !rules.Image.Compact || !rules.Audio.Compact {
+		t.Fatal(rules, err)
+	}
+	rules.Image.Compact = false
+	rules.Audio.Compact = false
+	if err := store.SaveNumbering(rules); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := store.Numbering()
+	if err != nil || saved != rules {
+		t.Fatal(saved, err)
+	}
+}

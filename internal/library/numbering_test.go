@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"video-rename/internal/domain"
 	"video-rename/internal/rename"
@@ -31,7 +32,9 @@ func TestNumberingRules(t *testing.T) {
 			for _, s := range tc.outside {
 				outside = append(outside, Entry{Name: s})
 			}
-			got := numberingNames(selected, outside, nil, domain.DefaultMediaNumberingRules(), "")
+			rules := domain.DefaultMediaNumberingRules()
+			rules.Compact = false
+			got := numberingNames(selected, outside, nil, rules, "")
 			for i, g := range got {
 				if g.New != tc.want[i] {
 					t.Fatalf("%s => %s; want %s", g.Old, g.New, tc.want[i])
@@ -155,6 +158,8 @@ func TestNumberingSharedSequenceAcrossClasses(t *testing.T) {
 	}
 	refresh(t, l, 1)
 	settings := domain.DefaultNumberingSettings()
+	settings.Image.Compact = false
+	settings.Audio.Compact = false
 	settings.Shared = true
 	b, err := l.PreviewNumbering(1, "image", "", "name_asc", settings)
 	if err != nil {
@@ -250,12 +255,15 @@ func TestNumberingApplyRestoreAndIdempotence(t *testing.T) {
 }
 func TestNumberingCrossPageOrderAndSearch(t *testing.T) {
 	l, root, _ := fixture(t)
+	settings := domain.DefaultNumberingSettings()
+	settings.Image.Compact = false
+	settings.Audio.Compact = false
 	for i := range 225 {
 		put(t, filepath.Join(root, fmt.Sprintf("photo-%03d.PNG", i)))
 	}
 	put(t, filepath.Join(root, "8.jpg"))
 	refresh(t, l, 1)
-	b, err := l.PreviewNumbering(1, "image", "photo", "name_desc", domain.DefaultNumberingSettings())
+	b, err := l.PreviewNumbering(1, "image", "photo", "name_desc", settings)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +271,7 @@ func TestNumberingCrossPageOrderAndSearch(t *testing.T) {
 		t.Fatal(b.Total, b.Items[0], b.Items[224])
 	}
 	for _, sort := range []string{"name_asc", "name_desc", "size_asc", "size_desc", "mtime_asc", "mtime_desc", "renamed_asc", "renamed_desc"} {
-		b, err = l.PreviewNumbering(1, "image", "photo", sort, domain.DefaultNumberingSettings())
+		b, err = l.PreviewNumbering(1, "image", "photo", sort, settings)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -438,4 +446,73 @@ func TestNumberingRecoveryNeverOverwritesExternalFile(t *testing.T) {
 		t.Fatal(recovered, err)
 	}
 	assertOriginals(t, root, b)
+}
+
+func TestNumberingTargetMovesWithDifferentCaseAliasIdentity(t *testing.T) {
+	snapshot := domain.Snapshot{Dev: 52, Ino: 100, Size: 4361526, ModTime: time.Unix(100, 0)}
+	source := NumberingItem{Old: "1.JPG", New: "1.jpg", Identity: Identity(snapshot), Size: snapshot.Size, Mtime: stamp(snapshot)}
+	alias := snapshot
+	alias.Ino = 1593055
+	cases := []struct {
+		name     string
+		target   string
+		names    []string
+		changed  map[string]NumberingItem
+		snapshot domain.Snapshot
+		want     bool
+	}{
+		{"case alias with different inode", "1.jpg", []string{"1.JPG"}, map[string]NumberingItem{"1.JPG": source}, alias, true},
+		{"exact moving source", "1.JPG", []string{"1.JPG"}, map[string]NumberingItem{"1.JPG": source}, snapshot, true},
+		{"replaced exact source", "1.JPG", []string{"1.JPG"}, map[string]NumberingItem{"1.JPG": source}, alias, false},
+		{"independent lowercase file even with same identity", "1.jpg", []string{"1.JPG", "1.jpg"}, map[string]NumberingItem{"1.JPG": source}, snapshot, false},
+		{"unchanged uppercase file", "1.jpg", []string{"1.JPG"}, nil, alias, false},
+		{"ambiguous case aliases", "1.jpg", []string{"1.JPG", "1.JpG"}, map[string]NumberingItem{"1.JPG": source}, alias, false},
+		{"unlisted target", "1.jpg", nil, map[string]NumberingItem{"1.JPG": source}, alias, false},
+		{"different size", "1.jpg", []string{"1.JPG"}, map[string]NumberingItem{"1.JPG": source}, domain.Snapshot{Dev: 52, Ino: 1593055, Size: 1, ModTime: snapshot.ModTime}, false},
+		{"different modification time", "1.jpg", []string{"1.JPG"}, map[string]NumberingItem{"1.JPG": source}, domain.Snapshot{Dev: 52, Ino: 1593055, Size: snapshot.Size, ModTime: snapshot.ModTime.Add(time.Second)}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			names := map[string][]string{}
+			for _, name := range tc.names {
+				key := strings.ToLower(name)
+				names[key] = append(names[key], name)
+			}
+			if got := numberingTargetMoves(tc.target, tc.snapshot, names, tc.changed); got != tc.want {
+				t.Fatalf("got %v want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNumberingCaseOnlyApplyRestoreWithSymlinkSibling(t *testing.T) {
+	l, root, _ := fixture(t)
+	if err := os.WriteFile(filepath.Join(root, "1.JPG"), []byte("original picture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("missing.jpg", filepath.Join(root, "linked.jpg")); err != nil {
+		t.Fatal(err)
+	}
+	refresh(t, l, 1)
+	batch, err := l.PreviewNumbering(1, "image", "", "name_asc", domain.DefaultNumberingSettings())
+	if err != nil || batch.Total != 1 || batch.Items[0].New != "1.jpg" {
+		t.Fatalf("%+v %v", batch, err)
+	}
+	if _, err := l.ApplyNumbering(batch.ID); err != nil {
+		t.Fatal(err)
+	}
+	undo, err := l.PreviewNumberingRestore(batch.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.ApplyNumbering(undo.ID); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "1.JPG"))
+	if err != nil || string(data) != "original picture" {
+		t.Fatalf("%q %v", data, err)
+	}
+	if target, err := os.Readlink(filepath.Join(root, "linked.jpg")); err != nil || target != "missing.jpg" {
+		t.Fatalf("symlink changed: %q %v", target, err)
+	}
 }

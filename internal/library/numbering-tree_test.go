@@ -37,7 +37,10 @@ func TestNumberingTreeIndexesEveryLevelAndRestores(t *testing.T) {
 		t.Fatal(err)
 	}
 	// No directory has been opened or indexed before this call.
-	batches, err := l.PreviewNumberingTree(t.Context(), 1, domain.DefaultNumberingSettings())
+	settings := domain.DefaultNumberingSettings()
+	settings.Image.Compact = false
+	settings.Audio.Compact = false
+	batches, err := l.PreviewNumberingTree(t.Context(), 1, settings)
 	if err != nil || len(batches) != 4 {
 		t.Fatalf("preview: %v, %v", batches, err)
 	}
@@ -81,6 +84,8 @@ func TestNumberingTreeSharedRulesAndChangedDirectory(t *testing.T) {
 		put(t, filepath.Join(root, name))
 	}
 	settings := domain.DefaultNumberingSettings()
+	settings.Image.Compact = false
+	settings.Audio.Compact = false
 	settings.Shared = true
 	settings.Image.Padding = 3
 	settings.Audio.Padding = 2

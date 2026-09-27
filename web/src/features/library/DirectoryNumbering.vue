@@ -4,12 +4,13 @@ import {Hash,History,Undo2} from 'lucide-vue-next'
 import {api,ApiError} from '../../app/api'
 import DateTime from '../../components/DateTime.vue'
 import Modal from '../../components/Modal.vue'
+import NumberingDiagnostics from './NumberingDiagnostics.vue'
 import './media-numbering.css'
 
 type Batch={id:string;parent:number;path:string;status:string;created:string;undo_of:string;error:string;total:number;changed:number;items?:{entry:number;old_name:string;new_name:string}[]}
 const props=defineProps<{directory:number;disabled:boolean}>()
 const emit=defineEmits<{changed:[]}>()
-const show=ref(false),busy=ref(false),history=ref(false),diagnostics=ref(''),copyStatus=ref(''),error=ref(''),result=ref(''),progress=ref(''),batches=ref<Batch[]>([]),records=ref<Batch[]>([]),page=ref(0)
+const show=ref(false),busy=ref(false),history=ref(false),diagnostics=ref(''),error=ref(''),result=ref(''),progress=ref(''),batches=ref<Batch[]>([]),records=ref<Batch[]>([]),page=ref(0)
 const total=computed(()=>batches.value.reduce((sum,b)=>sum+b.total,0))
 const changed=computed(()=>batches.value.reduce((sum,b)=>sum+b.changed,0))
 const items=computed(()=>batches.value.flatMap(b=>(b.items||[]).map(item=>({...item,path:b.path}))))
@@ -18,21 +19,21 @@ const restoring=computed(()=>!!batches.value[0]?.undo_of)
 const states:Record<string,string>={committed:'已完成',restored:'已还原',rolled_back:'已恢复原名',review:'待核对',running:'执行中',rollback:'正在恢复'}
 let parent=0
 async function preview(){
- history.value=false;error.value='';diagnostics.value='';copyStatus.value='';result.value='';batches.value=[];page.value=0;busy.value=true;progress.value='正在索引当前目录及所有子目录…'
+ history.value=false;error.value='';diagnostics.value='';result.value='';batches.value=[];page.value=0;busy.value=true;progress.value='正在索引当前目录及所有子目录…'
  try{batches.value=await api<Batch[]>(`/directories/${parent}/numberings/tree-preview`,'POST',{})}
  catch(e){diagnostics.value=e instanceof ApiError?e.processingLog:'';error.value=(e as Error).message}finally{busy.value=false;progress.value=''}
 }
 function open(){parent=props.directory;show.value=true;preview()}
 async function loadHistory(){records.value=await api<Batch[]>(`/directories/${parent}/numberings/tree`)}
-async function openHistory(){history.value=true;error.value='';diagnostics.value='';copyStatus.value='';busy.value=true;try{await loadHistory()}catch(e){diagnostics.value=e instanceof ApiError?e.processingLog:'';error.value=(e as Error).message}finally{busy.value=false}}
+async function openHistory(){history.value=true;error.value='';diagnostics.value='';busy.value=true;try{await loadHistory()}catch(e){diagnostics.value=e instanceof ApiError?e.processingLog:'';error.value=(e as Error).message}finally{busy.value=false}}
 async function restore(batch:Batch){
- busy.value=true;error.value='';diagnostics.value='';copyStatus.value='';result.value='';page.value=0
+ busy.value=true;error.value='';diagnostics.value='';result.value='';page.value=0
  try{const undo=await api<Batch>(`/numberings/${batch.id}/restore-preview`,'POST',{});batches.value=[{...undo,path:batch.path}];history.value=false}
  catch(e){diagnostics.value=e instanceof ApiError?e.processingLog:'';error.value=(e as Error).message}finally{busy.value=false}
 }
 async function apply(){
  if(busy.value||!changed.value)return
- busy.value=true;error.value='';diagnostics.value='';copyStatus.value='';let done=0,files=0
+ busy.value=true;error.value='';diagnostics.value='';let done=0,files=0
  const pending=batches.value.filter(b=>b.changed),undo=restoring.value
  try{
   for(const batch of pending){
@@ -47,11 +48,7 @@ async function apply(){
   busy.value=false
  }
 }
-async function recover(batch:Batch){busy.value=true;error.value='';diagnostics.value='';copyStatus.value='';try{const updated=await api<Batch>(`/numberings/${batch.id}/recover`,'POST',{});if(updated.status==='review')error.value=updated.error;else result.value=updated.error;await loadHistory()}catch(e){diagnostics.value=e instanceof ApiError?e.processingLog:'';error.value=(e as Error).message}finally{busy.value=false;emit('changed')}}
-async function copyDiagnostics(){
- try{await navigator.clipboard.writeText(error.value+'\n'+diagnostics.value);copyStatus.value='已复制诊断'}
- catch{copyStatus.value='浏览器不允许复制，请手动选择下方文本'}
-}
+async function recover(batch:Batch){busy.value=true;error.value='';diagnostics.value='';try{const updated=await api<Batch>(`/numberings/${batch.id}/recover`,'POST',{});if(updated.status==='review')error.value=updated.error;else result.value=updated.error;await loadHistory()}catch(e){diagnostics.value=e instanceof ApiError?e.processingLog:'';error.value=(e as Error).message}finally{busy.value=false;emit('changed')}}
 </script>
 <template>
  <button class="library-action action-number" :disabled="disabled||busy" @click="open"><Hash :size="16"/>编号</button>
@@ -61,7 +58,7 @@ async function copyDiagnostics(){
   <p v-if="busy" role="status">{{progress||'正在处理，请稍候…'}}</p>
   <p v-if="result" class="notice success" role="status">{{result}}</p>
   <p v-if="error" class="notice error" role="alert">{{error}}</p>
-  <details v-if="diagnostics" class="numbering-diagnostics"><summary>查看诊断详情</summary><button @click="copyDiagnostics">复制诊断</button><span role="status">{{copyStatus}}</span><pre>{{diagnostics}}</pre></details>
+  <NumberingDiagnostics v-if="diagnostics" :message="error" :diagnostics="diagnostics"/>
   <template v-if="!history&&batches.length">
    <p>共 {{batches.length}} 个目录、{{total}} 个文件，{{changed}} 个需要{{restoring?'还原':'修改'}}，{{total-changed}} 个保持不变。</p>
    <div class="table-scroll numbering-preview"><table><thead><tr><th>所在目录</th><th>原名</th><th>{{restoring?'还原为':'新名'}}</th></tr></thead><tbody><tr v-for="item in visible" :key="item.entry"><td>{{item.path}}</td><td>{{item.old_name}}</td><td>{{item.new_name}}<small v-if="item.old_name===item.new_name">（不变）</small></td></tr></tbody></table></div>
