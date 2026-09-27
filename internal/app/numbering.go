@@ -13,6 +13,7 @@ import (
 // Previews always read the currently saved rules; confirmed batches replay
 // the names frozen at preview time, so later rule changes never mutate them.
 func (a *App) numberingRoutes(api *http.ServeMux) {
+	a.numberingJobRoutes(api)
 	store := systemsettings.Store{DB: a.DB}
 	api.HandleFunc("POST /api/directories/{id}/numberings/tree-preview", func(w http.ResponseWriter, r *http.Request) {
 		settings, err := store.Numbering()

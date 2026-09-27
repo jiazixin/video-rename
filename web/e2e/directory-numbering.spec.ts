@@ -69,3 +69,43 @@ test('编号冲突直接显示原名、占用类型和可复制诊断',async({pa
  await expect(dialog).toContainText('暂无编号记录')
  await expect(dialog.locator('details')).toHaveCount(0)
 })
+
+test('目录编号持续反馈进度，关闭取消，预览完成仍须确认',async({page})=>{
+ let current='',action='',ready=false
+ const submissions:string[]=[],cancelled:string[]=[]
+ await page.route('**/api/numbering/jobs',async route=>{
+  const body=route.request().postDataJSON()
+  current=body.key;action=body.action;submissions.push(action)
+  await route.fulfill({status:202,json:{key:current,status:'running',phase:action,directories:0,files:0,done:0,total:1}})
+ })
+ await page.route('**/api/numbering/jobs/*',async route=>{
+  await route.fulfill({json:{key:current,status:ready&&action==='preview'?'completed':'running',phase:action,directories:12,files:3500,done:0,total:1,path:'测试目录'}})
+ })
+ await page.route('**/api/numbering/jobs/*/cancel',async route=>{
+  cancelled.push(route.request().url())
+  await route.fulfill({json:{status:'cancelling'}})
+ })
+ await page.route('**/api/numbering/jobs/*/result?*',async route=>{
+  await route.fulfill({json:{batches:[{id:'preview-batch',path:'测试目录',parent:1,total:1,changed:1,status:'preview'}],items:[{entry:1,path:'测试目录',old_name:'photo.jpg',new_name:'1.jpg'}],total:1}})
+ })
+ await page.goto('/')
+ await page.getByLabel('用户名',{exact:true}).fill('admin')
+ await page.getByLabel('密码',{exact:true}).fill('test-password-123')
+ await page.getByRole('button',{name:'登录',exact:true}).click()
+ const button=page.locator('.directory-mark-actions').getByRole('button',{name:'编号',exact:true})
+ await button.click()
+ await expect(page.getByRole('dialog')).toContainText('已扫描 12 个目录、3500 个文件')
+ await page.getByRole('button',{name:'停止并关闭',exact:true}).click()
+ await expect(page.getByRole('dialog')).toHaveCount(0)
+ await expect.poll(()=>cancelled.length).toBe(1)
+ expect(submissions).toEqual(['preview'])
+ ready=true
+ await button.click()
+ await expect(page.getByRole('dialog')).toContainText('photo.jpg1.jpg')
+ expect(submissions).toEqual(['preview','preview'])
+ await page.getByRole('button',{name:'确认编号',exact:true}).click()
+ await expect.poll(()=>submissions).toEqual(['preview','preview','apply'])
+ await page.getByRole('dialog').getByRole('button',{name:'关闭',exact:true}).click()
+ await expect.poll(()=>cancelled.length).toBe(2)
+ await expect(page.getByRole('dialog')).toHaveCount(0)
+})

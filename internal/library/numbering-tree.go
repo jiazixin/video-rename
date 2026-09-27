@@ -17,6 +17,11 @@ type DirectoryNumbering struct {
 // visited in the UI. Parent-first order keeps parent fingerprints valid while
 // applying batches (renaming in a child changes that child's directory mtime).
 func (l *Library) PreviewNumberingTree(ctx context.Context, parent int64, settings domain.NumberingSettings) ([]DirectoryNumbering, error) {
+	return l.PreviewNumberingTreeWithProgress(ctx, parent, settings, nil)
+}
+
+func (l *Library) PreviewNumberingTreeWithProgress(ctx context.Context, parent int64, settings domain.NumberingSettings, progress func(int64, int, int)) ([]DirectoryNumbering, error) {
+	visited, files := 0, 0
 	if err := domain.ValidateNumberingSettings(settings); err != nil {
 		return nil, err
 	}
@@ -27,6 +32,9 @@ func (l *Library) PreviewNumberingTree(ctx context.Context, parent int64, settin
 		pending = pending[1:]
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		if progress != nil {
+			progress(id, visited, files)
 		}
 		if err := l.Refresh(ctx, id); err != nil {
 			return nil, err
@@ -62,14 +70,19 @@ func (l *Library) PreviewNumberingTree(ctx context.Context, parent int64, settin
 		if err != nil {
 			return nil, err
 		}
+		visited++
 		if !hasMedia {
 			continue
 		}
-		b, err := l.PreviewNumbering(id, "mixed", "", "name_asc", settings)
+		b, err := l.PreviewNumberingContext(ctx, id, "mixed", "", "name_asc", settings)
 		if err != nil {
 			return nil, fmt.Errorf("%s：%w", rel, err)
 		}
 		result = append(result, DirectoryNumbering{Numbering: b, Path: rel})
+		files += b.Total
+		if progress != nil {
+			progress(id, visited, files)
+		}
 	}
 	return result, nil
 }

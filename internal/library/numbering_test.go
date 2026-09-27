@@ -1,6 +1,7 @@
 package library
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -514,5 +515,31 @@ func TestNumberingCaseOnlyApplyRestoreWithSymlinkSibling(t *testing.T) {
 	}
 	if target, err := os.Readlink(filepath.Join(root, "linked.jpg")); err != nil || target != "missing.jpg" {
 		t.Fatalf("symlink changed: %q %v", target, err)
+	}
+}
+
+func TestNumberingCancelledDuringMovesRestoresCurrentDirectory(t *testing.T) {
+	l, root, batch := numberedFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	got, err := l.ApplyNumberingContext(ctx, batch.ID, func(done, total int) {
+		if done == 1 {
+			cancel()
+		}
+	})
+	if err == nil || got.Status != "rolled_back" {
+		t.Fatal(got, err)
+	}
+	for _, item := range batch.Items {
+		if _, err := os.Stat(filepath.Join(root, item.Old)); err != nil {
+			t.Fatal(item.Old, err)
+		}
+		if _, err := os.Stat(filepath.Join(root, item.Temp)); !os.IsNotExist(err) {
+			t.Fatal("temporary file remains", item.Temp, err)
+		}
+	}
+	persisted, err := l.Numbering(batch.ID)
+	if err != nil || persisted.Status != "rolled_back" {
+		t.Fatal(persisted, err)
 	}
 }

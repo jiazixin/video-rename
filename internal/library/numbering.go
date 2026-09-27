@@ -1,6 +1,7 @@
 package library
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"video-rename/internal/domain"
 	"video-rename/internal/rename"
@@ -200,7 +202,28 @@ func (l *Library) checkNumberingAvailable(id int64) error {
 }
 
 func (l *Library) PreviewNumbering(parent int64, media, query, sortBy string, settings domain.NumberingSettings) (Numbering, error) {
-	l.mu.Lock()
+	return l.PreviewNumberingContext(context.Background(), parent, media, query, sortBy, settings)
+}
+
+func (l *Library) lockNumbering(ctx context.Context) error {
+	for !l.mu.TryLock() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		l.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
+func (l *Library) PreviewNumberingContext(ctx context.Context, parent int64, media, query, sortBy string, settings domain.NumberingSettings) (Numbering, error) {
+	if err := l.lockNumbering(ctx); err != nil {
+		return Numbering{}, err
+	}
 	defer l.mu.Unlock()
 	// Refresh holds the same mutex. A queued scan or its pending flag cleanup
 	// does not invalidate the complete index and disk checks below.
@@ -243,7 +266,7 @@ func (l *Library) PreviewNumbering(parent int64, media, query, sortBy string, se
 	if strings.HasSuffix(sortBy, "_desc") {
 		order = "DESC"
 	}
-	rows, err := l.DB.Query(`SELECT entry,instr(lower(name),lower(?))>0 FROM directory_items WHERE dir=? AND generation=(SELECT generation FROM directory_state WHERE dir=?) AND kind='file' ORDER BY `+value+` `+order+`,name COLLATE NATURAL_NAME `+order+`,entry `+order, query, parent, parent)
+	rows, err := l.DB.QueryContext(ctx, `SELECT entry,instr(lower(name),lower(?))>0 FROM directory_items WHERE dir=? AND generation=(SELECT generation FROM directory_state WHERE dir=?) AND kind='file' ORDER BY `+value+` `+order+`,name COLLATE NATURAL_NAME `+order+`,entry `+order, query, parent, parent)
 	if err != nil {
 		return Numbering{}, err
 	}
@@ -268,6 +291,9 @@ func (l *Library) PreviewNumbering(parent int64, media, query, sortBy string, se
 	var selected, outside, peers []Entry
 	indexed := map[string]bool{}
 	for _, c := range candidates {
+		if err := ctx.Err(); err != nil {
+			return Numbering{}, err
+		}
 		e, err := l.Get(c.id)
 		if err != nil {
 			return Numbering{}, err
@@ -319,7 +345,7 @@ func (l *Library) PreviewNumbering(parent int64, media, query, sortBy string, se
 		items = mixedNumberingNames(selected, settings)
 	}
 	b := Numbering{ID: numberingToken(), Parent: parent, Created: storage.Now(), Status: "preview", Fingerprint: before, Media: m.value, Items: items}
-	return l.saveNumberingPreview(b, path)
+	return l.saveNumberingPreviewContext(ctx, b, path)
 }
 
 // Plan both classes together so they share one fingerprint and rollback journal.
@@ -417,6 +443,10 @@ func numberingConflict(path string, b Numbering, item NumberingItem, target os.F
 }
 
 func (l *Library) saveNumberingPreview(b Numbering, path string) (Numbering, error) {
+	return l.saveNumberingPreviewContext(context.Background(), b, path)
+}
+
+func (l *Library) saveNumberingPreviewContext(ctx context.Context, b Numbering, path string) (Numbering, error) {
 	label := mediaLabel(b.Media)
 	changed := map[string]NumberingItem{}
 	identities := map[string]bool{}
@@ -443,6 +473,9 @@ func (l *Library) saveNumberingPreview(b Numbering, path string) (Numbering, err
 		names[key] = append(names[key], entry.Name())
 	}
 	for idx := range b.Items {
+		if err := ctx.Err(); err != nil {
+			return Numbering{}, err
+		}
 		i := &b.Items[idx]
 		i.Current = i.Old
 		i.Temp = ".video-rename-" + b.ID + fmt.Sprintf("-%d.tmp", idx)
@@ -466,24 +499,24 @@ func (l *Library) saveNumberingPreview(b Numbering, path string) (Numbering, err
 		}
 	}
 	b.Total = len(b.Items)
-	tx, err := l.DB.Begin()
+	tx, err := l.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return Numbering{}, err
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec("INSERT INTO image_numberings(id,parent,status,created,fingerprint,undo_of,media) VALUES(?,?,?,?,?,?,?)", b.ID, b.Parent, b.Status, b.Created, b.Fingerprint, b.UndoOf, b.Media); err != nil {
+	if _, err = tx.ExecContext(ctx, "INSERT INTO image_numberings(id,parent,status,created,fingerprint,undo_of,media) VALUES(?,?,?,?,?,?,?)", b.ID, b.Parent, b.Status, b.Created, b.Fingerprint, b.UndoOf, b.Media); err != nil {
 		return Numbering{}, err
 	}
 	for idx, i := range b.Items {
-		if _, err = tx.Exec(`INSERT INTO image_numbering_items(batch,position,entry,version,identity,size,mtime,old_name,new_name,temp_name,current_name,undo_of) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, b.ID, idx, i.Entry, i.Version, i.Identity, i.Size, i.Mtime, i.Old, i.New, i.Temp, i.Current, i.UndoOf); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO image_numbering_items(batch,position,entry,version,identity,size,mtime,old_name,new_name,temp_name,current_name,undo_of) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, b.ID, idx, i.Entry, i.Version, i.Identity, i.Size, i.Mtime, i.Old, i.New, i.Temp, i.Current, i.UndoOf); err != nil {
 			return Numbering{}, err
 		}
 	}
 	// Unconfirmed previews are disposable; completed journals remain available for restore.
-	if _, err = tx.Exec(`DELETE FROM image_numbering_items WHERE batch IN (SELECT id FROM image_numberings WHERE status='preview' AND created<?)`, b.Created[:10]); err != nil {
+	if _, err = tx.ExecContext(ctx, `DELETE FROM image_numbering_items WHERE batch IN (SELECT id FROM image_numberings WHERE status='preview' AND created<?)`, b.Created[:10]); err != nil {
 		return Numbering{}, err
 	}
-	if _, err = tx.Exec(`DELETE FROM image_numberings WHERE status='preview' AND created<?`, b.Created[:10]); err != nil {
+	if _, err = tx.ExecContext(ctx, `DELETE FROM image_numberings WHERE status='preview' AND created<?`, b.Created[:10]); err != nil {
 		return Numbering{}, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -577,7 +610,13 @@ func (l *Library) PreviewNumberingRestore(id string) (Numbering, error) {
 }
 
 func (l *Library) ApplyNumbering(id string) (Numbering, error) {
-	l.mu.Lock()
+	return l.ApplyNumberingContext(context.Background(), id, nil)
+}
+
+func (l *Library) ApplyNumberingContext(ctx context.Context, id string, progress func(int, int)) (Numbering, error) {
+	if err := l.lockNumbering(ctx); err != nil {
+		return Numbering{}, err
+	}
 	defer l.mu.Unlock()
 	b, err := l.Numbering(id)
 	if err != nil {
@@ -619,6 +658,9 @@ func (l *Library) ApplyNumbering(id string) (Numbering, error) {
 		}
 	}
 	for _, i := range b.Items {
+		if err := ctx.Err(); err != nil {
+			return b, err
+		}
 		e, err := l.Get(i.Entry)
 		if err != nil {
 			return b, err
@@ -640,7 +682,7 @@ func (l *Library) ApplyNumbering(id string) (Numbering, error) {
 		return b, err
 	}
 	b.Status = "running"
-	if err = l.performNumbering(&b, path); err != nil {
+	if err = l.performNumbering(ctx, &b, path, progress); err != nil {
 		// A failed COMMIT can have an uncertain outcome. Inspect durable state
 		// before moving files back; if the database is unavailable, let startup recover.
 		persisted, readErr := l.Numbering(id)
@@ -704,8 +746,12 @@ func syncNumberingDir(path string) error {
 	defer f.Close()
 	return f.Sync()
 }
-func (l *Library) performNumbering(b *Numbering, path string) error {
+func (l *Library) performNumbering(ctx context.Context, b *Numbering, path string, progress func(int, int)) error {
+	done := 0
 	for idx := range b.Items {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		i := &b.Items[idx]
 		if i.Old != i.New {
 			if err := l.moveNumbering(b, i, path, i.Temp); err != nil {
@@ -714,14 +760,24 @@ func (l *Library) performNumbering(b *Numbering, path string) error {
 		}
 	}
 	for idx := range b.Items {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		i := &b.Items[idx]
 		if i.Old != i.New {
 			if err := l.moveNumbering(b, i, path, i.New); err != nil {
 				return err
 			}
+			done++
+			if progress != nil {
+				progress(done, b.Changed)
+			}
 		}
 	}
 	for _, i := range b.Items {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !numberingMatch(filepath.Join(path, i.New), i) {
 			return fmt.Errorf("%s %s 在提交前发生变化", mediaLabel(b.Media), i.New)
 		}
@@ -733,6 +789,9 @@ func (l *Library) performNumbering(b *Numbering, path string) error {
 	defer tx.Rollback()
 	// Temporarily free database name uniqueness within the same transaction.
 	for _, i := range b.Items {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if i.Old != i.New {
 			if _, err = tx.Exec("UPDATE entries SET name=? WHERE id=?", i.Temp, i.Entry); err != nil {
 				return err
@@ -740,6 +799,9 @@ func (l *Library) performNumbering(b *Numbering, path string) error {
 		}
 	}
 	for _, i := range b.Items {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if i.Old == i.New {
 			continue
 		}
@@ -769,6 +831,9 @@ func (l *Library) performNumbering(b *Numbering, path string) error {
 		if _, err = tx.Exec("UPDATE image_numberings SET status='restored' WHERE id=?", b.UndoOf); err != nil {
 			return err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

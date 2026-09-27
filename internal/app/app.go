@@ -30,20 +30,24 @@ import (
 )
 
 type App struct {
-	Notifications *notifications.Service
-	DB            *storage.Store
-	Library       *library.Library
-	Jobs          *jobs.Manager
-	Scheduler     *scheduler.Scheduler
-	Auth          *auth.Auth
-	ctx           context.Context
-	cancel        context.CancelFunc
-	wg            sync.WaitGroup
-	settingsMu    sync.Mutex
-	markMu        sync.Mutex
-	markJobs      map[string]*markJob
-	markWG        sync.WaitGroup
-	markClosed    bool
+	Notifications   *notifications.Service
+	DB              *storage.Store
+	Library         *library.Library
+	Jobs            *jobs.Manager
+	Scheduler       *scheduler.Scheduler
+	Auth            *auth.Auth
+	ctx             context.Context
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
+	settingsMu      sync.Mutex
+	markMu          sync.Mutex
+	markJobs        map[string]*markJob
+	markWG          sync.WaitGroup
+	markClosed      bool
+	numberingMu     sync.Mutex
+	numberingJobs   map[string]*numberingJob
+	numberingWG     sync.WaitGroup
+	numberingClosed bool
 }
 
 func New(cfg *config.Config) (*App, error) {
@@ -79,7 +83,11 @@ func (a *App) Close() error {
 	a.markMu.Lock()
 	a.markClosed = true
 	a.markMu.Unlock()
+	a.numberingMu.Lock()
+	a.numberingClosed = true
+	a.numberingMu.Unlock()
 	a.cancel()
+	a.numberingWG.Wait()
 	a.markWG.Wait()
 	a.wg.Wait()
 	a.Library.Close()
