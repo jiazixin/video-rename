@@ -1,6 +1,8 @@
 package app
 
 import (
+	"errors"
+	"log/slog"
 	"net/http"
 	"video-rename/internal/domain"
 	"video-rename/internal/systemsettings"
@@ -15,12 +17,12 @@ func (a *App) numberingRoutes(api *http.ServeMux) {
 	api.HandleFunc("POST /api/directories/{id}/numberings/tree-preview", func(w http.ResponseWriter, r *http.Request) {
 		settings, err := store.Numbering()
 		if err != nil {
-			failure(w, err)
+			numberingFailure(w, err)
 			return
 		}
 		batches, err := a.Library.PreviewNumberingTree(r.Context(), number(r.PathValue("id")), settings)
 		if err != nil {
-			failure(w, err)
+			numberingFailure(w, err)
 			return
 		}
 		send(w, 200, batches)
@@ -28,7 +30,7 @@ func (a *App) numberingRoutes(api *http.ServeMux) {
 	api.HandleFunc("GET /api/directories/{id}/numberings/tree", func(w http.ResponseWriter, r *http.Request) {
 		batches, err := a.Library.NumberingTreeHistory(number(r.PathValue("id")))
 		if err != nil {
-			failure(w, err)
+			numberingFailure(w, err)
 			return
 		}
 		send(w, 200, batches)
@@ -36,7 +38,7 @@ func (a *App) numberingRoutes(api *http.ServeMux) {
 	api.HandleFunc("GET /api/numbering/settings", func(w http.ResponseWriter, r *http.Request) {
 		s, err := store.Numbering()
 		if err != nil {
-			failure(w, err)
+			numberingFailure(w, err)
 			return
 		}
 		send(w, 200, map[string]any{"settings": s})
@@ -47,7 +49,7 @@ func (a *App) numberingRoutes(api *http.ServeMux) {
 			return
 		}
 		if err := store.SaveNumbering(s); err != nil {
-			failure(w, err)
+			numberingFailure(w, err)
 			return
 		}
 		send(w, 200, s)
@@ -67,12 +69,12 @@ func (a *App) numberingRoutes(api *http.ServeMux) {
 		}
 		settings, err := store.Numbering()
 		if err != nil {
-			failure(w, err)
+			numberingFailure(w, err)
 			return
 		}
 		b, err := a.Library.PreviewNumbering(number(r.PathValue("id")), v.Media, v.Query, v.Sort, settings)
 		if err != nil {
-			failure(w, err)
+			numberingFailure(w, err)
 			return
 		}
 		send(w, 200, b)
@@ -85,7 +87,7 @@ func (a *App) numberingRoutes(api *http.ServeMux) {
 		}
 		b, err := a.Library.NumberingHistory(number(r.PathValue("id")), media)
 		if err != nil {
-			failure(w, err)
+			numberingFailure(w, err)
 			return
 		}
 		send(w, 200, b)
@@ -93,7 +95,7 @@ func (a *App) numberingRoutes(api *http.ServeMux) {
 	api.HandleFunc("POST /api/numberings/{id}/apply", func(w http.ResponseWriter, r *http.Request) {
 		b, err := a.Library.ApplyNumbering(r.PathValue("id"))
 		if err != nil {
-			failure(w, err)
+			numberingFailure(w, err)
 			return
 		}
 		send(w, 200, b)
@@ -101,7 +103,7 @@ func (a *App) numberingRoutes(api *http.ServeMux) {
 	api.HandleFunc("POST /api/numberings/{id}/restore-preview", func(w http.ResponseWriter, r *http.Request) {
 		b, err := a.Library.PreviewNumberingRestore(r.PathValue("id"))
 		if err != nil {
-			failure(w, err)
+			numberingFailure(w, err)
 			return
 		}
 		send(w, 200, b)
@@ -109,9 +111,21 @@ func (a *App) numberingRoutes(api *http.ServeMux) {
 	api.HandleFunc("POST /api/numberings/{id}/recover", func(w http.ResponseWriter, r *http.Request) {
 		b, err := a.Library.RecoverNumbering(r.PathValue("id"))
 		if err != nil {
-			failure(w, err)
+			numberingFailure(w, err)
 			return
 		}
 		send(w, 200, b)
 	})
+}
+
+// Numbering preflight errors are returned before a batch is saved. Preserve
+// wrapped filesystem diagnostics in the response and the service error output.
+func numberingFailure(w http.ResponseWriter, err error) {
+	if diagnostic, ok := errors.AsType[*domain.JobError](err); ok && diagnostic.ProcessingLog != "" {
+		slog.Warn("numbering failed", "error", err.Error(), "diagnostic", diagnostic.ProcessingLog)
+		send(w, http.StatusConflict, map[string]string{"code": string(diagnostic.Code), "message": err.Error(), "processing_log": diagnostic.ProcessingLog})
+		return
+	}
+	slog.Warn("numbering failed", "error", err.Error())
+	failure(w, err)
 }

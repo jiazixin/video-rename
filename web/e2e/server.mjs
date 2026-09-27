@@ -38,6 +38,9 @@ for(const dir of ['','子目录','子目录/孙目录','另一个目录']){
  mkdirSync(join(treeDir,dir),{recursive:true})
  for(const name of ['photo.JPG','song.MP3','clip.mp4'])writeFileSync(join(treeDir,dir,name),name)
 }
+const conflictDir=join(media,'编号冲突测试','子目录')
+mkdirSync(join(conflictDir,'1.jpg'),{recursive:true})
+writeFileSync(join(conflictDir,'photo.jpg'),'numbering conflict fixture')
 let modelCalls=0,notificationCalls=0,lastNotification=null
 const model=createServer(async(req,res)=>{if(req.url==='/notification-status'){res.setHeader('content-type','application/json');res.end(JSON.stringify({count:notificationCalls,last:lastNotification}));return};if(req.method==='GET'&&req.url==='/v1/models'){res.setHeader('content-type','application/json');res.end(JSON.stringify({data:[{id:'视觉模型 · 本地测试'},{id:'second-model'}]}));return};let raw='';for await(const chunk of req){raw+=chunk};const body=JSON.parse(raw);if(req.url==='/notify'){notificationCalls++;lastNotification=body;res.setHeader('content-type','application/json');res.end('{}');return};if(body.messages?.length!==2||body.messages[0].role!=='system'||body.messages[1].role!=='user'||!body.messages[0].content.includes('用于测试的独立提示词')||!body.messages[0].content.includes('标题正文不少于25个中文字符')){res.statusCode=400;res.end('Unexpected prompt or shared conversation');return};modelCalls++;res.setHeader('content-type','application/json');res.end(JSON.stringify({choices:[{message:{content:'山间晨雾与日出'},finish_reason:'stop'}]}))})
 await new Promise(resolve=>model.listen(0,'127.0.0.1',resolve))

@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"maps"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -203,9 +202,8 @@ func (l *Library) checkNumberingAvailable(id int64) error {
 func (l *Library) PreviewNumbering(parent int64, media, query, sortBy string, settings domain.NumberingSettings) (Numbering, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.isRefreshing(parent) {
-		return Numbering{}, fmt.Errorf("目录正在索引，请等待索引完成后重试")
-	}
+	// Refresh holds the same mutex. A queued scan or its pending flag cleanup
+	// does not invalidate the complete index and disk checks below.
 	m, err := mediaOf(media)
 	if err != nil {
 		return Numbering{}, err
@@ -357,25 +355,49 @@ func numberingMatch(path string, i NumberingItem) bool {
 	return err == nil && Identity(s) == i.Identity && s.Size == i.Size && stamp(s) == i.Mtime
 }
 
-func numberingChangedName(path string, changed map[string]bool, name string) bool {
-	if changed[name] {
-		return true
-	}
-	target, err := os.Lstat(filepath.Join(path, name))
+// Preview failures have no committed journal. Return evidence to the numbering
+// dialog so a conflict can be inspected before any file is renamed.
+func numberingConflict(path string, b Numbering, item NumberingItem) error {
+	target := filepath.Join(path, item.New)
+	var detail strings.Builder
+	fmt.Fprintf(&detail, "编号目标冲突诊断\n目录：%q\n原文件名：%q\n目标文件名：%q\n媒体类型：%s\n参与文件：%d；计划改名：%d\n", path, item.Old, item.New, b.Media, len(b.Items), b.Changed)
+	info, err := os.Lstat(target)
 	if err != nil {
-		return false
-	}
-	for old := range maps.Keys(changed) {
-		candidate, err := os.Lstat(filepath.Join(path, old))
-		if err == nil && os.SameFile(target, candidate) {
-			return true
+		fmt.Fprintf(&detail, "读取目标失败：%v\n", err)
+	} else {
+		fmt.Fprintf(&detail, "目标类型：%s\n目标大小：%d 字节\n", kindOf(info), info.Size())
+		if snap, err := domain.SnapshotFromInfo(info); err == nil {
+			fmt.Fprintf(&detail, "目标身份：%s\n", Identity(snap))
+		}
+		entries, readErr := os.ReadDir(path)
+		if readErr != nil {
+			fmt.Fprintf(&detail, "读取目录失败：%v\n", readErr)
+		} else {
+			for _, entry := range entries {
+				actual, statErr := entry.Info()
+				if statErr != nil || !os.SameFile(info, actual) {
+					continue
+				}
+				fmt.Fprintf(&detail, "占用条目实际名称：%q（%s）\n", entry.Name(), kindOf(actual))
+				participation := "未参与本次编号"
+				for _, planned := range b.Items {
+					if planned.Old == entry.Name() {
+						participation = fmt.Sprintf("参与本次编号，计划 %q → %q", planned.Old, planned.New)
+						break
+					}
+				}
+				fmt.Fprintf(&detail, "占用条目状态：%s\n", participation)
+			}
 		}
 	}
-	return false
+	fmt.Fprintln(&detail, "此次预览未修改文件；目录和符号链接不参与媒体编号。")
+	return &domain.JobError{Code: domain.CodeRenameConflict, Message: fmt.Sprintf("目标 %s 被未参与本次改名的文件或目录占用（原文件：%s）", item.New, item.Old), ProcessingLog: detail.String()}
 }
+
 func (l *Library) saveNumberingPreview(b Numbering, path string) (Numbering, error) {
 	label := mediaLabel(b.Media)
 	changed := map[string]bool{}
+	changedIdentities := map[string]bool{}
 	identities := map[string]bool{}
 	for _, i := range b.Items {
 		if err := ValidName(i.New); err != nil {
@@ -387,6 +409,7 @@ func (l *Library) saveNumberingPreview(b Numbering, path string) (Numbering, err
 		identities[i.Identity] = true
 		if i.Old != i.New {
 			changed[i.Old] = true
+			changedIdentities[i.Identity] = true
 			b.Changed++
 		}
 	}
@@ -400,10 +423,16 @@ func (l *Library) saveNumberingPreview(b Numbering, path string) (Numbering, err
 		if i.Old == i.New {
 			continue
 		}
-		if _, err := os.Lstat(filepath.Join(path, i.New)); err == nil {
+		if target, err := os.Lstat(filepath.Join(path, i.New)); err == nil {
 			// Case-only aliases are safe because all changed files first move to temp names.
-			if !numberingChangedName(path, changed, i.New) && !numberingMatch(filepath.Join(path, i.New), *i) {
-				return Numbering{}, fmt.Errorf("目标 %s 被未参与本次操作的文件或目录占用", i.New)
+			snapshot, err := domain.SnapshotFromInfo(target)
+			if err != nil {
+				return Numbering{}, err
+			}
+			// Source identities were verified when building this plan. Resolve a case
+			// alias once instead of re-statting every changed source for each target.
+			if !changed[i.New] && !(target.Mode().IsRegular() && changedIdentities[Identity(snapshot)]) {
+				return Numbering{}, numberingConflict(path, b, *i)
 			}
 		} else if !os.IsNotExist(err) {
 			return Numbering{}, err

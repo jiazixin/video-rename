@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {computed,ref} from 'vue'
 import {Hash,History,Undo2} from 'lucide-vue-next'
-import {api} from '../../app/api'
+import {api,ApiError} from '../../app/api'
 import DateTime from '../../components/DateTime.vue'
 import Modal from '../../components/Modal.vue'
 import './media-numbering.css'
@@ -10,23 +10,27 @@ const props=defineProps<{directory:number;query:string;sort:string;disabled:bool
 const noun=computed(()=>props.media==='audio'?'音频':'图片')
 const untouched=computed(()=>props.media==='audio'?'视频、图片和目录不变':'视频和目录不变')
 const emit=defineEmits<{changed:[]}>()
-const busy=ref(false),show=ref(false),history=ref(false),error=ref(''),result=ref(''),preview=ref<Batch>(),records=ref<Batch[]>([]),page=ref(0)
+const busy=ref(false),show=ref(false),history=ref(false),diagnostics=ref(''),copyStatus=ref(''),error=ref(''),result=ref(''),preview=ref<Batch>(),records=ref<Batch[]>([]),page=ref(0)
 const visible=computed(()=>preview.value?.items?.slice(page.value*100,(page.value+1)*100)||[])
 const states:Record<string,string>={committed:'已完成',restored:'已还原',rolled_back:'已恢复原名',review:'待核对',running:'执行中',rollback:'正在恢复'}
 let parent=0
 async function open(restore?:Batch){
- parent=props.directory;show.value=true;history.value=false;error.value='';result.value='';preview.value=undefined;page.value=0;busy.value=true
+ parent=props.directory;show.value=true;history.value=false;error.value='';diagnostics.value='';copyStatus.value='';result.value='';preview.value=undefined;page.value=0;busy.value=true
  try{preview.value=restore?await api<Batch>(`/numberings/${restore.id}/restore-preview`,'POST',{}):await api<Batch>(`/directories/${parent}/numberings/preview`,'POST',{media:props.media,query:props.query,sort:props.sort})}
- catch(e){error.value=(e as Error).message}finally{busy.value=false}
+ catch(e){diagnostics.value=e instanceof ApiError?e.processingLog:'';error.value=(e as Error).message}finally{busy.value=false}
 }
 async function loadHistory(){records.value=await api<Batch[]>(`/directories/${parent}/numberings?media=${props.media}`)}
-async function openHistory(){parent=props.directory;show.value=true;history.value=true;preview.value=undefined;error.value='';result.value='';busy.value=true;try{await loadHistory()}catch(e){error.value=(e as Error).message}finally{busy.value=false}}
-async function apply(){if(!preview.value||busy.value)return;busy.value=true;error.value=''
+async function openHistory(){parent=props.directory;show.value=true;history.value=true;preview.value=undefined;error.value='';diagnostics.value='';copyStatus.value='';result.value='';busy.value=true;try{await loadHistory()}catch(e){diagnostics.value=e instanceof ApiError?e.processingLog:'';error.value=(e as Error).message}finally{busy.value=false}}
+async function apply(){if(!preview.value||busy.value)return;busy.value=true;error.value='';diagnostics.value='';copyStatus.value=''
  try{const batch=await api<Batch>(`/numberings/${preview.value.id}/apply`,'POST',{});result.value=`${batch.undo_of?'已还原':'已编号'} ${batch.changed} 张${noun.value}`;preview.value=undefined;history.value=true;await loadHistory()}
- catch(e){error.value=(e as Error).message}
+ catch(e){diagnostics.value=e instanceof ApiError?e.processingLog:'';error.value=(e as Error).message}
  finally{busy.value=false;emit('changed')}
 }
-async function recover(batch:Batch){busy.value=true;error.value='';result.value='';try{const updated=await api<Batch>(`/numberings/${batch.id}/recover`,'POST',{});if(updated.status==='review')error.value=updated.error;else result.value=updated.error;await loadHistory()}catch(e){error.value=(e as Error).message}finally{busy.value=false;emit('changed')}}
+async function recover(batch:Batch){busy.value=true;error.value='';diagnostics.value='';copyStatus.value='';result.value='';try{const updated=await api<Batch>(`/numberings/${batch.id}/recover`,'POST',{});if(updated.status==='review')error.value=updated.error;else result.value=updated.error;await loadHistory()}catch(e){diagnostics.value=e instanceof ApiError?e.processingLog:'';error.value=(e as Error).message}finally{busy.value=false;emit('changed')}}
+async function copyDiagnostics(){
+ try{await navigator.clipboard.writeText(error.value+'\n'+diagnostics.value);copyStatus.value='已复制诊断'}
+ catch{copyStatus.value='浏览器不允许复制，请手动选择下方文本'}
+}
 </script>
 <template>
  <button :disabled="disabled||busy" @click="open()"><Hash :size="16"/>一键编号</button>
@@ -35,6 +39,7 @@ async function recover(batch:Batch){busy.value=true;error.value='';result.value=
   <p v-if="busy" role="status">正在处理，请稍候…</p>
   <p v-if="result" class="notice success" role="status">{{result}}</p>
   <div v-if="error" class="notice error" role="alert">{{error}}</div>
+  <details v-if="diagnostics" class="numbering-diagnostics"><summary>查看诊断详情</summary><button @click="copyDiagnostics">复制诊断</button><span role="status">{{copyStatus}}</span><pre>{{diagnostics}}</pre></details>
   <template v-if="preview">
    <p>共 {{preview.total}} 张{{noun}}，{{preview.changed}} 张需要{{preview.undo_of?'还原':'修改'}}，{{preview.total-preview.changed}} 张保持不变。</p>
    <p v-if="!preview.undo_of" class="help">仅当前目录内符合搜索条件的{{noun}}，包含所有分页。已有唯一编号保留，重复编号按当前排序保留第一张，其余从最大编号后续排；不同格式共用序号，扩展名小写。搜索隐藏的{{noun}}会保留其号码。{{untouched}}。</p>

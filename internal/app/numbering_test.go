@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"video-rename/internal/config"
+	"video-rename/internal/domain"
 	"video-rename/internal/library"
 )
 
@@ -198,5 +200,18 @@ func TestAudioNumberingAPI(t *testing.T) {
 	}
 	if w = request("GET", "/api/directories/1/numberings?media=image", ""); w.Code != 200 || strings.Contains(w.Body.String(), "committed") {
 		t.Fatal("audio batch leaked into image history", w.Code)
+	}
+}
+
+func TestNumberingFailurePreservesWrappedDiagnostics(t *testing.T) {
+	err := fmt.Errorf("parent/child：%w", &domain.JobError{Code: domain.CodeRenameConflict, Message: "目标被占用", ProcessingLog: "原文件名：photo.jpg\n目标类型：directory"})
+	w := httptest.NewRecorder()
+	numberingFailure(w, err)
+	var body map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusConflict || body["code"] != "RENAME_CONFLICT" || !strings.Contains(body["message"], "parent/child") || !strings.Contains(body["processing_log"], "目标类型：directory") {
+		t.Fatal(w.Code, body)
 	}
 }
