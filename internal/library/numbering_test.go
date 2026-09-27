@@ -2,6 +2,7 @@ package library
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -541,5 +542,71 @@ func TestNumberingCancelledDuringMovesRestoresCurrentDirectory(t *testing.T) {
 	persisted, err := l.Numbering(batch.ID)
 	if err != nil || persisted.Status != "rolled_back" {
 		t.Fatal(persisted, err)
+	}
+}
+
+func TestNumberingFingerprintIgnoresChildMetadataButRejectsReplacement(t *testing.T) {
+	root := t.TempDir()
+	child := filepath.Join(root, "child")
+	if err := os.Mkdir(child, 0700); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root, "photo.jpg")
+	if err := os.WriteFile(file, []byte("image"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := directoryFingerprint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(child, "nested.jpg"), []byte("child content"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(child, time.Unix(100, 0), time.Unix(100, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(file, 0640); err != nil {
+		t.Fatal(err)
+	}
+	after, err := directoryFingerprint(root)
+	if err != nil || before != after {
+		t.Fatal("unrelated child metadata invalidated preview", before, after, err)
+	}
+	if err := os.Rename(child, filepath.Join(t.TempDir(), "original-child")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(child, 0700); err != nil {
+		t.Fatal(err)
+	}
+	replaced, err := directoryFingerprint(root)
+	if err != nil || replaced == after {
+		t.Fatal("directory replacement not detected", err)
+	}
+	if err := os.WriteFile(file, []byte("changed file content"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := directoryFingerprint(root)
+	if err != nil || changed == replaced {
+		t.Fatal("file changes not detected", err)
+	}
+}
+
+func TestNumberingFingerprintFailureExplainsSourceDifference(t *testing.T) {
+	l, root, b := numberedFixture(t)
+	item := b.Items[0]
+	if err := os.WriteFile(filepath.Join(root, item.Old), []byte("external changed content"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := l.ApplyNumbering(b.ID)
+	diagnostic, ok := errors.AsType[*domain.JobError](err)
+	if !ok || !strings.Contains(diagnostic.ProcessingLog, item.Old) || !strings.Contains(diagnostic.ProcessingLog, "大小") {
+		t.Fatal(err)
+	}
+	if !strings.Contains(diagnostic.Message, root) {
+		t.Fatal("missing failed directory", diagnostic)
+	}
+	saved, err := l.Numbering(b.ID)
+	if err != nil || saved.Status != "preview" {
+		t.Fatal(saved, err)
 	}
 }

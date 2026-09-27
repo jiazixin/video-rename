@@ -3,7 +3,6 @@ package library
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -167,25 +166,40 @@ func numberingNames(selected, outside, peers []Entry, r domain.MediaNumberingRul
 	return result
 }
 
-func directoryFingerprint(path string) (string, error) {
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		return "", err
-	}
-	hash := sha256.New()
-	for _, e := range entries {
-		info, err := e.Info()
-		if err != nil {
-			return "", err
+// Saved file snapshots can explain a fingerprint mismatch without relaxing
+// identity checks on network filesystems. Limit diagnostics for large batches.
+func numberingFingerprintFailure(path string, b Numbering, actual string) error {
+	var detail strings.Builder
+	fmt.Fprintf(&detail, "编号目录校验诊断\n目录：%q\n预览时间：%s\n预览指纹：%s\n当前指纹：%s\n", path, b.Created, numberingFingerprintLabel(b.Fingerprint), numberingFingerprintLabel(actual))
+	if !describeNumberingSnapshotDiff(&detail, b.Fingerprint, actual) {
+		fmt.Fprintln(&detail, "此预览没有完整目录快照，以下仅比较参与编号的文件；更新后请重新预览。")
+		differences := 0
+		for _, item := range b.Items {
+			info, err := os.Lstat(filepath.Join(path, item.Old))
+			if err != nil {
+				fmt.Fprintf(&detail, "文件 %q：读取失败：%v\n", item.Old, err)
+				differences++
+			} else {
+				snap, err := domain.SnapshotFromInfo(info)
+				if err != nil {
+					fmt.Fprintf(&detail, "文件 %q：身份读取失败：%v\n", item.Old, err)
+					differences++
+				} else if !info.Mode().IsRegular() || Identity(snap) != item.Identity || snap.Size != item.Size || stamp(snap) != item.Mtime {
+					fmt.Fprintf(&detail, "文件 %q：类型=%s；身份 %s → %s；大小 %d → %d；修改时间 %s → %s\n", item.Old, info.Mode().Type(), item.Identity, Identity(snap), item.Size, snap.Size, item.Mtime, stamp(snap))
+					differences++
+				}
+			}
+			if differences >= 20 {
+				fmt.Fprintln(&detail, "差异仅展示前 20 项。")
+				break
+			}
 		}
-		// Lstat-based identity also detects replaced files; never traverse symlinks.
-		snap, err := domain.SnapshotFromInfo(info)
-		if err != nil {
-			return "", err
+		if differences == 0 {
+			fmt.Fprintln(&detail, "参与文件的身份、大小和修改时间一致；差异可能来自其他目录条目或旧版预览指纹，当前记录不足以确定具体条目。")
 		}
-		fmt.Fprintf(hash, "%q:%s:%d:%s:%d\n", e.Name(), Identity(snap), info.Size(), stamp(snap), info.Mode())
 	}
-	return hex.EncodeToString(hash.Sum(nil)), nil
+	fmt.Fprintln(&detail, "当前目录尚未开始改名。CIFS/SMB 下请核对 inode 和属性缓存；此提示不等于确认有人修改文件。")
+	return &domain.JobError{Code: domain.CodeSourceChanged, Message: fmt.Sprintf("目录 %s 的预览校验不一致，请查看诊断详情并重新预览", path), ProcessingLog: detail.String()}
 }
 
 func (l *Library) checkNumberingAvailable(id int64) error {
@@ -646,7 +660,7 @@ func (l *Library) ApplyNumberingContext(ctx context.Context, id string, progress
 		return b, err
 	}
 	if fingerprint != b.Fingerprint {
-		return b, fmt.Errorf("预览后目录已变化，请重新预览")
+		return b, numberingFingerprintFailure(path, b, fingerprint)
 	}
 	if b.UndoOf != "" {
 		original, err := l.Numbering(b.UndoOf)
