@@ -20,20 +20,19 @@ import (
 
 	"video-rename/internal/config"
 	"video-rename/internal/domain"
+	"video-rename/internal/systemsettings"
 
 	"golang.org/x/sys/unix"
 )
 
-const Retention = 72 * time.Hour
-
 type record struct {
-	Key            string
-	Set            domain.FrameSet
-	LastUsed       time.Time
-	Bytes          int64
-	pins           int
-	deleteWhenFree bool
-	Checksums      map[string]string
+	Key         string
+	Set         domain.FrameSet
+	LastUsed    time.Time
+	Bytes       int64
+	pins        int
+	SucceededAt time.Time
+	Checksums   map[string]string
 }
 type Cache struct {
 	mu       sync.Mutex
@@ -43,6 +42,7 @@ type Cache struct {
 	building map[string]bool
 	reserved int64
 	limit    int64
+	policy   systemsettings.Policy
 	changed  chan struct{}
 }
 type Lease struct {
@@ -74,7 +74,7 @@ func Key(job domain.VideoJob, cfg *config.Config) string {
 	h := sha256.Sum256(raw)
 	return hex.EncodeToString(h[:])
 }
-func New(base string, limit int64) (*Cache, error) {
+func New(base string, limit int64, policies ...systemsettings.Policy) (*Cache, error) {
 	root := filepath.Join(base, "video-rename-frames-v1")
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return nil, err
@@ -101,6 +101,10 @@ func New(base string, limit int64) (*Cache, error) {
 		}
 	}()
 	c := &Cache{lock: lock, root: root, limit: limit, entries: map[string]*record{}, building: map[string]bool{}, changed: make(chan struct{})}
+	c.policy = systemsettings.Default().Policy
+	if len(policies) > 0 {
+		c.policy = policies[0]
+	}
 	dirs, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err
@@ -205,7 +209,7 @@ func (c *Cache) pruneLocked(now time.Time, need int64) error {
 	}
 	slices.SortFunc(all, func(a, b *record) int { return a.LastUsed.Compare(b.LastUsed) })
 	for _, r := range all {
-		if now.Sub(r.LastUsed) >= Retention || c.used()+c.reserved+need > c.limit {
+		if c.expired(r, now) || c.used()+c.reserved+need > c.limit {
 			if err := c.remove(r); err != nil {
 				return err
 			}
@@ -402,7 +406,7 @@ func (c *Cache) Acquire(ctx context.Context, key string, reserve int64, build fu
 	return c.lease(r), nil
 }
 
-// Release keeps complete frames on failure/cancellation and removes only after successful commit.
+// Release records successful commits and applies the current retention policy.
 func (l *Lease) Release(success bool) {
 	l.once.Do(func() {
 		c := l.cache
@@ -415,8 +419,10 @@ func (l *Lease) Release(success bool) {
 		r.pins--
 		r.LastUsed = time.Now()
 		var err error
-		r.deleteWhenFree = r.deleteWhenFree || success
-		if r.deleteWhenFree && r.pins == 0 {
+		if success {
+			r.SucceededAt = time.Now()
+		}
+		if c.expired(r, time.Now()) && r.pins == 0 {
 			err = c.remove(r)
 		} else {
 			err = c.persist(r)
@@ -426,4 +432,57 @@ func (l *Lease) Release(success bool) {
 		}
 		c.signal()
 	})
+}
+
+// Configure applies current retention settings without touching active leases.
+func (c *Cache) Configure(limit int64, policy systemsettings.Policy) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.limit, c.policy = limit, policy
+	c.signal()
+	return c.pruneLocked(time.Now(), 0)
+}
+func (c *Cache) expired(r *record, now time.Time) bool {
+	if c.policy.IdleCacheHours > 0 && now.Sub(r.LastUsed) >= time.Duration(c.policy.IdleCacheHours)*time.Hour {
+		return true
+	}
+	if r.SucceededAt.IsZero() {
+		return false
+	}
+	switch c.policy.SuccessCacheMode {
+	case "", "immediate":
+		return true
+	case "delayed":
+		return now.Sub(r.SucceededAt) >= time.Duration(c.policy.SuccessCacheHours)*time.Hour
+	default:
+		return false
+	}
+}
+
+type ClearResult struct {
+	Deleted    int   `json:"deleted"`
+	FreedBytes int64 `json:"freed_bytes"`
+	Retained   int   `json:"retained"`
+}
+
+// Clear removes only completed, idle entries. Active builders and leases survive.
+func (c *Cache) Clear() (ClearResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	result := ClearResult{Retained: len(c.building)}
+	for r := range maps.Values(c.entries) {
+		if r.pins > 0 {
+			if !c.building[r.Key] {
+				result.Retained++
+			}
+			continue
+		}
+		size := r.Bytes
+		if err := c.remove(r); err != nil {
+			return result, err
+		}
+		result.Deleted++
+		result.FreedBytes += size
+	}
+	return result, nil
 }

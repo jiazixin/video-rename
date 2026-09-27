@@ -86,6 +86,35 @@ test('状态颜色、每页居中和日志日历',async({page})=>{
  await page.screenshot({path:'test-results/status-colors.png',fullPage:true,animations:'disabled'})
 })
 
+test('多选命名入队后不等待慢速状态查询',async({page})=>{
+ await login(page)
+ await page.getByRole('button',{name:'分页测试',exact:true}).click()
+ await expect(page.locator('tbody tr')).toHaveCount(100)
+ await page.getByRole('button',{name:'多选',exact:true}).click()
+ await page.getByLabel('选择 片段_0000.mp4',{exact:true}).check()
+ await page.getByLabel('选择 片段_0001.mp4',{exact:true}).check()
+ await page.route('**/api/runs/999',route=>route.fulfill({json:{id:999,status:'completed'}}))
+ await page.route('**/api/runs',async route=>{
+  if(route.request().method()!=='POST'){await route.continue();return}
+  expect(route.request().postDataJSON().targets).toHaveLength(2)
+  await route.fulfill({status:202,json:{id:999}})
+ })
+ let release!:()=>void,started!:()=>void
+ const wait=new Promise<void>(resolve=>{release=resolve}),queryStarted=new Promise<void>(resolve=>{started=resolve})
+ await page.route('**/api/entries/status?*',async route=>{started();await wait;await route.continue()})
+ try{
+  await page.getByRole('button',{name:'命名',exact:true}).click()
+  await page.getByRole('button',{name:'重命名',exact:true}).click()
+  await queryStarted
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.locator('.notice.success')).toContainText('重命名批次 #999 已加入队列')
+  // A delayed status refresh must not keep the shared saving flag locked.
+  await page.locator('.directory-mark-actions').getByRole('button',{name:'标记',exact:true}).click()
+  await expect(page.getByRole('button',{name:'确认标记',exact:true})).toBeEnabled()
+  await page.getByRole('dialog').locator('.modal-actions').getByRole('button',{name:'关闭',exact:true}).click()
+ }finally{release()}
+})
+
 for(const count of [1,2])test(`多选 ${count} 项后迟到的目录刷新不移动勾选行`,async({page})=>{
  await login(page)
  await page.getByRole('button',{name:'分页测试',exact:true}).click()
@@ -339,6 +368,29 @@ test('清除已选和全部历史不影响还原',async({page})=>{
  await page.getByRole('button',{name:'清除记录',exact:true}).click();await page.getByRole('button',{name:'确认清除',exact:true}).click();await expect(row).toHaveCount(0)
  await page.getByRole('button',{name:'失败记录',exact:true}).click();await expect(page.locator('.failure-diagnostics').first()).toBeVisible();await page.getByRole('button',{name:'清除记录',exact:true}).click();await page.getByRole('button',{name:'确认清除',exact:true}).click();await expect(page.getByRole('heading',{name:'没有失败记录',exact:true})).toBeVisible()
  await page.getByRole('button',{name:'文件目录',exact:true}).click();await page.getByRole('button',{name:'还原 清除保留测试.mp4',exact:true}).click();await page.getByRole('button',{name:'确认还原',exact:true}).click();await expect(page.getByText('VID_20260920_001.mp4',{exact:true})).toBeVisible()
+})
+
+test('后台标记查询断连后使用同一请求重试',async({page})=>{
+ await login(page)
+ const keys:string[]=[]
+ let polls=0
+ await page.route('**/api/entries/processed',async route=>{
+  const body=route.request().postDataJSON();keys.push(body.key)
+  await route.fulfill({status:202,json:{key:body.key,status:'running',changed:1,unchanged:0,failed:0,failures:[],interrupted:false}})
+ })
+ await page.route('**/api/entries/processed/status/*',async route=>{
+  if(++polls===1){await route.abort('connectionreset');return}
+  await route.fulfill({json:{key:keys[0],status:'completed',changed:230,unchanged:0,failed:0,failures:[],interrupted:false}})
+ })
+ await page.getByRole('button',{name:'标记已处理 分页测试',exact:true}).click()
+ await page.getByRole('button',{name:'确认标记',exact:true}).click()
+ await expect(page.getByRole('dialog')).toContainText('后台处理中：已变更 1 个视频')
+ await expect(page.getByRole('dialog').getByRole('alert')).toContainText('后台任务可能仍在执行')
+ await expect(page.getByRole('dialog').getByRole('alert')).toContainText('已确认变更 1 个视频')
+ await page.getByRole('button',{name:'确认标记',exact:true}).click()
+ await expect(page.getByRole('dialog')).toHaveCount(0)
+ await expect(page.locator('.notice.success')).toContainText('已标记 230 个视频')
+ expect(keys).toHaveLength(2);expect(keys[0]).toBeTruthy();expect(keys[1]).toBe(keys[0])
 })
 
 test('手动处理标记、目录递归与跨页批量取消',async({page})=>{

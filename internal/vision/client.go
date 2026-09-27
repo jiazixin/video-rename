@@ -95,6 +95,13 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 	}
 }
 
+// TitleOnce performs one request; jobs owns the retry budget and fallback selection.
+func (c *Client) TitleOnce(ctx context.Context, prompt string, frames []domain.Frame) (domain.TitleResult, *domain.JobError) {
+	single := *c
+	single.maxAttempts = 1
+	return single.Title(ctx, prompt, frames)
+}
+
 // Title 对一个视频的帧集请求标题。
 // 返回通过单行输出验证的标题;失败返回 *domain.JobError。
 // 401/403 返回 Global 标记,用于停止调度新任务。
@@ -128,6 +135,7 @@ func (c *Client) Title(ctx context.Context, prompt string, frames []domain.Frame
 			}
 			return domain.TitleResult{Title: title, Attempts: attempt, FramesSent: sent, RawRequest: exchange.Request, RawResponse: exchange.Response}, nil
 		}
+		rerr.JobError.RetryAfter = rerr.RetryAfter
 		lastErr = rerr
 		if !rerr.Retryable() {
 			return domain.TitleResult{Attempts: attempt, FramesSent: sent}, &rerr.JobError

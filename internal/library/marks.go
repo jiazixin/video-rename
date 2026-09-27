@@ -13,22 +13,41 @@ type MarkFailure struct {
 	Message string `json:"message"`
 }
 type MarkResult struct {
-	Changed   int64         `json:"changed"`
-	Unchanged int64         `json:"unchanged"`
-	Failed    int           `json:"failed"`
-	Failures  []MarkFailure `json:"failures"`
+	Changed     int64         `json:"changed"`
+	Unchanged   int64         `json:"unchanged"`
+	Failed      int           `json:"failed"`
+	Failures    []MarkFailure `json:"failures"`
+	Interrupted bool          `json:"interrupted"`
 }
 
 // SetProcessed walks current disk contents, not just previously indexed children.
 // Each file is independently committed; bounded failure details expose partial success.
 func (l *Library) SetProcessed(ctx context.Context, ids []int64, marked bool) MarkResult {
-	result := MarkResult{Failures: []MarkFailure{}}
+	return l.SetProcessedWithProgress(ctx, ids, marked, nil)
+}
+
+// SetProcessedWithProgress reports committed counts while walking the targets.
+// The callback runs synchronously and must not mutate the result's failure slice.
+func (l *Library) SetProcessedWithProgress(ctx context.Context, ids []int64, marked bool, progress func(MarkResult)) (result MarkResult) {
+	result = MarkResult{Failures: []MarkFailure{}}
+	report := func() {
+		if progress != nil {
+			progress(result)
+		}
+	}
+	defer func() {
+		// Cancellation can happen between pages or targets, without a failed file.
+		// Never present that partial traversal as a completed operation.
+		result.Interrupted = ctx.Err() != nil
+		report()
+	}()
 	seen := map[int64]bool{}
 	fail := func(id int64, err error) {
 		result.Failed++
 		if len(result.Failures) < 100 {
 			result.Failures = append(result.Failures, MarkFailure{id, l.DisplayPath(id), err.Error()})
 		}
+		report()
 	}
 	var walk func(int64)
 	walk = func(id int64) {
@@ -54,6 +73,7 @@ func (l *Library) SetProcessed(ctx context.Context, ids []int64, marked bool) Ma
 			} else {
 				result.Unchanged++
 			}
+			report()
 			return
 		}
 		if e.Kind != "directory" {

@@ -47,6 +47,7 @@ func (a *App) markEntries(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Targets []int64 `json:"targets"`
 		Marked  *bool   `json:"marked"`
+		Key     string  `json:"key"`
 	}
 	if !decode(w, r, &input) {
 		return
@@ -60,6 +61,10 @@ func (a *App) markEntries(w http.ResponseWriter, r *http.Request) {
 			send(w, 400, map[string]string{"message": "条目编号无效"})
 			return
 		}
+	}
+	if input.Key != "" {
+		a.startMark(w, r, input.Key, input.Targets, *input.Marked)
+		return
 	}
 	send(w, 200, a.Library.SetProcessed(r.Context(), input.Targets, *input.Marked))
 }

@@ -27,7 +27,7 @@ func Prepare(ctx context.Context, cfg *config.Config, job domain.VideoJob, probe
 func Infer(ctx context.Context, cfg *config.Config, frames []domain.Frame) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, domain.JobBudget(cfg.TimeoutDuration))
 	defer cancel()
-	result, err := vision.New(cfg).Title(ctx, cfg.Prompt, frames)
+	result, err := vision.New(cfg).TitleOnce(ctx, cfg.Prompt, frames)
 	if err != nil {
 		return "", err
 	}

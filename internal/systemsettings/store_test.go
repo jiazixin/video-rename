@@ -115,3 +115,37 @@ func TestInvalidSavedNumberingFails(t *testing.T) {
 		}
 	}
 }
+
+func TestRetryAndRetentionSettings(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "policy.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store := Store{DB: db}
+	value, err := store.Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !value.RetryEnabled || value.RetryCount != 3 || value.SuccessCacheMode != "immediate" || value.IdleCacheHours != 72 {
+		t.Fatal(value)
+	}
+	value.RetryCount = 5
+	value.SuccessCacheMode = "delayed"
+	value.SuccessCacheHours = 168
+	value.IdleCacheHours = 0
+	if err = store.Save(value); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get()
+	if err != nil || got != value {
+		t.Fatal(got, err)
+	}
+	for _, mutate := range []func(*Settings){func(s *Settings) { s.RetryCount = 11 }, func(s *Settings) { s.RetryCount = 0 }, func(s *Settings) { s.SuccessCacheHours = 0 }, func(s *Settings) { s.IdleCacheHours = -1 }, func(s *Settings) { s.SuccessCacheMode = "invalid" }} {
+		invalid := value
+		mutate(&invalid)
+		if err = store.Save(invalid); err == nil {
+			t.Fatal("accepted", invalid)
+		}
+	}
+}

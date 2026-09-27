@@ -57,6 +57,15 @@ func TestSystemSettingsAPI(t *testing.T) {
 	if response.Settings != systemsettings.Default() {
 		t.Fatal(response)
 	}
+	if w = request("POST", "/api/system/cache/clear", `{"confirm":true}`, false); w.Code != 403 {
+		t.Fatal("clear without CSRF", w.Code)
+	}
+	if w = request("POST", "/api/system/cache/clear", `{"confirm":false}`, true); w.Code < 400 {
+		t.Fatal("clear without confirmation", w.Code)
+	}
+	if w = request("POST", "/api/system/cache/clear", `{"confirm":true}`, true); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
 	value := systemsettings.Settings{ExtractWorkers: 3, CacheGB: 2}
 	raw, _ := json.Marshal(value)
 	if w = request("PUT", "/api/system/settings", string(raw), false); w.Code != 403 {

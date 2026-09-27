@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
@@ -87,33 +86,6 @@ func (m *Manager) analyze(ctx context.Context, run Run, entry int64, cfg *config
 		}
 	}
 	extracted()
-	waitStarted := time.Now()
-	release, n, err := m.modelSlot(ctx, run.ModelConfigID, cfg.Workers)
-	if err != nil {
-		return "", lease, err
-	}
-	defer release()
-	if err = ctx.Err(); err != nil {
-		return "", lease, err
-	}
-	cfg.Workers, cfg.Server.Workers = n, n
-	// Cached inputs must still describe the current source before spending a model request.
-	snap, err := domain.StatSnapshot(job.Path)
-	if err != nil {
-		return "", lease, err
-	}
-	if !snap.Same(job.Snapshot) {
-		diagnostic := domain.SourceChangedError("视频在等待模型期间发生变化", "抽帧完成后、获取模型名额后、调用模型前", job.Path, job.Snapshot, snap)
-		diagnostic.ProcessingLog += fmt.Sprintf("批次：%d\n文件条目：%d\n模型排队时长：%s\n基准：本视频处理开始时的原文件快照；当前：取得模型名额后的原文件快照。\n本次尚未调用模型；校验对象不是截图目录或截图数量。\n", run.ID, entry, time.Since(waitStarted))
-		if lease != nil {
-			diagnostic.ProcessingLog += fmt.Sprintf("已准备截图：%d 张\n", len(lease.Set.Frames))
-		}
-		return "", lease, diagnostic
-	}
-	if m.Analyze != nil {
-		title, e := m.Analyze(ctx, cfg, job, probe, ffmpeg)
-		return title, nil, e
-	}
-	title, err := m.Infer(ctx, cfg, lease.Set.Frames)
+	title, err := m.inferWithRetry(ctx, run, entry, cfg, job, probe, ffmpeg, lease)
 	return title, lease, err
 }

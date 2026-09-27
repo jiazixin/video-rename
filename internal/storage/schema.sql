@@ -94,6 +94,7 @@ CREATE TABLE runs (
  model_config_id INTEGER NOT NULL DEFAULT 1,
  model_config_title TEXT NOT NULL DEFAULT '',
  prompt_body TEXT NOT NULL DEFAULT '',
+ retry_snapshot TEXT NOT NULL DEFAULT '',
  model_snapshot TEXT NOT NULL DEFAULT '',
  started TEXT NOT NULL DEFAULT '',
  sampling_snapshot TEXT NOT NULL DEFAULT '',
@@ -250,17 +251,37 @@ CREATE TABLE system_settings (
  cache_gb INTEGER NOT NULL,
  stability_seconds INTEGER NOT NULL DEFAULT 30 CHECK(stability_seconds BETWEEN 0 AND 3600),
  numbering TEXT NOT NULL DEFAULT '',
- fixed_prompt TEXT NOT NULL DEFAULT ''
+ fixed_prompt TEXT NOT NULL DEFAULT '',
+ policy TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE token_usage_records (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  run INTEGER NOT NULL REFERENCES runs(id),
- item INTEGER NOT NULL UNIQUE REFERENCES run_items(id),
+ item INTEGER NOT NULL REFERENCES run_items(id),
+ attempt INTEGER NOT NULL DEFAULT 1,
+ model_config_id INTEGER,
+ model_config_title TEXT,
+ config_summary TEXT,
  recorded_at INTEGER NOT NULL,
  tokens INTEGER NOT NULL,
  records INTEGER NOT NULL DEFAULT 1,
- estimated_records INTEGER NOT NULL DEFAULT 0
+ estimated_records INTEGER NOT NULL DEFAULT 0,
+ UNIQUE(item,attempt)
+);
+
+CREATE TABLE model_attempts (
+ item INTEGER NOT NULL REFERENCES run_items(id),
+ attempt INTEGER NOT NULL,
+ model_config_id INTEGER NOT NULL,
+ model_config_title TEXT NOT NULL,
+ model TEXT NOT NULL,
+ fallback INTEGER NOT NULL,
+ started TEXT NOT NULL,
+ duration_ms INTEGER NOT NULL,
+ status TEXT NOT NULL,
+ message TEXT NOT NULL,
+ PRIMARY KEY(item,attempt)
 );
 
 CREATE TABLE extraction_records (
@@ -315,4 +336,4 @@ CREATE INDEX extraction_run ON extraction_records(run,id DESC);
 
 INSERT INTO notification_preferences VALUES(1,'UTC');
 
-PRAGMA user_version=20260927;
+PRAGMA user_version=20260928;

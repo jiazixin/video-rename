@@ -47,7 +47,7 @@ function startBatch(action:string){batch.value=action;batchError.value='';batchP
 async function submitBatch(){statusSeq++;saving.value=true;batchError.value='';try{
  if(batch.value==='auto'||batch.value==='extract'){const extracting=batch.value==='extract';const entries=[...(extracting?extractEntries.value:autoEntries.value)];const runs:number[]=[];for(let i=0;i<entries.length;i+=100){const group=entries.slice(i,i+100);const run=await api('/runs','POST',{task:extracting?'extract':'rename',targets:group.map(e=>e.id),recursive:recursive.value,model_config_id:extracting?0:modelConfigID.value,key:key()});runs.push(run.id);trackRun(run.id,group);notice.value=`${extracting?'抽帧':'重命名'}批次 ${runs.map(id=>'#'+id).join('、')} 已加入队列`;batchProgress.value=`已提交 ${Math.min(i+100,entries.length)} / ${entries.length}`}batch.value=''}
  else {const entries=[...restoreEntries.value];let done=0;const failures:string[]=[];for(const e of entries){batchProgress.value=`正在还原 ${++done} / ${entries.length}`;try{await api(`/operations/${e.restore_id}/restore`,'POST',{key:key()});chosen.value.delete(e.id)}catch(err){failures.push(`${e.name}：${(err as Error).message}`)}}notice.value=`已还原 ${entries.length-failures.length} 项，失败 ${failures.length} 项`;batchProgress.value='';if(failures.length)batchError.value=failures.join('\n');else batch.value=''}
- await syncEntries()
+ void syncEntries()
  }catch(err){batchError.value=(err as Error).message}finally{saving.value=false}}
 const videoBusy=ref(false),videoNotice=ref('')
 const audioPlaying=ref<Entry>(),audioNotice=ref(''),audioBusy=ref(false)
@@ -239,19 +239,32 @@ async function open(e:Entry,m:string){if(m==='auto')modelConfigID.value=0;if(m==
 async function submit(){if(!selected.value)return;statusSeq++;saving.value=true;dialogError.value='';try{const e=selected.value;if(mode.value==='rename'){await api(`/entries/${e.id}/rename`,'POST',{name:newName.value+extension.value,version:e.version,key:key()});notice.value='名称已更新，历史已保存'}else if(mode.value==='restore'){await api(`/operations/${e.restore_id}/restore`,'POST',{key:key()});notice.value='名称已还原，可以再次自动命名'}else{const extracting=mode.value==='extract';const run=await api('/runs','POST',{task:extracting?'extract':'rename',model_config_id:extracting?0:modelConfigID.value,targets:[e.id],recursive:recursive.value,key:key()});trackRun(run.id,[e]);notice.value=`${extracting?'抽帧':'重命名'}批次 #${run.id} 已加入队列`}
  mode.value='';await syncEntries()}catch(err){dialogError.value=(err as Error).message}finally{saving.value=false}}
 const marking=ref<Entry[]>([]),markValue=ref(true),markError=ref(''),markProgress=ref('')
-function openMark(entries:Entry[],value:boolean){marking.value=[...entries];markValue.value=value;markError.value='';markProgress.value=''}
+interface MarkResult {key:string;status:string;changed:number;unchanged:number;failed:number;interrupted:boolean;failures:{name:string;message:string}[]}
+let markKeys:string[]=[]
+function openMark(entries:Entry[],value:boolean){marking.value=[...entries];markValue.value=value;markError.value='';markProgress.value='';markKeys=[]}
 async function submitMark(){
- statusSeq++;saving.value=true;markError.value='';let changed=0,unchanged=0,failed=0;const failures:string[]=[]
+ statusSeq++;saving.value=true;markError.value='';let changed=0,unchanged=0,failed=0,confirmed=0;const failures:string[]=[]
  try{
   for(let i=0;i<marking.value.length;i+=100){
+   const requestKey=markKeys[i/100]??(markKeys[i/100]=key())
    markProgress.value=`正在处理第 ${i+1}–${Math.min(i+100,marking.value.length)} 个目标…`
-   const result=await api<{changed:number;unchanged:number;failed:number;failures:{name:string;message:string}[]}>('/entries/processed','POST',{targets:marking.value.slice(i,i+100).map(e=>e.id),marked:markValue.value})
+   let result=await api<MarkResult>('/entries/processed','POST',{targets:marking.value.slice(i,i+100).map(e=>e.id),marked:markValue.value,key:requestKey})
+   while(result.status==='running'){
+    confirmed=changed+result.changed
+    markProgress.value=`后台处理中：已变更 ${changed+result.changed} 个视频，未变更 ${unchanged+result.unchanged} 个，失败 ${failed+result.failed} 项…`
+    await new Promise(resolve=>setTimeout(resolve,1000))
+    if(disposed)return
+    result=await api<MarkResult>(`/entries/processed/status/${encodeURIComponent(requestKey)}`)
+   }
    changed+=result.changed;unchanged+=result.unchanged;failed+=result.failed
+   confirmed=changed
    failures.push(...result.failures.map(e=>`${e.name}：${e.message}`))
+   if(result.interrupted){markKeys=[];throw new Error('标记任务已中断，仍有目标未处理')}
   }
+  markKeys=[]
   notice.value=`${markValue.value?'已标记':'已取消标记'} ${changed} 个视频，未变更 ${unchanged} 个，失败 ${failed} 项`
   if(failed)markError.value=failures.join('\n');else marking.value=[]
- }catch(e){markError.value=`已完成 ${changed} 个视频；${(e as Error).message}。可重试，已完成的标记不会重复创建。`}
+ }catch(e){markError.value=`已确认变更 ${confirmed} 个视频；${(e as Error).message}。后台任务可能仍在执行，可点击确认重试查询；已完成的标记会保留。`}
  finally{markProgress.value='';saving.value=false;await syncEntries()}
 }
 function status(e:Entry){if(e.task_status)return statusNames[e.task_status]||e.task_status;return e.processed==='marked'?'手动标记已处理':e.processed==='manual'?'已手动命名':e.processed==='automatic'?'已自动命名':e.processed==='restore'?'已还原':'未处理'}

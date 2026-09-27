@@ -59,3 +59,37 @@ func TestScaleDirectoryPagination(t *testing.T) {
 		t.Fatalf("P95 exceeds target: %s", p95)
 	}
 }
+
+func TestScaleProcessedMarks(t *testing.T) {
+	l, root, _ := fixture(t)
+	for d := range 2 {
+		dir := filepath.Join(root, fmt.Sprintf("mark-%d", d))
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		for f := range 10000 {
+			put(t, filepath.Join(dir, fmt.Sprintf("clip-%05d.mp4", f)))
+		}
+	}
+	refresh(t, l, 1)
+	targets := []int64{entry(t, l, 1, "mark-0").ID, entry(t, l, 1, "mark-1").ID}
+	for _, marked := range []bool{true, true, false} {
+		start := time.Now()
+		result := l.SetProcessed(t.Context(), targets, marked)
+		t.Logf("marked=%v: %+v, elapsed=%s", marked, result, time.Since(start))
+		if result.Failed != 0 || result.Changed+result.Unchanged != 20000 {
+			t.Fatalf("incomplete marking: %+v", result)
+		}
+		var count int
+		if err := l.DB.QueryRow("SELECT count(*) FROM marks").Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		want := 0
+		if marked {
+			want = 20000
+		}
+		if count != want {
+			t.Fatalf("marks=%d, want %d", count, want)
+		}
+	}
+}

@@ -52,6 +52,13 @@ func (s Store) Delete(id, version int64) error {
 	if selected != 0 {
 		return fmt.Errorf("请先将其他模型配置设为全局默认，再删除此配置")
 	}
+	var fallback int
+	if err = tx.QueryRow("SELECT count(*) FROM system_settings WHERE json_extract(NULLIF(policy,''),'$.fallback_model_id')=?", id).Scan(&fallback); err != nil {
+		return err
+	}
+	if fallback > 0 {
+		return fmt.Errorf("请先在处理与缓存中更换或取消兜底模型，再删除此配置")
+	}
 	var plans int
 	if err = tx.QueryRow("SELECT count(*) FROM schedules WHERE model_config_id=?", id).Scan(&plans); err != nil {
 		return err

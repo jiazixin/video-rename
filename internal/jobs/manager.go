@@ -12,7 +12,6 @@ import (
 	"maps"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -27,10 +26,10 @@ import (
 	"video-rename/internal/sampling"
 	"video-rename/internal/storage"
 	"video-rename/internal/systemsettings"
-	"video-rename/internal/tokenusage"
 )
 
 type Run struct {
+	retry            retryPolicy
 	Task             string         `json:"task"`
 	TargetNames      []string       `json:"target_names,omitempty"`
 	RequestConfig    jsontext.Value `json:"request_config,omitempty"`
@@ -105,7 +104,7 @@ func New(db *storage.Store, l *library.Library, cfg *config.Config) (*Manager, e
 		}
 		temp = filepath.Join(filepath.Dir(path), ".cache")
 	}
-	cache, err := framecache.New(temp, settings.Bytes())
+	cache, err := framecache.New(temp, settings.Bytes(), settings.Policy)
 	if err != nil {
 		return nil, err
 	}
@@ -171,19 +170,10 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 		r.ModelConfigID = 0
 	}
 	// Normalize scopes without scanning them. Overlapping recursive targets are redundant.
-	slices.Sort(r.Targets)
-	normalized := make([]int64, 0, len(r.Targets))
-	for _, id := range r.Targets {
-		covered := false
-		for _, other := range r.Targets {
-			if other != id && r.Recursive && m.Library.IsWithin(id, other) {
-				covered = true
-				break
-			}
-		}
-		if !covered && (len(normalized) == 0 || normalized[len(normalized)-1] != id) {
-			normalized = append(normalized, id)
-		}
+	index := newScopeIndex(m.DB)
+	normalized, err := index.normalize(r.Targets, r.Recursive)
+	if err != nil {
+		return 0, err
 	}
 	r.Targets = normalized
 	if r.Task == "rename" && r.ModelConfigID == 0 {
@@ -198,7 +188,7 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	var oldTargets string
 	var oldRecursive bool
 	var oldTask string
-	err := m.DB.QueryRow("SELECT id,targets,recursive,model_config_id,task FROM runs WHERE request_key=?", r.Key).Scan(&old, &oldTargets, &oldRecursive, &oldModelConfigID, &oldTask)
+	err = m.DB.QueryRow("SELECT id,targets,recursive,model_config_id,task FROM runs WHERE request_key=?", r.Key).Scan(&old, &oldTargets, &oldRecursive, &oldModelConfigID, &oldTask)
 	if err == nil {
 		current, _ := json.Marshal(r.Targets)
 		if oldTargets != string(current) || oldRecursive != r.Recursive || oldModelConfigID != r.ModelConfigID || oldTask != r.Task {
@@ -209,22 +199,19 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
-	if err = m.checkOverlap(r); err != nil {
+	if err = m.checkOverlap(r, index); err != nil {
 		return 0, err
 	}
 	if _, _, err = m.Tools(); err != nil {
 		return 0, err
 	}
 	for _, id := range r.Targets {
-		e, err := m.Library.Get(id)
+		e, err := index.get(id)
 		if err != nil {
 			return 0, err
 		}
-		if e.Kind != "directory" && (e.Kind != "file" || !discovery.IsVideoExtension(e.Name)) {
+		if e.kind != "directory" && (e.kind != "file" || !discovery.IsVideoExtension(e.name)) {
 			return 0, fmt.Errorf("只能运行目录或视频文件")
-		}
-		if _, err = m.Library.Path(id); err != nil {
-			return 0, err
 		}
 	}
 	frames, err := (sampling.Store{DB: m.DB}).Get()
@@ -263,6 +250,14 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 			return 0, err
 		}
 	}
+	retry, err := m.freezeRetry(r.Task, r.ModelConfigID)
+	if err != nil {
+		return 0, err
+	}
+	retryRaw, err := json.Marshal(retry)
+	if err != nil {
+		return 0, err
+	}
 	raw, _ := json.Marshal(r.Targets)
 	roles := []string{"system", "user"}
 	systemLocation := "messages"
@@ -274,7 +269,7 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	if cfg.Server.Provider == "openai" {
 		tokenParameter = "max_completion_tokens"
 	}
-	summary, _ := json.Marshal(map[string]any{"model": cfg.Server.Model, "provider": cfg.Server.Provider, "base_url": cfg.Server.BaseURL, "protocol": cfg.Server.Protocol, "omit_temperature": cfg.Server.OmitTemperature, "thinking": cfg.Server.Thinking, "thinking_adapter": cfg.Server.ThinkingAdapter, "thinking_effort": cfg.Server.ThinkingEffort, "thinking_budget": cfg.Server.ThinkingBudget, "prompt_hash": cfg.PromptHash(), "sampling": cfg.Sampling, "images": cfg.Images, "workers": cfg.Workers, "temperature": cfg.Server.Temperature, "max_tokens": cfg.Server.MaxTokens, "token_parameter": tokenParameter, "stream": false, "message_roles": roles, "system_location": systemLocation})
+	summary, _ := json.Marshal(map[string]any{"retry_enabled": retry.Enabled, "retry_count": retry.Count, "fallback_model_title": retry.FallbackTitle, "model": cfg.Server.Model, "provider": cfg.Server.Provider, "base_url": cfg.Server.BaseURL, "protocol": cfg.Server.Protocol, "omit_temperature": cfg.Server.OmitTemperature, "thinking": cfg.Server.Thinking, "thinking_adapter": cfg.Server.ThinkingAdapter, "thinking_effort": cfg.Server.ThinkingEffort, "thinking_budget": cfg.Server.ThinkingBudget, "prompt_hash": cfg.PromptHash(), "sampling": cfg.Sampling, "images": cfg.Images, "workers": cfg.Workers, "temperature": cfg.Server.Temperature, "max_tokens": cfg.Server.MaxTokens, "token_parameter": tokenParameter, "stream": false, "message_roles": roles, "system_location": systemLocation})
 	if r.Task == "extract" {
 		summary, _ = json.Marshal(map[string]any{"sampling": cfg.Sampling, "images": cfg.Images})
 	}
@@ -290,7 +285,7 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	if count >= 20 {
 		return 0, fmt.Errorf("任务队列已满，请稍后重试")
 	}
-	res, err := tx.Exec("INSERT INTO runs(source,targets,recursive,status,created,request_key,plan,config_summary,model_config_id,model_config_title,prompt_body,model_snapshot,sampling_snapshot,task) VALUES(?,?,?,'queued',?,?,?,?,?,?,?,?,?,?)", source, string(raw), r.Recursive, storage.Now(), r.Key, plan, string(summary), prompt.ID, prompt.Title, prompt.Body, snapshot, string(frameSnapshot), r.Task)
+	res, err := tx.Exec("INSERT INTO runs(source,targets,recursive,status,created,request_key,plan,config_summary,model_config_id,model_config_title,prompt_body,model_snapshot,sampling_snapshot,task,retry_snapshot) VALUES(?,?,?,'queued',?,?,?,?,?,?,?,?,?,?,?)", source, string(raw), r.Recursive, storage.Now(), r.Key, plan, string(summary), prompt.ID, prompt.Title, prompt.Body, snapshot, string(frameSnapshot), r.Task, string(retryRaw))
 	if err != nil {
 		return 0, err
 	}
@@ -408,16 +403,24 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 	if claimed == 0 {
 		return
 	}
-	fail := func(e error) {
-		_, _ = m.DB.Exec("UPDATE runs SET status='failed',error=?,finished=? WHERE id=?", e.Error(), storage.Now(), id)
+	failAt := func(e error, target int64) {
+		_, _ = m.DB.Exec("UPDATE runs SET status='failed',failed=failed+CASE WHEN ?>0 THEN 1 ELSE 0 END,error=?,finished=? WHERE id=?", target, e.Error(), storage.Now(), id)
+		path, action := "", "run"
+		if target > 0 {
+			path, action = m.Library.DisplayPath(target), "scan"
+		}
 		if r.Task == "extract" {
-			m.extractionFailure(r, 0, strings.Join(r.TargetNames, "、"), e)
+			if target == 0 {
+				path = strings.Join(r.TargetNames, "、")
+			}
+			m.extractionFailure(r, target, path, e)
 		} else {
-			if logErr := m.recordFailure("run", 0, id, "", e); logErr != nil {
+			if logErr := m.recordFailure(action, target, id, path, e); logErr != nil {
 				slog.Error("保存批次失败诊断失败", "run", id, "error", logErr)
 			}
 		}
 	}
+	fail := func(e error) { failAt(e, 0) }
 	if r.Task != "extract" && r.PromptBody == "" {
 		fail(fmt.Errorf("任务没有模型配置快照，请重新创建任务"))
 		return
@@ -435,10 +438,16 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 	}
 	runConfig.Sampling, runConfig.Images = frames.Sampling, frames.Images
 	if r.Task != "extract" {
-		var snapshot string
-		if err = m.DB.QueryRow("SELECT model_snapshot FROM runs WHERE id=?", id).Scan(&snapshot); err != nil {
+		var snapshot, retryRaw string
+		if err = m.DB.QueryRow("SELECT model_snapshot,retry_snapshot FROM runs WHERE id=?", id).Scan(&snapshot, &retryRaw); err != nil {
 			fail(err)
 			return
+		}
+		if retryRaw != "" {
+			if err = json.Unmarshal([]byte(retryRaw), &r.retry); err != nil {
+				fail(err)
+				return
+			}
 		}
 		if err = (models.Store{DB: m.DB}).ApplySnapshot(snapshot, &runConfig); err != nil {
 			fail(err)
@@ -451,6 +460,17 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 		return
 	}
 	stableDelay := time.Duration(settings.StabilitySeconds) * time.Second
+	// Media mounts may be slow. Validate every selected path in the worker,
+	// before creating any items, so submission never waits for media I/O.
+	for _, target := range r.Targets {
+		if ctx.Err() != nil {
+			break
+		}
+		if _, err = m.Library.Path(target); err != nil {
+			failAt(err, target)
+			return
+		}
+	}
 	for _, target := range r.Targets {
 		if err = m.scan(ctx, r, target); err != nil {
 			if ctx.Err() != nil {
@@ -653,15 +673,6 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.C
 				var exchange domain.ModelDiagnostics
 				var lease *framecache.Lease
 				title, lease, err = m.analyze(domain.WithModelDiagnostics(ctx, &exchange), batch, it.Entry, cfg, domain.VideoJob{Path: p, Snapshot: snap, JobID: fmt.Sprint(it.ID)}, probe, ffmpeg, extracted)
-				request, response := exchange.Request, exchange.Response
-				if err != nil {
-					if diagnostic, ok := errors.AsType[*domain.JobError](err); ok {
-						request, response = diagnostic.RawRequest, diagnostic.RawResponse
-					}
-				}
-				if err := tokenusage.Record(m.DB, run, it.ID, request, response, time.Now()); err != nil {
-					slog.Error("记录 token 用量失败", "run", run, "item", it.ID, "error", err)
-				}
 				if lease != nil {
 					defer func() { lease.Release(committed) }()
 				}

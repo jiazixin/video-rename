@@ -104,6 +104,22 @@ func TestRunningBatchConcurrencyChangesAndCancellation(t *testing.T) {
 	noStart()
 	finishOne()
 	next(1)
+	// A new model request can start before the previous result commits. Wait for
+	// the three released files to commit before testing cancellation of the rest.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		run, err := m.Get(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if run.Done == 3 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("released requests did not commit: %+v", run)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	if err := m.Cancel(id); err != nil {
 		t.Fatal(err)
 	}

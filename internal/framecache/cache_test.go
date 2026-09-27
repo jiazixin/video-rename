@@ -11,6 +11,7 @@ import (
 
 	"video-rename/internal/config"
 	"video-rename/internal/domain"
+	"video-rename/internal/systemsettings"
 )
 
 func build(work string) (domain.FrameSet, error) {
@@ -159,5 +160,109 @@ func TestSharedLeaseSuccessDeletesAfterLastReader(t *testing.T) {
 	second.Release(false)
 	if c.Stats().Entries != 0 {
 		t.Fatal("committed frames retained after last reader")
+	}
+}
+
+func TestRetentionPoliciesAndRestart(t *testing.T) {
+	for _, mode := range []string{"immediate", "delayed", "keep"} {
+		t.Run(mode, func(t *testing.T) {
+			base := t.TempDir()
+			policy := systemsettings.Default().Policy
+			policy.SuccessCacheMode, policy.SuccessCacheHours, policy.IdleCacheHours = mode, 120, 0
+			c, err := New(base, 1000000, policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			key := strings.Repeat("c", 64)
+			lease, err := c.Acquire(t.Context(), key, 100000, build)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lease.Release(true)
+			if mode == "immediate" {
+				if c.Stats().Entries != 0 {
+					t.Fatal("immediate retained")
+				}
+				c.Close()
+				return
+			}
+			c.mu.Lock()
+			c.entries[key].LastUsed = time.Now().Add(-96 * time.Hour)
+			if err = c.persist(c.entries[key]); err != nil {
+				t.Fatal(err)
+			}
+			c.mu.Unlock()
+			c.Close()
+			c, err = New(base, 1000000, policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.Close()
+			if c.Stats().Entries != 1 {
+				t.Fatal("startup used fixed 3-day retention")
+			}
+			if err = c.Sweep(time.Now().Add(121 * time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			want := 1
+			if mode == "delayed" {
+				want = 0
+			}
+			if c.Stats().Entries != want {
+				t.Fatal(c.Stats())
+			}
+		})
+	}
+}
+func TestClearProtectsLeasesAndBuilders(t *testing.T) {
+	c := mustCache(t, t.TempDir(), 1000000)
+	a, err := c.Acquire(t.Context(), strings.Repeat("a", 64), 100000, build)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := c.Acquire(t.Context(), strings.Repeat("b", 64), 100000, build)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Release(false)
+	c.mu.Lock()
+	c.building["pending-test"] = true
+	c.building[a.key] = true
+	c.mu.Unlock()
+	result, err := c.Clear()
+	if err != nil || result.Deleted != 1 || result.Retained != 2 || result.FreedBytes <= 0 {
+		t.Fatal(result, err)
+	}
+	if _, err = os.Stat(a.Set.Frames[0].Path); err != nil {
+		t.Fatal(err)
+	}
+	a.Release(false)
+	c.mu.Lock()
+	delete(c.building, "pending-test")
+	delete(c.building, a.key)
+	c.mu.Unlock()
+	result, err = c.Clear()
+	if err != nil || result.Deleted != 1 || result.Retained != 0 {
+		t.Fatal(result, err)
+	}
+}
+func TestIdleAndSuccessExpiryWhicheverFirst(t *testing.T) {
+	c := mustCache(t, t.TempDir(), 1000000)
+	policy := systemsettings.Default().Policy
+	policy.SuccessCacheMode = "delayed"
+	policy.SuccessCacheHours = 168
+	if err := c.Configure(1000000, policy); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := c.Acquire(t.Context(), strings.Repeat("d", 64), 100000, build)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.Release(true)
+	if err = c.Sweep(time.Now().Add(73 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if c.Stats().Entries != 0 {
+		t.Fatal("idle deadline did not win")
 	}
 }

@@ -1,12 +1,52 @@
 package library
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 	"video-rename/internal/domain"
 	"video-rename/internal/storage"
 )
+
+func TestProcessedMarksCancellationBetweenFiles(t *testing.T) {
+	l, root, _ := fixture(t)
+	put(t, filepath.Join(root, "a.mp4"))
+	put(t, filepath.Join(root, "b.mp4"))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	r := l.SetProcessedWithProgress(ctx, []int64{1}, true, func(result MarkResult) {
+		if result.Changed == 1 {
+			cancel()
+		}
+	})
+	if !r.Interrupted || r.Changed != 1 {
+		t.Fatalf("cancelled traversal reported as complete: %+v", r)
+	}
+	// A fresh request can finish the remaining file without losing the first mark.
+	r = l.SetProcessed(t.Context(), []int64{1}, true)
+	if r.Interrupted || r.Changed != 1 || r.Unchanged != 1 || r.Failed != 0 {
+		t.Fatalf("retry did not finish remaining work: %+v", r)
+	}
+}
+
+func TestProcessedMarksCancellationBetweenTargets(t *testing.T) {
+	l, root, _ := fixture(t)
+	put(t, filepath.Join(root, "a.mp4"))
+	put(t, filepath.Join(root, "b.mp4"))
+	refresh(t, l, 1)
+	a, b := entry(t, l, 1, "a.mp4"), entry(t, l, 1, "b.mp4")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	r := l.SetProcessedWithProgress(ctx, []int64{a.ID, b.ID}, true, func(result MarkResult) {
+		if result.Changed == 1 {
+			cancel()
+		}
+	})
+	if !r.Interrupted || r.Changed != 1 {
+		t.Fatalf("cancelled targets reported as complete: %+v", r)
+	}
+}
 
 func TestProcessedMarksRecursiveAndPersistent(t *testing.T) {
 	l, root, dbpath := fixture(t)

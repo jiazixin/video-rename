@@ -57,9 +57,10 @@ const (
 // Global 为 true 表示全局依赖故障(鉴权失效、日志不可写、外部工具消失),
 // 会停止调度新任务;普通视频级错误不终止批次。
 type JobError struct {
-	ProcessingLog string `json:"-"`
-	RawRequest    string `json:"-"`
-	RawResponse   string `json:"-"`
+	RetryAfter    time.Duration `json:"-"`
+	ProcessingLog string        `json:"-"`
+	RawRequest    string        `json:"-"`
+	RawResponse   string        `json:"-"`
 	Code          ErrorCode
 	Message       string
 	ExitCode      int    // 媒体进程退出码;未运行或未知为 0

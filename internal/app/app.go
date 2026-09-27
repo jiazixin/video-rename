@@ -40,6 +40,10 @@ type App struct {
 	cancel        context.CancelFunc
 	wg            sync.WaitGroup
 	settingsMu    sync.Mutex
+	markMu        sync.Mutex
+	markJobs      map[string]*markJob
+	markWG        sync.WaitGroup
+	markClosed    bool
 }
 
 func New(cfg *config.Config) (*App, error) {
@@ -72,7 +76,11 @@ func (a *App) Start() {
 	a.wg.Go(func() { a.Scheduler.Loop(a.ctx) })
 }
 func (a *App) Close() error {
+	a.markMu.Lock()
+	a.markClosed = true
+	a.markMu.Unlock()
 	a.cancel()
+	a.markWG.Wait()
 	a.wg.Wait()
 	a.Library.Close()
 	a.Jobs.Cache.Close()
@@ -139,6 +147,7 @@ func (a *App) Handler() http.Handler {
 	api.HandleFunc("GET /api/entries/{id}/image-neighbor", a.adjacentImage)
 	api.HandleFunc("GET /api/entries/status", a.entryStatus)
 	api.HandleFunc("POST /api/entries/processed", a.markEntries)
+	api.HandleFunc("GET /api/entries/processed/status/{key}", a.markStatus)
 	api.HandleFunc("GET /api/system", func(w http.ResponseWriter, r *http.Request) {
 		_, _, err := a.Jobs.Tools()
 		message := ""
@@ -517,6 +526,12 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, item := range out {
 		item["current_path"] = a.Library.DisplayPath(item["entry"].(int64))
+		attempts, err := jobs.Attempts(a.DB, item["id"].(int64))
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		item["attempts"] = attempts
 	}
 	send(w, 200, out)
 }

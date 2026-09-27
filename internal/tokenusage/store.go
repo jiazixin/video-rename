@@ -7,12 +7,18 @@ import (
 )
 
 // Record counts one model exchange and appends it to the per-request ledger,
-// advancing the run aggregate in the same short transaction. The unique item
-// makes the write idempotent: a repeated record for the same run item is
+// advancing the run aggregate in the same short transaction. The unique item/attempt
+// makes the write idempotent: a repeated record for the same run item and attempt is
 // ignored, and the aggregate only moves when a ledger row is actually inserted.
 // Exchanges without a countable usage stay unwritten, matching the aggregate's
 // historical semantics.
 func Record(db *storage.Store, run, item int64, request, response string, at time.Time) error {
+	return record(db, run, item, 1, nil, nil, nil, request, response, at)
+}
+func RecordAttempt(db *storage.Store, run, item int64, attempt int, profileID int64, title, summary, request, response string, at time.Time) error {
+	return record(db, run, item, attempt, profileID, title, summary, request, response, at)
+}
+func record(db *storage.Store, run, item int64, attempt int, profileID, title, summary any, request, response string, at time.Time) error {
 	tokens, estimated, ok := Count(request, response)
 	if !ok {
 		return nil
@@ -26,7 +32,7 @@ func Record(db *storage.Store, run, item int64, request, response string, at tim
 		return err
 	}
 	defer tx.Rollback()
-	inserted, err := tx.Exec(`INSERT INTO token_usage_records(run,item,recorded_at,tokens,records,estimated_records) VALUES(?,?,?,?,1,?) ON CONFLICT(item) DO NOTHING`, run, item, at.UnixMilli(), tokens, rough)
+	inserted, err := tx.Exec(`INSERT INTO token_usage_records(run,item,attempt,model_config_id,model_config_title,config_summary,recorded_at,tokens,records,estimated_records) VALUES(?,?,?,?,?,?,?,?,1,?) ON CONFLICT(item,attempt) DO NOTHING`, run, item, attempt, profileID, title, summary, at.UnixMilli(), tokens, rough)
 	if err != nil {
 		return err
 	}

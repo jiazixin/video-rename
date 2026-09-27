@@ -94,3 +94,39 @@ func TestRecordKeepsEstimatesAndSkipsUncountedExchanges(t *testing.T) {
 		t.Fatal("ledger rows", count, err)
 	}
 }
+
+func TestAttemptsCountOnceAndGroupByActualModel(t *testing.T) {
+	db := openStore(t)
+	seedRun(t, db, 9, `{"model":"primary"}`)
+	seedItem(t, db, 104, 9)
+	at := time.Now()
+	for _, n := range []int{1, 2, 2} {
+		profile, title, summary := int64(1), "主模型", `{"model":"primary"}`
+		if n == 2 {
+			profile, title, summary = 2, "兜底", `{"model":"fallback"}`
+		}
+		if err := RecordAttempt(db, 9, 104, n, profile, title, summary, `{}`, `{"usage":{"total_tokens":10}}`, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tokens, records, _ := aggregate(t, db, 9)
+	if tokens != 20 || records != 2 {
+		t.Fatal(tokens, records)
+	}
+	report, err := Analytics(db, AnalyticsQuery{From: at.Add(-time.Minute).UnixMilli(), To: at.Add(time.Minute).UnixMilli(), Location: time.UTC})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Models) != 2 || len(report.Profiles) != 2 {
+		t.Fatal(report.Models, report.Profiles)
+	}
+	for _, model := range report.Models {
+		if model.Tokens != 10 || model.Batches != 1 {
+			t.Fatal(model)
+		}
+	}
+	report, err = Analytics(db, AnalyticsQuery{From: at.Add(-time.Minute).UnixMilli(), To: at.Add(time.Minute).UnixMilli(), Location: time.UTC, Profile: 2})
+	if err != nil || report.Totals.Tokens != 10 {
+		t.Fatal(report, err)
+	}
+}

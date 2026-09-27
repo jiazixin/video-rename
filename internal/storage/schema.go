@@ -8,7 +8,7 @@ import (
 //go:embed schema.sql
 var schema string
 
-const schemaVersion = 20260927
+const schemaVersion = 20260928
 
 // initialize creates the current schema once. An unrelated or obsolete database
 // is rejected before any schema changes; its contents are never reset or upgraded.

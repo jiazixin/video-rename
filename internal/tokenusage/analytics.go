@@ -182,7 +182,7 @@ func Analytics(db *storage.Store, q AnalyticsQuery) (*Report, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT r.run,r.recorded_at,r.tokens,r.records,r.estimated_records,u.source,u.plan,u.config_summary,u.model_config_id,u.model_config_title,u.status,u.created,u.started,u.finished
+	rows, err := tx.Query(`SELECT r.run,r.recorded_at,r.tokens,r.records,r.estimated_records,u.source,u.plan,COALESCE(r.config_summary,u.config_summary),COALESCE(r.model_config_id,u.model_config_id),COALESCE(r.model_config_title,u.model_config_title),u.status,u.created,u.started,u.finished,u.config_summary,u.model_config_id,u.model_config_title
 FROM token_usage_records r JOIN runs u ON u.id=r.run
 WHERE r.recorded_at>=? AND r.recorded_at<? ORDER BY r.recorded_at,r.id`, q.From, q.To)
 	if err != nil {
@@ -199,10 +199,13 @@ WHERE r.recorded_at>=? AND r.recorded_at<? ORDER BY r.recorded_at,r.id`, q.From,
 	}
 	var samples []sample
 	var totals ReportTotals
+	modelBatches := map[string]map[int64]bool{}
+	profileBatches := map[int64]map[int64]bool{}
 	for rows.Next() {
 		var run, recordedAt, tokens, records, estimated, plan, profileID int64
-		var source, summary, profileTitle, status, created, started, finished string
-		if err = rows.Scan(&run, &recordedAt, &tokens, &records, &estimated, &source, &plan, &summary, &profileID, &profileTitle, &status, &created, &started, &finished); err != nil {
+		var source, summary, profileTitle, status, created, started, finished, batchSummary, batchTitle string
+		var batchProfile int64
+		if err = rows.Scan(&run, &recordedAt, &tokens, &records, &estimated, &source, &plan, &summary, &profileID, &profileTitle, &status, &created, &started, &finished, &batchSummary, &batchProfile, &batchTitle); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -232,12 +235,24 @@ WHERE r.recorded_at>=? AND r.recorded_at<? ORDER BY r.recorded_at,r.id`, q.From,
 		}
 		batch := batches[run]
 		if batch == nil {
-			batch = &batchAcc{id: run, meta: meta, status: status, created: created, started: started, finished: finished}
+			batch = &batchAcc{id: run, meta: parseMeta(source, plan, batchSummary, batchProfile, batchTitle), status: status, created: created, started: started, finished: finished}
 			batches[run] = batch
 			totals.Batches++
-			model.Batches++
-			profile.Batches++
 			origin.Batches++
+		}
+		if modelBatches[meta.key] == nil {
+			modelBatches[meta.key] = map[int64]bool{}
+		}
+		if !modelBatches[meta.key][run] {
+			model.Batches++
+			modelBatches[meta.key][run] = true
+		}
+		if profileBatches[meta.profileID] == nil {
+			profileBatches[meta.profileID] = map[int64]bool{}
+		}
+		if !profileBatches[meta.profileID][run] {
+			profile.Batches++
+			profileBatches[meta.profileID][run] = true
 		}
 		model.Tokens += tokens
 		model.Records += counted
@@ -374,7 +389,7 @@ func lifetimeUsage(tx *sql.Tx, ids map[int64]bool) (map[int64][2]int64, error) {
 // reportOptions lists the models and profiles that ever recorded usage, so the
 // page can offer filters even when the current range shows no rows for them.
 func reportOptions(tx *sql.Tx) (ReportOptions, error) {
-	rows, err := tx.Query(`SELECT DISTINCT u.source,u.plan,u.config_summary,u.model_config_id,u.model_config_title FROM runs u JOIN token_usage_records r ON r.run=u.id`)
+	rows, err := tx.Query(`SELECT DISTINCT u.source,u.plan,COALESCE(r.config_summary,u.config_summary),COALESCE(r.model_config_id,u.model_config_id),COALESCE(r.model_config_title,u.model_config_title) FROM runs u JOIN token_usage_records r ON r.run=u.id`)
 	if err != nil {
 		return ReportOptions{}, err
 	}
