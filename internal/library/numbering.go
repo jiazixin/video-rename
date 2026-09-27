@@ -198,7 +198,7 @@ func numberingFingerprintFailure(path string, b Numbering, actual string) error 
 			fmt.Fprintln(&detail, "参与文件的身份、大小和修改时间一致；差异可能来自其他目录条目或旧版预览指纹，当前记录不足以确定具体条目。")
 		}
 	}
-	fmt.Fprintln(&detail, "当前目录尚未开始改名。CIFS/SMB 下请核对 inode 和属性缓存；此提示不等于确认有人修改文件。")
+	fmt.Fprintln(&detail, "当前目录尚未开始改名。以上为两次读取的差异，不能据此确定变化原因；请核对具体条目后重新预览。")
 	return &domain.JobError{Code: domain.CodeSourceChanged, Message: fmt.Sprintf("目录 %s 的预览校验不一致，请查看诊断详情并重新预览", path), ProcessingLog: detail.String()}
 }
 
@@ -426,7 +426,7 @@ func numberingConflict(path string, b Numbering, item NumberingItem, target os.F
 	// Reuse the target and name candidates from the failed check. Only inspect
 	// matching names, rather than statting every unrelated file for diagnostics.
 	if len(candidates) == 0 {
-		fmt.Fprintln(&detail, "目录列表中没有同名或大小写匹配项，请核对挂载或外部目录变化。")
+		fmt.Fprintln(&detail, "目标路径查询成功，但目录列表中没有同名或大小写匹配项；两次读取结果不一致，尚不能确定原因。")
 	}
 	for _, name := range candidates {
 		actual := target
@@ -452,7 +452,7 @@ func numberingConflict(path string, b Numbering, item NumberingItem, target os.F
 		}
 		fmt.Fprintf(&detail, "占用条目状态：%s\n", participation)
 	}
-	fmt.Fprintln(&detail, "此次预览未修改文件；目录和符号链接不参与媒体编号。")
+	fmt.Fprintln(&detail, "此次预览未修改文件；程序跳过识别为目录或符号链接的条目，其名称仍可能占用编号目标。网络共享返回的文件类型可能与服务端实际类型不同。")
 	return &domain.JobError{Code: domain.CodeRenameConflict, Message: fmt.Sprintf("目标 %s 被未参与本次改名的文件或目录占用（原文件：%s）", item.New, item.Old), ProcessingLog: detail.String()}
 }
 
