@@ -4,6 +4,7 @@ package storage
 import (
 	"crypto/cipher"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -16,6 +17,7 @@ import (
 
 type Store struct {
 	*sql.DB
+	read   *sql.DB
 	lock   *os.File
 	secret cipher.AEAD
 }
@@ -66,13 +68,35 @@ func Open(path string) (*Store, error) {
 		s.Close()
 		return nil, err
 	}
+	options.Set("mode", "ro")
+	options.Add("_pragma", "query_only(1)")
+	dsn.RawQuery = options.Encode()
+	s.read, err = sql.Open("sqlite", dsn.String())
+	if err == nil {
+		s.read.SetMaxOpenConns(4)
+		s.read.SetMaxIdleConns(4)
+		err = s.read.Ping()
+	}
+	if err != nil {
+		s.Close()
+		return nil, err
+	}
 	return s, nil
 }
+
+// Read supplies bounded, read-only WAL connections for queries and snapshots.
+// Writes and read-modify-write transactions must continue to use DB.
+func (s *Store) Read() *sql.DB { return s.read }
+
 func (s *Store) Close() error {
+	var readErr error
+	if s.read != nil {
+		readErr = s.read.Close()
+	}
 	err := s.DB.Close()
 	if s.lock != nil {
 		s.lock.Close()
 	}
-	return err
+	return errors.Join(readErr, err)
 }
 func Now() string { return time.Now().UTC().Format(time.RFC3339Nano) }

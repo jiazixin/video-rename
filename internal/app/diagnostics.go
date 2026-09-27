@@ -4,7 +4,7 @@ import "net/http"
 
 func (a *App) logDiagnostics(w http.ResponseWriter, r *http.Request) {
 	var request, response, processing string
-	err := a.DB.QueryRow("SELECT raw_request,raw_response,processing_log FROM events WHERE id=? AND category IN ('success','failure')", number(r.PathValue("id"))).Scan(&request, &response, &processing)
+	err := a.DB.Read().QueryRow("SELECT raw_request,raw_response,processing_log FROM events WHERE id=? AND category IN ('success','failure')", number(r.PathValue("id"))).Scan(&request, &response, &processing)
 	if err != nil {
 		failure(w, err)
 		return

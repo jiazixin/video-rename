@@ -59,7 +59,7 @@ func (l *Library) SetProcessedWithProgress(ctx context.Context, ids []int64, mar
 			fail(id, err)
 			return
 		}
-		e, err := l.Get(id)
+		e, err := l.IndexedEntry(id)
 		if err != nil {
 			fail(id, err)
 			return
@@ -136,7 +136,7 @@ func (l *Library) setFileProcessed(ctx context.Context, id int64, marked bool) (
 	if l.Busy != nil && l.Busy(id) {
 		return 0, fmt.Errorf("文件有活动任务，请等待任务结束后修改标记")
 	}
-	e, err := l.Get(id)
+	e, err := l.IndexedEntry(id)
 	if err != nil {
 		return 0, err
 	}

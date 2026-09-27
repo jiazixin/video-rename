@@ -79,7 +79,7 @@ func New(db *storage.Store, root string) (*Library, error) {
 }
 func (l *Library) Get(id int64) (Entry, error) {
 	var e Entry
-	err := l.DB.QueryRow(`SELECT e.id,e.parent,e.name,e.kind,e.identity,e.size,e.mtime,e.version,
+	err := l.DB.Read().QueryRow(`SELECT e.id,e.parent,e.name,e.kind,e.identity,e.size,e.mtime,e.version,
  COALESCE((SELECT source FROM marks m WHERE m.identity=e.identity AND m.size=e.size AND m.mtime=e.mtime),''),
  COALESCE((SELECT id FROM operations o WHERE o.entry=e.id AND o.status='committed' AND o.undone=0 AND o.undo_of=0 ORDER BY id DESC LIMIT 1),0)
  ,COALESCE((SELECT i.status FROM run_items i JOIN runs r ON r.id=i.run WHERE i.entry=e.id AND i.status IN ('queued','running') AND r.status IN ('queued','scanning','running','cancelling') ORDER BY i.id DESC LIMIT 1),
@@ -96,6 +96,16 @@ func (l *Library) Get(id int64) (Entry, error) {
 	return e, err
 }
 
+// IndexedEntry loads only the indexed file snapshot and its processed mark.
+// Workers and path validation do not need UI history or running-scope summaries.
+func (l *Library) IndexedEntry(id int64) (Entry, error) {
+	var e Entry
+	err := l.DB.Read().QueryRow(`SELECT e.id,e.parent,e.name,e.kind,e.identity,e.size,e.mtime,e.version,
+ COALESCE((SELECT source FROM marks m WHERE m.identity=e.identity AND m.size=e.size AND m.mtime=e.mtime),'')
+ FROM entries e WHERE e.id=? AND e.present=1`, id).Scan(&e.ID, &e.Parent, &e.Name, &e.Kind, &e.Identity, &e.Size, &e.Mtime, &e.Version, &e.Processed)
+	return e, err
+}
+
 // Path checks every ancestor, including mount identity; symlinks are never followed.
 func (l *Library) Path(id int64) (string, error) {
 	chain := []Entry{}
@@ -105,7 +115,7 @@ func (l *Library) Path(id int64) (string, error) {
 			return "", fmt.Errorf("目录关系无效")
 		}
 		seen[id] = true
-		e, err := l.Get(id)
+		e, err := l.IndexedEntry(id)
 		if err != nil {
 			return "", err
 		}
@@ -115,7 +125,7 @@ func (l *Library) Path(id int64) (string, error) {
 		chain = append(chain, e)
 		id = e.Parent
 	}
-	root, err := l.Get(1)
+	root, err := l.IndexedEntry(1)
 	if err != nil {
 		return "", err
 	}
@@ -133,7 +143,7 @@ func (l *Library) Path(id int64) (string, error) {
 		if st.Mode()&os.ModeSymlink != 0 {
 			return "", fmt.Errorf("不允许操作符号链接")
 		}
-		s, err := domain.StatSnapshot(p)
+		s, err := domain.SnapshotFromInfo(st)
 		if err != nil {
 			return "", err
 		}
@@ -162,7 +172,7 @@ func (l *Library) IsWithin(id, ancestor int64) bool {
 		if id == ancestor {
 			return true
 		}
-		e, err := l.Get(id)
+		e, err := l.IndexedEntry(id)
 		if err != nil {
 			return false
 		}
@@ -201,34 +211,51 @@ func (l *Library) Refresh(ctx context.Context, id int64) error {
 		return err
 	}
 	defer f.Close()
+	return l.refreshDirectory(ctx, id, f.ReadDir)
+}
+
+// refreshDirectory requires l.mu to keep application mutations out of the scan.
+func (l *Library) refreshDirectory(ctx context.Context, id int64, readDir func(int) ([]os.DirEntry, error)) error {
 	gen := time.Now().UnixNano()
 	fail := func(e error) error {
 		_, _ = l.DB.Exec("INSERT INTO directory_state(dir,error) VALUES(?,?) ON CONFLICT(dir) DO UPDATE SET error=excluded.error", id, e.Error())
 		return e
 	}
 	for {
-		if err = ctx.Err(); err != nil {
+		if err := ctx.Err(); err != nil {
 			return fail(err)
 		}
-		batch, re := f.ReadDir(128)
+		batch, re := readDir(128)
+		// CIFS metadata reads can block. Gather a bounded batch before taking
+		// the database connection so submissions and status queries can proceed.
+		type scannedEntry struct {
+			name, kind string
+			snapshot   domain.Snapshot
+		}
+		scanned := make([]scannedEntry, 0, len(batch))
+		for _, de := range batch {
+			if err := ctx.Err(); err != nil {
+				return fail(err)
+			}
+			info, er := de.Info()
+			if er != nil {
+				return fail(er)
+			}
+			snap, er := domain.SnapshotFromInfo(info)
+			if er != nil {
+				return fail(er)
+			}
+			scanned = append(scanned, scannedEntry{de.Name(), kindOf(info), snap})
+		}
 		tx, err := l.DB.BeginTx(ctx, nil)
 		if err != nil {
 			return fail(err)
 		}
-		for _, de := range batch {
-			info, er := de.Info()
-			if er != nil {
-				tx.Rollback()
-				return fail(er)
-			}
-			snap, er := domain.StatSnapshot(filepath.Join(p, de.Name()))
-			if er != nil {
-				tx.Rollback()
-				return fail(er)
-			}
+		for _, item := range scanned {
+			snap := item.snapshot
 			var eid int64
 			var identity string
-			er = tx.QueryRow("SELECT id,identity FROM entries WHERE parent=? AND name=? AND present=1", id, de.Name()).Scan(&eid, &identity)
+			er := tx.QueryRow("SELECT id,identity FROM entries WHERE parent=? AND name=? AND present=1", id, item.name).Scan(&eid, &identity)
 			if er != nil && !errors.Is(er, sql.ErrNoRows) {
 				tx.Rollback()
 				return fail(er)
@@ -241,20 +268,20 @@ func (l *Library) Refresh(ctx context.Context, id int64) error {
 				eid = 0
 			}
 			if eid == 0 {
-				res, er := tx.Exec("INSERT INTO entries(parent,name,kind,identity,size,mtime,observed) VALUES(?,?,?,?,?,?,?)", id, de.Name(), kindOf(info), Identity(snap), snap.Size, stamp(snap), storage.Now())
+				res, er := tx.Exec("INSERT INTO entries(parent,name,kind,identity,size,mtime,observed) VALUES(?,?,?,?,?,?,?)", id, item.name, item.kind, Identity(snap), snap.Size, stamp(snap), storage.Now())
 				if er != nil {
 					tx.Rollback()
 					return fail(er)
 				}
 				eid, _ = res.LastInsertId()
 			} else {
-				_, er = tx.Exec("UPDATE entries SET version=version+CASE WHEN size<>? OR mtime<>? THEN 1 ELSE 0 END,size=?,mtime=?,kind=?,observed=? WHERE id=?", snap.Size, stamp(snap), snap.Size, stamp(snap), kindOf(info), storage.Now(), eid)
+				_, er = tx.Exec("UPDATE entries SET version=version+CASE WHEN size<>? OR mtime<>? THEN 1 ELSE 0 END,size=?,mtime=?,kind=?,observed=? WHERE id=?", snap.Size, stamp(snap), snap.Size, stamp(snap), item.kind, storage.Now(), eid)
 				if er != nil {
 					tx.Rollback()
 					return fail(er)
 				}
 			}
-			if _, er = tx.Exec("INSERT INTO directory_items VALUES(?,?,?,?,?,?,?)", id, gen, eid, de.Name(), kindOf(info), snap.Size, stamp(snap)); er != nil {
+			if _, er = tx.Exec("INSERT INTO directory_items VALUES(?,?,?,?,?,?,?)", id, gen, eid, item.name, item.kind, snap.Size, stamp(snap)); er != nil {
 				tx.Rollback()
 				return fail(er)
 			}
@@ -344,7 +371,7 @@ func (l *Library) ListOrdered(ctx context.Context, id int64, offset, limit int, 
 		return p, fmt.Errorf("不是目录")
 	}
 	var refreshed sql.NullString
-	err = l.DB.QueryRow("SELECT generation,refreshed,error FROM directory_state WHERE dir=?", id).Scan(&p.Generation, &refreshed, &p.Error)
+	err = l.DB.Read().QueryRow("SELECT generation,refreshed,error FROM directory_state WHERE dir=?", id).Scan(&p.Generation, &refreshed, &p.Error)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return p, err
 	}
@@ -372,7 +399,7 @@ func (l *Library) ListOrdered(ctx context.Context, id int64, offset, limit int, 
 	var anchorID int64
 	value, sortBy := directoryOrder(sortBy)
 	if offset > 0 {
-		if err = l.DB.QueryRow("SELECT CASE WHEN kind='directory' THEN 0 ELSE 1 END,name,entry,"+value+" FROM directory_items WHERE dir=? AND generation=? AND entry=?", id, p.Generation, offset).Scan(&anchorKind, &anchorName, &anchorID, &anchorValue); err != nil {
+		if err = l.DB.Read().QueryRow("SELECT CASE WHEN kind='directory' THEN 0 ELSE 1 END,name,entry,"+value+" FROM directory_items WHERE dir=? AND generation=? AND entry=?", id, p.Generation, offset).Scan(&anchorKind, &anchorName, &anchorID, &anchorValue); err != nil {
 			return p, fmt.Errorf("分页位置已失效，请返回第一页")
 		}
 	}
@@ -396,14 +423,14 @@ func (l *Library) ListOrdered(ctx context.Context, id int64, offset, limit int, 
 			filter = "(" + filter + " OR kind='directory')"
 		}
 	}
-	if err = l.DB.QueryRow(`SELECT count(*) FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter, id, p.Generation, q, kind, kind).Scan(&p.Total); err != nil {
+	if err = l.DB.Read().QueryRow(`SELECT count(*) FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter, id, p.Generation, q, kind, kind).Scan(&p.Total); err != nil {
 		return p, err
 	}
 	order, comparison := "ASC", ">"
 	if strings.HasSuffix(sortBy, "_desc") {
 		order, comparison = "DESC", "<"
 	}
-	rows, err := l.DB.Query(`SELECT entry FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter+` AND (?=0 OR CASE WHEN kind='directory' THEN 0 ELSE 1 END>? OR (CASE WHEN kind='directory' THEN 0 ELSE 1 END=? AND (`+value+`,name COLLATE NATURAL_NAME,entry)`+comparison+`(?,?,?))) ORDER BY CASE WHEN kind='directory' THEN 0 ELSE 1 END,`+value+` `+order+`,name COLLATE NATURAL_NAME `+order+`,entry `+order+` LIMIT ?`, id, p.Generation, q, kind, kind, offset, anchorKind, anchorKind, anchorValue, anchorName, anchorID, limit+1)
+	rows, err := l.DB.Read().Query(`SELECT entry FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter+` AND (?=0 OR CASE WHEN kind='directory' THEN 0 ELSE 1 END>? OR (CASE WHEN kind='directory' THEN 0 ELSE 1 END=? AND (`+value+`,name COLLATE NATURAL_NAME,entry)`+comparison+`(?,?,?))) ORDER BY CASE WHEN kind='directory' THEN 0 ELSE 1 END,`+value+` `+order+`,name COLLATE NATURAL_NAME `+order+`,entry `+order+` LIMIT ?`, id, p.Generation, q, kind, kind, offset, anchorKind, anchorKind, anchorValue, anchorName, anchorID, limit+1)
 	if err != nil {
 		return p, err
 	}
@@ -455,7 +482,7 @@ func (l *Library) DisplayPath(id int64) string {
 	for i := 0; id > 1 && i < 1024; i++ {
 		var parent int64
 		var name string
-		if err := l.DB.QueryRow("SELECT parent,name FROM entries WHERE id=?", id).Scan(&parent, &name); err != nil {
+		if err := l.DB.Read().QueryRow("SELECT parent,name FROM entries WHERE id=?", id).Scan(&parent, &name); err != nil {
 			return "目录已缺失"
 		}
 		parts = append([]string{name}, parts...)

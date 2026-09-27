@@ -74,6 +74,10 @@ func TestCurrentSchemaReopensWithoutChangingData(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	var indexCount int
+	if err = db.QueryRow("SELECT count(*) FROM sqlite_schema WHERE type='index' AND name='entry_parent_id'").Scan(&indexCount); err != nil || indexCount != 1 {
+		t.Fatal("current schema missing cursor index", indexCount, err)
+	}
 	if plain, err := db.Unseal(sealed); err != nil || plain != "secret" {
 		t.Fatal(plain, err)
 	}
@@ -93,7 +97,7 @@ func TestCurrentSchemaReopensWithoutChangingData(t *testing.T) {
 }
 
 func TestUnsupportedDatabaseRemainsIntact(t *testing.T) {
-	for _, version := range []int{0, 1, 21, 20260927} {
+	for _, version := range []int{0, 1, 21, 20260927, 20260928} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "unsupported.sqlite")
 			db, err := sql.Open("sqlite", path)

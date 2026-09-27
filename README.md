@@ -41,7 +41,7 @@ auth:
 - 路径相对于配置文件所在目录；`--config` 本身相对于工作目录。配置优先级为 YAML > 内置默认值，不读取环境变量覆盖。
 - `media-path` 必填且必须存在；数据库与配置不得放在可操作的媒体根目录内。`storage` 指向数据目录，省略时默认 `../data`，数据库文件名固定为 `data.sqlite`。
 - 业务日志、处理标记、历史、计划均在 SQLite 中。部署 YAML 只接受单个文档及已声明字段。
-- 本项目尚未上线，数据库只维护当前完整结构，不提供旧版迁移。全新 storage 自动初始化；结构不匹配时拒绝启动，请配置新的 storage 目录，程序不会清空原数据库。
+- 本项目尚未上线，数据库只维护当前完整结构，不提供旧版迁移。全新 storage 自动初始化；结构不匹配时拒绝启动，请配置新的 storage 目录，程序不会清空原数据库。性能索引随当前完整结构一次创建，不提供启动时补建或兼容旧结构的代码。
 - 配置不会从界面写回。修改部署配置后重启，页面模型配置保存后直接用于新任务；认证变更会使旧会话失效。
 
 模型与提示词设置见 [模型配置](docs/models.md)。完整字段见 [配置参考](docs/configuration.md)，设计与行为见 [整体设计](docs/DESIGN.md) 和 [运行说明](docs/operations.md)。
@@ -86,7 +86,7 @@ auth:
 
 ## 持久数据与部署
 
-- 数据库放宿主机本地磁盘，不能放 SMB / NFS 等网络文件系统；SQLite 使用 WAL。
+- 数据库放宿主机本地磁盘，不能放 SMB / NFS 等网络文件系统；SQLite 使用 WAL，保留 1 个写连接和最多 4 个只读连接，目录统计、历史和分析查询使用读池。
 - 运行账号需要媒体目录改名权限、配置读取权限及数据库目录写权限。配置文件建议仅运行账号可读。
 - 一个数据库只允许运行一个应用实例；实例锁防止双重调度。根目录身份变化或挂载丢失会阻止继续操作。
 - `storage` 目录需要持久化挂载。模型密钥及任务模型快照加密保存在 SQLite，加密主密钥位于数据库旁的 `<storage>/data.sqlite.key`；备份与恢复必须同时保留该文件。不要删除数据库来“清空日志”，否则会同时丢失防重复标记和还原历史。
@@ -109,6 +109,9 @@ go test -tags=integration ./internal/media/
 
 # 大规模隔离文件集：5,000 目录 × 10 文件，另加单目录 50,000 文件
 go test -tags=scale ./internal/library -run TestScaleDirectoryPagination -v
+# 30 万文件索引、约 1 GB 合成数据库；需要额外临时磁盘空间
+go test -tags=scale ./internal/library -run TestScaleLargeLibraryProgress -v
+go test -tags=scale ./internal/jobs -run TestScaleCandidateQueue -v
 
 # 浏览器测试：本地临时视频 + 假模型，需要 ffmpeg 和 Chromium
 go build -o bin/video-rename ./cmd/video-rename

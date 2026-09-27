@@ -182,18 +182,13 @@ func (a *App) Handler() http.Handler {
 			failure(w, err)
 			return
 		}
-		for i, e := range p.Items {
-			p.Items[i], err = a.Library.WithProgress(e)
-			if err != nil {
-				failure(w, err)
-				return
-			}
-		}
-		p.Directory, err = a.Library.WithProgress(p.Directory)
+		withProgress, err := a.Library.WithProgressBatch(r.Context(), append(p.Items, p.Directory))
 		if err != nil {
 			failure(w, err)
 			return
 		}
+		p.Items = withProgress[:len(withProgress)-1]
+		p.Directory = withProgress[len(withProgress)-1]
 		send(w, 200, p)
 	})
 	api.HandleFunc("POST /api/directories/{id}/refresh", func(w http.ResponseWriter, r *http.Request) {
@@ -460,11 +455,11 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 	where := " FROM events e LEFT JOIN runs r ON r.id=e.run WHERE e.category=? AND (?=0 OR e.run=?) AND (?='' OR instr(lower(e.old_path||e.new_path||e.message),lower(?))>0) AND (?='' OR e.action=?) AND (?='' OR e.created>=?) AND (?='' OR e.created<=?)"
 	args := []any{category, run, run, q.Get("q"), q.Get("q"), q.Get("action"), q.Get("action"), q.Get("from"), q.Get("from"), q.Get("to"), q.Get("to")}
 	var total int
-	if err := a.DB.QueryRow("SELECT COUNT(*)"+where, args...).Scan(&total); err != nil {
+	if err := a.DB.Read().QueryRow("SELECT COUNT(*)"+where, args...).Scan(&total); err != nil {
 		failure(w, err)
 		return
 	}
-	rows, err := a.DB.Query("SELECT e.id,e.category,e.action,e.entry,e.operation,e.run,e.old_path,e.new_path,e.message,e.created,COALESCE(r.config_summary,''),COALESCE(r.model_config_title,''),COALESCE((SELECT SUM(t.tokens) FROM token_usage_records t JOIN run_items i ON i.id=t.item WHERE t.run=e.run AND i.entry=e.entry),0),COALESCE((SELECT MAX(t.estimated_records) FROM token_usage_records t JOIN run_items i ON i.id=t.item WHERE t.run=e.run AND i.entry=e.entry),0)"+where+" AND e.id<? ORDER BY e.id DESC LIMIT ?", append(args, before, limit+1)...)
+	rows, err := a.DB.Read().Query("SELECT e.id,e.category,e.action,e.entry,e.operation,e.run,e.old_path,e.new_path,e.message,e.created,COALESCE(r.config_summary,''),COALESCE(r.model_config_title,''),COALESCE((SELECT SUM(t.tokens) FROM token_usage_records t JOIN run_items i ON i.id=t.item WHERE t.run=e.run AND i.entry=e.entry),0),COALESCE((SELECT MAX(t.estimated_records) FROM token_usage_records t JOIN run_items i ON i.id=t.item WHERE t.run=e.run AND i.entry=e.entry),0)"+where+" AND e.id<? ORDER BY e.id DESC LIMIT ?", append(args, before, limit+1)...)
 	if err != nil {
 		failure(w, err)
 		return
@@ -502,7 +497,7 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 }
 func (a *App) items(w http.ResponseWriter, r *http.Request) {
 	after := number(r.URL.Query().Get("after"))
-	rows, err := a.DB.Query("SELECT id,entry,status,message,original_path FROM run_items WHERE run=? AND id>? ORDER BY id LIMIT 100", number(r.PathValue("id")), after)
+	rows, err := a.DB.Read().Query("SELECT id,entry,status,message,original_path FROM run_items WHERE run=? AND id>? ORDER BY id LIMIT 100", number(r.PathValue("id")), after)
 	if err != nil {
 		failure(w, err)
 		return

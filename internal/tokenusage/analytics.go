@@ -177,7 +177,7 @@ func Analytics(db *storage.Store, q AnalyticsQuery) (*Report, error) {
 			q.Size = 100
 		}
 	}
-	tx, err := db.Begin()
+	tx, err := db.Read().Begin()
 	if err != nil {
 		return nil, err
 	}

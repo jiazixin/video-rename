@@ -34,12 +34,12 @@ func (a *App) entryStatus(w http.ResponseWriter, r *http.Request) {
 			failure(w, err)
 			return
 		}
-		e, err = a.Library.WithProgress(e)
-		if err != nil {
-			failure(w, err)
-			return
-		}
 		items = append(items, e)
+	}
+	items, err := a.Library.WithProgressBatch(r.Context(), items)
+	if err != nil {
+		failure(w, err)
+		return
 	}
 	send(w, 200, items)
 }

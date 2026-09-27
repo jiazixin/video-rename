@@ -8,7 +8,7 @@ func (a *App) logBatches(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("category") == "extraction" {
 		query = "SELECT DISTINCT run FROM extraction_records WHERE run>0 ORDER BY run DESC"
 	}
-	rows, err := a.DB.QueryContext(r.Context(), query)
+	rows, err := a.DB.Read().QueryContext(r.Context(), query)
 	if err != nil {
 		failure(w, err)
 		return

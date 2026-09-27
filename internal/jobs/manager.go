@@ -533,29 +533,12 @@ func (m *Manager) scan(ctx context.Context, batch Run, id int64) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	e, err := m.Library.Get(id)
+	e, err := m.Library.IndexedEntry(id)
 	if err != nil {
 		return err
 	}
 	if e.Kind == "file" {
-		if !discovery.IsVideoExtension(e.Name) {
-			return nil
-		}
-		res, err := m.DB.Exec("INSERT OR IGNORE INTO run_items(run,entry,identity,size,mtime,original_path) VALUES(?,?,?,?,?,?)", run, e.ID, e.Identity, e.Size, e.Mtime, m.Library.DisplayPath(e.ID))
-		if err != nil {
-			return err
-		}
-		n, _ := res.RowsAffected()
-		if n > 0 {
-			_, err = m.DB.Exec("UPDATE runs SET discovered=discovered+1 WHERE id=?", run)
-			if err == nil && e.Processed != "" && batch.Task != "extract" {
-				_, err = m.DB.Exec("UPDATE run_items SET status='skipped',message='已处理，跳过',finished_ms=? WHERE run=? AND identity=?", time.Now().UnixMilli(), run, e.Identity)
-				if err == nil {
-					_, err = m.DB.Exec("UPDATE runs SET skipped=skipped+1 WHERE id=?", run)
-				}
-			}
-		}
-		return err
+		return m.queueFiles(ctx, batch, []library.Entry{e})
 	}
 	if e.Kind != "directory" {
 		return nil
@@ -571,24 +554,26 @@ func (m *Manager) scan(ctx context.Context, batch Run, id int64) error {
 	}
 	var after int64
 	for {
-		rows, err := m.DB.Query("SELECT id,kind FROM entries WHERE parent=? AND present=1 AND id>? ORDER BY id LIMIT 128", id, after)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		rows, err := m.DB.Read().QueryContext(ctx, `SELECT e.id,e.parent,e.name,e.kind,e.identity,e.size,e.mtime,
+        COALESCE((SELECT source FROM marks m WHERE m.identity=e.identity AND m.size=e.size AND m.mtime=e.mtime),'')
+        FROM entries e WHERE e.parent=? AND e.present=1 AND e.id>? ORDER BY e.id LIMIT 128`, id, after)
 		if err != nil {
 			return err
 		}
-		type child struct {
-			id   int64
-			kind string
-		}
-		children := []child{}
+		children := []library.Entry{}
 		for rows.Next() {
-			var c child
-			if err = rows.Scan(&c.id, &c.kind); err != nil {
-				rows.Close()
-				return err
+			var c library.Entry
+			if err = rows.Scan(&c.ID, &c.Parent, &c.Name, &c.Kind, &c.Identity, &c.Size, &c.Mtime, &c.Processed); err != nil {
+				break
 			}
 			children = append(children, c)
 		}
-		err = rows.Err()
+		if err == nil {
+			err = rows.Err()
+		}
 		rows.Close()
 		if err != nil {
 			return err
@@ -596,10 +581,13 @@ func (m *Manager) scan(ctx context.Context, batch Run, id int64) error {
 		if len(children) == 0 {
 			return nil
 		}
+		if err = m.queueFiles(ctx, batch, children); err != nil {
+			return err
+		}
 		for _, c := range children {
-			after = c.id
-			if c.kind == "file" || batch.Recursive && c.kind == "directory" {
-				if err = m.scan(ctx, batch, c.id); err != nil {
+			after = c.ID
+			if batch.Recursive && c.Kind == "directory" {
+				if err = m.scan(ctx, batch, c.ID); err != nil {
 					return err
 				}
 			}

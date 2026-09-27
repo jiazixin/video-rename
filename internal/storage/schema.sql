@@ -304,6 +304,10 @@ CREATE UNIQUE INDEX entry_path ON entries(parent,name) WHERE present=1;
 
 CREATE INDEX entry_identity ON entries(identity);
 
+CREATE INDEX entry_parent_id ON entries(parent,id) WHERE present=1;
+
+CREATE INDEX directory_entry ON directory_items(dir,entry);
+
 CREATE INDEX directory_natural ON directory_items(dir,generation,CASE WHEN kind='directory' THEN 0 ELSE 1 END,name COLLATE NATURAL_NAME,entry);
 
 CREATE INDEX directory_natural_desc ON directory_items(dir,generation,CASE WHEN kind='directory' THEN 0 ELSE 1 END,name COLLATE NATURAL_NAME DESC,entry DESC);
@@ -315,6 +319,9 @@ CREATE INDEX directory_sort_desc ON directory_items(dir,generation,CASE WHEN kin
 CREATE INDEX operation_entry ON operations(entry,id DESC);
 
 CREATE INDEX event_page ON events(category,id DESC);
+
+CREATE INDEX event_automatic_failure_entry ON events(entry)
+ WHERE category='failure' AND action='automatic';
 
 CREATE INDEX item_queue ON run_items(run,status,id);
 
@@ -336,4 +343,4 @@ CREATE INDEX extraction_run ON extraction_records(run,id DESC);
 
 INSERT INTO notification_preferences VALUES(1,'UTC');
 
-PRAGMA user_version=20260928;
+PRAGMA user_version=20260929;

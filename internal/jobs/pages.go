@@ -101,7 +101,7 @@ func (m *Manager) ListPage(ctx context.Context, category, task string, page, siz
 			}
 		}
 	}
-	tx, err := m.DB.BeginTx(ctx, nil)
+	tx, err := m.DB.Read().BeginTx(ctx, nil)
 	if err != nil {
 		return out, err
 	}

@@ -48,7 +48,7 @@ func (a *App) extractions(w http.ResponseWriter, r *http.Request) {
 	if limit != 50 && limit != 100 && limit != 200 {
 		limit = 50
 	}
-	tx, err := a.DB.BeginTx(r.Context(), nil)
+	tx, err := a.DB.Read().BeginTx(r.Context(), nil)
 	if err != nil {
 		failure(w, err)
 		return
@@ -110,7 +110,7 @@ func (a *App) extractions(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) extractionDetail(w http.ResponseWriter, r *http.Request) {
 	var detail string
-	if err := a.DB.QueryRowContext(r.Context(), "SELECT processing_log FROM extraction_records WHERE id=?", number(r.PathValue("id"))).Scan(&detail); err != nil {
+	if err := a.DB.Read().QueryRowContext(r.Context(), "SELECT processing_log FROM extraction_records WHERE id=?", number(r.PathValue("id"))).Scan(&detail); err != nil {
 		failure(w, err)
 		return
 	}
