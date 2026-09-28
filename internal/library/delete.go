@@ -35,7 +35,7 @@ func (l *Library) Delete(id, version int64) error {
 	if err := l.DB.QueryRow(`WITH RECURSIVE descendants(id) AS (
 	 SELECT ? UNION ALL SELECT e.id FROM entries e JOIN descendants d ON e.parent=d.id WHERE e.present=1
 	) SELECT count(*) FROM runs r JOIN json_each(r.targets) t
-	 WHERE r.status IN ('queued','scanning','running','cancelling') AND t.value IN (SELECT id FROM descendants)`, id).Scan(&active); err != nil {
+	 WHERE r.status IN ('queued','scanning','running','paused','cancelling') AND t.value IN (SELECT id FROM descendants)`, id).Scan(&active); err != nil {
 		return err
 	}
 	if active > 0 {

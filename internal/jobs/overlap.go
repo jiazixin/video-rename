@@ -107,7 +107,7 @@ func (s *scopeIndex) covers(a, b scopeTarget, recursive bool) (bool, error) {
 
 // All callers create batches through Create's mutex, including scheduled runs.
 func (m *Manager) checkOverlap(request Request, index *scopeIndex) error {
-	rows, err := m.DB.Query("SELECT id,targets,recursive FROM runs WHERE status IN ('queued','scanning','running','cancelling') ORDER BY id")
+	rows, err := m.DB.Query("SELECT id,targets,recursive FROM runs WHERE status IN ('queued','scanning','running','paused','cancelling') ORDER BY id")
 	if err != nil {
 		return err
 	}

@@ -79,6 +79,7 @@ type Manager struct {
 type activeRun struct {
 	targets []int64
 	cancel  context.CancelFunc
+	control *runControl
 }
 
 func New(db *storage.Store, l *library.Library, cfg *config.Config) (*Manager, error) {
@@ -121,10 +122,10 @@ func interruptRuns(db *storage.Store) error {
 	defer tx.Rollback()
 	now := time.Now()
 	if _, err = tx.Exec(`UPDATE run_items SET status='cancelled',message='服务重启，处理已中断',finished_ms=?
-WHERE status IN ('queued','running') AND run IN (SELECT id FROM runs WHERE status IN ('queued','scanning','running','cancelling'))`, now.UnixMilli()); err != nil {
+WHERE status IN ('queued','running') AND run IN (SELECT id FROM runs WHERE status IN ('queued','scanning','running','paused','cancelling'))`, now.UnixMilli()); err != nil {
 		return err
 	}
-	if _, err = tx.Exec("UPDATE runs SET status='interrupted',finished=?,error='服务重启，前次运行已中断' WHERE status IN ('queued','scanning','running','cancelling')", now.UTC().Format(time.RFC3339Nano)); err != nil {
+	if _, err = tx.Exec("UPDATE runs SET status='interrupted',finished=?,error='服务重启，前次运行已中断' WHERE status IN ('queued','scanning','running','paused','cancelling')", now.UTC().Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -279,7 +280,7 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	}
 	defer tx.Rollback()
 	var count int
-	if err = tx.QueryRow("SELECT count(*) FROM runs WHERE status IN ('queued','scanning','running','cancelling')").Scan(&count); err != nil {
+	if err = tx.QueryRow("SELECT count(*) FROM runs WHERE status IN ('queued','scanning','running','paused','cancelling')").Scan(&count); err != nil {
 		return 0, err
 	}
 	if count >= 20 {
@@ -337,10 +338,17 @@ func (m *Manager) List(before int64) ([]Run, error) {
 func (m *Manager) Cancel(id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if r, ok := m.active[id]; ok {
-		r.cancel()
+	_, running := m.active[id]
+	status, finished := "cancelled", storage.Now()
+	if running {
+		status, finished = "cancelling", ""
 	}
-	_, err := m.DB.Exec("UPDATE runs SET status=CASE WHEN status='queued' THEN 'cancelled' ELSE 'cancelling' END,finished=CASE WHEN status='queued' THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE finished END WHERE id=? AND status IN ('queued','scanning','running')", id)
+	_, err := m.DB.Exec("UPDATE runs SET status=?,finished=? WHERE id=? AND status IN ('queued','scanning','running','paused')", status, finished, id)
+	if err == nil {
+		if r, ok := m.active[id]; ok {
+			r.cancel()
+		}
+	}
 	return err
 }
 func (m *Manager) Loop(ctx context.Context) {
@@ -392,17 +400,21 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 		m.mu.Unlock()
 		return
 	}
-	m.active[id] = activeRun{targets: r.Targets, cancel: cancel}
-	m.mu.Unlock()
-	defer func() { m.mu.Lock(); delete(m.active, id); m.mu.Unlock() }()
 	claim, err := m.DB.Exec("UPDATE runs SET status='scanning',started=? WHERE id=? AND status='queued'", storage.Now(), id)
 	if err != nil {
+		m.mu.Unlock()
 		return
 	}
 	claimed, _ := claim.RowsAffected()
 	if claimed == 0 {
+		m.mu.Unlock()
 		return
 	}
+	scheduleCtx, stop := context.WithCancel(ctx)
+	m.active[id] = activeRun{targets: r.Targets, cancel: cancel, control: &runControl{phase: "scanning", parent: ctx, schedule: scheduleCtx, stop: stop, changed: make(chan struct{})}}
+	m.mu.Unlock()
+	defer func() { m.mu.Lock(); delete(m.active, id); m.mu.Unlock() }()
+
 	failAt := func(e error, target int64) {
 		_, _ = m.DB.Exec("UPDATE runs SET status='failed',failed=failed+CASE WHEN ?>0 THEN 1 ELSE 0 END,error=?,finished=? WHERE id=?", target, e.Error(), storage.Now(), id)
 		path, action := "", "run"
@@ -463,7 +475,7 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 	// Media mounts may be slow. Validate every selected path in the worker,
 	// before creating any items, so submission never waits for media I/O.
 	for _, target := range r.Targets {
-		if ctx.Err() != nil {
+		if _, err = m.dispatchContext(ctx, id); err != nil {
 			break
 		}
 		if _, err = m.Library.Path(target); err != nil {
@@ -494,7 +506,7 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 		}
 	}
 	if ctx.Err() == nil {
-		if _, err = m.DB.Exec("UPDATE runs SET status='running' WHERE id=?", id); err != nil {
+		if err = m.setPhase(id, "running"); err != nil {
 			fail(err)
 			return
 		}
@@ -530,7 +542,7 @@ type item struct {
 
 func (m *Manager) scan(ctx context.Context, batch Run, id int64) error {
 	run := batch.ID
-	if err := ctx.Err(); err != nil {
+	if _, err := m.dispatchContext(ctx, run); err != nil {
 		return err
 	}
 	e, err := m.Library.IndexedEntry(id)
@@ -554,7 +566,7 @@ func (m *Manager) scan(ctx context.Context, batch Run, id int64) error {
 	}
 	var after int64
 	for {
-		if err := ctx.Err(); err != nil {
+		if _, err := m.dispatchContext(ctx, run); err != nil {
 			return err
 		}
 		rows, err := m.DB.Read().QueryContext(ctx, `SELECT e.id,e.parent,e.name,e.kind,e.identity,e.size,e.mtime,
@@ -650,7 +662,7 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.C
 		if err == nil {
 			if batch.Task == "extract" {
 				var lease *framecache.Lease
-				lease, err = m.prepareFrames(ctx, batch, it.Entry, cfg, domain.VideoJob{Path: p, Snapshot: snap, JobID: fmt.Sprint(it.ID)}, probe, ffmpeg)
+				lease, err = m.prepareFrames(ctx, batch, it.Entry, cfg, domain.VideoJob{Path: p, Snapshot: snap, JobID: fmt.Sprint(it.ID)}, probe, ffmpeg, extracted)
 				extractionLogged = true
 				extracted()
 				if lease != nil {

@@ -22,7 +22,7 @@ func (l *Library) RestoreBatch(ctx context.Context, run int64) (BatchRestoreResu
 		return out, err
 	}
 	switch status {
-	case "queued", "scanning", "running", "cancelling":
+	case "queued", "scanning", "running", "paused", "cancelling":
 		return out, fmt.Errorf("请先取消运行并等待批次结束，再还原名称")
 	}
 	rows, err := l.DB.Query("SELECT id FROM operations WHERE run=? AND source='automatic' AND status='committed' AND undo_of=0 ORDER BY id DESC", run)

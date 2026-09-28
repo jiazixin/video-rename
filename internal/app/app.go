@@ -327,6 +327,36 @@ func (a *App) Handler() http.Handler {
 		}
 		send(w, 200, result)
 	})
+	for _, action := range []string{"pause", "resume"} {
+		api.HandleFunc("POST /api/runs/{id}/"+action, func(w http.ResponseWriter, r *http.Request) {
+			var request struct {
+				Confirm bool `json:"confirm"`
+			}
+			if !decode(w, r, &request) {
+				return
+			}
+			if !request.Confirm {
+				send(w, 400, map[string]string{"message": "请确认批次操作"})
+				return
+			}
+			id := number(r.PathValue("id"))
+			if id <= 0 {
+				send(w, 400, map[string]string{"message": "批次编号无效"})
+				return
+			}
+			var err error
+			if action == "pause" {
+				err = a.Jobs.Pause(id)
+			} else {
+				err = a.Jobs.Resume(id)
+			}
+			if err != nil {
+				failure(w, err)
+				return
+			}
+			send(w, 200, map[string]bool{"ok": true})
+		})
+	}
 	api.HandleFunc("POST /api/runs/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
 		if err := a.Jobs.Cancel(number(r.PathValue("id"))); err != nil {
 			failure(w, err)

@@ -54,7 +54,7 @@ test('三个独立抽帧入口、真实缓存复用及统一成功失败记录',
 
   await page.getByRole('button',{name:'刷新',exact:true}).click()
   await page.getByRole('button',{name:'多选',exact:true}).click()
-  await expect(page.locator('.batch-toolbar button')).toHaveText(['全选','反选','清空','抽帧','命名','标记已处理','取消标记','还原'])
+  await expect(page.locator('.batch-toolbar button')).toHaveText(['全选','反选','清空','删除','抽帧','命名','标记已处理','取消标记','还原'])
   await page.getByLabel('选择 prepared.mp4',{exact:true}).check()
   await page.locator('.batch-toolbar').getByRole('button',{name:'抽帧',exact:true}).click()
   const second=await submitRun(page)

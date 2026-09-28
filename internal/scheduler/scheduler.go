@@ -290,7 +290,7 @@ func (s *Scheduler) Tick(now time.Time) error {
 			continue
 		}
 		var active int
-		if e = s.DB.QueryRow("SELECT count(*) FROM runs WHERE plan=? AND status IN ('queued','scanning','running','cancelling')", p.ID).Scan(&active); e != nil {
+		if e = s.DB.QueryRow("SELECT count(*) FROM runs WHERE plan=? AND status IN ('queued','scanning','running','paused','cancelling')", p.ID).Scan(&active); e != nil {
 			return e
 		}
 		message := "已触发"

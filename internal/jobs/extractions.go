@@ -22,14 +22,38 @@ func recoverExtractions(db *storage.Store) error {
 
 // The record ends when usable frames are ready, independently of inference and rename.
 // Cache hits are explicit so their short duration is not mistaken for a fresh extraction.
-func (m *Manager) prepareFrames(ctx context.Context, run Run, entry int64, cfg *config.Config, job domain.VideoJob, probe, ffmpeg string) (lease *framecache.Lease, err error) {
-	started := time.Now()
-	id, err := m.startExtraction(run, entry, m.Library.DisplayPath(entry), started)
-	if err != nil {
-		return nil, fmt.Errorf("无法记录抽帧开始: %w", err)
+func (m *Manager) prepareFrames(ctx context.Context, run Run, entry int64, cfg *config.Config, job domain.VideoJob, probe, ffmpeg string, extracted func()) (*framecache.Lease, error) {
+	// A pause interrupts capacity waits, but never an extraction already started.
+	release := extracted
+	defer func() { release() }()
+	for {
+		schedule := m.currentSchedule(ctx, run.ID)
+		lease, err := m.prepareFramesOnce(ctx, schedule, run, entry, cfg, job, probe, ffmpeg)
+		if err == nil || !errors.Is(err, context.Canceled) || schedule.Err() == nil || ctx.Err() != nil {
+			return lease, err
+		}
+		release()
+		release, err = m.extractionSlot(ctx, run.ID)
+		if err != nil {
+			release = func() {}
+			return nil, err
+		}
 	}
+}
+
+func (m *Manager) prepareFramesOnce(ctx, schedule context.Context, run Run, entry int64, cfg *config.Config, job domain.VideoJob, probe, ffmpeg string) (lease *framecache.Lease, err error) {
+	started := time.Now()
+	var id int64
 	cached := true
+	start := func() error {
+		var err error
+		id, err = m.startExtraction(run, entry, m.Library.DisplayPath(entry), started)
+		return err
+	}
 	defer func() {
+		if id == 0 {
+			return
+		}
 		frames := 0
 		if lease != nil {
 			frames = len(lease.Set.Frames)
@@ -37,10 +61,23 @@ func (m *Manager) prepareFrames(ctx context.Context, run Run, entry int64, cfg *
 		m.finishExtraction(id, started, cached && err == nil, frames, err)
 	}()
 	reserve := int64(cfg.Sampling.MaxFrames)*(1<<20) + (32 << 20) + 65536
-	lease, err = m.Cache.Acquire(ctx, framecache.Key(job, cfg), reserve, func(work string) (domain.FrameSet, error) {
+	lease, err = m.Cache.Acquire(schedule, framecache.Key(job, cfg), reserve, func(work string) (domain.FrameSet, error) {
+		// The slot was admitted before pause; only cancellation stops its work.
 		cached = false
+		if err := start(); err != nil {
+			return domain.FrameSet{}, fmt.Errorf("无法记录抽帧开始: %w", err)
+		}
 		return m.Prepare(ctx, cfg, job, probe, ffmpeg, work)
 	})
+	if id == 0 && (err == nil || schedule.Err() == nil || ctx.Err() != nil) {
+		if recordErr := start(); recordErr != nil {
+			if lease != nil {
+				lease.Release(false)
+				lease = nil
+			}
+			return nil, fmt.Errorf("无法记录抽帧开始: %w", recordErr)
+		}
+	}
 	if err == nil {
 		var current domain.Snapshot
 		current, err = domain.StatSnapshot(job.Path)

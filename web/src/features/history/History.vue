@@ -46,7 +46,7 @@ const timer=setInterval(async()=>{
  if(polling||busy.value)return
  polling=true
  try{
-  if(retryRuns.value.length){const results=await Promise.all(retryRuns.value.map(id=>api(`/runs/${id}`)));retryRuns.value=results.filter(r=>['queued','scanning','running','cancelling'].includes(r.status)).map(r=>r.id)}
+  if(retryRuns.value.length){const results=await Promise.all(retryRuns.value.map(id=>api(`/runs/${id}`)));retryRuns.value=results.filter(r=>['queued','scanning','running','paused','cancelling'].includes(r.status)).map(r=>r.id)}
   if(category.value==='failure'){await load(true);if(!rows.value.length&&pageNumber.value>1){pageNumber.value--;await load(true)}}
  }catch{}finally{polling=false}
 },3000)

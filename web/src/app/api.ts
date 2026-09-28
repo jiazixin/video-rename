@@ -26,7 +26,7 @@ export const time=(v:string)=>v?new Date(v).toLocaleString('zh-CN',{hour12:false
 export const datePart=(v:string)=>new Date(v).toLocaleDateString('zh-CN')
 export const clockPart=(v:string)=>new Date(v).toLocaleTimeString('zh-CN',{hour12:false})
 export const size=(v:number)=>v>=1073741824?`${(v/1073741824).toFixed(1)} GB`:v>=1048576?`${(v/1048576).toFixed(1)} MB`:v>=1024?`${(v/1024).toFixed(1)} KB`:`${v} B`
-export const statusNames:Record<string,string>={queued:'排队中',scanning:'扫描与稳定性检查',running:'运行中',cancelling:'正在取消',completed:'已完成',partial_failure:'部分失败',failed:'失败',cancelled:'已取消',interrupted:'已中断',done:'已完成',skipped:'已跳过'}
+export const statusNames:Record<string,string>={queued:'排队中',scanning:'扫描与稳定性检查',running:'运行中',paused:'已暂停',cancelling:'正在取消',completed:'已完成',partial_failure:'部分失败',failed:'失败',cancelled:'已取消',interrupted:'已中断',done:'已完成',skipped:'已跳过'}
 export const actionNames:Record<string,string>={manual:'手动命名',automatic:'自动命名',restore:'还原',recovery:'恢复核对',scan:'目录扫描',run:'运行',schedule:'计划触发',scheduler:'调度器'}
 
 export interface ModelProfile {workers:number;thinking:string;thinking_adapter:string;thinking_effort:string;thinking_budget:number;provider:string;protocol:string;base_url:string;model:string;timeout:string;temperature:number;max_tokens:number;omit_temperature:boolean;has_api_key:boolean;ready:boolean;is_default:boolean;id:number;title:string;prompt_id:number;prompt_title:string;body:string;version:number;created:string;updated:string}

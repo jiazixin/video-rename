@@ -80,12 +80,12 @@ func (m *Manager) analyze(ctx context.Context, run Run, entry int64, cfg *config
 	var lease *framecache.Lease
 	if m.Analyze == nil {
 		var err error
-		lease, err = m.prepareFrames(ctx, run, entry, cfg, job, probe, ffmpeg)
+		lease, err = m.prepareFrames(ctx, run, entry, cfg, job, probe, ffmpeg, extracted)
 		if err != nil {
 			return "", nil, err
 		}
 	}
 	extracted()
-	title, err := m.inferWithRetry(ctx, run, entry, cfg, job, probe, ffmpeg, lease)
+	title, err := m.inferWithRetry(ctx, run, entry, cfg, job, probe, ffmpeg, &lease)
 	return title, lease, err
 }

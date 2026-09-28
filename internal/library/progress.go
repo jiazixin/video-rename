@@ -75,7 +75,7 @@ func (l *Library) WithProgressBatch(ctx context.Context, entries []Entry) ([]Ent
  ), counts AS (
  SELECT e.parent,COUNT(*) AS total,
  SUM(EXISTS(SELECT 1 FROM marks m WHERE m.identity=e.identity AND m.size=e.size AND m.mtime=e.mtime)) AS processed,
- SUM(EXISTS(SELECT 1 FROM run_items i JOIN runs r ON r.id=i.run WHERE i.entry=e.id AND i.status IN ('queued','running') AND r.status IN ('queued','scanning','running','cancelling'))) AS active
+ SUM(EXISTS(SELECT 1 FROM run_items i JOIN runs r ON r.id=i.run WHERE i.entry=e.id AND i.status IN ('queued','running') AND r.status IN ('queued','scanning','running','paused','cancelling'))) AS active
  FROM dirs d JOIN entries e ON e.parent=d.id WHERE e.present=1 AND e.kind='file' AND video_rename_media_kind(e.name)=1 GROUP BY e.parent
  ) SELECT d.id,d.parent,COALESCE(c.total,0),COALESCE(c.processed,0),COALESCE(c.active,0),
  NOT EXISTS(SELECT 1 FROM directory_state s WHERE s.dir=d.id AND s.generation>0 AND s.error='')

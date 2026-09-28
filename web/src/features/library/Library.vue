@@ -174,13 +174,13 @@ async function syncEntries(){
  try{
   const runs=await Promise.all([...trackedRuns].map(id=>api<Run>(`/runs/${id}`)))
   if(n!==seq||request!==statusSeq||disposed)return
-  for(const run of runs)if(!['queued','scanning','running','cancelling'].includes(run.status))trackedRuns.delete(run.id)
+  for(const run of runs)if(!['queued','scanning','running','paused','cancelling'].includes(run.status))trackedRuns.delete(run.id)
   const ids=[...new Set([page.value.directory.id,...page.value.items.map(e=>e.id),...chosen.value.keys()])]
   const entries:Entry[]=[]
   for(let i=0;i<ids.length;i+=300)entries.push(...await api<Entry[]>(`/entries/status?ids=${ids.slice(i,i+300).join(',')}`))
   if(n!==seq||request!==statusSeq||disposed)return
   // A queued/scanning run may not have populated run_items yet.
-  for(const run of runs)if(['queued','scanning','running','cancelling'].includes(run.status))for(const e of entries)if((run.targets||[]).includes(e.id)&&!e.processed&&!e.task_status)e.task_status=run.status
+  for(const run of runs)if(['queued','scanning','running','paused','cancelling'].includes(run.status))for(const e of entries)if((run.targets||[]).includes(e.id)&&!e.processed&&!e.task_status)e.task_status=run.status
   const latest=new Map(entries.map(e=>[e.id,e]))
   const directory=latest.get(page.value.directory.id);if(directory)Object.assign(page.value.directory,directory)
   page.value.items=page.value.items.filter(e=>latest.has(e.id))

@@ -87,7 +87,9 @@ func retryWait(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-func (m *Manager) inferWithRetry(ctx context.Context, run Run, entry int64, cfg *config.Config, job domain.VideoJob, probe, ffmpeg string, lease *framecache.Lease) (string, error) {
+func (m *Manager) inferWithRetry(ctx context.Context, run Run, entry int64, cfg *config.Config, job domain.VideoJob, probe, ffmpeg string, leaseRef **framecache.Lease) (string, error) {
+	lease := *leaseRef
+	defer func() { *leaseRef = lease }()
 	var itemID int64
 	if err := m.DB.QueryRow("SELECT id FROM run_items WHERE run=? AND entry=?", run.ID, entry).Scan(&itemID); err != nil {
 		return "", err
@@ -109,7 +111,7 @@ func (m *Manager) inferWithRetry(ctx context.Context, run Run, entry int64, cfg 
 			id, title = run.retry.FallbackID, run.retry.FallbackTitle
 		}
 		waitStarted := time.Now()
-		release, n, err := m.modelSlot(ctx, id, current.Workers)
+		release, n, err := m.inferenceSlot(ctx, run, entry, id, &current, job, probe, ffmpeg, &lease)
 		if err != nil {
 			return "", err
 		}
@@ -181,8 +183,19 @@ func (m *Manager) inferWithRetry(ctx context.Context, run Run, entry int64, cfg 
 			continue
 		}
 		delay = max(delay, time.Duration(float64(min(15*time.Second, time.Second*2*time.Duration(1<<slot)))*(0.5+0.5*rand.Float64())))
-		if waitErr := retryWait(ctx, delay); waitErr != nil {
-			return "", waitErr
+		// Preserve Retry-After across pause/resume, without pinning screenshots.
+		until := time.Now().Add(delay)
+		for time.Now().Before(until) {
+			if waitErr := retryWait(m.currentSchedule(ctx, run.ID), time.Until(until)); waitErr == nil {
+				break
+			}
+			if lease != nil {
+				lease.Release(false)
+				lease = nil
+			}
+			if _, waitErr := m.dispatchContext(ctx, run.ID); waitErr != nil {
+				return "", waitErr
+			}
 		}
 	}
 	return "", fmt.Errorf("模型请求未完成")

@@ -51,7 +51,7 @@ func (m *Manager) ListPage(ctx context.Context, category, task string, page, siz
 		q := filters[0]
 		if status := q.Get("status"); status != "" {
 			switch status {
-			case "queued", "scanning", "running", "cancelling", "completed", "partial_failure", "failed", "cancelled", "interrupted":
+			case "queued", "scanning", "running", "paused", "cancelling", "completed", "partial_failure", "failed", "cancelled", "interrupted":
 				where += " AND r.status=?"
 				args = append(args, status)
 			default:
@@ -91,7 +91,7 @@ func (m *Manager) ListPage(ctx context.Context, category, task string, page, siz
 			if !ok {
 				return out, fmt.Errorf("耗时范围无效")
 			}
-			expr := "MAX(0,unixepoch(CASE WHEN r.finished<>'' THEN r.finished WHEN r.status IN ('queued','scanning','running','cancelling') THEN ? ELSE NULL END,'subsec')-unixepoch(r.started,'subsec'))"
+			expr := "MAX(0,unixepoch(CASE WHEN r.finished<>'' THEN r.finished WHEN r.status IN ('queued','scanning','running','paused','cancelling') THEN ? ELSE NULL END,'subsec')-unixepoch(r.started,'subsec'))"
 			where += " AND r.started<>'' AND " + expr + ">=?"
 			stamp := time.Now().UTC().Format(time.RFC3339Nano)
 			args = append(args, stamp, span[0])

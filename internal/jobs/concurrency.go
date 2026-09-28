@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 	"video-rename/internal/config"
-	"video-rename/internal/systemsettings"
 )
 
 // Dispatch only when an extraction slot is available. Release that slot once
@@ -38,10 +37,7 @@ func (m *Manager) processPending(ctx context.Context, run Run, cfg config.Config
 			return nil
 		}
 		for _, it := range batch {
-			release, _, err := m.extractSlots.acquire(ctx, 0, 8, func() (int, error) {
-				settings, err := (systemsettings.Store{DB: m.DB}).Get()
-				return settings.ExtractWorkers, err
-			})
+			release, err := m.extractionSlot(ctx, run.ID)
 			if err != nil {
 				return err
 			}
