@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ToastNotice from '../../components/ToastNotice.vue'
 import {computed,ref,onMounted,onUnmounted} from 'vue'
 import {CheckCircle2,AlertCircle,Search,Info,RefreshCw,ChevronLeft,ChevronRight,ScrollText,Copy,Undo2,Trash2} from 'lucide-vue-next'
 import {api,key,actionNames} from '../../app/api'
@@ -53,7 +54,7 @@ onMounted(()=>load());onUnmounted(()=>{seq++;clearTimeout(debounce);clearInterva
 <template><section>
 <div class="page-heading"><div><h1>运行记录<span class="title-dot">.</span></h1><p>查看文件命名、还原等操作的成功与失败结果。</p></div><div class="history-heading-actions"><button @click="openClear"><Trash2 :size="16"/>清除记录</button><button :disabled="busy" @click="reset"><RefreshCw :size="16" :class="{spin:busy}"/>刷新</button></div></div>
 <div class="log-tabs" aria-label="运行记录状态"><button :class="{active:category==='success'}" :aria-pressed="category==='success'" @click="tab('success')"><CheckCircle2 :size="18"/>成功记录</button><button :class="{active:category==='failure'}" :aria-pressed="category==='failure'" @click="tab('failure')"><AlertCircle :size="18"/>失败记录</button></div>
-<div v-if="error" role="alert" class="notice error">{{error}}<button @click="load()">重试</button></div><div v-if="message" role="status" class="notice success">{{message}}<button @click="message=''">关闭</button></div>
+<div v-if="error" role="alert" class="notice error">{{error}}<button @click="load()">重试</button></div><ToastNotice v-model="message" />
 <div class="panel"><div class="filterbar log-filters"><div class="search-input"><Search :size="16"/><input v-model="q" placeholder="搜索文件名或记录内容…" aria-label="搜索运行记录" @input="search"/></div><SelectField v-model="action" @change="reset" label="操作类型" :options="[{value:'',label:'全部操作'},...Object.entries(actionNames).map(([value,label])=>({value,label}))]"/><SelectField v-model="run" label="运行批次" :options="batchOptions" @change="reset"/><DateField v-model="from" label="起始日期" :max="to" @change="reset"/><span class="subtle">至</span><DateField v-model="to" label="结束日期" :min="from" @change="reset"/><div class="filter-spacer"/><span class="subtle">共 {{total}} 项 · {{rows.length}} 项 / 当前页</span></div>
 <div v-if="category==='failure'" class="batch-toolbar"><strong>已选 {{chosen.size}} 项</strong><button :disabled="busy||retrying||!retryable.length" @click="retry"><RefreshCw :size="15"/>{{retrying?'正在提交…':`批量重试（${retryable.length}）`}}</button><span class="subtle">{{retryRuns.length?'重试运行中，成功后自动移除失败记录':'自动命名失败可重试，使用原模型配置的最新设置'}}</span></div>
 <div class="table-scroll"><table class="history-table" :class="category"><thead><tr><th class="history-select"><input type="checkbox" aria-label="选择本页记录" :checked="rows.length>0&&chosen.size===rows.length" @change="selectPage"/></th><th>时间</th><th>操作</th><th>模型配置</th><th>目录</th><th>旧文件名</th><th>{{category==='success'?'新文件名':'运行批次'}}</th><th v-if="category==='success'">运行批次</th><th>token数</th><th v-if="category==='failure'" class="history-reason">失败原因</th><th></th></tr></thead>

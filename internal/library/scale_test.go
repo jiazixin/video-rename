@@ -58,6 +58,18 @@ func TestScaleDirectoryPagination(t *testing.T) {
 	if p95 > 300*time.Millisecond {
 		t.Fatalf("P95 exceeds target: %s", p95)
 	}
+	for _, page := range []int{1, 250, 500} {
+		start = time.Now()
+		p, err := l.ListPage(t.Context(), dir.ID, page, 100, "", "video", "name_asc")
+		elapsed := time.Since(start)
+		t.Logf("50,000-file numbered page %d: %s", page, elapsed)
+		if err != nil || p.Number != page || p.Total != 50000 || len(p.Items) != 100 || p.Items[0].Name != fmt.Sprintf("clip-%05d.mp4", (page-1)*100) {
+			t.Fatalf("unexpected numbered page %d: %v", page, err)
+		}
+		if elapsed > 300*time.Millisecond {
+			t.Fatalf("numbered page %d exceeds target: %s", page, elapsed)
+		}
+	}
 }
 
 func TestScaleProcessedMarks(t *testing.T) {

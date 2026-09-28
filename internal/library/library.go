@@ -334,6 +334,7 @@ func (l *Library) StartRefresh(ctx context.Context, id int64) {
 
 type Page struct {
 	Total       int     `json:"total"`
+	Number      int     `json:"page,omitzero"`
 	Items       []Entry `json:"items"`
 	Next        int     `json:"next"`
 	Generation  int64   `json:"generation,string"`
@@ -355,6 +356,16 @@ func (l *Library) ListSorted(ctx context.Context, id int64, offset, limit int, g
 	return l.ListOrdered(ctx, id, offset, limit, generation, q, kind, force, sortBy)
 }
 func (l *Library) ListOrdered(ctx context.Context, id int64, offset, limit int, generation int64, q, kind string, force bool, sortBy string) (Page, error) {
+	return l.listOrdered(ctx, id, offset, limit, generation, q, kind, force, sortBy, 0)
+}
+
+// ListPage reads a fresh page without carrying a cursor from an older index.
+// Count and page boundaries come from one snapshot, even during a rescan.
+func (l *Library) ListPage(ctx context.Context, id int64, page, limit int, q, kind, sortBy string) (Page, error) {
+	return l.listOrdered(ctx, id, 0, limit, 0, q, kind, false, sortBy, max(1, page))
+}
+
+func (l *Library) listOrdered(ctx context.Context, id int64, offset, limit int, generation int64, q, kind string, force bool, sortBy string, pageNumber int) (Page, error) {
 	p := Page{Items: []Entry{}, Breadcrumbs: []Entry{}}
 	var err error
 	p.Directory, err = l.Get(id)
@@ -364,8 +375,13 @@ func (l *Library) ListOrdered(ctx context.Context, id int64, offset, limit int, 
 	if p.Directory.Kind != "directory" {
 		return p, fmt.Errorf("不是目录")
 	}
+	tx, err := l.DB.Read().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return p, err
+	}
+	defer tx.Rollback()
 	var refreshed sql.NullString
-	err = l.DB.Read().QueryRow("SELECT generation,refreshed,error FROM directory_state WHERE dir=?", id).Scan(&p.Generation, &refreshed, &p.Error)
+	err = tx.QueryRowContext(ctx, "SELECT generation,refreshed,error FROM directory_state WHERE dir=?", id).Scan(&p.Generation, &refreshed, &p.Error)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return p, err
 	}
@@ -393,7 +409,7 @@ func (l *Library) ListOrdered(ctx context.Context, id int64, offset, limit int, 
 	var anchorID int64
 	value, sortBy := directoryOrder(sortBy)
 	if offset > 0 {
-		if err = l.DB.Read().QueryRow("SELECT CASE WHEN kind='directory' THEN 0 ELSE 1 END,name,entry,"+value+" FROM directory_items WHERE dir=? AND generation=? AND entry=?", id, p.Generation, offset).Scan(&anchorKind, &anchorName, &anchorID, &anchorValue); err != nil {
+		if err = tx.QueryRowContext(ctx, "SELECT CASE WHEN kind='directory' THEN 0 ELSE 1 END,name,entry,"+value+" FROM directory_items WHERE dir=? AND generation=? AND entry=?", id, p.Generation, offset).Scan(&anchorKind, &anchorName, &anchorID, &anchorValue); err != nil {
 			return p, fmt.Errorf("分页位置已失效，请返回第一页")
 		}
 	}
@@ -417,14 +433,20 @@ func (l *Library) ListOrdered(ctx context.Context, id int64, offset, limit int, 
 			filter = "(" + filter + " OR kind='directory')"
 		}
 	}
-	if err = l.DB.Read().QueryRow(`SELECT count(*) FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter, id, p.Generation, q, kind, kind).Scan(&p.Total); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter, id, p.Generation, q, kind, kind).Scan(&p.Total); err != nil {
 		return p, err
 	}
 	order, comparison := "ASC", ">"
 	if strings.HasSuffix(sortBy, "_desc") {
 		order, comparison = "DESC", "<"
 	}
-	rows, err := l.DB.Read().Query(`SELECT entry FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter+` AND (?=0 OR CASE WHEN kind='directory' THEN 0 ELSE 1 END>? OR (CASE WHEN kind='directory' THEN 0 ELSE 1 END=? AND (`+value+`,name COLLATE NATURAL_NAME,entry)`+comparison+`(?,?,?))) ORDER BY CASE WHEN kind='directory' THEN 0 ELSE 1 END,`+value+` `+order+`,name COLLATE NATURAL_NAME `+order+`,entry `+order+` LIMIT ?`, id, p.Generation, q, kind, kind, offset, anchorKind, anchorKind, anchorValue, anchorName, anchorID, limit+1)
+	skip := 0
+	if pageNumber > 0 {
+		// Clamp before multiplying so arbitrary client page numbers cannot overflow.
+		p.Number = min(pageNumber, max(1, (p.Total+limit-1)/limit))
+		skip = (p.Number - 1) * limit
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT entry FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter+` AND (?=0 OR CASE WHEN kind='directory' THEN 0 ELSE 1 END>? OR (CASE WHEN kind='directory' THEN 0 ELSE 1 END=? AND (`+value+`,name COLLATE NATURAL_NAME,entry)`+comparison+`(?,?,?))) ORDER BY CASE WHEN kind='directory' THEN 0 ELSE 1 END,`+value+` `+order+`,name COLLATE NATURAL_NAME `+order+`,entry `+order+` LIMIT ? OFFSET ?`, id, p.Generation, q, kind, kind, offset, anchorKind, anchorKind, anchorValue, anchorName, anchorID, limit+1, skip)
 	if err != nil {
 		return p, err
 	}
@@ -440,6 +462,10 @@ func (l *Library) ListOrdered(ctx context.Context, id int64, offset, limit int, 
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
+		return p, err
+	}
+	// Release the snapshot before Get uses the read pool for live entry status.
+	if err = tx.Commit(); err != nil {
 		return p, err
 	}
 	if len(ids) > limit {

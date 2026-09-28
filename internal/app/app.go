@@ -185,7 +185,13 @@ func (a *App) Handler() http.Handler {
 	})
 	api.HandleFunc("GET /api/directories/{id}/entries", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		p, err := a.Library.ListOrdered(a.ctx, number(r.PathValue("id")), int(number(q.Get("offset"))), int(number(q.Get("limit"))), number(q.Get("generation")), q.Get("q"), q.Get("kind"), false, q.Get("sort"))
+		var p library.Page
+		var err error
+		if q.Has("page") {
+			p, err = a.Library.ListPage(a.ctx, number(r.PathValue("id")), int(number(q.Get("page"))), int(number(q.Get("limit"))), q.Get("q"), q.Get("kind"), q.Get("sort"))
+		} else {
+			p, err = a.Library.ListOrdered(a.ctx, number(r.PathValue("id")), int(number(q.Get("offset"))), int(number(q.Get("limit"))), number(q.Get("generation")), q.Get("q"), q.Get("kind"), false, q.Get("sort"))
+		}
 		if err != nil {
 			failure(w, err)
 			return

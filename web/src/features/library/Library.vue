@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ToastNotice from '../../components/ToastNotice.vue'
 import { ref,onActivated,onDeactivated,onUnmounted,computed,nextTick } from 'vue'
 import {Folder,FileVideo,FileAudio,File,ArrowDownUp,ChevronRight,ChevronLeft,RefreshCw,Search,ArrowUpRight,PenLine,Undo2,Sparkles,Home,History,ArrowRight,Link,Image as ImageIcon,CircleCheck,CircleMinus,Images} from 'lucide-vue-next'
 import './library-actions.css'
@@ -27,7 +28,7 @@ async function deleteEntry(){
   const e=deleting.value
   await api(`/entries/${e.id}`,'DELETE',{version:e.version,confirmed:true})
   chosen.value.delete(e.id);deleting.value=undefined;notice.value=`已永久删除 ${e.name}`
-  offset.value=0;cursors.value=[];await load()
+  await load()
  }catch(err){deleteError.value=(err as Error).message}finally{saving.value=false}
 }
 const video=(e:Entry)=>/\.(mp4|m4v|mkv|mov|avi|webm|flv|wmv|mpg|mpeg|ts|m2ts|mts|3gp|ogv|rmvb|asf|vob)$/i.test(e.name)
@@ -90,11 +91,10 @@ function play(e:Entry){videoNotice.value='';playing.value=e}
 function playAudio(e:Entry){audioPlaying.value=e}
 const modelConfigID=ref(0)
 const sort=ref('name_asc')
-function toggleSort(field:string){sort.value=sort.value===`${field}_asc`?`${field}_desc`:`${field}_asc`;offset.value=0;cursors.value=[];load()}
+function toggleSort(field:string){sort.value=sort.value===`${field}_asc`?`${field}_desc`:`${field}_asc`;pageNumber.value=1;load()}
 function sortLabel(field:string){return sort.value===`${field}_asc`?'升序':sort.value===`${field}_desc`?'降序':''}
-const cursors=ref<number[]>([])
 function routeDirectory(){const value=Number(location.hash.match(/^#library\/(\d+)$/)?.[1]||1);return Number.isSafeInteger(value)&&value>0?value:1}
-const dir=ref(routeDirectory()),page=ref<Page>(),busy=ref(false),error=ref(''),notice=ref(''),q=ref(''),kind=ref(''),offset=ref(0),limit=ref(100)
+const dir=ref(routeDirectory()),page=ref<Page>(),busy=ref(false),error=ref(''),notice=ref(''),q=ref(''),kind=ref(''),pageNumber=ref(1),limit=ref(100)
 const selected=ref<Entry>(),mode=ref(''),newName=ref(''),saving=ref(false),dialogError=ref(''),recursive=ref(true),history=ref<any[]>([])
 const inlineEntry=ref<Entry>(),inlineInput=ref<HTMLInputElement>(),inlineName=ref(''),inlineExtension=ref(''),inlineVersion=ref(0),inlineSaving=ref(false),inlineError=ref('')
 function setInlineInput(el:unknown){inlineInput.value=el instanceof HTMLInputElement?el:undefined}
@@ -142,9 +142,6 @@ async function syncEntries(){
   for(const run of runs)if(['queued','scanning','running','cancelling'].includes(run.status))for(const e of entries)if((run.targets||[]).includes(e.id)&&!e.processed&&!e.task_status)e.task_status=run.status
   const latest=new Map(entries.map(e=>[e.id,e]))
   const directory=latest.get(page.value.directory.id);if(directory)Object.assign(page.value.directory,directory)
-  // A task/recursive mark may rebuild the directory index. Keep this page's
-  // rows in place, but resolve the next user-initiated page against the new index.
-  page.value.generation='0'
   page.value.items=page.value.items.filter(e=>latest.has(e.id))
   for(const e of page.value.items)Object.assign(e,latest.get(e.id))
   for(const id of chosen.value.keys()){const e=latest.get(id);if(e)chosen.value.set(id,e);else chosen.value.delete(id)}
@@ -152,31 +149,33 @@ async function syncEntries(){
   if(trackedRuns.size||entries.some(e=>e.task_status||e.progress?.active))scheduleSync()
  }catch(e){if(n===seq&&request===statusSeq&&!disposed){error.value=`状态更新失败：${(e as Error).message}`;scheduleSync()}}
 }
-async function load(quiet=false){
+async function load(quiet=false,keepRows=true){
  const n=++seq;clearTimeout(timer);busy.value=!quiet;error.value=''
  try{
-  const params=new URLSearchParams({offset:String(offset.value),limit:String(limit.value),q:q.value,kind:kind.value,sort:sort.value,generation:offset.value>0?page.value?.generation||'0':'0'})
+  const requestedPage=pageNumber.value
+  const params=new URLSearchParams({page:String(requestedPage),limit:String(limit.value),q:q.value,kind:kind.value,sort:sort.value})
   const p=await api<Page>(`/directories/${dir.value}/entries?${params}`)
   if(n!==seq)return
-  // Check selection when the response arrives: the user may have selected
-  // rows while this background request was in flight. Keep those rows in
-  // place; a newer index may move them to another page, not delete them.
-  if(quiet&&chosen.value.size&&page.value){
-   const latest=new Map(p.items.map(e=>[e.id,e]))
+  // Background scans must not move the rows being read or selected. Fetch by
+  // ID as renamed entries can have moved outside this page's latest sort range.
+  if(quiet&&keepRows&&page.value?.items.length&&(p.page??requestedPage)===requestedPage){
+   const entries=await api<Entry[]>(`/entries/status?ids=${page.value.items.map(e=>e.id).join(',')}`)
+   if(n!==seq)return
+   const latest=new Map(entries.map(e=>[e.id,e]))
    const visible=new Set(page.value.items.map(e=>e.id))
-   const rows=page.value.items.map(e=>latest.get(e.id)||e)
+   const rows=page.value.items.filter(e=>latest.has(e.id)).map(e=>latest.get(e.id)!)
    p.items=[...rows,...p.items.filter(e=>!visible.has(e.id)).slice(0,Math.max(0,limit.value-rows.length))]
-   p.generation='0'
   }
+  pageNumber.value=p.page??requestedPage
   page.value=p
   if(inlineEntry.value&&!p.items.some(e=>e.id===inlineEntry.value?.id))cancelInlineRename()
   await restorePosition(n,p);if(n!==seq)return
   for(const e of p.items)if(chosen.value.has(e.id))chosen.value.set(e.id,e)
-  if(p.refreshing)timer=setTimeout(()=>load(true),1500)
+  if(p.refreshing)timer=setTimeout(()=>load(true,keepRows),1500)
   else if(trackedRuns.size||p.directory.task_status||p.directory.progress?.active||p.items.some(e=>e.task_status||e.progress?.active))scheduleSync()
  }catch(e){if(n===seq)error.value=(e as Error).message}finally{if(n===seq)busy.value=false}
 }
-type DirectoryPosition={offset:number;cursors:number[];q:string;kind:string;sort:string;limit:number;scrollY:number;anchor?:number;snapshot?:Page}
+type DirectoryPosition={pageNumber:number;q:string;kind:string;sort:string;limit:number;scrollY:number;anchor?:number;snapshot?:Page}
 const positions=new Map<number,DirectoryPosition>()
 const listRoot=ref<HTMLElement>(),returnAnchor=ref<number>()
 let pendingPosition:DirectoryPosition|undefined
@@ -220,7 +219,7 @@ function enter(id:number,updateRoute=true){
  clearTimeout(searchTimer);returnAnchor.value=undefined
  chosen.value.clear()
  const child=page.value?.items.find(e=>e.id===id&&e.kind==='directory')
- positions.set(dir.value,{offset:offset.value,cursors:[...cursors.value],q:q.value,kind:kind.value,sort:sort.value,limit:limit.value,scrollY:window.scrollY,anchor:child?.id??positions.get(dir.value)?.anchor,snapshot:page.value})
+ positions.set(dir.value,{pageNumber:pageNumber.value,q:q.value,kind:kind.value,sort:sort.value,limit:limit.value,scrollY:window.scrollY,anchor:child?.id??positions.get(dir.value)?.anchor,snapshot:page.value})
  // Bound retained lists while keeping recent return navigation immediate.
  if(positions.size>30)positions.delete(positions.keys().next().value!)
  const saved=positions.get(id)
@@ -228,13 +227,13 @@ function enter(id:number,updateRoute=true){
  if(!saved)window.scrollTo({top:0,behavior:'instant'})
  dir.value=id
  if(updateRoute&&(routeDirectory()!==id||!location.hash.startsWith('#library/')))location.hash=`library/${id}`
- offset.value=saved?.offset||0;cursors.value=[...(saved?.cursors||[])];q.value=saved?.q||'';kind.value=saved?.kind??'';sort.value=saved?.sort??sort.value;limit.value=saved?.limit??limit.value
+ pageNumber.value=saved?.pageNumber||1;q.value=saved?.q||'';kind.value=saved?.kind??'';sort.value=saved?.sort??sort.value;limit.value=saved?.limit??limit.value
  page.value=saved?.snapshot
  void load(!!page.value)
  if(page.value)void restorePosition(seq,page.value)
 }
-function search(){offset.value=0;cursors.value=[];seq++;clearTimeout(timer);clearTimeout(searchTimer);searchTimer=setTimeout(load,250)}
-async function refresh(){offset.value=0;cursors.value=[];try{await api(`/directories/${dir.value}/refresh`,'POST',{});await load()}catch(e){error.value=(e as Error).message}}
+function search(){pageNumber.value=1;seq++;clearTimeout(timer);clearTimeout(searchTimer);searchTimer=setTimeout(load,250)}
+async function refresh(){const directory=dir.value;try{await api(`/directories/${directory}/refresh`,'POST',{});if(directory===dir.value)await load(false,false)}catch(e){if(directory===dir.value)error.value=(e as Error).message}}
 async function open(e:Entry,m:string){if(m==='auto')modelConfigID.value=0;if(m==='extract')recursive.value=true;selected.value=e;mode.value=m;dialogError.value='';newName.value=e.kind==='file'?e.name.slice(0,e.name.length-(e.name.match(/\.[^.]+$/)?.[0].length||0)):e.name;history.value=[];if(m==='restore'||m==='history'){try{history.value=await api(`/entries/${e.id}/history`)}catch(err){dialogError.value=(err as Error).message}}}
 async function submit(){if(!selected.value)return;statusSeq++;saving.value=true;dialogError.value='';try{const e=selected.value;if(mode.value==='rename'){await api(`/entries/${e.id}/rename`,'POST',{name:newName.value+extension.value,version:e.version,key:key()});notice.value='名称已更新，历史已保存'}else if(mode.value==='restore'){await api(`/operations/${e.restore_id}/restore`,'POST',{key:key()});notice.value='名称已还原，可以再次自动命名'}else{const extracting=mode.value==='extract';const run=await api('/runs','POST',{task:extracting?'extract':'rename',model_config_id:extracting?0:modelConfigID.value,targets:[e.id],recursive:recursive.value,key:key()});trackRun(run.id,[e]);notice.value=`${extracting?'抽帧':'重命名'}批次 #${run.id} 已加入队列`}
  mode.value='';await syncEntries()}catch(err){dialogError.value=(err as Error).message}finally{saving.value=false}}
@@ -267,7 +266,7 @@ async function submitMark(){
  }catch(e){markError.value=`已确认变更 ${confirmed} 个视频；${(e as Error).message}。后台任务可能仍在执行，可点击确认重试查询；已完成的标记会保留。`}
  finally{markProgress.value='';saving.value=false;await syncEntries()}
 }
-function status(e:Entry){if(e.task_status)return statusNames[e.task_status]||e.task_status;return e.processed==='marked'?'手动标记已处理':e.processed==='manual'?'已手动命名':e.processed==='automatic'?'已自动命名':e.processed==='restore'?'已还原':'未处理'}
+function status(e:Entry){if(e.task_status)return statusNames[e.task_status]||e.task_status;return e.processed==='marked'?'手动标记已处理':e.processed==='manual'?'手动命名':e.processed==='automatic'?'自动命名':e.processed==='restore'?'已还原':'未处理'}
 function routeChanged(){const id=routeDirectory();if((!location.hash||location.hash.startsWith('#library'))&&id!==dir.value)enter(id,false)}
 function activate(){
  if(active)return
@@ -297,10 +296,10 @@ onActivated(activate);onDeactivated(deactivate);onUnmounted(()=>{deactivate();di
  <div class="directory-action-row"><button class="library-action action-mark" title="将当前目录及子目录中的现有视频标记为已处理，自动命名会跳过" :disabled="!page" @click="openMark([page!.directory],true)"><CircleCheck :size="16"/>标记</button><button class="library-action action-unmark" title="清除当前目录及子目录中视频的已处理标记，允许再次自动命名；文件名不变" :disabled="!page" @click="openMark([page!.directory],false)"><CircleMinus :size="16"/>取消标记</button></div>
  <p class="directory-action-hint">作用于当前目录及所有子目录</p>
 </div></div>
-<div v-if="notice" class="notice success" role="status">{{notice}}<button @click="notice=''">关闭</button></div><div v-if="error" class="notice error" role="alert">{{error}}<button @click="enter(1)">返回媒体库</button><button @click="offset=0;cursors=[];load()">返回第一页重试</button></div>
+<ToastNotice v-model="notice" /><div v-if="error" class="notice error" role="alert">{{error}}<button @click="enter(1)">返回媒体库</button><button @click="load()">重试</button></div>
 <div class="panel file-panel">
 <div class="panel-toolbar directory-toolbar"><div class="breadcrumbs"><button @click="enter(1)"><Home :size="15"/>媒体库</button><template v-for="crumb in page?.breadcrumbs.filter(x=>x.id!==1)" :key="crumb.id"><ChevronRight :size="13"/><button @click="enter(crumb.id)">{{crumb.name}}</button></template></div><div class="directory-summary"><DirectoryStatus v-if="page?.directory.progress" :entry="page.directory"/><div class="directory-refresh-summary"><DirectoryContents inline :contents="page?.directory.contents"/><button :disabled="busy" @click="refresh"><RefreshCw :size="16" :class="{spin:busy}"/>刷新</button></div></div></div>
-<div class="filterbar"><button :aria-pressed="multi" @click="multi=!multi;chosen.clear()">{{multi?'退出多选':'多选'}}</button><div class="search-input"><Search :size="16"/><input v-model="q" placeholder="搜索当前目录…" aria-label="搜索当前目录" @input="search"/></div><SelectField v-model="kind" @change="offset=0;cursors=[];load()" label="类型筛选" :options="[{value:'',label:'全部类型'},{value:'directory',label:'目录'},{value:'video',label:'视频'},{value:'image',label:'图片'},{value:'audio',label:'音频'},{value:'other',label:'其他文件'}]"/><MediaNumbering v-if="kind==='image'||kind==='audio'" :media="kind" :directory="dir" :query="q" :sort="sort" :disabled="busy||!page||!!page.refreshing||!!page.directory.task_status" @changed="preview=undefined;chosen.clear();syncEntries()"/><div class="filter-spacer"/><span class="subtle">共 {{page?.total??0}} 项 · {{page?.items.length||0}} 项 / 当前页</span></div>
+<div class="filterbar"><button :aria-pressed="multi" @click="multi=!multi;chosen.clear()">{{multi?'退出多选':'多选'}}</button><div class="search-input"><Search :size="16"/><input v-model="q" placeholder="搜索当前目录…" aria-label="搜索当前目录" @input="search"/></div><SelectField v-model="kind" @change="pageNumber=1;load()" label="类型筛选" :options="[{value:'',label:'全部类型'},{value:'directory',label:'目录'},{value:'video',label:'视频'},{value:'image',label:'图片'},{value:'audio',label:'音频'},{value:'other',label:'其他文件'}]"/><MediaNumbering v-if="kind==='image'||kind==='audio'" :media="kind" :directory="dir" :query="q" :sort="sort" :disabled="busy||!page||!!page.refreshing||!!page.directory.task_status" @changed="preview=undefined;chosen.clear();syncEntries()"/><div class="filter-spacer"/><span class="subtle">共 {{page?.total??0}} 项 · {{page?.items.length||0}} 项 / 当前页</span></div>
 <div v-if="multi" class="batch-toolbar"><strong>已选 {{chosen.size}} 项</strong><button title="全选本页" @click="selectPage()">全选</button><button title="反选本页" @click="selectPage(true)">反选</button><button :disabled="!chosen.size" @click="chosen.clear()">清空</button><span class="batch-divider" aria-hidden="true"/><button class="library-action action-extract" :disabled="!extractEntries.length" @click="startBatch('extract')"><Images :size="15"/>抽帧</button><button class="library-action action-name" :disabled="!ready||!autoEntries.length" @click="startBatch('auto')"><Sparkles :size="15"/>命名</button><span class="batch-divider" aria-hidden="true"/><button class="library-action action-mark" title="将选中目标中的视频标记为已处理，目录包含子目录" :disabled="!markEntries.length" @click="openMark(markEntries,true)"><CircleCheck :size="15"/>标记已处理</button><button class="library-action action-unmark" title="清除选中目标中视频的已处理标记，文件名不变" :disabled="!markEntries.length" @click="openMark(markEntries,false)"><CircleMinus :size="15"/>取消标记</button><button :disabled="!restoreEntries.length" @click="startBatch('restore')"><Undo2 :size="15"/>还原</button></div>
 <div class="table-scroll"><table class="file-table"><thead><tr><th v-if="multi" class="selection-cell">选择</th><th class="filename-cell"><button class="table-sort" aria-label="切换名称排序" @click="toggleSort('name')">名称<ArrowDownUp :size="12"/>{{sortLabel('name')}}</button></th><th><button class="table-sort" aria-label="切换大小排序" @click="toggleSort('size')">大小<ArrowDownUp :size="12"/>{{sortLabel('size')}}</button></th><th class="contents-cell" title="仅统计该目录的直接子项；进入目录完成索引后显示">目录内容</th><th>处理状态</th><th><button class="table-sort" aria-label="切换文件修改时间排序" @click="toggleSort('mtime')">文件修改时间<ArrowDownUp :size="12"/>{{sortLabel('mtime')}}</button></th><th><button class="table-sort" aria-label="切换重命名时间排序" @click="toggleSort('renamed')">重命名时间<ArrowDownUp :size="12"/>{{sortLabel('renamed')}}</button></th><th class="align-right">操作</th></tr></thead>
 <tbody><tr v-for="e in page?.items" :key="e.id" :data-entry-id="e.id" :class="{'is-selected':multi&&chosen.has(e.id),'return-anchor':returnAnchor===e.id}"><td v-if="multi" class="selection-cell"><input v-if="selectable(e)" type="checkbox" :aria-label="`选择 ${e.name}`" :checked="chosen.has(e.id)" @change="toggle(e)"/></td>
@@ -308,7 +307,7 @@ onActivated(activate);onDeactivated(deactivate);onUnmounted(()=>{deactivate();di
 <td class="subtle mono">{{e.kind==='directory'?'—':size(e.size)}}</td><td class="subtle contents-cell"><DirectoryContents v-if="e.kind==='directory'" :contents="e.contents"/><span v-else>—</span></td><td><DirectoryStatus v-if="e.kind==='directory'" :entry="e"/><StatusBadge v-else :status="e.task_status||e.processed||'unprocessed'">{{status(e)}}</StatusBadge></td><td class="subtle date-cell"><DateTime :value="e.mtime"/></td><td class="subtle date-cell"><DateTime :value="e.renamed_at"/></td>
 <td><div class="row-actions" v-if="e.kind==='file'||e.kind==='directory'"><button v-if="isImage(e)" :aria-label="`查看图片 ${e.name}`" title="查看图片" @click="showImage(e)"><ImageIcon :size="15"/></button><button v-if="e.kind==='directory'" title="重命名" :aria-label="`重命名 ${e.name}`" @click="open(e,'rename')"><PenLine :size="15"/></button><button class="library-action action-name" v-if="e.kind==='directory'||video(e)" :disabled="!ready||!!e.processed||!!e.task_status" :aria-label="`自动命名 ${e.name}`" :title="e.processed?'已处理，自动任务将跳过':'自动命名'" @click="open(e,'auto')"><Sparkles :size="15"/></button><button class="library-action action-mark" v-if="e.kind==='directory'||video(e)&&!e.processed" :aria-label="`标记已处理 ${e.name}`" title="标记已处理" :disabled="!!e.task_status" @click="openMark([e],true)"><CircleCheck :size="15"/></button><button class="library-action action-unmark" v-if="e.kind==='directory'||video(e)&&e.processed" :aria-label="`取消已处理标记 ${e.name}`" title="取消已处理标记" :disabled="!!e.task_status" @click="openMark([e],false)"><CircleMinus :size="15"/></button><button v-if="e.restore_id" :aria-label="`还原 ${e.name}`" title="还原" @click="open(e,'restore')"><Undo2 :size="15"/></button><button title="命名历史" :aria-label="`历史 ${e.name}`" @click="open(e,'history')"><History :size="15"/></button><button class="delete-action" title="永久删除" :aria-label="`删除 ${e.name}`" :disabled="!!e.task_status||!!e.progress?.active" @click="confirmDelete(e)"><Trash2 :size="15"/></button></div><span v-else class="subtle">不可操作</span></td></tr></tbody></table>
 <div v-if="!page?.items.length" class="empty"><Folder :size="35"/><h3>{{busy||page?.refreshing?'正在读取目录':'这里还没有内容'}}</h3><p>{{busy||page?.refreshing?'首次进入时会建立当前层的目录索引。':q?'没有符合搜索条件的条目。':'可以返回上级目录，或刷新查看最新文件。'}}</p></div></div>
-<div v-if="page?.error" class="notice error">目录同步失败：{{page.error}}</div><div class="pagination"><span class="subtle">{{page?.refreshed?`更新于 ${time(page.refreshed)}`:'等待首次同步'}}</span><SelectField v-model="limit" @change="offset=0;cursors=[];load()" label="每页条目数" :options="[{value:50,label:'50 项 / 页'},{value:100,label:'100 项 / 页'},{value:200,label:'200 项 / 页'}]"/><button :disabled="offset===0||busy" aria-label="上一页" @click="offset=cursors.pop()||0;load()"><ChevronLeft :size="16"/></button><span>{{cursors.length+1}}</span><button :disabled="!page?.next||busy" aria-label="下一页" @click="cursors.push(offset);offset=page!.next;load()"><ChevronRight :size="16"/></button></div></div>
+<div v-if="page?.error" class="notice error">目录同步失败：{{page.error}}</div><div class="pagination"><span class="subtle">{{page?.refreshed?`更新于 ${time(page.refreshed)}`:'等待首次同步'}}</span><SelectField v-model="limit" @change="pageNumber=1;load()" label="每页条目数" :options="[{value:50,label:'50 项 / 页'},{value:100,label:'100 项 / 页'},{value:200,label:'200 项 / 页'}]"/><button :disabled="pageNumber===1||busy" aria-label="上一页" @click="pageNumber--;load()"><ChevronLeft :size="16"/></button><span>{{pageNumber}}</span><button :disabled="!page?.next||busy" aria-label="下一页" @click="pageNumber++;load()"><ChevronRight :size="16"/></button></div></div>
 <div class="page-footnote"><button class="text-button" @click="emit('run')">查看批次记录 <ArrowUpRight :size="14"/></button></div></section>
 <Modal v-if="deleting" :title="deleting.kind==='directory'?'删除目录':'删除文件'" @close="!saving&&(deleting=undefined)"><form @submit.prevent="deleteEntry"><p>确定永久删除以下{{deleting.kind==='directory'?'目录':'文件'}}？</p><p class="delete-path">媒体库 / {{deletePath}}</p><p v-if="deleting.kind==='directory'">目录内的所有文件和子目录都会一并删除。</p><p class="help">将从磁盘真实删除，不进入回收站，无法通过还原功能恢复。</p><div v-if="deleteError" class="notice error" role="alert">{{deleteError}}</div><div class="modal-actions"><button type="button" :disabled="saving" @click="deleting=undefined">取消</button><button class="delete-confirm" :disabled="saving">{{saving?'正在删除…':'确认永久删除'}}</button></div></form></Modal>
 <Modal v-if="mode" :title="mode==='extract'?'目录抽帧':mode==='rename'?'重命名':mode==='restore'?'还原名称':mode==='history'?'命名历史':'自动命名'" @close="!saving&&(mode='')"><form @submit.prevent="submit">

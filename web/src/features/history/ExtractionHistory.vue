@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ToastNotice from '../../components/ToastNotice.vue'
 import {computed,onMounted,onUnmounted,ref} from 'vue'
 import {AlertCircle,CheckCircle2,ChevronLeft,ChevronRight,Copy,Search,RefreshCw,Trash2} from 'lucide-vue-next'
 import {api} from '../../app/api'
@@ -52,7 +53,7 @@ onUnmounted(()=>{seq++;detailSeq++;controller?.abort();clearInterval(timer);clea
  <div class="log-tabs" aria-label="抽帧记录状态"><button :class="{active:category==='success'}" :aria-pressed="category==='success'" @click="category='success'"><CheckCircle2 :size="18"/>成功记录</button><button :class="{active:category==='failure'}" :aria-pressed="category==='failure'" @click="category='failure'"><AlertCircle :size="18"/>失败记录</button></div>
  <div class="extraction-history">
  <div v-if="error" role="alert" class="notice error">{{error}}<button @click="load">重试</button></div>
- <div v-if="message" role="status" class="notice success">{{message}}<button @click="message=''">关闭</button></div>
+ <ToastNotice v-model="message" />
  <div class="panel filterbar extraction-filters">
   <div class="search-input"><Search :size="16"/><input v-model="q" aria-label="搜索抽帧记录" placeholder="搜索视频名称或失败原因…" @input="search"/></div>
   <SelectField v-model="run" label="抽帧批次" :options="batchOptions" @change="reset"/>
