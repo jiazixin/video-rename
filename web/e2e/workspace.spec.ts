@@ -769,6 +769,43 @@ test('返回目录恢复分页并居中定位，支持面包屑和浏览器后�
  await page.locator('.page-heading').click({position:{x:350,y:15}})
  await expect(row).not.toHaveClass(/return-anchor/)
 })
+test('连续进入超过30个子目录后返回仍保留第二页和定位',async({page})=>{
+ await login(page)
+ await page.getByRole('button',{name:'返回定位测试',exact:true}).click()
+ await expect(page.locator('tbody tr')).toHaveCount(100)
+ await page.getByRole('button',{name:'下一页',exact:true}).click()
+ await expect(page.locator('tbody tr')).toHaveCount(60)
+ for(let i=100;i<132;i++){
+  const target=page.getByRole('button',{name:`目录_${i}`,exact:true})
+  await target.click()
+  await expect(page.getByText('这里还没有内容',{exact:true})).toBeVisible()
+  await page.getByRole('button',{name:'返回定位测试',exact:true}).click()
+  await expect(page.locator('.pagination > span').last()).toHaveText('2')
+  await expect(page.locator('tbody tr').filter({has:target})).toHaveClass(/return-anchor/)
+ }
+})
+test('列表快照淘汰后返回仍能从接口恢复第二页和定位',async({page})=>{
+ await login(page)
+ await page.getByRole('button',{name:'返回定位测试',exact:true}).click()
+ await expect(page.locator('tbody tr')).toHaveCount(100)
+ await page.getByRole('button',{name:'下一页',exact:true}).click()
+ await expect(page.locator('tbody tr')).toHaveCount(60)
+ const ids=await page.locator('tbody tr').evaluateAll(rows=>rows.map(row=>Number(row.getAttribute('data-entry-id'))))
+ const target=page.getByRole('button',{name:'目录_135',exact:true})
+ await target.click()
+ await expect(page.getByText('这里还没有内容',{exact:true})).toBeVisible()
+ // Visit other directories without touching the parent, evicting its list snapshot.
+ for(const id of ids.slice(0,32)){
+  await page.evaluate(id=>{location.hash=`library/${id}`},id)
+  await expect(page.locator('.breadcrumbs button').last()).toHaveText(`目录_${100+ids.indexOf(id)}`)
+  await expect(page.getByText('这里还没有内容',{exact:true})).toBeVisible()
+ }
+ await page.getByRole('button',{name:'返回定位测试',exact:true}).click()
+ await expect(page.locator('.pagination > span').last()).toHaveText('2')
+ const row=page.locator('tbody tr').filter({has:target})
+ await expect(row).toHaveClass(/return-anchor/)
+ await expect.poll(async()=>row.evaluate(el=>Math.abs(el.getBoundingClientRect().top+el.getBoundingClientRect().height/2-innerHeight/2))).toBeLessThan(3)
+})
 test('切换页面后返回上级目录仍定位先前进入的文件夹',async({page})=>{
  await login(page)
  await page.getByRole('button',{name:'返回定位测试',exact:true}).click()

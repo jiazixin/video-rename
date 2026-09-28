@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import {computed,onMounted,ref,watch} from 'vue'
-import {RefreshCw,Save,Trash2} from 'lucide-vue-next'
+import {RefreshCw,Save,Trash2,CircleHelp} from 'lucide-vue-next'
 import {api,type ModelProfile} from '../../app/api'
 import Modal from '../../components/Modal.vue'
 import SelectField from '../../components/SelectField.vue'
 type Settings={extract_workers:number;cache_gb:number;stability_seconds:number;retry_enabled:boolean;retry_count:number;fallback_model_id:number;success_cache_mode:string;success_cache_hours:number;idle_cache_hours:number}
 type State={settings:Settings;cache:{path:string;used_bytes:number;reserved_bytes:number;entries:number}}
 const form=ref<Settings>(),state=ref<State>(),saved=ref(''),loading=ref(true),saving=ref(false),error=ref(''),message=ref('')
+const retryHelp=ref('')
 const models=ref<ModelProfile[]>([]),modelError=ref(''),clearDialog=ref(false),clearing=ref(false),clearError=ref('')
 const successUnit=ref(24),idleUnit=ref(24)
 const units=[{value:1,label:'小时'},{value:24,label:'天'}]
@@ -40,7 +41,10 @@ onMounted(()=>{void load();void loadModels()})
 <form v-else-if="form&&state" @submit.prevent="save">
 <fieldset :disabled="saving||clearing" class="processing-fieldset">
 <section class="panel processing-card"><div><span class="eyebrow">01 · 处理</span><h2>并发抽帧</h2><p class="help">模型生成标题时，继续为后续视频准备截图。</p></div><label>同时抽帧的视频数<input v-model.number="form.extract_workers" aria-label="同时抽帧的视频数" type="number" min="1" max="32" step="1" required/><small class="help">1–32 个，默认 8 个。所有运行批次共享此上限；模型请求并发在模型配置中设置。</small></label></section>
-<section class="panel processing-card"><div><span class="eyebrow">02 · 重试</span><h2>失败自动重试</h2><p class="help">复用已准备的截图重新请求模型，最后一次重试可交给兜底模型。</p><p class="help">重试规则和模型配置在新批次创建时固定。抽帧、文件操作失败与用户取消不会触发模型重试。</p></div><div class="processing-fields"><label class="processing-check"><input v-model="form.retry_enabled" type="checkbox"/>开启失败自动重试</label><fieldset :disabled="!form.retry_enabled" class="processing-fields"><div class="retry-config-row"><label>最大重试次数<input v-model.number="form.retry_count" aria-label="最大重试次数" type="number" min="1" max="10" step="1" required/><small class="help">首次请求之外额外重试 {{form.retry_count}} 次，最多请求 {{1+Number(form.retry_count)}} 次。</small></label><label>兜底模型配置<SelectField v-model="form.fallback_model_id" label="兜底模型配置" :options="fallbackOptions"/></label></div><p class="help">兜底使用该配置的模型和提示词，仅尝试一次。与主模型相同时沿用主模型；明确的配置错误会直接尝试兜底。</p><div v-if="modelError" class="notice error" role="alert">{{modelError}}<button type="button" @click="loadModels">重试加载模型</button></div></fieldset></div></section>
+<section class="panel processing-card retry-card"><div><span class="eyebrow">02 · 重试</span><h2>失败自动重试</h2><p class="help">复用已准备的截图重新请求模型，最后一次重试可交给兜底模型。</p><p class="help">重试规则和模型配置在新批次创建时固定。抽帧、文件操作失败与用户取消不会触发模型重试。</p></div><div class="processing-fields"><label class="processing-check"><input v-model="form.retry_enabled" type="checkbox"/>开启失败自动重试</label><fieldset :disabled="!form.retry_enabled" class="processing-fields"><div class="retry-config-row">
+<div class="retry-field"><div class="retry-field-heading"><label for="retry-count">最大重试次数</label><span class="retry-help" @mouseenter="retryHelp='count'" @mouseleave="retryHelp=''"><button type="button" aria-label="最大重试次数说明" :aria-expanded="retryHelp==='count'" aria-describedby="retry-count-help" @focus="retryHelp='count'" @blur="retryHelp=''" @click="retryHelp='count'" @keydown.esc="retryHelp=''"><CircleHelp :size="15"/></button><span v-show="retryHelp==='count'" id="retry-count-help" class="retry-tooltip" role="tooltip">首次请求之外额外重试 {{form.retry_count}} 次，最多请求 {{1+Number(form.retry_count)}} 次。</span></span></div><input id="retry-count" v-model.number="form.retry_count" aria-label="最大重试次数" type="number" min="1" max="10" step="1" required/></div>
+<div class="retry-field"><div class="retry-field-heading"><span>兜底模型配置</span><span class="retry-help" @mouseenter="retryHelp='fallback'" @mouseleave="retryHelp=''"><button type="button" aria-label="兜底模型配置说明" :aria-expanded="retryHelp==='fallback'" aria-describedby="retry-fallback-help" @focus="retryHelp='fallback'" @blur="retryHelp=''" @click="retryHelp='fallback'" @keydown.esc="retryHelp=''"><CircleHelp :size="15"/></button><span v-show="retryHelp==='fallback'" id="retry-fallback-help" class="retry-tooltip" role="tooltip">兜底使用该配置的模型和提示词，仅尝试一次。与主模型相同时沿用主模型；明确的配置错误会直接尝试兜底。</span></span></div><SelectField v-model="form.fallback_model_id" label="兜底模型配置" :options="fallbackOptions"/></div>
+</div><div v-if="modelError" class="notice error" role="alert">{{modelError}}<button type="button" @click="loadModels">重试加载模型</button></div></fieldset></div></section>
 <section class="panel processing-card"><div><span class="eyebrow">03 · 文件保护</span><h2>文件稳定性检查</h2><p class="help">扫描后等待一段时间，再核对文件是否仍在写入。</p></div><label>稳定性等待时长（秒）<input v-model.number="form.stability_seconds" aria-label="稳定性等待时长（秒）" type="number" min="0" max="3600" step="1" required/><small class="help">默认 30 秒，0 禁用等待，处理前与改名前仍核对文件变化。已开始的等待保持原时长。</small></label></section>
 <section class="panel processing-card"><div><span class="eyebrow">04 · 缓存</span><h2>缓存管理</h2><p class="help">保留截图可供还原后重新命名，切换模型或提示词仍可复用。</p><p class="help">成功后清理和闲置清理分别判断，先到期的规则生效。容量不足时仍会优先清理闲置旧截图。</p></div><div class="processing-fields"><label>临时目录容量（GB）<input v-model.number="form.cache_gb" aria-label="临时目录容量（GB）" type="number" min="1" max="10000" step="1" required/><small class="help">默认 10 GB，1 GB = 1,000,000,000 字节，包含抽帧预留空间。</small></label><fieldset class="processing-options"><legend>重命名成功后</legend><label class="processing-check"><input v-model="form.success_cache_mode" type="radio" value="immediate" name="success-cache"/>立即删除（默认）</label><label class="processing-check"><input v-model="form.success_cache_mode" type="radio" value="delayed" name="success-cache"/>延时删除</label><div v-if="form.success_cache_mode==='delayed'" class="cache-duration"><label>成功后保留时长<input v-model.number="successTime" aria-label="成功后保留时长" type="number" min="1" :max="Math.floor(8760/successUnit)" step="1" required/></label><SelectField :model-value="successUnit" @update:model-value="changeUnit('success',$event)" label="成功后保留时间单位" :options="units"/></div><label class="processing-check"><input v-model="form.success_cache_mode" type="radio" value="keep" name="success-cache"/>不因改名删除</label></fieldset><fieldset class="processing-options"><legend>闲置缓存清理</legend><label class="processing-check"><input v-model="idleEnabled" type="checkbox"/>按闲置时间自动清理</label><div v-if="idleEnabled" class="cache-duration"><label>连续未使用时长<input v-model.number="idleTime" aria-label="连续未使用时长" type="number" min="1" :max="Math.floor(8760/idleUnit)" step="1" required/></label><SelectField :model-value="idleUnit" @update:model-value="changeUnit('idle',$event)" label="闲置清理时间单位" :options="units"/></div><small class="help">默认 3 天。每次复用重新计时；取消勾选后不按闲置时间删除。</small></fieldset></div></section>
 </fieldset>
@@ -53,7 +57,15 @@ onMounted(()=>{void load();void loadModels()})
 </template>
 <style scoped>
 .retry-config-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:18px 16px;max-width:496px;width:100%;align-items:start}
-.retry-config-row>label{min-width:0}
+.retry-card{overflow:visible}
+.retry-field{min-width:0;display:flex;flex-direction:column;gap:10px}
+.retry-field-heading{position:relative;display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500}
+.retry-field-heading label{margin:0}
+.retry-help{display:inline-flex;align-items:center}
+.retry-help button{padding:2px;border:0;background:transparent;color:var(--ash);border-radius:4px}
+.retry-help button:hover,.retry-help button:focus-visible{color:#287452;background:#edf7f0}
+.retry-tooltip{position:absolute;left:0;top:100%;margin-top:6px;z-index:20;width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:white;box-shadow:0 6px 20px #182c201a;color:var(--steel);font-size:12px;font-weight:400;line-height:1.7;white-space:normal}
+.retry-tooltip::before{content:'';position:absolute;bottom:100%;left:0;right:0;height:8px}
 .retry-config-row input,.retry-config-row .select-field{width:100%;min-width:0;max-width:none}
 .retry-config-row :deep(.select-trigger){min-height:40px}
 .retry-config-row .help{margin-bottom:0}

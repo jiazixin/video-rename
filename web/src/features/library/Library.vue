@@ -175,8 +175,9 @@ async function load(quiet=false,keepRows=true){
   else if(trackedRuns.size||p.directory.task_status||p.directory.progress?.active||p.items.some(e=>e.task_status||e.progress?.active))scheduleSync()
  }catch(e){if(n===seq)error.value=(e as Error).message}finally{if(n===seq)busy.value=false}
 }
-type DirectoryPosition={pageNumber:number;q:string;kind:string;sort:string;limit:number;scrollY:number;anchor?:number;snapshot?:Page}
+type DirectoryPosition={pageNumber:number;q:string;kind:string;sort:string;limit:number;scrollY:number;anchor?:number}
 const positions=new Map<number,DirectoryPosition>()
+const snapshots=new Map<number,Page>()
 const listRoot=ref<HTMLElement>(),returnAnchor=ref<number>()
 let pendingPosition:DirectoryPosition|undefined
 const nativeScrollRestoration=window.history.scrollRestoration
@@ -219,16 +220,19 @@ function enter(id:number,updateRoute=true){
  clearTimeout(searchTimer);returnAnchor.value=undefined
  chosen.value.clear()
  const child=page.value?.items.find(e=>e.id===id&&e.kind==='directory')
- positions.set(dir.value,{pageNumber:pageNumber.value,q:q.value,kind:kind.value,sort:sort.value,limit:limit.value,scrollY:window.scrollY,anchor:child?.id??positions.get(dir.value)?.anchor,snapshot:page.value})
- // Bound retained lists while keeping recent return navigation immediate.
- if(positions.size>30)positions.delete(positions.keys().next().value!)
+ positions.set(dir.value,{pageNumber:pageNumber.value,q:q.value,kind:kind.value,sort:sort.value,limit:limit.value,scrollY:window.scrollY,anchor:child?.id??positions.get(dir.value)?.anchor})
+ // Bound only the heavy lists. Evicting a snapshot must never discard the
+ // page, filters or anchor needed to restore an older directory from the API.
+ snapshots.delete(dir.value)
+ if(page.value)snapshots.set(dir.value,page.value)
+ if(snapshots.size>30)snapshots.delete(snapshots.keys().next().value!)
  const saved=positions.get(id)
  pendingPosition=saved?{...saved}:undefined
  if(!saved)window.scrollTo({top:0,behavior:'instant'})
  dir.value=id
  if(updateRoute&&(routeDirectory()!==id||!location.hash.startsWith('#library/')))location.hash=`library/${id}`
  pageNumber.value=saved?.pageNumber||1;q.value=saved?.q||'';kind.value=saved?.kind??'';sort.value=saved?.sort??sort.value;limit.value=saved?.limit??limit.value
- page.value=saved?.snapshot
+ page.value=snapshots.get(id)
  void load(!!page.value)
  if(page.value)void restorePosition(seq,page.value)
 }
