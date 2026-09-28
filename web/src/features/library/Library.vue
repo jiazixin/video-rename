@@ -20,6 +20,33 @@ defineProps<{ready:boolean}>();const emit=defineEmits<{run:[]}>()
 const multi=ref(false),chosen=ref(new Map<number,Entry>()),batch=ref(''),batchError=ref(''),batchProgress=ref(''),playing=ref<Entry>()
 const preview=ref<Entry>(),imageError=ref(false),imageBusy=ref(false),galleryError=ref('')
 const deleting=ref<Entry>(),deleteError=ref(''),deletePath=ref('')
+const deletingBatch=ref<Entry[]>([]),deleteBatchPath=ref(''),deleteBatchError=ref(''),deleteBatchProgress=ref('')
+function confirmBatchDelete(){
+ if(saving.value||!chosen.value.size)return
+ deletingBatch.value=[...chosen.value.values()].map(e=>({...e}))
+ deleteBatchPath.value=['媒体库',...(page.value?.breadcrumbs.filter(c=>c.id!==1).map(c=>c.name)||[])].join(' / ')
+ deleteBatchError.value='';deleteBatchProgress.value=''
+}
+async function deleteBatch(){
+ if(saving.value||!deletingBatch.value.length)return
+ const entries=[...deletingBatch.value],directory=dir.value,failed:Entry[]=[],errors:string[]=[]
+ saving.value=true;statusSeq++;clearTimeout(timer);deleteBatchError.value=''
+ try{
+  for(const [index,e] of entries.entries()){
+   deleteBatchProgress.value=`正在删除 ${index+1} / ${entries.length}：${e.name}`
+   try{
+    await api(`/entries/${e.id}`,'DELETE',{version:e.version,confirmed:true})
+    chosen.value.delete(e.id)
+   }catch(err){failed.push(e);errors.push(`${e.name}：${(err as Error).message}`)}
+  }
+  const summary=`已删除 ${entries.length-failed.length} 项，失败 ${failed.length} 项`
+  notice.value=summary
+  deletingBatch.value=failed
+  deleteBatchError.value=failed.length?[summary,...errors].join('\n'):''
+  selectionAnchor=undefined
+  if(directory===dir.value&&!disposed)await load()
+ }finally{saving.value=false;deleteBatchProgress.value=''}
+}
 function confirmDelete(e:Entry){deleting.value={...e};deleteError.value='';deletePath.value=[...(page.value?.breadcrumbs.filter(c=>c.id!==1).map(c=>c.name)||[]),e.name].join('/')}
 async function deleteEntry(){
  if(!deleting.value||saving.value)return
@@ -318,7 +345,7 @@ onActivated(activate);onDeactivated(deactivate);onUnmounted(()=>{deactivate();di
 <div class="panel file-panel">
 <div class="panel-toolbar directory-toolbar"><div class="breadcrumbs"><button @click="enter(1)"><Home :size="15"/>媒体库</button><template v-for="crumb in page?.breadcrumbs.filter(x=>x.id!==1)" :key="crumb.id"><ChevronRight :size="13"/><button @click="enter(crumb.id)">{{crumb.name}}</button></template></div><div class="directory-summary"><DirectoryStatus v-if="page?.directory.progress" :entry="page.directory"/><div class="directory-refresh-summary"><DirectoryContents inline :contents="page?.directory.contents"/><button :disabled="busy" @click="refresh"><RefreshCw :size="16" :class="{spin:busy}"/>刷新</button></div></div></div>
 <div class="filterbar"><button :aria-pressed="multi" @click="multi=!multi;clearSelection()">{{multi?'退出多选':'多选'}}</button><div class="search-input"><Search :size="16"/><input v-model="q" placeholder="搜索当前目录…" aria-label="搜索当前目录" @input="search"/></div><SelectField v-model="kind" @change="pageNumber=1;load()" label="类型筛选" :options="[{value:'',label:'全部类型'},{value:'directory',label:'目录'},{value:'video',label:'视频'},{value:'image',label:'图片'},{value:'audio',label:'音频'},{value:'other',label:'其他文件'}]"/><MediaNumbering v-if="kind==='image'||kind==='audio'" :media="kind" :directory="dir" :query="q" :sort="sort" :disabled="busy||!page||!!page.refreshing||!!page.directory.task_status" @changed="preview=undefined;clearSelection();syncEntries()"/><div class="filter-spacer"/><span class="subtle">共 {{page?.total??0}} 项 · {{page?.items.length||0}} 项 / 当前页</span></div>
-<div v-if="multi" class="batch-toolbar"><strong>已选 {{chosen.size}} 项</strong><button title="全选本页" @click="selectPage()">全选</button><button title="反选本页" @click="selectPage(true)">反选</button><button :disabled="!chosen.size" @click="clearSelection()">清空</button><span class="batch-divider" aria-hidden="true"/><button class="library-action action-extract" :disabled="!extractEntries.length" @click="startBatch('extract')"><Images :size="15"/>抽帧</button><button class="library-action action-name" :disabled="!ready||!autoEntries.length" @click="startBatch('auto')"><Sparkles :size="15"/>命名</button><span class="batch-divider" aria-hidden="true"/><button class="library-action action-mark" title="将选中目标中的视频标记为已处理，目录包含子目录" :disabled="!markEntries.length" @click="openMark(markEntries,true)"><CircleCheck :size="15"/>标记已处理</button><button class="library-action action-unmark" title="清除选中目标中视频的已处理标记，文件名不变" :disabled="!markEntries.length" @click="openMark(markEntries,false)"><CircleMinus :size="15"/>取消标记</button><button :disabled="!restoreEntries.length" @click="startBatch('restore')"><Undo2 :size="15"/>还原</button></div>
+<div v-if="multi" class="batch-toolbar"><strong>已选 {{chosen.size}} 项</strong><button title="全选本页" @click="selectPage()">全选</button><button title="反选本页" @click="selectPage(true)">反选</button><button :disabled="!chosen.size" @click="clearSelection()">清空</button><span class="batch-delete-group"><span class="batch-divider" aria-hidden="true"/><button class="delete-confirm" :disabled="saving||!chosen.size" @click="confirmBatchDelete"><Trash2 :size="15"/>删除</button><span class="batch-divider" aria-hidden="true"/></span><button class="library-action action-extract" :disabled="!extractEntries.length" @click="startBatch('extract')"><Images :size="15"/>抽帧</button><button class="library-action action-name" :disabled="!ready||!autoEntries.length" @click="startBatch('auto')"><Sparkles :size="15"/>命名</button><span class="batch-divider" aria-hidden="true"/><button class="library-action action-mark" title="将选中目标中的视频标记为已处理，目录包含子目录" :disabled="!markEntries.length" @click="openMark(markEntries,true)"><CircleCheck :size="15"/>标记已处理</button><button class="library-action action-unmark" title="清除选中目标中视频的已处理标记，文件名不变" :disabled="!markEntries.length" @click="openMark(markEntries,false)"><CircleMinus :size="15"/>取消标记</button><button :disabled="!restoreEntries.length" @click="startBatch('restore')"><Undo2 :size="15"/>还原</button></div>
 <div class="table-scroll"><table class="file-table"><thead><tr><th v-if="multi" class="selection-cell">选择</th><th class="filename-cell"><button class="table-sort" aria-label="切换名称排序" @click="toggleSort('name')"><span>名称<template v-if="sortLabel('name')"> · {{sortLabel('name')}}</template></span><ArrowDownUp :size="12"/></button></th><th><button class="table-sort" aria-label="切换大小排序" @click="toggleSort('size')"><span>大小<template v-if="sortLabel('size')"> · {{sortLabel('size')}}</template></span><ArrowDownUp :size="12"/></button></th><th class="contents-cell" title="仅统计该目录的直接子项；进入目录完成索引后显示">目录内容</th><th>处理状态</th><th><button class="table-sort" aria-label="切换文件修改时间排序" @click="toggleSort('mtime')"><span>文件修改时间<template v-if="sortLabel('mtime')"> · {{sortLabel('mtime')}}</template></span><ArrowDownUp :size="12"/></button></th><th><button class="table-sort" aria-label="切换重命名时间排序" @click="toggleSort('renamed')"><span>重命名时间<template v-if="sortLabel('renamed')"> · {{sortLabel('renamed')}}</template></span><ArrowDownUp :size="12"/></button></th><th>操作</th></tr></thead>
 <tbody><tr v-for="e in page?.items" :key="e.id" :data-entry-id="e.id" :class="{'is-selected':multi&&chosen.has(e.id),'return-anchor':returnAnchor===e.id}"><td v-if="multi" class="selection-cell"><input v-if="selectable(e)" type="checkbox" :aria-label="`选择 ${e.name}`" :checked="chosen.has(e.id)" @click="selectEntry(e,$event)" title="按住 Shift 点击可连续选择当前页条目"/></td>
 <td class="filename-cell"><div class="file-name"><button v-if="e.kind==='file'&&video(e)" class="file-symbol video-symbol" :aria-label="`播放视频 ${e.name}`" @click="play(e)"><FileVideo :size="21"/></button><button v-else-if="isImage(e)" class="file-symbol image-symbol" :aria-label="`预览图片 ${e.name}`" @click="showImage(e)"><ImageIcon :size="21"/></button><button v-else-if="isAudio(e)" class="file-symbol audio-symbol" :aria-label="`播放音频 ${e.name}`" @click="playAudio(e)"><FileAudio :size="21"/></button><span v-else class="file-symbol" :class="{directory:e.kind==='directory'}"><Folder v-if="e.kind==='directory'" :size="21"/><Link v-else-if="e.kind==='symlink'" :size="21"/><FileVideo v-else-if="video(e)" :size="21"/><File v-else :size="21"/></span><div v-if="inlineEntry?.id===e.id" class="inline-rename"><div class="inline-rename-field"><input :ref="setInlineInput" v-model="inlineName" :aria-label="`编辑 ${e.name}`" :readonly="inlineSaving" maxlength="240" @keydown.enter.prevent="saveInlineRename" @keydown.esc.prevent="cancelInlineRename" @blur="cancelInlineRename"/><span>{{inlineExtension}}</span></div><small v-if="inlineError" role="alert">{{inlineError}}</small></div><button v-else-if="e.kind==='directory'" class="name-button" :title="e.name" @click="enter(e.id)"><span class="name-text">{{e.name}}</span><ChevronRight :size="14"/></button><button v-else-if="e.kind==='file'" type="button" class="name-text inline-rename-trigger" :title="`双击重命名 ${e.name}`" :aria-label="`双击或按 Enter 重命名 ${e.name}`" @dblclick="beginInlineRename(e)" @keydown.enter.prevent="beginInlineRename(e)" @keydown.f2.prevent="beginInlineRename(e)">{{e.name}}</button><span v-else class="name-text" :title="e.name">{{e.name}}</span></div></td>
@@ -328,6 +355,13 @@ onActivated(activate);onDeactivated(deactivate);onUnmounted(()=>{deactivate();di
 <div v-if="page?.error" class="notice error">目录同步失败：{{page.error}}</div><div class="pagination"><span class="subtle">{{page?.refreshed?`更新于 ${time(page.refreshed)}`:'等待首次同步'}}</span><SelectField v-model="limit" @change="pageNumber=1;load()" label="每页条目数" :options="[{value:50,label:'50 项 / 页'},{value:100,label:'100 项 / 页'},{value:200,label:'200 项 / 页'}]"/><button :disabled="pageNumber===1||busy" aria-label="上一页" @click="pageNumber--;load()"><ChevronLeft :size="16"/></button><span>{{pageNumber}}</span><button :disabled="!page?.next||busy" aria-label="下一页" @click="pageNumber++;load()"><ChevronRight :size="16"/></button></div></div>
 <div class="page-footnote"><button class="text-button" @click="emit('run')">查看批次记录 <ArrowUpRight :size="14"/></button></div></section>
 <Modal v-if="deleting" :title="deleting.kind==='directory'?'删除目录':'删除文件'" @close="!saving&&(deleting=undefined)"><form @submit.prevent="deleteEntry"><p>确定永久删除以下{{deleting.kind==='directory'?'目录':'文件'}}？</p><p class="delete-path">媒体库 / {{deletePath}}</p><p v-if="deleting.kind==='directory'">目录内的所有文件和子目录都会一并删除。</p><p class="help">将从磁盘真实删除，不进入回收站，无法通过还原功能恢复。</p><div v-if="deleteError" class="notice error" role="alert">{{deleteError}}</div><div class="modal-actions"><button type="button" :disabled="saving" @click="deleting=undefined">取消</button><button class="delete-confirm" :disabled="saving">{{saving?'正在删除…':'确认永久删除'}}</button></div></form></Modal>
+<Modal v-if="deletingBatch.length" title="批量删除" @close="!saving&&(deletingBatch=[])"><form @submit.prevent="deleteBatch">
+<p>确定永久删除选中的 {{deletingBatch.length}} 个条目？包含其他分页的已选项。</p><p class="delete-path">{{deleteBatchPath}}</p>
+<ul class="delete-targets"><li v-for="entry in deletingBatch" :key="entry.id">{{entry.name}}<span v-if="entry.kind==='directory'">（目录）</span></li></ul>
+<p v-if="deletingBatch.some(e=>e.kind==='directory')">所选目录内的所有文件和子目录都会一并删除。</p><p class="help">将从磁盘真实删除，不进入回收站，无法通过还原功能恢复。逐项执行，失败不会撤销已完成的删除。</p>
+<p v-if="deleteBatchProgress" role="status">{{deleteBatchProgress}}</p><div v-if="deleteBatchError" class="notice error batch-errors" role="alert">{{deleteBatchError}}</div>
+<div class="modal-actions"><button type="button" :disabled="saving" @click="deletingBatch=[]">取消</button><button class="delete-confirm" :disabled="saving">{{saving?'正在删除…':'确认永久删除'}}</button></div>
+</form></Modal>
 <Modal v-if="mode" :title="mode==='extract'?'目录抽帧':mode==='rename'?'重命名':mode==='restore'?'还原名称':mode==='history'?'命名历史':'自动命名'" @close="!saving&&(mode='')"><form @submit.prevent="submit">
 <div class="selection-summary"><Folder v-if="selected?.kind==='directory'" :size="23"/><FileVideo v-else :size="23"/><strong>{{selected?.name||'整个媒体库'}}</strong></div>
 <template v-if="mode==='rename'"><label>新名称<div class="extension-input"><input v-model="newName" aria-label="新名称" required maxlength="240"/><span>{{extension}}</span></div></label><p class="help">只修改名称，文件保留在原目录。成功后可以还原。</p></template>
@@ -350,6 +384,14 @@ onActivated(activate);onDeactivated(deactivate);onUnmounted(()=>{deactivate();di
 <style scoped>
 .file-table tr.return-anchor{background:#e3f2e9;box-shadow:inset 3px 0 #398366}
 .file-table .row-actions button{width:36px;min-height:36px;padding:0}
+.file-table th:last-child,.file-table td:last-child{text-align:right}
+.file-table .row-actions{justify-content:flex-end}
+.batch-toolbar button.delete-confirm,button.delete-confirm{background:#b14545;border-color:#b14545;color:white}
+.batch-toolbar button.delete-confirm:hover:not(:disabled),button.delete-confirm:hover:not(:disabled){background:#943737;border-color:#943737;color:white}
+.batch-delete-group{display:inline-flex;align-items:center;gap:10px}
+.batch-delete-group .batch-divider{display:block}
+.delete-targets{max-height:220px;overflow:auto;padding-left:24px;overflow-wrap:anywhere}
+.delete-targets li{margin:6px 0}
 .delete-action{color:#b14545}.delete-confirm{background:#b14545;border-color:#b14545;color:white}.delete-path{overflow-wrap:anywhere;font-weight:600}
 .inline-rename-trigger{border:0;background:transparent;padding:0;text-align:center;color:var(--ink);font:inherit;font-weight:500;cursor:text}
 .inline-rename-trigger:focus-visible{outline:2px solid #89bca7;outline-offset:3px;border-radius:2px}
