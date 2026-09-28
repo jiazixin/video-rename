@@ -83,6 +83,17 @@ func (s ServerConfig) ThinkingFields() (map[string]any, error) {
 		fields["reasoning_effort"] = effort
 	case "template":
 		fields["chat_template_kwargs"] = map[string]any{"enable_thinking": enabled}
+	case "llama_cpp":
+		budget := 0
+		if enabled {
+			if s.ThinkingBudget < 1 || s.ThinkingBudget >= s.MaxTokens {
+				return nil, fmt.Errorf("llama.cpp 思考预算须至少 1，且小于最大输出 token")
+			}
+			budget = s.ThinkingBudget
+		}
+		fields["chat_template_kwargs"] = map[string]any{"enable_thinking": enabled}
+		fields["reasoning_budget_tokens"] = budget
+		fields["reasoning_format"] = "deepseek"
 	case "adaptive":
 		if enabled {
 			fields["thinking"] = map[string]any{"type": "adaptive"}

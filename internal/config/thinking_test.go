@@ -24,6 +24,14 @@ func TestThinkingControls(t *testing.T) {
 		{"claude", "anthropic", "claude-mythos-5", "disabled", "", "", 0, 8192, true},
 		{"custom", "openai", "local", "enabled", "", "", 0, 8192, true},
 		{"custom", "openai", "local", "disabled", "template", `"enable_thinking":false`, 0, 1024, false},
+		{"custom", "openai", "local", "enabled", "llama_cpp", `"reasoning_budget_tokens":512`, 512, 2048, false},
+		{"custom", "openai", "local", "disabled", "llama_cpp", `"reasoning_budget_tokens":0`, 0, 1024, false},
+		{"custom", "openai", "local", "default", "llama_cpp", `{}`, 0, 1024, false},
+		{"custom", "openai", "local", "enabled", "llama_cpp", ``, 0, 2048, true},
+		{"custom", "openai", "local", "enabled", "llama_cpp", ``, -1, 2048, true},
+		{"custom", "openai", "local", "enabled", "llama_cpp", ``, 2048, 2048, true},
+		{"custom", "openai", "local", "enabled", "llama_cpp", ``, 2049, 2048, true},
+		{"custom", "anthropic", "local", "enabled", "llama_cpp", "", 512, 2048, true},
 		{"custom", "openai", "local", "default", "", "{}", 0, 1024, false},
 	} {
 		t.Run(tc.provider+tc.model+tc.mode, func(t *testing.T) {

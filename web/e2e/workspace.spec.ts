@@ -343,6 +343,29 @@ test('思考模式参数选择、保存与预算校验',async({page})=>{
  await page.getByLabel('最大输出 token',{exact:true}).fill('4096');await page.getByRole('button',{name:'保存配置',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0)
 })
 
+test('llama.cpp 预算保存与参数双列布局',async({page})=>{
+ await login(page);await page.getByRole('button',{name:'系统设置',exact:true}).click();await page.getByRole('button',{name:'模型配置',exact:true}).click();await page.getByRole('button',{name:'新增配置',exact:true}).click()
+ const select=async(label:string,name:string)=>{await page.getByRole('combobox',{name:label,exact:true}).click();await page.getByRole('option',{name,exact:true}).click()}
+ await page.getByLabel('配置名称',{exact:true}).fill('llama预算测试');await page.getByLabel('服务 URL',{exact:true}).fill(modelURL());await page.getByLabel('模型名称',{exact:true}).fill('qwen-local');await select('命名提示词','测试提示词')
+ await select('思考模式','开启思考');await select('思考参数类型','llama.cpp · 思考预算')
+ const budget=page.getByLabel('思考预算',{exact:true}),max=page.getByLabel('最大输出 token',{exact:true})
+ await expect(budget).toHaveValue('512');await expect(page.getByLabel('温度',{exact:true})).toBeDisabled()
+ await max.fill('512');await page.getByRole('button',{name:'保存配置',exact:true}).click();await expect(page.getByRole('alert')).toContainText('小于最大输出')
+ await max.fill('2048');await page.getByRole('button',{name:'保存配置',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0)
+ await page.reload();await page.getByRole('button',{name:'编辑模型配置 llama预算测试',exact:true}).click()
+ await expect(budget).toHaveValue('512');await expect(max).toHaveValue('2048');await expect(page.getByRole('combobox',{name:'思考参数类型',exact:true})).toHaveText('llama.cpp · 思考预算')
+ await budget.scrollIntoViewIfNeeded()
+ const a=await budget.boundingBox(),b=await max.boundingBox()
+ expect(a&&b).toBeTruthy();expect(Math.abs(a!.y-b!.y)).toBeLessThan(2);expect(b!.x).toBeGreaterThan(a!.x+a!.width)
+ await page.screenshot({path:'test-results/model-parameters-desktop.png',animations:'disabled'})
+ await page.setViewportSize({width:390,height:844});await budget.scrollIntoViewIfNeeded()
+ const mobileA=await budget.boundingBox(),mobileB=await max.boundingBox()
+ expect(Math.abs(mobileA!.x-mobileB!.x)).toBeLessThan(2);expect(mobileB!.y).toBeGreaterThan(mobileA!.y+mobileA!.height)
+ await page.screenshot({path:'test-results/model-parameters-mobile.png',animations:'disabled'})
+ await select('思考模式','关闭思考');await expect(budget).toHaveCount(0)
+ await select('思考模式','跟随模型默认');await expect(page.getByRole('combobox',{name:'思考参数类型',exact:true})).toHaveCount(0)
+})
+
 test('图片按钮和方向键循环仅遍历图片',async({page})=>{
  await login(page);await page.getByRole('combobox',{name:'类型筛选'}).click();await page.getByRole('option',{name:'图片',exact:true}).click()
  await page.getByRole('button',{name:'查看图片 photo.png',exact:true}).click()
