@@ -586,7 +586,7 @@ test('运行详情显示目录文件清单与翻页、成功历史诊断',async(
  const run={id:9901,source:'manual',plan:0,status:'completed',targets:[1],target_names:['旅行记录 / 九月'],recursive:true,done:101,discovered:101,skipped:0,failed:0,created:'2026-09-21T01:00:00Z',prompt_body:'测试提示词',model_config_title:'默认视频命名',request_config:{model:'test'}}
  await mockRunPages(page,[run])
  await page.route('**/api/runs/9901',r=>r.fulfill({json:run}))
- await page.route('**/api/runs/9901/items?*',r=>{const after=Number(new URL(r.request().url()).searchParams.get('after'));return r.fulfill({json:Array.from({length:after?1:100},(_,i)=>({id:after+i+1,entry:i+1,status:'done',original_path:`旅行记录 / 九月 / 原视频${after+i}.mp4`,current_path:`旅行记录 / 九月 / 新标题${after+i}.mp4`,message:''}))})})
+ await page.route('**/api/runs/9901/items?*',r=>{const page=Number(new URL(r.request().url()).searchParams.get('page'))||1,after=(page-1)*100;return r.fulfill({json:{page,total:101,items:Array.from({length:after?1:100},(_,i)=>({id:after+i+1,entry:i+1,status:'done',original_path:`旅行记录 / 九月 / 原视频${after+i}.mp4`,current_path:`旅行记录 / 九月 / 新标题${after+i}.mp4`,message:''}))}})})
  await page.getByRole('button',{name:'批次记录',exact:true}).click()
  await page.getByRole('button',{name:'详情',exact:true}).click()
  const dialog=page.getByRole('dialog')
@@ -699,9 +699,9 @@ test('历史统计分页和多选重试成功后刷新移除',async({page})=>{
  await page.route('**/api/logs/batches',r=>r.fulfill({json:[7]}))
  await page.route('**/api/logs?*',r=>{
   const q=new URL(r.request().url()).searchParams
-  const category=q.get('category'),limit=Number(q.get('limit')),before=Number(q.get('before'))||1000
+  const category=q.get('category'),limit=Number(q.get('limit')),pageNumber=Number(q.get('page'))||1
   const all=Array.from({length:105},(_,i)=>({id:105-i,entry:105-i,category,action:'automatic',run:7,old_path:`目录/片段${105-i}.mp4`,created:'2026-09-21T08:00:00Z'})).filter(row=>!completed||category!=='failure'||row.id<104)
-  const rest=all.filter(row=>row.id<before),items=rest.slice(0,limit)
+  const rest=all.slice((pageNumber-1)*limit),items=rest.slice(0,limit)
   return r.fulfill({json:{items,total:all.length,next:rest.length>limit?items.at(-1)!.id:0}})
  })
  await page.route('**/api/logs/retry',async r=>{
@@ -780,7 +780,7 @@ test('连续进入超过30个子目录后返回仍保留第二页和定位',asyn
   await target.click()
   await expect(page.getByText('这里还没有内容',{exact:true})).toBeVisible()
   await page.getByRole('button',{name:'返回定位测试',exact:true}).click()
-  await expect(page.locator('.pagination > span').last()).toHaveText('2')
+  await expect(page.locator('.pagination .page-current').last()).toHaveText('2')
   await expect(page.locator('tbody tr').filter({has:target})).toHaveClass(/return-anchor/)
  }
 })
@@ -801,7 +801,7 @@ test('列表快照淘汰后返回仍能从接口恢复第二页和定位',async(
   await expect(page.getByText('这里还没有内容',{exact:true})).toBeVisible()
  }
  await page.getByRole('button',{name:'返回定位测试',exact:true}).click()
- await expect(page.locator('.pagination > span').last()).toHaveText('2')
+ await expect(page.locator('.pagination .page-current').last()).toHaveText('2')
  const row=page.locator('tbody tr').filter({has:target})
  await expect(row).toHaveClass(/return-anchor/)
  await expect.poll(async()=>row.evaluate(el=>Math.abs(el.getBoundingClientRect().top+el.getBoundingClientRect().height/2-innerHeight/2))).toBeLessThan(3)

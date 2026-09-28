@@ -59,7 +59,7 @@ func (a *App) extractions(w http.ResponseWriter, r *http.Request) {
 	result := map[string]any{}
 	for _, status := range []string{"success", "failure", "running"} {
 		groupArgs := append(slices.Clone(args), status)
-		var total int
+		var total int64
 		if err = tx.QueryRowContext(r.Context(), "SELECT count(*)"+where+" AND status=?", groupArgs...).Scan(&total); err != nil {
 			failure(w, err)
 			return
@@ -72,7 +72,13 @@ func (a *App) extractions(w http.ResponseWriter, r *http.Request) {
 		if before <= 0 {
 			before = 1 << 62
 		}
-		rows, err := tx.QueryContext(r.Context(), `SELECT id,run,entry,path,source,status,started,finished,duration_ms,cached,frames,message`+where+` AND status=? AND id<? ORDER BY id DESC LIMIT ?`, append(groupArgs, before, limit+1)...)
+		page, offset := int64(1), int64(0)
+		if q.Has(status + "_page") {
+			page = min(max(1, number(q.Get(status+"_page"))), max(1, (total+limit-1)/limit))
+			offset = (page - 1) * limit
+			before = 1 << 62
+		}
+		rows, err := tx.QueryContext(r.Context(), `SELECT id,run,entry,path,source,status,started,finished,duration_ms,cached,frames,message`+where+` AND status=? AND id<? ORDER BY id DESC LIMIT ? OFFSET ?`, append(groupArgs, before, limit+1, offset)...)
 		if err != nil {
 			failure(w, err)
 			return
@@ -98,7 +104,7 @@ func (a *App) extractions(w http.ResponseWriter, r *http.Request) {
 			items = items[:limit]
 			next = items[len(items)-1].ID
 		}
-		result[status] = map[string]any{"items": items, "total": total, "next": next}
+		result[status] = map[string]any{"items": items, "total": total, "next": next, "page": page}
 	}
 	if err = tx.Commit(); err != nil {
 		failure(w, err)

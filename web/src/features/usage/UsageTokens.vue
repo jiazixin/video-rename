@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageNavigation from '../../components/PageNavigation.vue'
 import {computed,onUnmounted,ref,watch} from 'vue'
 import {RefreshCw,RotateCcw,ChevronRight} from 'lucide-vue-next'
 import {api,time,statusNames,type UsageReport} from '../../app/api'
@@ -51,7 +52,7 @@ async function load(){
  loading.value=true
  try{
   const data=await api<UsageReport>(`/usage/analytics?${params.toString()}`,'GET',undefined,controller.signal)
-  if(mine===seq){report.value=data;error.value=''}
+  if(mine===seq){report.value=data;if(page.value!==data.batches.page)page.value=data.batches.page;error.value=''}
  }catch(e){
   if(mine===seq&&(e as Error).name!=='AbortError')error.value=(e as Error).message
  }finally{
@@ -155,8 +156,7 @@ const hasData=computed(()=>!!totals.value&&totals.value.records>0)
     <div class="usage-detail-tools">
      <button class="table-sort" :class="{active:sort!=='tokens'}" @click="sort=sort==='tokens'?'recent':'tokens'">{{sort==='tokens'?'按用量排序':'按时间排序'}}</button>
      <span class="subtle">共 {{report.batches.total}} 个批次 · 第 {{report.batches.page}} / {{totalPages}} 页</span>
-     <button :disabled="page<=1||loading" @click="page--">上一页</button>
-     <button :disabled="page>=totalPages||loading" @click="page++">下一页</button>
+     <PageNavigation :page="page" :total-pages="totalPages" :disabled="loading" @change="page=$event"/>
     </div>
    </div>
    <div v-if="report.batches.items.length" class="table-scroll"><table>

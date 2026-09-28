@@ -53,7 +53,7 @@ test('批量删除跨页文件和非空目录，确认可取消，操作列右�
  await dialog.getByRole('button',{name:'确认永久删除',exact:true}).click()
  await expect(dialog).toHaveCount(0)
  await expect(toolbar.locator('strong')).toHaveText('已选 0 项')
- await expect(page.locator('.pagination > span').last()).toHaveText('2')
+ await expect(page.locator('.pagination .page-current').last()).toHaveText('2')
  for(const name of ['子目录','file000.txt','file104.txt'])expect(existsSync(join(path,name))).toBe(false)
  expect(existsSync(join(path,'file001.txt'))).toBe(true)
 })

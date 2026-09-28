@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageNavigation from '../../components/PageNavigation.vue'
 import {computed,ref} from 'vue'
 import {Hash,History,Undo2} from 'lucide-vue-next'
 import {api,ApiError} from '../../app/api'
@@ -42,7 +43,7 @@ async function recover(batch:Batch){busy.value=true;error.value='';diagnostics.v
    <p v-if="!preview.undo_of" class="help">仅当前目录内符合搜索条件的{{noun}}，包含所有分页。已有唯一编号保留，重复编号按当前排序保留第一张，其余从最大编号后续排；不同格式共用序号，扩展名小写。搜索隐藏的{{noun}}会保留其号码。{{untouched}}。</p>
    <p v-else class="help">整批恢复本次编号前的名称和扩展名大小写。文件有后续修改或名称被占用时会停止。</p>
    <div class="table-scroll numbering-preview"><table><thead><tr><th>原名</th><th>{{preview.undo_of?'还原为':'新名'}}</th></tr></thead><tbody><tr v-for="item in visible" :key="item.entry"><td>{{item.old_name}}</td><td>{{item.new_name}}<small v-if="item.old_name===item.new_name">（不变）</small></td></tr></tbody></table></div>
-   <div class="pagination"><span>第 {{page+1}} / {{Math.max(1,Math.ceil(preview.total/100))}} 页</span><button :disabled="page===0||busy" @click="page--">上页</button><button :disabled="(page+1)*100>=preview.total||busy" @click="page++">下页</button></div>
+   <div class="pagination"><PageNavigation :page="page+1" :total-pages="Math.ceil(preview.total/100)" :disabled="busy" previous-label="上页" next-label="下页" @change="page=$event-1"/></div>
    <div class="modal-actions"><button :disabled="busy" @click="show=false">取消</button><button class="primary" :disabled="busy||!preview.changed" @click="apply">{{preview.undo_of?'确认整批还原':'确认编号'}}</button></div>
   </template>
   <template v-if="history">

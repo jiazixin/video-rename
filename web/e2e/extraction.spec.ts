@@ -153,7 +153,7 @@ test('抽帧历史独立分页、无批次、窄屏与清除',async({page})=>{
  let cleared=false
  await page.route('**/api/extractions?*',route=>{
   const params=new URL(route.request().url()).searchParams
-  const second=params.get('success_before')==='10'
+  const second=params.get('success_page')==='2'
   return route.fulfill({json:{success:{items:cleared?[]:[{...item,path:second?'目录/第二页.mp4':item.path}],total:cleared?0:51,next:cleared||second?0:10},failure:{items:cleared?[]:[{...item,id:11,status:'failure',path:'目录/失败.mp4',message:'EXTRACT_FAILED: decoder unavailable'}],total:cleared?0:1,next:0},running:0}})
  })
  await page.route('**/api/extractions/clear',route=>{expect(route.request().postDataJSON()).toEqual({all:true});cleared=true;return route.fulfill({json:{message:'已清除 52 条抽帧记录'}})})

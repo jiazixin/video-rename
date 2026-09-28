@@ -29,6 +29,40 @@ async function setup(page:Page,name:string){
  return {id,path,headers,rescan}
 }
 
+test('直接跳页、首末页、非法页码和窄屏键盘操作',async({page})=>{
+ const {id}=await setup(page,'分页体验-跳转')
+ await page.getByRole('button',{name:'多选',exact:true}).click()
+ await page.getByLabel('选择 clip000.mp4',{exact:true}).check()
+ const nav=page.getByRole('navigation',{name:'分页导航',exact:true}),input=nav.getByLabel('跳转页码')
+ let calls=0
+ page.on('request',request=>{if(request.url().includes(`/directories/${id}/entries?`))calls++})
+ await input.fill('3');await input.press('Enter')
+ await expect(page.locator('tbody tr').first()).toContainText('clip200.mp4')
+ await expect(nav.locator('.page-current')).toHaveText('3')
+ await expect(nav.getByRole('button',{name:'末页',exact:true})).toBeDisabled()
+ await expect(page.locator('.batch-toolbar strong')).toHaveText('已选 1 项')
+ expect(calls).toBe(1)
+ for(const value of ['0','4','1.5','abc','']){
+  await input.fill(value);await nav.getByRole('button',{name:'跳转',exact:true}).click()
+  await expect(nav.getByRole('alert')).toContainText('1–3')
+  await expect(nav.locator('.page-current')).toHaveText('3')
+ }
+ expect(calls).toBe(1)
+ await input.press('Escape');await expect(input).toHaveValue('3')
+ await nav.getByRole('button',{name:'首页',exact:true}).click()
+ await expect(page.getByLabel('选择 clip000.mp4',{exact:true})).toBeChecked()
+ await nav.getByRole('button',{name:'末页',exact:true}).click()
+ await expect(nav.locator('.page-current')).toHaveText('3')
+ await nav.scrollIntoViewIfNeeded();await page.screenshot({path:'test-results/page-navigation-desktop.png'});await page.locator('.pagination').screenshot({path:'test-results/page-navigation-detail.png'})
+ await page.setViewportSize({width:390,height:844})
+ await input.fill('2');await input.press('Enter')
+ await expect(page.locator('tbody tr').first()).toContainText('clip100.mp4')
+ await nav.scrollIntoViewIfNeeded();await page.screenshot({path:'test-results/page-navigation-mobile.png'})
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
+ const next=await nav.getByRole('button',{name:'下一页',exact:true}).boundingBox()
+ expect(next!.height).toBeGreaterThanOrEqual(44)
+})
+
 test('Shift 连选包含两端，支持反向选择和已选端点',async({page})=>{
  await setup(page,'多选体验-范围')
  await page.getByRole('button',{name:'多选',exact:true}).click()
@@ -93,11 +127,11 @@ test('目录重扫后继续翻页和刷新，保留页码及跨页勾选',async(
  await rescan()
  await page.getByRole('button',{name:'下一页',exact:true}).click()
  await expect(page.locator('tbody tr').first()).toContainText('clip200.mp4')
- await expect(page.locator('.pagination > span').last()).toHaveText('3')
+ await expect(page.locator('.pagination .page-current').last()).toHaveText('3')
  await page.getByRole('button',{name:'上一页',exact:true}).click()
  await expect(page.getByLabel('选择 clip100.mp4',{exact:true})).toBeChecked()
  await page.getByRole('button',{name:'刷新',exact:true}).click()
- await expect(page.locator('.pagination > span').last()).toHaveText('2')
+ await expect(page.locator('.pagination .page-current').last()).toHaveText('2')
  await expect(page.locator('tbody tr').first()).toContainText('clip100.mp4')
  await expect(page.locator('.batch-toolbar strong')).toHaveText('已选 2 项')
  await expect(page.getByRole('alert')).toHaveCount(0)
@@ -138,7 +172,7 @@ test('第二页后台重扫与改名不移动阅读位置和勾选行',async({pa
   await page.unroute(`**/api/directories/${id}/entries?*`)
   await page.getByRole('button',{name:'刷新',exact:true}).click()
   await expect(page.locator('tbody tr').first()).toContainText('clip101.mp4')
-  await expect(page.locator('.pagination > span').last()).toHaveText('2')
+  await expect(page.locator('.pagination .page-current').last()).toHaveText('2')
  }finally{release()}
 })
 
@@ -152,13 +186,13 @@ test('目录缩小后保留最后一个有效页，空目录回到第一页',asy
  await rescan()
  await page.getByRole('button',{name:'刷新',exact:true}).click()
  await expect(page.locator('tbody tr')).toHaveCount(90)
- await expect(page.locator('.pagination > span').last()).toHaveText('2')
+ await expect(page.locator('.pagination .page-current').last()).toHaveText('2')
  await expect(page.getByRole('button',{name:'下一页',exact:true})).toBeDisabled()
  for(let i=0;i<190;i++)unlinkSync(join(path,`clip${String(i).padStart(3,'0')}.mp4`))
  await rescan()
  await page.getByRole('button',{name:'刷新',exact:true}).click()
  await expect(page.getByText('这里还没有内容',{exact:true})).toBeVisible()
- await expect(page.locator('.pagination > span').last()).toHaveText('1')
+ await expect(page.locator('.pagination .page-current').last()).toHaveText('1')
  await expect(page.getByRole('alert')).toHaveCount(0)
 })
 
@@ -187,7 +221,7 @@ test('迟到的第二页响应不覆盖新搜索，真实错误在当前页可�
   release();await oldResponse
   await expect(page.locator('tbody tr')).toHaveCount(1)
   await expect(page.locator('tbody tr')).toContainText('clip005.mp4')
-  await expect(page.locator('.pagination > span').last()).toHaveText('1')
+  await expect(page.locator('.pagination .page-current').last()).toHaveText('1')
   await expect(page.getByRole('alert')).toHaveCount(0)
  }finally{release()}
 })

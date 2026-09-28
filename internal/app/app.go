@@ -468,12 +468,24 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 	}
 	where := " FROM events e LEFT JOIN runs r ON r.id=e.run WHERE e.category=? AND (?=0 OR e.run=?) AND (?='' OR instr(lower(e.old_path||e.new_path||e.message),lower(?))>0) AND (?='' OR e.action=?) AND (?='' OR e.created>=?) AND (?='' OR e.created<=?)"
 	args := []any{category, run, run, q.Get("q"), q.Get("q"), q.Get("action"), q.Get("action"), q.Get("from"), q.Get("from"), q.Get("to"), q.Get("to")}
-	var total int
-	if err := a.DB.Read().QueryRow("SELECT COUNT(*)"+where, args...).Scan(&total); err != nil {
+	tx, err := a.DB.Read().BeginTx(r.Context(), nil)
+	if err != nil {
 		failure(w, err)
 		return
 	}
-	rows, err := a.DB.Read().Query("SELECT e.id,e.category,e.action,e.entry,e.operation,e.run,e.old_path,e.new_path,e.message,e.created,COALESCE(r.config_summary,''),COALESCE(r.model_config_title,''),COALESCE((SELECT SUM(t.tokens) FROM token_usage_records t JOIN run_items i ON i.id=t.item WHERE t.run=e.run AND i.entry=e.entry),0),COALESCE((SELECT MAX(t.estimated_records) FROM token_usage_records t JOIN run_items i ON i.id=t.item WHERE t.run=e.run AND i.entry=e.entry),0)"+where+" AND e.id<? ORDER BY e.id DESC LIMIT ?", append(args, before, limit+1)...)
+	defer tx.Rollback()
+	var total int64
+	if err := tx.QueryRowContext(r.Context(), "SELECT COUNT(*)"+where, args...).Scan(&total); err != nil {
+		failure(w, err)
+		return
+	}
+	page, offset := int64(1), int64(0)
+	if q.Has("page") {
+		page = min(max(1, number(q.Get("page"))), max(1, (total+limit-1)/limit))
+		offset = (page - 1) * limit
+		before = 1 << 62
+	}
+	rows, err := tx.QueryContext(r.Context(), "SELECT e.id,e.category,e.action,e.entry,e.operation,e.run,e.old_path,e.new_path,e.message,e.created,COALESCE(r.config_summary,''),COALESCE(r.model_config_title,''),COALESCE((SELECT SUM(t.tokens) FROM token_usage_records t JOIN run_items i ON i.id=t.item WHERE t.run=e.run AND i.entry=e.entry),0),COALESCE((SELECT MAX(t.estimated_records) FROM token_usage_records t JOIN run_items i ON i.id=t.item WHERE t.run=e.run AND i.entry=e.entry),0)"+where+" AND e.id<? ORDER BY e.id DESC LIMIT ? OFFSET ?", append(args, before, limit+1, offset)...)
 	if err != nil {
 		failure(w, err)
 		return
@@ -503,15 +515,38 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 		out = out[:limit]
 		next = out[len(out)-1]["id"].(int64)
 	}
-	if q.Get("paged") == "1" {
-		send(w, 200, map[string]any{"items": out, "total": total, "next": next})
+	rows.Close()
+	if err := tx.Commit(); err != nil {
+		failure(w, err)
+		return
+	}
+	if q.Get("paged") == "1" || q.Has("page") {
+		send(w, 200, map[string]any{"items": out, "total": total, "next": next, "page": page})
 		return
 	}
 	send(w, 200, out)
 }
 func (a *App) items(w http.ResponseWriter, r *http.Request) {
-	after := number(r.URL.Query().Get("after"))
-	rows, err := a.DB.Read().Query("SELECT id,entry,status,message,original_path FROM run_items WHERE run=? AND id>? ORDER BY id LIMIT 100", number(r.PathValue("id")), after)
+	q := r.URL.Query()
+	after, run := number(q.Get("after")), number(r.PathValue("id"))
+	tx, err := a.DB.Read().BeginTx(r.Context(), nil)
+	if err != nil {
+		failure(w, err)
+		return
+	}
+	defer tx.Rollback()
+	var total int64
+	if err := tx.QueryRowContext(r.Context(), "SELECT count(*) FROM run_items WHERE run=?", run).Scan(&total); err != nil {
+		failure(w, err)
+		return
+	}
+	page, offset := int64(1), int64(0)
+	if q.Has("page") {
+		page = min(max(1, number(q.Get("page"))), max(1, (total+99)/100))
+		offset = (page - 1) * 100
+		after = 0
+	}
+	rows, err := tx.QueryContext(r.Context(), "SELECT id,entry,status,message,original_path FROM run_items WHERE run=? AND id>? ORDER BY id LIMIT 100 OFFSET ?", run, after, offset)
 	if err != nil {
 		failure(w, err)
 		return
@@ -533,6 +568,10 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
 		failure(w, err)
 		return
 	}
+	if err := tx.Commit(); err != nil {
+		failure(w, err)
+		return
+	}
 	for _, item := range out {
 		item["current_path"] = a.Library.DisplayPath(item["entry"].(int64))
 		attempts, err := jobs.Attempts(a.DB, item["id"].(int64))
@@ -541,6 +580,10 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		item["attempts"] = attempts
+	}
+	if q.Has("page") {
+		send(w, 200, map[string]any{"items": out, "total": total, "page": page})
+		return
 	}
 	send(w, 200, out)
 }

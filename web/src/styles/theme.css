@@ -50,3 +50,5 @@ button.cancel-run:hover:not(:disabled),.row-actions button.cancel-run:hover:not(
 .table-model{display:block;margin-inline:auto;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--steel)}.history-table .table-model{max-width:112px}
 
 .status-badge[data-status=skipped]{--status-ink:#946200;--status-bg:#fff7df;--status-line:#ecd397}
+
+.pagination{flex-wrap:wrap;gap:12px;justify-content:flex-end}.pagination>.page-navigation{margin-left:0}@media(max-width:600px){.pagination>.subtle{max-width:none;flex-basis:100%}.pagination>.select-field{margin-left:auto;margin-right:auto}}

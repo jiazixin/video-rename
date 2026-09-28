@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageNavigation from '../../components/PageNavigation.vue'
 import {computed,ref,onDeactivated,watch,nextTick} from 'vue'
 import {useNumberingTask} from './numbering-task'
 import {Hash,History,Undo2} from 'lucide-vue-next'
@@ -92,7 +93,7 @@ async function recover(batch:Batch){busy.value=true;error.value='';diagnostics.v
   <template v-if="!history&&batches.length">
    <p>共 {{batches.length}} 个目录、{{total}} 个文件，{{changed}} 个需要{{restoring?'还原':'修改'}}，{{total-changed}} 个保持不变。</p>
    <div class="table-scroll numbering-preview"><table><thead><tr><th>所在目录</th><th>原名</th><th>{{restoring?'还原为':'新名'}}</th></tr></thead><tbody><tr v-for="item in visible" :key="item.entry"><td>{{item.path}}</td><td>{{item.old_name}}</td><td>{{item.new_name}}<small v-if="item.old_name===item.new_name">（不变）</small></td></tr></tbody></table></div>
-   <div class="pagination"><span>第 {{page+1}} / {{Math.max(1,Math.ceil(total/100))}} 页</span><button :disabled="!page||busy" @click="loadPage(page-1)">上页</button><button :disabled="(page+1)*100>=total||busy" @click="loadPage(page+1)">下页</button></div>
+   <div class="pagination"><PageNavigation :page="page+1" :total-pages="Math.ceil(total/100)" :disabled="busy" previous-label="上页" next-label="下页" @change="loadPage($event-1)"/></div>
   </template>
   <p v-else-if="!history&&!busy&&!error" class="empty compact">当前目录及子目录中没有可编号的图片或音频</p>
   <div v-if="history" class="numbering-history">

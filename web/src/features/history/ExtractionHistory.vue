@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageNavigation from '../../components/PageNavigation.vue'
 import ToastNotice from '../../components/ToastNotice.vue'
 import {computed,onMounted,onUnmounted,ref} from 'vue'
 import {AlertCircle,CheckCircle2,ChevronLeft,ChevronRight,Copy,Search,RefreshCw,Trash2} from 'lucide-vue-next'
@@ -9,14 +10,14 @@ import SelectField from '../../components/SelectField.vue'
 import Modal from '../../components/Modal.vue'
 
 type RecordItem={id:number;run:number;entry:number;path:string;source:string;status:string;started:string;finished:string;duration_ms:number;cached:boolean;frames:number;message:string}
-type Group={items:RecordItem[];total:number;next:number}
+type Group={items:RecordItem[];total:number;next:number;page?:number}
 type Report={success:Group;failure:Group;running:number}
 type Category='success'|'failure'
 const groups=[{id:'success' as Category,label:'抽帧成功'},{id:'failure' as Category,label:'抽帧失败'}]
 const category=ref<Category>('success')
 const report=ref<Report>({success:{items:[],total:0,next:0},failure:{items:[],total:0,next:0},running:0})
 const busy=ref(false),error=ref(''),message=ref(''),q=ref(''),run=ref(''),from=ref(''),to=ref(''),limit=ref(50),batches=ref<number[]>([])
-const before=ref({success:0,failure:0}),pages=ref<Record<Category,number[]>>({success:[],failure:[]})
+const pages=ref({success:1,failure:1})
 const batchOptions=computed(()=>[{value:'',label:'全部批次'},...batches.value.map(id=>({value:String(id),label:`批次 #${id}`}))])
 const selected=ref<RecordItem>(),diagnostics=ref(''),detailError=ref(''),detailBusy=ref(false)
 const clearOpen=ref(false),clearing=ref(false),clearError=ref('')
@@ -26,15 +27,14 @@ function pathParts(path:string){const i=path.lastIndexOf('/');return {directory:
 async function load(){
  const n=++seq;controller?.abort();controller=new AbortController();busy.value=true;error.value=''
  try{
-  const params=new URLSearchParams({limit:String(limit.value),q:q.value,run:run.value,success_before:String(before.value.success),failure_before:String(before.value.failure),from:from.value?new Date(from.value+'T00:00:00').toISOString():'',to:to.value?new Date(to.value+'T23:59:59.999').toISOString():''})
+  const params=new URLSearchParams({limit:String(limit.value),q:q.value,run:run.value,success_page:String(pages.value.success),failure_page:String(pages.value.failure),from:from.value?new Date(from.value+'T00:00:00').toISOString():'',to:to.value?new Date(to.value+'T23:59:59.999').toISOString():''})
   const [data,ids]=await Promise.all([api<Report>(`/extractions?${params}`,'GET',undefined,controller.signal),api<number[]>('/logs/batches?category=extraction','GET',undefined,controller.signal)])
-  if(n===seq){report.value=data;batches.value=ids;if(run.value&&!ids.includes(Number(run.value)))batches.value=[...ids,Number(run.value)].sort((a,b)=>b-a)}
+  if(n===seq){report.value=data;pages.value={success:data.success.page??pages.value.success,failure:data.failure.page??pages.value.failure};batches.value=ids;if(run.value&&!ids.includes(Number(run.value)))batches.value=[...ids,Number(run.value)].sort((a,b)=>b-a)}
  }catch(e){if(n===seq)error.value=(e as Error).message}finally{if(n===seq)busy.value=false}
 }
-function reset(){clearTimeout(debounce);before.value={success:0,failure:0};pages.value={success:[],failure:[]};load()}
+function reset(){clearTimeout(debounce);pages.value={success:1,failure:1};load()}
 function search(){clearTimeout(debounce);debounce=setTimeout(reset,250)}
-function next(group:Category){pages.value[group].push(before.value[group]);before.value[group]=report.value[group].next;load()}
-function previous(group:Category){before.value[group]=pages.value[group].pop()||0;load()}
+function changePage(group:Category,value:number){pages.value[group]=value;load()}
 async function inspect(row:RecordItem){
  selected.value=row;diagnostics.value='';detailError.value='';detailBusy.value=true;const n=++detailSeq
  try{const result=await api<{processing_log:string}>(`/extractions/${row.id}`);if(n===detailSeq)diagnostics.value=result.processing_log}catch(e){if(n===detailSeq)detailError.value=(e as Error).message}finally{if(n===detailSeq)detailBusy.value=false}
@@ -71,7 +71,7 @@ onUnmounted(()=>{seq++;detailSeq++;controller?.abort();clearInterval(timer);clea
     <td v-if="group.id==='success'"><span>{{row.cached?'复用缓存':'抽帧完成'}} · {{row.frames}} 帧</span></td><td v-else class="extraction-reason"><p>{{row.message||'抽帧失败'}}</p><button class="text-button" @click="inspect(row)">详细原因</button></td>
    </tr></tbody>
   </table><div v-if="!report[group.id].items.length" class="empty compact">{{busy?'正在读取抽帧记录…':`暂无${group.label}记录`}}</div></div>
-   <div class="pagination"><span class="subtle">按时间从新到旧</span><SelectField v-model="limit" label="抽帧每页条目数" :options="[{value:50,label:'50 项 / 页'},{value:100,label:'100 项 / 页'},{value:200,label:'200 项 / 页'}]" @change="reset"/><button :disabled="busy||!pages[group.id].length" :aria-label="`上一页${group.label}`" @click="previous(group.id)"><ChevronLeft :size="16"/></button><span>{{pages[group.id].length+1}}</span><button :disabled="busy||!report[group.id].next" :aria-label="`下一页${group.label}`" @click="next(group.id)"><ChevronRight :size="16"/></button></div>
+   <div class="pagination"><span class="subtle">按时间从新到旧</span><SelectField v-model="limit" label="抽帧每页条目数" :options="[{value:50,label:'50 项 / 页'},{value:100,label:'100 项 / 页'},{value:200,label:'200 项 / 页'}]" @change="reset"/><PageNavigation :page="pages[group.id]" :total-pages="Math.ceil(report[group.id].total/limit)" :disabled="busy" :previous-label="`上一页${group.label}`" :next-label="`下一页${group.label}`" @change="changePage(group.id,$event)"/></div>
  </section>
 </div>
 </section>
