@@ -21,7 +21,7 @@ const parts=computed(()=>{
 </template>
 
 <style scoped>
-.stacked-date-time{display:inline-grid;gap:var(--date-time-gap,4px);width:max-content;vertical-align:middle;text-align:left;font-size:12px;font-weight:400;font-variant-numeric:tabular-nums;line-height:1.4;white-space:nowrap;color:var(--steel)}
+.stacked-date-time{display:inline-grid;gap:var(--date-time-gap,4px);width:max-content;vertical-align:middle;text-align:inherit;font-size:12px;font-weight:400;font-variant-numeric:tabular-nums;line-height:1.4;white-space:nowrap;color:var(--steel)}
 .stacked-date-time>span:first-child{color:var(--ink);font-weight:500}
 .date-time-empty{color:var(--steel)}
 </style>

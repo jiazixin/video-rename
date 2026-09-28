@@ -255,9 +255,9 @@ test('运行记录文件名分列、省略与操作颜色',async({page})=>{
  await page.screenshot({path:'test-results/task-history.png',animations:'disabled'})
 })
 
- test('名称左对齐与下拉面板中轴对齐',async({page})=>{
+ test('表格内容与下拉面板中轴对齐',async({page})=>{
  await login(page)
- expect(await page.locator('.file-table th,.file-table td').evaluateAll(es=>es.every(e=>getComputedStyle(e).textAlign===(e.classList.contains('filename-cell')?'left':e.classList.contains('align-right')?'right':'center')))).toBe(true)
+ expect(await page.locator('.file-table th,.file-table td').evaluateAll(es=>es.every(e=>getComputedStyle(e).textAlign==='center'))).toBe(true)
  for(const label of ['类型筛选','每页条目数']){
   const combo=page.getByRole('combobox',{name:label});const outer=await combo.boundingBox(),inner=await combo.locator('span').boundingBox()
   expect(Math.abs(outer!.x+outer!.width/2-inner!.x-inner!.width/2)).toBeLessThan(1)
@@ -269,6 +269,24 @@ test('运行记录文件名分列、省略与操作颜色',async({page})=>{
   await combo.press('Escape')
  }
  await page.screenshot({path:'test-results/library-centered.png',animations:'disabled'})
+ const longDirectory='长目录与素材归档'.repeat(12),longName='很长的视频文件名称'.repeat(16)+'.mp4'
+ await page.route('**/api/extractions?*',route=>route.fulfill({json:{success:{items:[{id:9001,run:22,entry:1,path:longDirectory+'/'+longName,source:'automatic',status:'completed',started:'2026-09-28T13:58:03Z',finished:'2026-09-28T13:58:06Z',duration_ms:3000,cached:false,frames:12,message:''}],total:1,next:0},failure:{items:[],total:0,next:0},running:0}}))
+ await page.getByRole('button',{name:'抽帧记录',exact:true}).click()
+ await expect(page.locator('.extraction-table tbody tr')).toHaveCount(1)
+ expect(await page.locator('.extraction-table th,.extraction-table td').evaluateAll(es=>es.every(e=>getComputedStyle(e).textAlign==='center'))).toBe(true)
+ for(const selector of ['.stacked-date-time','.log-directory','.history-filename']){
+  const element=page.locator('.extraction-table '+selector).first()
+  const deviation=await element.evaluate(el=>{const a=el.getBoundingClientRect(),b=el.closest('td')!.getBoundingClientRect();return Math.abs(a.x+a.width/2-b.x-b.width/2)})
+  expect(deviation).toBeLessThan(1)
+ }
+ await expect(page.locator('.extraction-table .history-filename')).toHaveAttribute('title',longName)
+ expect(await page.locator('.extraction-table .history-filename').evaluate(el=>el.scrollWidth>el.clientWidth)).toBe(true)
+ expect(await page.locator('.extraction-table .stacked-date-time').first().evaluate(el=>getComputedStyle(el).textAlign)).toBe('center')
+ await page.screenshot({path:'test-results/extraction-centered.png',animations:'disabled'})
+ await page.setViewportSize({width:390,height:844})
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
+ await page.screenshot({path:'test-results/extraction-centered-mobile.png',animations:'disabled'})
+ await page.setViewportSize({width:1440,height:1000})
  await page.getByRole('button',{name:'运行记录',exact:true}).click()
  const date=page.getByRole('button',{name:'起始日期',exact:true});await date.click()
  const db=await date.boundingBox(),pb=await page.getByRole('dialog',{name:'起始日期日历'}).boundingBox()
