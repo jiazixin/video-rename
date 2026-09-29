@@ -128,6 +128,12 @@ WHERE status IN ('queued','running') AND run IN (SELECT id FROM runs WHERE statu
 	if _, err = tx.Exec("UPDATE runs SET status='interrupted',finished=?,error='服务重启，前次运行已中断' WHERE status IN ('queued','scanning','running','paused','cancelling')", now.UTC().Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
+	// Correct terminal batches previously classified as partial despite all
+	// items failing. Keep counts, timestamps and diagnostics unchanged.
+	if _, err = tx.Exec(`UPDATE runs SET status='failed'
+WHERE status='partial_failure' AND failed>0 AND done=0 AND skipped=0`); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 func (m *Manager) Busy(id int64) bool {
@@ -527,7 +533,10 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 	} else {
 		r, _ = m.Get(id)
 		if r.Failed > 0 {
-			status = "partial_failure"
+			status = "failed"
+			if r.Done > 0 || r.Skipped > 0 {
+				status = "partial_failure"
+			}
 		}
 	}
 	_, _ = m.DB.Exec("UPDATE runs SET status=?,finished=? WHERE id=?", status, storage.Now(), id)

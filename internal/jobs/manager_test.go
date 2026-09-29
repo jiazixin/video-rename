@@ -395,7 +395,7 @@ func TestNamingFailureKeepsFileAndRecordsFailure(t *testing.T) {
 	}
 	m.Execute(t.Context(), id)
 	r, _ := m.Get(id)
-	if r.Failed != 1 || r.Done != 0 || r.Status != "partial_failure" {
+	if r.Failed != 1 || r.Done != 0 || r.Status != "failed" {
 		t.Fatalf("%+v", r)
 	}
 	if _, err = os.Stat(filepath.Join(root, "original.mp4")); err != nil {
