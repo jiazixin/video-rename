@@ -164,8 +164,8 @@ func (m *Manager) Tools() (string, string, error) {
 func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	m.createMu.Lock()
 	defer m.createMu.Unlock()
-	if len(r.Targets) == 0 || len(r.Targets) > 100 || len(r.Key) < 8 || len(r.Key) > 180 {
-		return 0, fmt.Errorf("请选择 1–100 个目录或文件，并提供请求键")
+	if len(r.Targets) == 0 || len(r.Key) < 8 || len(r.Key) > 180 {
+		return 0, fmt.Errorf("请选择目录或文件，并提供有效请求键")
 	}
 	if r.Task == "" {
 		r.Task = "rename"
