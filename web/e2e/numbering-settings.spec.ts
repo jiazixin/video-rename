@@ -35,6 +35,10 @@ test('编号规则分类草稿、实时示例、保存与响应式布局',async(
  await expect(page.getByLabel('图片编号前缀',{exact:true})).toHaveValue('IMG_')
  await expect(page.getByRole('radio',{name:'保留已有编号',exact:false})).toBeChecked()
  await expect(page.getByText('有未保存的修改',{exact:true})).toBeVisible()
+ await page.setViewportSize({width:1920,height:1080})
+ const tabs=await page.locator('.settings-tabs').boundingBox()
+ const content=await page.locator('.numbering-settings').boundingBox()
+ expect(Math.abs(tabs!.width-content!.width)).toBeLessThan(2)
  await page.screenshot({path:'test-results/numbering-settings-desktop.png',fullPage:true})
  fail=true
  await save.click()

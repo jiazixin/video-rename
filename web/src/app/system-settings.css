@@ -44,7 +44,7 @@
 .system-settings .model-grid,.system-settings .notification-grid{grid-template-columns:minmax(0,1fr)}
 .system-settings .model-card{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:36px;row-gap:18px;padding:26px}
 .system-settings .model-card>header{grid-column:1;grid-row:1;margin:0;align-items:flex-start}
-.system-settings .model-card>.model-endpoint{grid-column:1;grid-row:2;margin:0}
+.system-settings .model-card>.model-endpoint{grid-column:1;grid-row:2;margin:0;align-self:start}
 .system-settings .model-card>.model-metrics{grid-column:2;grid-row:1;margin:0}
 .system-settings .model-card>.model-prompt{grid-column:2;margin:0}
 .system-settings .model-card>footer{grid-column:1 / -1;margin:0}

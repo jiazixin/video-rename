@@ -24,6 +24,15 @@ test('系统设置聚合、处理参数持久化与窄屏',async({page})=>{
   await expect(page.getByRole('button',{name,exact:true})).toHaveAttribute('aria-pressed','true')
   await page.setViewportSize({width:1920,height:1080})
   await expect(page.locator('.system-settings .panel').first()).toBeVisible()
+  if(name==='模型配置'){
+   const card=page.locator('.model-card').first()
+   const endpoint=card.locator('.model-endpoint')
+   const before=await endpoint.boundingBox()
+   await card.locator('.model-prompt summary').click()
+   await expect(card.locator('.model-prompt p')).toBeVisible()
+   const after=await endpoint.boundingBox()
+   expect(Math.abs(before!.height-after!.height)).toBeLessThan(2)
+  }
   if(name==='抽帧设置'){
    const tabs=await page.locator('.settings-tabs').boundingBox()
    const content=await page.locator('.sampling-page').boundingBox()
