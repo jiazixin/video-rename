@@ -19,6 +19,11 @@ func NoReplace(oldpath, newpath string) *domain.JobError {
 	return mapErrno(unix.RenamexNp(oldpath, newpath, unix.RENAME_EXCL), oldpath, newpath)
 }
 
+// NoReplaceAt renames two basenames within an already verified directory.
+func NoReplaceAt(dirfd int, oldname, newname string) *domain.JobError {
+	return mapErrno(unix.RenameatxNp(dirfd, oldname, dirfd, newname, unix.RENAME_EXCL), oldname, newname)
+}
+
 func mapErrno(err error, oldpath, newpath string) *domain.JobError {
 	if err == nil {
 		return nil

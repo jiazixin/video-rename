@@ -54,6 +54,32 @@ func TestNoReplaceNeverOverwrites(t *testing.T) {
 	}
 }
 
+func TestNoReplaceAtNeverOverwrites(t *testing.T) {
+	dir, src, dst := setup(t)
+	f, err := os.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := os.WriteFile(dst, []byte("existing"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := NoReplaceAt(int(f.Fd()), filepath.Base(src), filepath.Base(dst)); err == nil || err.Code != domain.CodeRenameConflict {
+		t.Fatalf("expected conflict: %v", err)
+	}
+	data, err := os.ReadFile(dst)
+	if err != nil || string(data) != "existing" {
+		t.Fatalf("destination changed: %q %v", data, err)
+	}
+	if err := NoReplaceAt(int(f.Fd()), filepath.Base(src), "available.mp4"); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(filepath.Join(dir, "available.mp4"))
+	if err != nil || string(data) != "content" {
+		t.Fatalf("rename failed: %q %v", data, err)
+	}
+}
+
 func TestNoReplaceMissingSource(t *testing.T) {
 	dir := t.TempDir()
 	jerr := NoReplace(filepath.Join(dir, "nope.mp4"), filepath.Join(dir, "dst.mp4"))

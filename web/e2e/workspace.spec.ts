@@ -107,7 +107,7 @@ test('多选命名入队后不等待慢速状态查询',async({page})=>{
   await page.getByRole('button',{name:'重命名',exact:true}).click()
   await queryStarted
   await expect(page.getByRole('dialog')).toHaveCount(0)
-  await expect(page.locator('.notice.success')).toContainText('重命名批次 #999 已加入队列')
+  await expect(page.getByRole('status').filter({hasText:'重命名批次 #999 已加入队列'})).toBeVisible()
   // A delayed status refresh must not keep the shared saving flag locked.
   await page.locator('.directory-mark-actions').getByRole('button',{name:'标记',exact:true}).click()
   await expect(page.getByRole('button',{name:'确认标记',exact:true})).toBeEnabled()
@@ -179,11 +179,11 @@ test('弹窗锁滚动、多选反选、批量还原和视频播放',async({page}
  await page.route('**/api/runs',async route=>{if(route.request().method()==='POST'){expect(route.request().postDataJSON().targets).toHaveLength(2);await route.fulfill({json:{id:999}})}else await route.continue()})
  await page.getByRole('button',{name:'命名',exact:true}).click()
  await page.getByRole('button',{name:'重命名',exact:true}).click()
- await expect(page.getByRole('status')).toContainText('重命名批次 #999 已加入队列')
+ await expect(page.getByRole('status').filter({hasText:'重命名批次 #999 已加入队列'})).toBeVisible()
  await page.unroute('**/api/runs')
  await page.getByRole('button',{name:'上一页',exact:true}).click()
  for(const n of ['0000','0001']){await page.getByRole('button',{name:`双击或按 Enter 重命名 片段_${n}.mp4`}).dblclick();const batchEditor=page.getByRole('textbox',{name:`编辑 片段_${n}.mp4`});await batchEditor.fill(`批量_${n}`);await batchEditor.press('Enter');await expect(page.getByText(`批量_${n}.mp4`,{exact:true})).toBeVisible();await page.getByLabel(`选择 批量_${n}.mp4`,{exact:true}).check()}
- await page.getByRole('button',{name:'还原',exact:true}).click();await page.getByRole('button',{name:'确认批量还原',exact:true}).click();await expect(page.locator('.notice.success')).toContainText('已还原 2 项，失败 0 项')
+ await page.getByRole('button',{name:'还原',exact:true}).click();await page.getByRole('button',{name:'确认批量还原',exact:true}).click();await expect(page.getByRole('status').filter({hasText:'已还原 2 项，失败 0 项'})).toBeVisible()
  await expect(page.getByText('片段_0000.mp4',{exact:true})).toBeVisible()
  await expect(page.getByText('片段_0001.mp4',{exact:true})).toBeVisible()
  await page.getByLabel('选择 片段_0000.mp4',{exact:true}).check()
@@ -257,7 +257,10 @@ test('运行记录文件名分列、省略与操作颜色',async({page})=>{
 
  test('表格内容与下拉面板中轴对齐',async({page})=>{
  await login(page)
- expect(await page.locator('.file-table th,.file-table td').evaluateAll(es=>es.every(e=>getComputedStyle(e).textAlign==='center'))).toBe(true)
+ expect(await page.locator('.file-table th,.file-table td').evaluateAll(cells=>cells.every(cell=>{
+  const expected=cell.matches(':last-child')?'right':cell.classList.contains('filename-cell')?'left':'center'
+  return getComputedStyle(cell).textAlign===expected
+ }))).toBe(true)
  for(const label of ['类型筛选','每页条目数']){
   const combo=page.getByRole('combobox',{name:label});const outer=await combo.boundingBox(),inner=await combo.locator('span').boundingBox()
   expect(Math.abs(outer!.x+outer!.width/2-inner!.x-inner!.width/2)).toBeLessThan(1)
@@ -397,7 +400,7 @@ test('图片识别测试与智谱 Coding Plan 预设',async({page})=>{
  await expect(page.getByRole('combobox',{name:'检测超时',exact:true})).toHaveText('5s')
  await page.getByRole('combobox',{name:'检测超时',exact:true}).click();await expect(page.getByRole('option')).toHaveText(['5s','10s','15s']);await page.getByRole('option',{name:'10s',exact:true}).click()
  let calls=0;await page.route('**/api/model-configs/test-vision',r=>{calls++;expect(r.request().postDataJSON().provider).toBe('zhipu-coding');expect(r.request().postDataJSON().probe_timeout_seconds).toBe(10);return r.fulfill({json:{status:'passed',message:'测试图片识别正确',answer:'red,green,blue,yellow',expected:'red,green,blue,yellow',elapsed_ms:123,http_status:200}})})
- await page.getByRole('button',{name:'测试图片识别',exact:true}).click();await expect(page.getByRole('status')).toContainText('测试图片识别正确');expect(calls).toBe(1)
+ await page.getByRole('button',{name:'测试图片识别',exact:true}).click();await expect(page.getByRole('status').filter({hasText:'测试图片识别正确'})).toBeVisible();expect(calls).toBe(1)
  await page.getByLabel('模型名称',{exact:true}).fill('other');await expect(page.locator('.probe-result')).toHaveCount(0)
 })
 
@@ -430,7 +433,7 @@ test('后台标记查询断连后使用同一请求重试',async({page})=>{
  await expect(page.getByRole('dialog').getByRole('alert')).toContainText('已确认变更 1 个视频')
  await page.getByRole('button',{name:'确认标记',exact:true}).click()
  await expect(page.getByRole('dialog')).toHaveCount(0)
- await expect(page.locator('.notice.success')).toContainText('已标记 230 个视频')
+ await expect(page.getByRole('status').filter({hasText:'已标记 230 个视频'})).toBeVisible()
  expect(keys).toHaveLength(2);expect(keys[0]).toBeTruthy();expect(keys[1]).toBe(keys[0])
 })
 
@@ -449,7 +452,7 @@ test('手动处理标记、目录递归与跨页批量取消',async({page})=>{
  await expect(page.getByRole('dialog')).toContainText('所有子目录')
  await page.getByRole('button',{name:'确认标记',exact:true}).click()
  await expect(page.getByRole('dialog')).toHaveCount(0)
- await expect(page.locator('.notice.success')).toContainText('失败 0 项')
+ await expect(page.getByRole('status').filter({hasText:'失败 0 项'})).toBeVisible()
  await expect(page.locator('tbody tr').filter({has:page.getByRole('button',{name:'分页测试',exact:true})})).toContainText('全部已处理')
  await page.getByRole('button',{name:'分页测试',exact:true}).click()
  await expect(page.locator('tbody tr')).toHaveCount(100)
@@ -460,7 +463,7 @@ test('手动处理标记、目录递归与跨页批量取消',async({page})=>{
  await page.locator('.batch-toolbar').getByRole('button',{name:'取消标记',exact:true}).click()
  await page.getByRole('button',{name:'确认取消标记',exact:true}).click()
  await expect(page.getByRole('dialog')).toHaveCount(0)
- await expect(page.locator('.notice.success')).toContainText('已取消标记 2 个视频')
+ await expect(page.getByRole('status').filter({hasText:'已取消标记 2 个视频'})).toBeVisible()
  await expect(page.locator('.panel-toolbar')).toContainText('部分已处理')
  await expect(page.getByText('已选 2 项',{exact:true})).toBeVisible()
  await expect(page.locator('tbody tr').filter({hasText:'片段_0100.mp4'})).toContainText('未处理')
@@ -935,7 +938,7 @@ test('图片识别测试在所选时限结束等待并允许重试',async({page}
  await page.unroute('**/api/model-configs/test-vision')
  await page.route('**/api/model-configs/test-vision',r=>r.fulfill({json:{status:'passed',message:'测试图片识别正确',answer:'red,blue,green,yellow',expected:'red,blue,green,yellow',elapsed_ms:100,http_status:200}}))
  await page.getByRole('button',{name:'测试图片识别',exact:true}).click()
- await expect(page.getByRole('status')).toContainText('测试图片识别正确')
+ await expect(page.getByRole('status').filter({hasText:'测试图片识别正确'})).toBeVisible()
 })
 
 for(const task of ['rename','extract'])test(`跨页选择230个目标只提交一个${task}批次`,async({page})=>{

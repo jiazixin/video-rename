@@ -57,7 +57,7 @@ func (a *Allocator) Allocate(dir, title, ext string, job domain.VideoJob) (Alloc
 
 		// 候选存在：同一身份仅在无需转换扩展名时跳过；不同身份尝试下一后缀。
 		if snap, err := domain.StatSnapshot(target); err == nil {
-			if snap.SameIdentity(job.Snapshot) {
+			if snap.SameIdentity(job.Snapshot) && sameDirectoryEntry(dir, name, filepath.Base(job.Path)) {
 				return AllocateResult{Target: target, Unchanged: filepath.Ext(job.Path) == ext}, nil
 			}
 			continue
@@ -92,4 +92,25 @@ func (a *Allocator) Release(dir, name string) {
 	if m := a.reserved[dir]; m != nil {
 		delete(m, strings.ToLower(name))
 	}
+}
+
+// Equal identities can also be separate hard links. Only accept an exact source
+// name or a case alias that does not exist as a separate directory entry.
+func sameDirectoryEntry(dir, target, source string) bool {
+	if target == source {
+		return true
+	}
+	if !strings.EqualFold(target, source) {
+		return false
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.Name() == target {
+			return false
+		}
+	}
+	return true
 }

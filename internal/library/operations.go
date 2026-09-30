@@ -226,7 +226,12 @@ func (l *Library) commit(e Entry, name, source, key string, undo, run int64, dia
 	if err != nil {
 		return Operation{}, err
 	}
-	snap, err := domain.StatSnapshot(p)
+	dir, err := l.openDirectory(e.Parent)
+	if err != nil {
+		return Operation{}, err
+	}
+	defer dir.Close()
+	snap, err := directorySnapshot(dir, e.Name)
 	if err != nil {
 		return Operation{}, err
 	}
@@ -253,7 +258,7 @@ func (l *Library) commit(e Entry, name, source, key string, undo, run int64, dia
 		return o, err
 	}
 	if name != e.Name {
-		if je := rename.NoReplace(p, target); je != nil {
+		if je := rename.NoReplaceAt(int(dir.Fd()), e.Name, name); je != nil {
 			_, dbErr := l.DB.Exec("UPDATE operations SET status='failed',error=? WHERE id=?", je.Message, oid)
 			if dbErr != nil {
 				l.broken = dbErr
@@ -261,15 +266,15 @@ func (l *Library) commit(e Entry, name, source, key string, undo, run int64, dia
 
 			return o, je
 		}
-		dir, de := os.Open(filepath.Dir(p))
-		if de == nil {
-			de = dir.Sync()
-			dir.Close()
-		}
+		de := dir.Sync()
 		if de != nil {
 			l.broken = de
 			return o, fmt.Errorf("文件已改名，但目录同步失败，需重启核对: %w", de)
 		}
+	}
+	if _, err = l.Path(e.Parent); err != nil {
+		l.broken = err
+		return o, fmt.Errorf("文件已改名，但父目录已变化，需重启核对: %w", err)
 	}
 	if err = l.finish(o, oldrel, newrel); err != nil {
 		l.broken = err

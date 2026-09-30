@@ -115,6 +115,44 @@ func TestNumberingTreeSharedRulesAndChangedDirectory(t *testing.T) {
 	}
 }
 
+func TestNumberingTreeSharedCompactReservesOnlyKeptNumbers(t *testing.T) {
+	for _, audioCompact := range []bool{true, false} {
+		t.Run(fmt.Sprintf("audioCompact=%v", audioCompact), func(t *testing.T) {
+			l, root, _ := fixture(t)
+			for _, name := range []string{"x.jpg", "1.mp3"} {
+				if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			settings := domain.DefaultNumberingSettings()
+			settings.Shared = true
+			settings.Audio.Compact = audioCompact
+			batches, err := l.PreviewNumberingTree(t.Context(), 1, settings)
+			if err != nil || len(batches) != 1 {
+				t.Fatalf("preview: %v %v", batches, err)
+			}
+			want := map[string]string{"x.jpg": "1.jpg", "1.mp3": "2.mp3"}
+			if !audioCompact {
+				want = map[string]string{"x.jpg": "2.jpg", "1.mp3": "1.mp3"}
+			}
+			for _, item := range batches[0].Items {
+				if item.New != want[item.Old] {
+					t.Fatalf("unexpected numbering: %+v", item)
+				}
+			}
+			if _, err := l.ApplyNumbering(batches[0].ID); err != nil {
+				t.Fatal(err)
+			}
+			for original, renamed := range want {
+				data, err := os.ReadFile(filepath.Join(root, renamed))
+				if err != nil || string(data) != original {
+					t.Fatalf("%s: %q %v", renamed, data, err)
+				}
+			}
+		})
+	}
+}
+
 func TestNumberingTreeWithPendingRefreshFlag(t *testing.T) {
 	l, root, _ := fixture(t)
 	put(t, filepath.Join(root, "photo.jpg"))

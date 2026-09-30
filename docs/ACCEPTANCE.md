@@ -108,3 +108,30 @@ go build -o bin/video-rename ./cmd/video-rename
 - 冲突诊断复用原目标信息和文件名候选，移除重新读取目标和扫描整个目录的代码；仍显示大小写匹配项的身份差异及参与情况。
 - 两个编号弹窗的诊断内容、复制逻辑和样式统一放在功能目录内的 `NumberingDiagnostics.vue`。
 - 两阶段临时名、no-replace、预览与提交阶段的独立校验、恢复位置核对和持久化移动日志保留；它们分别保障批量交换名称、并发外部变更和崩溃恢复。
+
+
+## 2026-09-30 OCR 委托审查修复
+
+范围：当前工作区的改名目录校验、标题冲突分配和目录混合编号；未调整依赖、数据库结构或前端行为。
+
+- 改名和编号使用逐层验证的目录句柄，相对句柄检查源文件、执行无覆盖移动并同步目录；路径替换后保留待核对状态。
+- 独立硬链接占用目标名时分配后缀，只生成一次成功操作记录。
+- 图片与音频都紧凑重排时不预留音频旧号码；音频保留已有编号时仍避让其号码。
+- 新增确定性的目录替换回归（普通改名、编号）、硬链接冲突、目录句柄无覆盖移动及混合编号文件内容验证。
+
+| 验证命令 | 结果 |
+| --- | --- |
+| `npm --prefix web run build` | 通过，包含 TypeScript 检查 |
+| `go test -count=1 ./...` | 全包通过 |
+| `go test -race -count=1 ./...` | 全包通过，无竞态报告 |
+| `go vet ./...`、`go mod verify` | 通过 |
+| `go test -tags=integration -count=1 ./internal/media/` | 通过，使用本机 FFmpeg / ffprobe |
+| `go test -tags=scale -run '^TestScale' -count=1 -v ./internal/library ./internal/jobs ./internal/app` | 8 项全部通过；覆盖 30 万文件索引、50,000 文件分页、20,000 文件编号预览与批量标记 |
+| `go build -o bin/video-rename ./cmd/video-rename` | 通过 |
+| `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/video-rename-ocr-linux ./cmd/video-rename` | 交叉编译通过 |
+| `npm --prefix web run test:e2e` | 最终完整运行 91/91 通过，耗时 6.5 分钟 |
+| `git diff --check`、改动 Go 文件的 `gofmt -l` | 通过 |
+
+本次运行环境为 macOS/arm64。大小写敏感卷专属的独立 `source.mp4` / `SOURCE.mp4` 硬链接子用例因当前卷不支持而跳过；普通硬链接冲突与既有大小写改名回归通过。Linux 完成编译检查，未在 Linux/CIFS 实机运行。测试使用临时合成文件和本地假模型，没有访问真实媒体或付费模型。
+
+浏览器验证发现既有测试仍定位已移除的 `.notice.success`，并把文件名列和操作列都断言为居中。按当前组件与布局更新为按 `role="status"` 和预期消息定位，以及文件名左对齐、操作列右对齐；保留原有消息内容、数量、磁盘变更和交互断言。前两轮因旧断言及过宽的状态定位失败后停止，批量还原与播放定向回归通过后，用全新隔离夹具完成最后一轮 91 项全量测试，全部通过。

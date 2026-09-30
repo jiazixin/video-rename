@@ -374,7 +374,7 @@ func mixedNumberingNames(entries []Entry, settings domain.NumberingSettings) []N
 		}
 	}
 	var peers []Entry
-	if settings.Shared {
+	if settings.Shared && !settings.Audio.Compact {
 		peers = audio
 	}
 	items := numberingNames(images, nil, peers, settings.Image, settings.Audio.Prefix)
@@ -750,17 +750,26 @@ func (l *Library) moveNumbering(b *Numbering, i *NumberingItem, path, target str
 	if checked, err := l.Path(b.Parent); err != nil || checked != path {
 		return fmt.Errorf("父目录已变化")
 	}
-	if !numberingMatch(filepath.Join(path, i.Current), *i) {
+	dir, err := l.openDirectory(b.Parent)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	snap, err := directorySnapshot(dir, i.Current)
+	if err != nil || Identity(snap) != i.Identity || snap.Size != i.Size || stamp(snap) != i.Mtime {
 		return fmt.Errorf("%s %s 身份或内容已变化", mediaLabel(b.Media), i.Current)
 	}
 	if _, err := l.DB.Exec("UPDATE image_numbering_items SET pending_name=? WHERE batch=? AND entry=?", target, b.ID, i.Entry); err != nil {
 		return err
 	}
 	i.Pending = target
-	if err := rename.NoReplace(filepath.Join(path, i.Current), filepath.Join(path, target)); err != nil {
+	if err := rename.NoReplaceAt(int(dir.Fd()), i.Current, target); err != nil {
 		return numberingMoveFailure(b, i, path, target, err)
 	}
-	if err := syncNumberingDir(path); err != nil {
+	if err := dir.Sync(); err != nil {
+		return err
+	}
+	if _, err := l.Path(b.Parent); err != nil {
 		return err
 	}
 	if _, err := l.DB.Exec("UPDATE image_numbering_items SET current_name=?,pending_name='' WHERE batch=? AND entry=?", target, b.ID, i.Entry); err != nil {
