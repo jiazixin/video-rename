@@ -135,3 +135,27 @@ test('目录编号持续反馈进度，关闭取消，预览完成仍须确认',
  await expect.poll(()=>cancelled.length).toBe(2)
  await expect(page.getByRole('dialog')).toHaveCount(0)
 })
+
+test('编号历史刷新后可展开并复制执行失败现场',async({page,context})=>{
+ const diagnostic='编号执行失败诊断\n阶段：最终编号\n原文件名："2.JPG"\n目标文件名："2.jpg"\n目标同名或大小写匹配条目总数：1'
+ await context.grantPermissions(['clipboard-read','clipboard-write'])
+ await page.route('**/api/directories/*/numberings/tree',route=>route.fulfill({json:[{id:'failed-batch',parent:1,path:'测试目录',status:'rolled_back',created:'2026-09-30T12:00:00Z',undo_of:'',error:'操作失败，已恢复原名：目标已存在',processing_log:diagnostic,total:3,changed:3}]}))
+ await page.goto('/')
+ await page.getByLabel('用户名',{exact:true}).fill('admin')
+ await page.getByLabel('密码',{exact:true}).fill('test-password-123')
+ await page.getByRole('button',{name:'登录',exact:true}).click()
+ await page.getByRole('button',{name:'编号冲突测试',exact:true}).click()
+ for(let attempt=0;attempt<2;attempt++){
+  if(attempt)await page.reload()
+  await page.locator('.directory-mark-actions').getByRole('button',{name:'编号',exact:true}).click()
+  const dialog=page.getByRole('dialog')
+  await expect(dialog.getByRole('button',{name:'编号记录',exact:true})).toBeEnabled()
+  await dialog.getByRole('button',{name:'编号记录',exact:true}).click()
+  const record=dialog.locator('.numbering-record')
+  await record.getByText('查看诊断详情',{exact:true}).click()
+  await expect(record.locator('pre')).toHaveText(diagnostic)
+  await record.getByRole('button',{name:'复制诊断',exact:true}).click()
+  await expect(record.getByRole('status')).toHaveText('已复制诊断')
+  expect(await page.evaluate(()=>navigator.clipboard.readText())).toContain(diagnostic)
+ }
+})

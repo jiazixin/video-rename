@@ -9,7 +9,7 @@ import Modal from '../../components/Modal.vue'
 import NumberingDiagnostics from './NumberingDiagnostics.vue'
 import './media-numbering.css'
 
-type Batch={id:string;parent:number;path:string;status:string;created:string;undo_of:string;error:string;total:number;changed:number;items?:{entry:number;old_name:string;new_name:string}[]}
+type Batch={id:string;parent:number;path:string;status:string;created:string;undo_of:string;error:string;processing_log?:string;total:number;changed:number;items?:{entry:number;old_name:string;new_name:string}[]}
 const confirmingClose=ref(false),continueButton=ref<HTMLButtonElement>()
 const task=useNumberingTask()
 const progress=task.progress
@@ -98,7 +98,7 @@ async function recover(batch:Batch){busy.value=true;error.value='';diagnostics.v
   <p v-else-if="!history&&!busy&&!error" class="empty compact">当前目录及子目录中没有可编号的图片或音频</p>
   <div v-if="history" class="numbering-history">
    <p class="help">当前目录及子目录最近 100 次编号操作，按文件夹记录；支持刷新后还原。</p>
-   <article v-for="batch in records" :key="batch.id" class="numbering-record"><div><strong>{{batch.path}} · {{batch.undo_of?'还原':'编号'}} · {{states[batch.status]||batch.status}}</strong><p class="numbering-record-meta"><DateTime :value="batch.created"/><span>{{batch.changed}} 个修改 / {{batch.total}} 个文件</span></p><p v-if="batch.error">{{batch.error}}</p></div><button v-if="batch.status==='committed'&&!batch.undo_of&&batch.changed" :disabled="busy" @click="restore(batch)"><Undo2 :size="15"/>还原本次编号</button><button v-if="['review','running','rollback'].includes(batch.status)" :disabled="busy" @click="recover(batch)">重试恢复原名</button></article>
+   <article v-for="batch in records" :key="batch.id" class="numbering-record"><div><strong>{{batch.path}} · {{batch.undo_of?'还原':'编号'}} · {{states[batch.status]||batch.status}}</strong><p class="numbering-record-meta"><DateTime :value="batch.created"/><span>{{batch.changed}} 个修改 / {{batch.total}} 个文件</span></p><p v-if="batch.error">{{batch.error}}</p><NumberingDiagnostics v-if="batch.processing_log" :message="batch.error" :diagnostics="batch.processing_log"/></div><button v-if="batch.status==='committed'&&!batch.undo_of&&batch.changed" :disabled="busy" @click="restore(batch)"><Undo2 :size="15"/>还原本次编号</button><button v-if="['review','running','rollback'].includes(batch.status)" :disabled="busy" @click="recover(batch)">重试恢复原名</button></article>
    <p v-if="!records.length&&!busy" class="empty compact">暂无编号记录</p>
   </div>
   </div>

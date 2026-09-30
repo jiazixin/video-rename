@@ -32,17 +32,18 @@ type NumberingItem struct {
 	UndoOf    int64  `json:"-"`
 }
 type Numbering struct {
-	ID          string          `json:"id"`
-	Parent      int64           `json:"parent"`
-	Status      string          `json:"status"`
-	Created     string          `json:"created"`
-	UndoOf      string          `json:"undo_of"`
-	Error       string          `json:"error"`
-	Total       int             `json:"total"`
-	Changed     int             `json:"changed"`
-	Items       []NumberingItem `json:"items,omitempty"`
-	Fingerprint string          `json:"-"`
-	Media       string          `json:"-"`
+	ID            string          `json:"id"`
+	Parent        int64           `json:"parent"`
+	Status        string          `json:"status"`
+	Created       string          `json:"created"`
+	UndoOf        string          `json:"undo_of"`
+	Error         string          `json:"error"`
+	ProcessingLog string          `json:"processing_log"`
+	Total         int             `json:"total"`
+	Changed       int             `json:"changed"`
+	Items         []NumberingItem `json:"items,omitempty"`
+	Fingerprint   string          `json:"-"`
+	Media         string          `json:"-"`
 }
 
 func numberingToken() string {
@@ -545,6 +546,7 @@ func (l *Library) Numbering(id string) (Numbering, error) {
 	if err != nil {
 		return b, err
 	}
+	b.decodeNumberingError()
 	rows, err := l.DB.Query(`SELECT entry,version,identity,size,mtime,old_name,new_name,temp_name,current_name,pending_name,operation,undo_of FROM image_numbering_items WHERE batch=? ORDER BY position`, id)
 	if err != nil {
 		return b, err
@@ -578,6 +580,7 @@ func (l *Library) NumberingHistory(parent int64, media string) ([]Numbering, err
 		if err = rows.Scan(&b.ID, &b.Parent, &b.Status, &b.Created, &b.UndoOf, &b.Error, &b.Total, &b.Changed); err != nil {
 			return nil, err
 		}
+		b.decodeNumberingError()
 		result = append(result, b)
 	}
 	return result, rows.Err()
@@ -709,15 +712,30 @@ func (l *Library) ApplyNumberingContext(ctx context.Context, id string, progress
 		}
 		b = persisted
 		cause := err
+		if diagnostic, ok := errors.AsType[*domain.JobError](cause); ok {
+			b.ProcessingLog = diagnostic.ProcessingLog
+		}
+		b.Error = cause.Error()
+		// Save the captured failure before rollback changes the filesystem.
+		if _, saveErr := l.DB.Exec("UPDATE image_numberings SET error=? WHERE id=?", b.numberingErrorRecord(), id); saveErr != nil {
+			l.broken = saveErr
+			return b, fmt.Errorf("保存编号失败现场失败，需重启核对：%w", saveErr)
+		}
 		if recovery := l.rollbackNumbering(&b, path); recovery != nil {
 			b.Status = "review"
 			b.Error = fmt.Sprintf("%v；恢复未完成：%v", cause, recovery)
+			if diagnostic, ok := errors.AsType[*domain.JobError](recovery); ok {
+				b.ProcessingLog += "\n恢复失败现场：\n" + diagnostic.ProcessingLog
+			}
 		} else {
 			b.Status = "rolled_back"
 			b.Error = fmt.Sprintf("操作失败，已恢复原名：%v", cause)
 		}
-		if _, dbErr := l.DB.Exec("UPDATE image_numberings SET status=?,error=? WHERE id=?", b.Status, b.Error, id); dbErr != nil {
+		if _, dbErr := l.DB.Exec("UPDATE image_numberings SET status=?,error=? WHERE id=?", b.Status, b.numberingErrorRecord(), id); dbErr != nil {
 			l.broken = dbErr
+		}
+		if diagnostic, ok := errors.AsType[*domain.JobError](cause); ok {
+			return b, &domain.JobError{Code: diagnostic.Code, Message: b.Error, ProcessingLog: b.ProcessingLog}
 		}
 		return b, errors.New(b.Error)
 	}
@@ -740,7 +758,7 @@ func (l *Library) moveNumbering(b *Numbering, i *NumberingItem, path, target str
 	}
 	i.Pending = target
 	if err := rename.NoReplace(filepath.Join(path, i.Current), filepath.Join(path, target)); err != nil {
-		return err
+		return numberingMoveFailure(b, i, path, target, err)
 	}
 	if err := syncNumberingDir(path); err != nil {
 		return err
@@ -887,6 +905,7 @@ func (l *Library) rollbackNumbering(b *Numbering, path string) error {
 	if _, err := l.DB.Exec("UPDATE image_numberings SET status='rollback' WHERE id=?", b.ID); err != nil {
 		return err
 	}
+	b.Status = "rollback"
 	if err := l.reconcileNumbering(b, path); err != nil {
 		return err
 	}
@@ -957,7 +976,10 @@ func (l *Library) recoverNumbering(id string) (Numbering, error) {
 	if err != nil {
 		b.Status = "review"
 		b.Error = fmt.Sprintf("%s编号恢复未完成：%v", mediaLabel(b.Media), err)
+		if diagnostic, ok := errors.AsType[*domain.JobError](err); ok {
+			b.ProcessingLog += "\n恢复失败现场：\n" + diagnostic.ProcessingLog
+		}
 	}
-	_, dbErr := l.DB.Exec("UPDATE image_numberings SET status=?,error=? WHERE id=?", b.Status, b.Error, id)
+	_, dbErr := l.DB.Exec("UPDATE image_numberings SET status=?,error=? WHERE id=?", b.Status, b.numberingErrorRecord(), id)
 	return b, dbErr
 }

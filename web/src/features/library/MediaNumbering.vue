@@ -7,7 +7,7 @@ import DateTime from '../../components/DateTime.vue'
 import Modal from '../../components/Modal.vue'
 import NumberingDiagnostics from './NumberingDiagnostics.vue'
 import './media-numbering.css'
-type Batch={id:string;parent:number;status:string;created:string;undo_of:string;error:string;total:number;changed:number;items?:{entry:number;old_name:string;new_name:string}[]}
+type Batch={id:string;parent:number;status:string;created:string;undo_of:string;error:string;processing_log?:string;total:number;changed:number;items?:{entry:number;old_name:string;new_name:string}[]}
 const props=defineProps<{directory:number;query:string;sort:string;disabled:boolean;media:'image'|'audio'}>()
 const noun=computed(()=>props.media==='audio'?'音频':'图片')
 const untouched=computed(()=>props.media==='audio'?'视频、图片和目录不变':'视频和目录不变')
@@ -48,7 +48,7 @@ async function recover(batch:Batch){busy.value=true;error.value='';diagnostics.v
   </template>
   <template v-if="history">
    <p class="help">当前目录最近 50 次操作。未完成的操作会在重启时尝试恢复，也可手动重试恢复。</p>
-   <article v-for="batch in records" :key="batch.id" class="numbering-record"><div><strong>{{batch.undo_of?'整批还原':`${noun}编号`}} · {{states[batch.status]||batch.status}}</strong><p class="numbering-record-meta"><DateTime :value="batch.created"/><span>{{batch.changed}} 张修改 / {{batch.total}} 张{{noun}}</span></p><p v-if="batch.error">{{batch.error}}</p></div><button v-if="batch.status==='committed'&&!batch.undo_of&&batch.changed" :disabled="busy" @click="open(batch)"><Undo2 :size="15"/>还原本次编号</button><button v-if="['review','running','rollback'].includes(batch.status)" :disabled="busy" @click="recover(batch)">重试恢复原名</button></article>
+   <article v-for="batch in records" :key="batch.id" class="numbering-record"><div><strong>{{batch.undo_of?'整批还原':`${noun}编号`}} · {{states[batch.status]||batch.status}}</strong><p class="numbering-record-meta"><DateTime :value="batch.created"/><span>{{batch.changed}} 张修改 / {{batch.total}} 张{{noun}}</span></p><p v-if="batch.error">{{batch.error}}</p><NumberingDiagnostics v-if="batch.processing_log" :message="batch.error" :diagnostics="batch.processing_log"/></div><button v-if="batch.status==='committed'&&!batch.undo_of&&batch.changed" :disabled="busy" @click="open(batch)"><Undo2 :size="15"/>还原本次编号</button><button v-if="['review','running','rollback'].includes(batch.status)" :disabled="busy" @click="recover(batch)">重试恢复原名</button></article>
    <p v-if="!records.length&&!busy" class="empty compact">暂无编号记录</p>
   </template>
   <div v-if="!preview" class="modal-actions"><button :disabled="busy" @click="show=false">关闭</button></div>
