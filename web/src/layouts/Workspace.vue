@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { Settings2,FolderOpen,ScrollText,Clock3,LogOut,PanelLeftClose,BarChart3,Images,ListVideo,Coins } from 'lucide-vue-next'
+import { Settings2,FolderOpen,ScrollText,Clock3,LogOut,BarChart3,Images,ListVideo,Coins } from 'lucide-vue-next'
 import { api,session } from '../app/api'
 import { computed,ref } from 'vue'
 const props=defineProps<{page:string;model:string;ready:boolean}>()
-const emit=defineEmits<{navigate:[page:string]}>();const collapsed=ref(false),error=ref('')
+const emit=defineEmits<{navigate:[page:string]}>();const error=ref('')
 const groups=[
  {label:'工作台',items:[{id:'library',name:'文件目录',icon:FolderOpen}]},
  {label:'任务记录',items:[{id:'extractions',name:'抽帧记录',icon:Images},{id:'history',name:'运行记录',icon:ScrollText}]},
@@ -11,12 +11,11 @@ const groups=[
  {label:'分析',items:[{id:'usage/tokens',name:'模型用量',icon:Coins},{id:'usage/analysis',name:'运行分析',icon:BarChart3}]},
  {label:'系统',items:[{id:'settings',name:'系统设置',icon:Settings2}]},
 ]
-const title=computed(()=>groups.flatMap(group=>group.items).find(item=>item.id===props.page)?.name||'文件目录')
 const modelLabel=computed(()=>props.model.split(/[\\/]/).filter(Boolean).at(-1)||'未连接')
 async function logout(){try{await api('/auth/logout','POST',{});session.value=null}catch(e){error.value=(e as Error).message}}
 </script>
 <template>
-<div class="workspace" :class="{collapsed}">
+<div class="workspace">
  <aside class="sidebar">
    <a href="#library" class="brand"><span class="brand-mark"><img src="/logo.png" alt="" width="40" height="40"/></span><span>video-rename</span></a>
   <nav aria-label="主导航">
@@ -30,7 +29,7 @@ async function logout(){try{await api('/auth/logout','POST',{});session.value=nu
     <div class="account"><div class="avatar">{{session?.username.slice(0,1).toUpperCase()}}</div><div class="account-info"><strong :title="session?.username">{{session?.username}}</strong><small>管理员</small></div><button class="icon-btn" aria-label="退出登录" title="退出登录" @click="logout"><LogOut :size="20" :stroke-width="1.8"/></button></div><p v-if="error" class="error">{{error}}</p>
    </div>
  </aside>
- <div class="workspace-main"><header class="topbar"><div><button class="icon-btn sidebar-toggle" aria-label="收起或展开导航" :aria-expanded="!collapsed" @click="collapsed=!collapsed"><PanelLeftClose :size="18"/></button><strong>{{title}}</strong></div></header><main class="page-main"><slot/></main></div>
+ <div class="workspace-main"><main class="page-main"><slot/></main></div>
 </div>
 </template>
 <style scoped>
@@ -67,8 +66,6 @@ async function logout(){try{await api('/auth/logout','POST',{});session.value=nu
 .sidebar .account .icon-btn:hover{color:#282d32;background:#e9edf0}
 .sidebar .account svg{stroke-width:1.8}
 .sidebar-footer>.error{padding:8px 12px;overflow-wrap:anywhere}
-.sidebar-toggle{display:flex}
-.collapsed .sidebar{display:none}.collapsed .workspace-main{margin-left:0}
 @media(max-width:800px){
  .workspace{--sidebar-width:64px}
  .sidebar{padding:0 8px}
