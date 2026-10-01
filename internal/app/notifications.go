@@ -2,6 +2,7 @@ package app
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 	_ "time/tzdata"
 	"video-rename/internal/notifications"
@@ -57,6 +58,17 @@ func (a *App) notificationRoutes(mux *http.ServeMux) {
 		send(w, 200, map[string]string{"message": "测试通知已发送"})
 	})
 	mux.HandleFunc("GET /api/notifications/history", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Has("page") || r.URL.Query().Has("size") {
+			page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+			size, _ := strconv.Atoi(r.URL.Query().Get("size"))
+			v, err := a.Notifications.ListHistoryPage(r.Context(), page, size)
+			if err != nil {
+				failure(w, err)
+				return
+			}
+			send(w, 200, v)
+			return
+		}
 		v, err := a.Notifications.History()
 		if err != nil {
 			failure(w, err)

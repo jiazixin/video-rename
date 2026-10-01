@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"video-rename/internal/config"
+	"video-rename/internal/notifications"
 )
 
 func TestNotificationEndpointsRequireSessionAndCSRF(t *testing.T) {
@@ -33,6 +34,18 @@ func TestNotificationEndpointsRequireSessionAndCSRF(t *testing.T) {
 	var session map[string]string
 	json.Unmarshal(w.Body.Bytes(), &session)
 	cookies := w.Result().Cookies()
+	for _, url := range []string{"/api/notifications/history?page=99&size=100", "/api/notifications/history?size=200", "/api/notifications/history?page=invalid&size=-1"} {
+		w = httptest.NewRecorder()
+		r = httptest.NewRequest("GET", url, nil)
+		for _, c := range cookies {
+			r.AddCookie(c)
+		}
+		a.Handler().ServeHTTP(w, r)
+		var page notifications.HistoryPage
+		if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil || w.Code != 200 || page.Page != 1 || page.Items == nil || page.Total != 0 {
+			t.Fatal("invalid history page", w.Code, w.Body.String(), err)
+		}
+	}
 	for _, csrf := range []bool{false, true} {
 		w = httptest.NewRecorder()
 		r = httptest.NewRequest("PUT", "/api/notifications/webhook", strings.NewReader(`{"enabled":true,"endpoint":"file:///etc/passwd"}`))

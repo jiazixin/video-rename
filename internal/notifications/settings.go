@@ -11,7 +11,7 @@ import (
 	"video-rename/internal/storage"
 )
 
-var Kinds = []string{"wecom", "telegram", "dingtalk", "bark", "webhook"}
+var Kinds = []string{"dingtalk", "wecom", "bark", "telegram", "webhook"}
 var Names = map[string]string{"wecom": "企业微信", "telegram": "Telegram", "dingtalk": "钉钉", "bark": "Bark", "webhook": "Webhook"}
 
 type Credentials struct {

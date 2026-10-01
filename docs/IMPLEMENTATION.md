@@ -118,6 +118,8 @@ GET /api/entries/status?ids=... 返回最多 300 个条目的当前状态（不�
 
 ## 批次通知与诊断扩展
 
+通知设置依次展示钉钉、企业微信、Bark、Telegram、自定义（Webhook）。发送记录使用 `GET /api/notifications/history?page=1&size=50`，返回 `items/total/page/size`；按 ID 倒序，在同一读事务内计数并读取当前页，越界页码收敛，空列表为第一页，每页支持 50 / 100 / 200 条。无分页参数的既有调用仍返回最近 30 条数组。前端复用 `SelectField` 与 `PageNavigation`，切换条数回第一页，刷新和轮询保留页码，请求序号避免迟到响应覆盖当前列表。
+
 notification_channels 保存渠道，notification_deliveries 保存发送队列，runs.started 记录实际开始时刻。独立 notifications worker 每 3 秒发现新终态批次、持久化通知并发送；每渠道/批次唯一键去重，启动恢复 sending 为 pending，失败最多三次（30 秒、60 秒退避）。关闭配置取消待发送项；重新启用从最新批次 ID 开始。通知失败不修改任务状态。HTTP 禁止重定向，限制响应 64 KiB，校验渠道业务码，错误文本不回显远端正文或含密钥 URL。
 
 operations 保存脱敏请求/响应，run_items.original_path 保存原始路径。成功模型结果经 pipeline 捕获后与 prepared 操作一起持久化，完成或崩溃恢复时写入成功事件，诊断接口支持成功与失败记录。图片负载省略、凭据脱敏、每项 128 KiB 限制沿用既有实现。GET /api/runs/{id} 返回目标显示路径，items 返回原始与当前路径，详情支持每页 100 项翻页。
