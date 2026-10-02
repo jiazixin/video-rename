@@ -227,7 +227,7 @@ test('迟到的第二页响应不覆盖新搜索，真实错误在当前页可�
 })
 
 
-test('长列表下滑后操作、分页与表头保持可用，窄屏表头同步横向滚动',async({page})=>{
+test('红框工具区随页面上移后吸顶，标题与目录信息滚走，窄屏表头同步横向滚动',async({page})=>{
  await setup(page,'分页体验-固定表头')
  const controls=page.locator('.library-fixed-controls'),actions=page.locator('.directory-action-row>button')
  const nav=page.getByRole('navigation',{name:'分页导航',exact:true})
@@ -242,9 +242,18 @@ test('长列表下滑后操作、分页与表头保持可用，窄屏表头同�
  const title=(await page.getByRole('heading',{name:'文件目录.'}).boundingBox())!
  expect(tops[0]).toBeGreaterThanOrEqual(title.y+title.height)
  await page.screenshot({path:'test-results/library-actions-desktop.png'})
+ const initialTop=await controls.evaluate(el=>el.getBoundingClientRect().top)
+ expect(initialTop).toBeGreaterThan(100)
+ await page.evaluate(()=>window.scrollTo(0,60))
+ await expect.poll(()=>controls.evaluate(el=>el.getBoundingClientRect().top)).toBeCloseTo(initialTop-60,0)
+ await expect.poll(aligned).toBeLessThan(2)
  await page.evaluate(()=>window.scrollTo(0,1600))
  await expect.poll(()=>controls.evaluate(el=>Math.abs(el.getBoundingClientRect().top))).toBeLessThan(1)
  await expect.poll(aligned).toBeLessThan(2)
+ for(const selector of ['.library-heading','.directory-toolbar']){
+  expect(await page.locator(selector).evaluate(el=>el.getBoundingClientRect().bottom)).toBeLessThan(0)
+ }
+ expect(await controls.locator('.filterbar').evaluate(el=>el.getBoundingClientRect().top)).toBeLessThan(2)
  // Sample immediately after each scroll, before a JS scroll handler could move
  // the header, to catch the old frame-by-frame vertical jitter.
  const jitter=await page.evaluate(async()=>{
@@ -276,6 +285,9 @@ test('长列表下滑后操作、分页与表头保持可用，窄屏表头同�
   const rect=el.getBoundingClientRect(),nav=el.querySelector('.page-navigation')!.getBoundingClientRect()
   return nav.bottom<=rect.bottom
  })).toBe(true)
+ for(const selector of ['.library-heading','.directory-toolbar']){
+  expect(await page.locator(selector).evaluate(el=>el.getBoundingClientRect().bottom)).toBeLessThan(0)
+ }
  const mobileButtons=await actions.evaluateAll(buttons=>buttons.map(button=>{const r=button.getBoundingClientRect();return {left:r.left,right:r.right}}))
  for(const button of mobileButtons){expect(button.left).toBeGreaterThanOrEqual(0);expect(button.right).toBeLessThanOrEqual(390)}
  await page.locator('.library-file-rows .table-scroll').evaluate(el=>{el.scrollLeft=400})
@@ -293,4 +305,12 @@ test('长列表下滑后操作、分页与表头保持可用，窄屏表头同�
  await nav.getByRole('button',{name:'跳转',exact:true}).click()
  await expect(page.locator('tbody tr').first()).toContainText('clip200.mp4')
  await expect(page.locator('.batch-toolbar strong')).toHaveText('已选 100 项')
+ await page.getByRole('button',{name:'退出多选',exact:true}).click()
+ await expect(page.locator('.batch-toolbar')).toHaveCount(0)
+ await expect.poll(aligned).toBeLessThan(2)
+ await expect.poll(()=>controls.evaluate(el=>Math.abs(el.getBoundingClientRect().top))).toBeLessThan(1)
+ await page.evaluate(()=>window.scrollTo(0,0))
+ await expect.poll(()=>controls.evaluate(el=>el.getBoundingClientRect().top)).toBeGreaterThan(100)
+ expect(await page.locator('.library-heading').evaluate(el=>el.getBoundingClientRect().top)).toBeGreaterThan(0)
+ await expect.poll(aligned).toBeLessThan(2)
 })

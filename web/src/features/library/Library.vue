@@ -378,13 +378,15 @@ function deactivate(){
 onActivated(activate);onDeactivated(deactivate);onUnmounted(()=>{deactivate();disposed=true})
 </script>
 <template><section ref="listRoot" class="library-page">
-<div ref="fixedControls" class="library-fixed-controls">
 <div class="page-heading library-heading"><h1>文件目录<span class="title-dot">.</span></h1><div class="heading-actions directory-mark-actions" role="group" aria-label="当前目录操作">
  <div class="directory-action-row"><button class="library-action action-extract" aria-label="抽帧当前目录" :disabled="busy||!page||!!page.directory.task_status" @click="open(page!.directory,'extract')"><Images :size="16"/>抽帧</button><button class="library-action action-name" aria-label="重命名当前目录" :disabled="!ready||!page||!!page.directory.task_status" @click="open(page!.directory,'auto')"><Sparkles :size="16"/>重命名</button><DirectoryNumbering :directory="dir" :disabled="busy||!page||!!page.directory.task_status" @changed="preview=undefined;clearSelection();syncEntries()"/><button class="library-action action-mark" title="将当前目录及子目录中的现有视频标记为已处理，自动命名会跳过" :disabled="!page" @click="openMark([page!.directory],true)"><CircleCheck :size="16"/>标记</button><button class="library-action action-unmark" title="清除当前目录及子目录中视频的已处理标记，允许再次自动命名；文件名不变" :disabled="!page" @click="openMark([page!.directory],false)"><CircleMinus :size="16"/>取消标记</button></div>
 </div></div>
 <ToastNotice ref="toast" /><div v-if="error" class="notice error" role="alert">{{error}}<button @click="enter(1)">返回媒体库</button><button @click="load()">重试</button></div>
-<div class="panel file-panel library-panel-controls">
+<div class="panel file-panel library-directory-overview">
 <div class="panel-toolbar directory-toolbar"><div class="breadcrumbs"><button @click="enter(1)"><Home :size="15"/>媒体库</button><template v-for="crumb in page?.breadcrumbs.filter(x=>x.id!==1)" :key="crumb.id"><ChevronRight :size="13"/><button @click="enter(crumb.id)">{{crumb.name}}</button></template></div><div class="directory-summary"><DirectoryStatus v-if="page?.directory.progress" :entry="page.directory"/><div class="directory-refresh-summary"><DirectoryContents inline :contents="page?.directory.contents"/><button :disabled="busy" @click="refresh"><RefreshCw :size="16" :class="{spin:busy}"/>刷新</button></div></div></div>
+</div>
+<div ref="fixedControls" class="library-fixed-controls">
+<div class="panel file-panel library-panel-controls">
 <div class="filterbar"><button :aria-pressed="multi" @click="multi=!multi;clearSelection()">{{multi?'退出多选':'多选'}}</button><div class="search-input"><Search :size="16"/><input v-model="q" placeholder="搜索当前目录…" aria-label="搜索当前目录" @input="search"/></div><SelectField v-model="kind" @change="pageNumber=1;load()" label="类型筛选" :options="[{value:'',label:'全部类型'},{value:'directory',label:'目录'},{value:'video',label:'视频'},{value:'image',label:'图片'},{value:'audio',label:'音频'},{value:'other',label:'其他文件'}]"/><MediaNumbering v-if="kind==='image'||kind==='audio'" :media="kind" :directory="dir" :query="q" :sort="sort" :disabled="busy||!page||!!page.refreshing||!!page.directory.task_status" @changed="preview=undefined;clearSelection();syncEntries()"/><div class="filter-spacer"/><span class="subtle">共 {{page?.total??0}} 项 · {{page?.items.length||0}} 项 / 当前页</span></div>
 <div v-if="multi" class="batch-toolbar"><strong>已选 {{chosen.size}} 项</strong><button title="全选本页" @click="selectPage()">全选</button><button title="反选本页" @click="selectPage(true)">反选</button><button :disabled="!chosen.size" @click="clearSelection()">清空</button><span class="batch-delete-group"><span class="batch-divider" aria-hidden="true"/><button class="delete-confirm" :disabled="saving||!chosen.size" @click="confirmBatchDelete"><Trash2 :size="15"/>删除</button><span class="batch-divider" aria-hidden="true"/></span><button class="library-action action-extract" :disabled="!extractEntries.length" @click="startBatch('extract')"><Images :size="15"/>抽帧</button><button class="library-action action-name" :disabled="!ready||!autoEntries.length" @click="startBatch('auto')"><Sparkles :size="15"/>命名</button><span class="batch-divider" aria-hidden="true"/><button class="library-action action-mark" title="将选中目标中的视频标记为已处理，目录包含子目录" :disabled="!markEntries.length" @click="openMark(markEntries,true)"><CircleCheck :size="15"/>标记已处理</button><button class="library-action action-unmark" title="清除选中目标中视频的已处理标记，文件名不变" :disabled="!markEntries.length" @click="openMark(markEntries,false)"><CircleMinus :size="15"/>取消标记</button><button :disabled="!restoreEntries.length" @click="startBatch('restore')"><Undo2 :size="15"/>还原</button></div>
 <div v-if="page?.error" class="notice error">目录同步失败：{{page.error}}</div><div class="pagination"><span class="subtle">{{page?.refreshed?`更新于 ${time(page.refreshed)}`:'等待首次同步'}}</span><SelectField v-model="limit" @change="pageNumber=1;load()" label="每页条目数" :options="[{value:50,label:'50 项 / 页'},{value:100,label:'100 项 / 页'},{value:200,label:'200 项 / 页'}]"/><PageNavigation :page="pageNumber" :total-pages="Math.max(1,Math.ceil((page?.total||0)/limit))" :disabled="busy" @change="pageNumber=$event;load()"/></div></div>
@@ -432,7 +434,7 @@ onActivated(activate);onDeactivated(deactivate);onUnmounted(()=>{deactivate();di
 </template>
 
 <style scoped>
-.library-fixed-controls{position:sticky;top:0;z-index:6;background:white;padding-top:12px;margin-top:-12px}
+.library-fixed-controls{position:sticky;top:0;z-index:6;background:white}
 .library-heading{flex-direction:column;align-items:flex-start;gap:16px;margin-bottom:24px}
 .library-heading h1{margin:0;white-space:nowrap}
 .library-table-header{position:absolute;top:100%;left:0;right:0;border:1px solid var(--line);border-top:0;background:#fafbfc;overflow-x:auto;scrollbar-width:none}
@@ -440,26 +442,27 @@ onActivated(activate);onDeactivated(deactivate);onUnmounted(()=>{deactivate();di
 .library-table-header .file-table{table-layout:fixed;border-collapse:separate;border-spacing:0}
 .library-table-header :deep(th){width:auto}
 .library-table-header :deep(th:last-child){text-align:right}
-.library-panel-controls{border-radius:12px 12px 0 0;overflow:visible}
+.library-directory-overview{border-radius:12px 12px 0 0}
+.library-panel-controls{border-top:0;border-radius:0;overflow:visible}
 .library-file-rows{border-top:0;border-radius:0 0 12px 12px}
 .library-file-rows .file-table{border-collapse:separate;border-spacing:0}
 .library-file-rows :deep(thead){visibility:hidden}
 .library-panel-controls .pagination{border-top:0}
 .library-panel-controls .filterbar{flex-wrap:wrap}
 @media(max-width:800px){
- .library-fixed-controls .page-heading{margin-bottom:12px;gap:8px}
- .library-panel-controls .panel-toolbar{padding:10px 12px;gap:8px}
+ .library-page .page-heading{margin-bottom:12px;gap:8px}
+ .library-directory-overview .panel-toolbar{padding:10px 12px;gap:8px}
  .library-panel-controls .filterbar{padding:8px 12px;gap:8px}
  .library-panel-controls .batch-toolbar{flex-wrap:nowrap;overflow-x:auto;padding:8px 12px}
  .library-panel-controls .batch-toolbar>*{flex-shrink:0;white-space:nowrap}
  .library-panel-controls .pagination{padding:8px 12px;gap:8px}
 }
 @media(max-width:600px){
- .library-fixed-controls .page-heading h1{font-size:22px;margin-bottom:0}
- .library-panel-controls .directory-toolbar{position:relative}
- .library-panel-controls .breadcrumbs{padding-right:42px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}
- .library-panel-controls .breadcrumbs button{white-space:nowrap;flex-shrink:0}
- .library-panel-controls .directory-refresh-summary>button{position:absolute;top:8px;right:12px;width:44px;min-height:44px;font-size:0;padding:8px;gap:0}
+ .library-page .page-heading h1{font-size:22px;margin-bottom:0}
+ .library-directory-overview .directory-toolbar{position:relative}
+ .library-directory-overview .breadcrumbs{padding-right:42px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}
+ .library-directory-overview .breadcrumbs button{white-space:nowrap;flex-shrink:0}
+ .library-directory-overview .directory-refresh-summary>button{position:absolute;top:8px;right:12px;width:44px;min-height:44px;font-size:0;padding:8px;gap:0}
  .library-panel-controls .filterbar{display:grid;grid-template-columns:auto minmax(0,1fr)}
  .library-panel-controls .filterbar .search-input{min-width:0;width:100%}
  .library-panel-controls .filterbar>.subtle{font-size:10px;text-align:right}
