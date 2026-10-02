@@ -171,3 +171,78 @@ func TestLoginRateLimitCountsFailuresOnly(t *testing.T) {
 		t.Fatalf("达到失败上限后应为 429, got %d", code)
 	}
 }
+
+func TestCookieSecuritySurvivesProxyRenewal(t *testing.T) {
+	for _, tc := range []struct {
+		name, url, origin string
+		secure            bool
+	}{
+		{"TLS", "https://example.test", "", true},
+		{"HTTPS proxy", "http://example.test", "https://example.test", true},
+		{"HTTP LAN ignores forwarded header", "http://example.test", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, err := storage.Open(filepath.Join(t.TempDir(), "sessions.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			a := New(db, config.AuthConfig{Username: "admin", Password: "test-password"})
+			handler := a.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+			login := httptest.NewRequest("POST", tc.url+"/api/auth/login", strings.NewReader(`{"username":"admin","password":"test-password"}`))
+			login.Header.Set("Content-Type", "application/json")
+			login.Header.Set("Origin", tc.origin)
+			login.Header.Set("X-Forwarded-Proto", "https")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, login)
+			cookies := response.Result().Cookies()
+			if response.Code != 200 || len(cookies) != 1 || cookies[0].Secure != tc.secure {
+				t.Fatalf("login=%d cookies=%v", response.Code, cookies)
+			}
+			var session map[string]string
+			if err := json.Unmarshal(response.Body.Bytes(), &session); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec("UPDATE sessions SET expires=?", time.Now().Add(time.Hour).Unix()); err != nil {
+				t.Fatal(err)
+			}
+			// The TLS proxy forwards this GET as HTTP, without an Origin header.
+			renew := httptest.NewRequest("GET", "http://example.test/api/auth/session", nil)
+			renew.AddCookie(cookies[0])
+			response = httptest.NewRecorder()
+			handler.ServeHTTP(response, renew)
+			refreshed := response.Result().Cookies()
+			if response.Code != 200 || len(refreshed) != 1 || refreshed[0].Secure != tc.secure || refreshed[0].Value != cookies[0].Value {
+				t.Fatalf("renewal=%d cookies=%v", response.Code, refreshed)
+			}
+			var renewed map[string]string
+			if err := json.Unmarshal(response.Body.Bytes(), &renewed); err != nil || renewed["csrf"] != session["csrf"] {
+				t.Fatal("renewal changed CSRF token", renewed, err)
+			}
+			post := httptest.NewRequest("POST", "http://example.test/api/data", strings.NewReader("{}"))
+			post.AddCookie(refreshed[0])
+			post.Header.Set("Content-Type", "application/json")
+			post.Header.Set("X-CSRF-Token", session["csrf"])
+			response = httptest.NewRecorder()
+			handler.ServeHTTP(response, post)
+			if response.Code != 204 {
+				t.Fatal("authenticated mutation failed after renewal", response.Code)
+			}
+			post.Header.Set("Origin", "https://evil.test")
+			response = httptest.NewRecorder()
+			handler.ServeHTTP(response, post)
+			if response.Code != 403 {
+				t.Fatal("forged origin bypassed CSRF", response.Code)
+			}
+			forged := *cookies[0]
+			forged.Value = secureSessionPrefix + forged.Value
+			renew = httptest.NewRequest("GET", "http://example.test/api/auth/session", nil)
+			renew.AddCookie(&forged)
+			response = httptest.NewRecorder()
+			handler.ServeHTTP(response, renew)
+			if response.Code != 401 {
+				t.Fatal("forged token prefix authenticated", response.Code)
+			}
+		})
+	}
+}

@@ -26,8 +26,9 @@ import (
 // renewal margin and must re-issue the cookie, or the browser would drop
 // the session at the original MaxAge even though SQLite still accepts it.
 const (
-	sessionLifetime  = 12 * time.Hour
-	sessionRenewLeft = sessionLifetime / 2
+	sessionLifetime     = 12 * time.Hour
+	sessionRenewLeft    = sessionLifetime / 2
+	secureSessionPrefix = "secure."
 )
 
 type Auth struct {
@@ -141,7 +142,10 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 		}
 		if r.URL.Path != "/api/auth/logout" && expiry-time.Now().Unix() < int64(sessionRenewLeft/time.Second) {
 			if _, err = a.DB.Exec("UPDATE sessions SET expires=? WHERE token=? AND fingerprint=?", time.Now().Add(sessionLifetime).Unix(), hash(cookie.Value), a.fingerprint); err == nil {
-				http.SetCookie(w, &http.Cookie{Name: "vr_session", Value: cookie.Value, Path: "/", MaxAge: int(sessionLifetime / time.Second), HttpOnly: true, Secure: secureCookie(r), SameSite: http.SameSiteStrictMode})
+				// The token's hash authenticates the original cookie policy, so a
+				// proxied GET without Origin cannot downgrade an HTTPS session.
+				secure := secureCookie(r) || strings.HasPrefix(cookie.Value, secureSessionPrefix)
+				http.SetCookie(w, &http.Cookie{Name: "vr_session", Value: cookie.Value, Path: "/", MaxAge: int(sessionLifetime / time.Second), HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
 			}
 		}
 		if r.URL.Path == "/api/auth/session" && r.Method == "GET" {
@@ -183,6 +187,10 @@ func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token, csrf := Token(), Token()
+	secure := secureCookie(r)
+	if secure {
+		token = secureSessionPrefix + token
+	}
 	tx, err := a.DB.Begin()
 	if err != nil {
 		fail(w, 503, "登录暂不可用")
@@ -200,7 +208,7 @@ func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
 		fail(w, 503, "登录暂不可用")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "vr_session", Value: token, Path: "/", MaxAge: int(sessionLifetime / time.Second), HttpOnly: true, Secure: secureCookie(r), SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: "vr_session", Value: token, Path: "/", MaxAge: int(sessionLifetime / time.Second), HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
 	write(w, 200, map[string]string{"username": a.Config.Username, "csrf": csrf})
 }
 

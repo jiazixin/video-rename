@@ -67,6 +67,25 @@ test('指标卡、趋势图与散点渲染',async({page})=>{
  await page.screenshot({path:'test-results/usage-analysis-desktop.png',fullPage:true,animations:'disabled'})
 })
 
+test('有数据明细窄屏标题完整且分页换行',async({page})=>{
+ await login(page)
+ await page.route('**/api/runs/analytics*',route=>route.fulfill({json:fixture()}))
+ await page.setViewportSize({width:390,height:844})
+ await page.goto('/#usage/analysis')
+ const title=page.getByRole('heading',{name:'批次明细',exact:true})
+ const panel=page.locator('.panel').filter({has:title})
+ const navigation=panel.getByRole('navigation',{name:'分页导航'})
+ await expect(title).toBeVisible()
+ await expect.poll(()=>title.evaluate(el=>{const range=document.createRange();range.selectNodeContents(el);return range.getClientRects().length})).toBe(1)
+ const headingBox=(await title.boundingBox())!,navigationBox=(await navigation.boundingBox())!,panelBox=(await panel.boundingBox())!
+ expect(navigationBox.y).toBeGreaterThanOrEqual(headingBox.y+headingBox.height)
+ expect(navigationBox.x).toBeGreaterThanOrEqual(panelBox.x)
+ expect(navigationBox.x+navigationBox.width).toBeLessThanOrEqual(panelBox.x+panelBox.width)
+ await expect(panel.locator('tbody tr')).toHaveCount(3)
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy()
+ await panel.screenshot({path:'test-results/usage-analysis-detail-mobile.png',animations:'disabled'})
+})
+
 test('明细排序与筛选请求参数',async({page})=>{
  await login(page)
  const data=fixture()
@@ -119,6 +138,7 @@ test('空区间显示无数据而不是伪造零值',async({page})=>{
  await expect(page.getByText('还没有可统计的逐项耗时',{exact:true})).toBeVisible()
  await expect(page.getByText('区间内没有批次记录',{exact:true})).toBeVisible()
  await page.setViewportSize({width:390,height:844})
+ await expect.poll(()=>page.locator('.usage-trend').evaluateAll(plots=>plots.every(el=>el.querySelector('svg')!.getBoundingClientRect().width<=el.clientWidth))).toBe(true)
  await page.screenshot({path:'test-results/usage-analysis-mobile.png',fullPage:true,animations:'disabled'})
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy()
 })

@@ -61,8 +61,8 @@ func TestIntegrationProbeAndExtractLandscape(t *testing.T) {
 	if meta.DisplayWidth != 640 || meta.DisplayHeight != 360 {
 		t.Fatalf("显示尺寸 = %dx%d", meta.DisplayWidth, meta.DisplayHeight)
 	}
-	if meta.Duration < 4*time.Second || meta.Duration > 6*time.Second {
-		t.Errorf("时长 = %v", meta.Duration)
+	if meta.Duration != 5*time.Second {
+		t.Fatalf("生成的 5 秒视频探测时长 = %v", meta.Duration)
 	}
 
 	s := NewSampler(loadDefaultSampling(t))
@@ -70,8 +70,16 @@ func TestIntegrationProbeAndExtractLandscape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.TargetN != 3 {
-		t.Errorf("5 秒视频应取 3 帧: %d", plan.TargetN)
+	// Default duration sampling asks for 8 frames, bounded by the 4 whole
+	// seconds in the window after skipping the first and last 5 percent.
+	wantTimes := []time.Duration{812500 * time.Microsecond, 1937500 * time.Microsecond, 3062500 * time.Microsecond, 4187500 * time.Microsecond}
+	if plan.TargetN != 4 || plan.WindowStart != 250*time.Millisecond || plan.WindowLen != 4500*time.Millisecond || len(plan.Times) != len(wantTimes) {
+		t.Fatalf("5 秒视频应在 [0.25s, 4.75s] 窗口取 4 帧: %+v", plan)
+	}
+	for i, at := range wantTimes {
+		if plan.Times[i] != at {
+			t.Errorf("采样点 %d = %v, 期望 %v", i, plan.Times[i], at)
+		}
 	}
 
 	ex := &Extractor{FFmpegPath: lookTool(t, "ffmpeg"), Images: defaultImages()}
@@ -80,13 +88,16 @@ func TestIntegrationProbeAndExtractLandscape(t *testing.T) {
 		t.Fatal(jerr)
 	}
 	defer os.RemoveAll(set.TempDir)
-	if len(set.Frames) != 3 {
-		t.Fatalf("应提取 3 帧: %d (failed=%+v warn=%v)", len(set.Frames), set.Failed, set.Warn)
+	if len(set.Frames) != 4 {
+		t.Fatalf("应提取 4 帧: %d (failed=%+v warn=%v)", len(set.Frames), set.Failed, set.Warn)
 	}
 	for i, fr := range set.Frames {
 		// 640x360 < 768:不放大
 		if fr.Width != 640 || fr.Height != 360 {
 			t.Errorf("帧 %d 尺寸 %dx%d, 期望 640x360(不放大)", i, fr.Width, fr.Height)
+		}
+		if fr.Planned != wantTimes[i] || fr.Actual != wantTimes[i] {
+			t.Errorf("帧 %d 时间点 planned=%v actual=%v, 期望 %v", i, fr.Planned, fr.Actual, wantTimes[i])
 		}
 	}
 }

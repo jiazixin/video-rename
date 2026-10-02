@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"video-rename/internal/domain"
 )
@@ -100,6 +101,52 @@ func TestTruncateToBytes(t *testing.T) {
 	}
 	if _, jerr := TruncateToBytes("标题", 2, ".mp4"); jerr == nil {
 		t.Error("预算过小应报错")
+	}
+}
+
+func TestTruncateToBytesUnicodeBoundaries(t *testing.T) {
+	for _, c := range []struct {
+		budget int
+		want   string
+	}{
+		{-1, ""}, {0, ""}, {1, "a"}, {2, "a"}, {3, "a"}, {4, "a字"},
+		{5, "a字"}, {6, "a字"}, {7, "a字"}, {8, "a字😀"}, {9, "a字😀b"},
+	} {
+		got, err := TruncateToBytes("a字😀b", c.budget, ".mp4")
+		if c.want == "" {
+			if err == nil {
+				t.Fatalf("budget %d accepted an empty title", c.budget)
+			}
+			continue
+		}
+		if err != nil || got != c.want || !utf8.ValidString(got) {
+			t.Fatalf("budget %d: got %q, want %q, error %v", c.budget, got, c.want, err)
+		}
+	}
+}
+
+func TestAllocateLargeModelTitle(t *testing.T) {
+	// A title close to the model response budget must be truncated promptly,
+	// including again when a conflict suffix consumes part of the byte budget.
+	title := strings.Repeat("字😀a", 120*1024)
+	dir := t.TempDir()
+	job, _ := newFile(t, dir, "source.mp4")
+	a := NewAllocator()
+	for attempt := range 2 {
+		result, err := a.Allocate(dir, title, ".mp4", job)
+		if err != nil {
+			t.Fatal(err)
+		}
+		name := filepath.Base(result.Target)
+		if len(name) > MaxFilenameBytes || !utf8.ValidString(name) {
+			t.Fatalf("invalid filename: %q", name)
+		}
+		if attempt == 1 && !strings.HasSuffix(name, " (2).mp4") {
+			t.Fatalf("missing conflict suffix: %q", name)
+		}
+		if err := os.WriteFile(result.Target, []byte("occupied"), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

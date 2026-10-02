@@ -4,7 +4,28 @@ import (
 	"encoding/json/v2"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
+
+func TestDiagnosticClippingPreservesUTF8AndTotalBudget(t *testing.T) {
+	for _, prefix := range []string{"", "a", "ab"} {
+		raw, err := json.Marshal(map[string]string{"content": prefix + strings.Repeat("标题", 30000)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := diagnosticBody(raw, "")
+		if len(got) > 128*1024 || !utf8.ValidString(got) || !strings.Contains(got, "diagnostic truncated") {
+			t.Fatalf("invalid clipped diagnostic: bytes=%d valid=%v", len(got), utf8.ValidString(got))
+		}
+		// The API must be able to encode the captured diagnostic as a string.
+		if _, err := json.Marshal(got); err != nil {
+			t.Fatal("clipped diagnostic cannot be returned by API", err)
+		}
+	}
+	if got := diagnosticBody([]byte{0xff, 0xfe}, ""); !utf8.ValidString(got) {
+		t.Fatal("malformed response bytes cannot be returned as diagnostic")
+	}
+}
 
 func TestDiagnosticRedaction(t *testing.T) {
 	raw := []byte(`{"api_key":"secret","messages":[{"content":[{"image_url":{"url":"data:image/jpeg;base64,AAAA"}},{"source":{"type":"base64","data":"BBBB"}}]}],"echo":"secret","finish_reason":"length","reasoning_content":"still thinking"}`)

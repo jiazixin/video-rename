@@ -1,6 +1,6 @@
 # 当前架构与行为
 
-更新：2026-09-27。当前功能入口见 [README](../README.md)，实现细节见 [开发说明](IMPLEMENTATION.md)。目录规则统一引用根 [目录规范](../目录规范.md)。
+更新：2026-10-02。当前功能入口见 [README](../README.md)，实现细节见 [开发说明](IMPLEMENTATION.md)。目录规则统一引用根 [目录规范](../目录规范.md)。
 
 ## 服务形态
 
@@ -39,7 +39,7 @@ YAML 只保存监听地址、媒体根目录、持久数据和缓存目录、管
 
 ## SQLite 结构
 
-唯一建表资源是 `internal/storage/schema.sql`；初始化器在空数据库内事务创建全部表和索引。当前结构标识为 20260927，已有不同结构会被拒绝，不执行迁移、历史回填或重建。需要使用新的 storage 目录，已有数据库和媒体保持原状。
+唯一建表资源是 `internal/storage/schema.sql`；初始化器在空数据库内事务创建全部表和索引。当前结构标识为 20260929，已有不同结构会被拒绝，不执行迁移、历史回填或重建。需要使用新的 storage 目录，已有数据库和媒体保持原状。
 
 | 数据组 | 表 |
 | --- | --- |
@@ -47,10 +47,10 @@ YAML 只保存监听地址、媒体根目录、持久数据和缓存目录、管
 | 改名与保护 | operations、events、marks、image_numberings、image_numbering_items |
 | 任务与计划 | runs、run_items、schedules、schedule_ticks、extraction_records |
 | 模型与设置 | model_configs、prompts、sampling_settings、system_settings |
-| 统计 | run_token_usage、token_usage_records |
+| 统计与请求诊断 | run_token_usage、token_usage_records、model_attempts |
 | 认证与通知 | sessions、notification_channels、notification_deliveries、notification_preferences |
 
-数据库使用 WAL、FULL 同步、单连接短事务和实例锁。连接重建时重新启用外键、同步及 busy_timeout。实体 ID 不复用，避免历史引用或已用游标指向新实体。模型配置必须引用存在的提示词；计划保存事务内检查模型引用，模型删除检查计划使用情况。
+数据库使用 WAL、FULL 同步、单写连接和最多4个只读连接，以及实例锁。连接重建时重新启用外键、同步及 busy_timeout。实体 ID 不复用，避免历史引用或已用游标指向新实体。模型配置必须引用存在的提示词；计划保存事务内检查模型引用，模型删除检查计划使用情况。
 
 目录索引先完成新 generation 再切换。分页、排序和汇总读取完整 generation；首次建立索引显示待统计，后台刷新可继续展示上一次完整结果。文件使用设备号、inode、大小和修改时刻核对，路径由受约束的父子条目关系构建。
 
@@ -58,7 +58,7 @@ YAML 只保存监听地址、媒体根目录、持久数据和缓存目录、管
 
 手动命名、自动命名与还原共用 library 提交逻辑：核对根目录和祖先路径、文件快照及目标冲突，先持久化 prepared 操作，再执行平台原子 no-replace 改名及目录同步，最后提交索引、历史与处理标记。不能覆盖已有目标。
 
-还原要求当前身份、内容和操作链仍匹配，逐次撤销最近有效命名。恢复原名时保留原扩展名大小写；手动和自动命名统一使用小写扩展名。批量还原逐项提交，失败项可重试，不提供跨文件事务。
+还原要求当前身份、内容和操作链仍匹配，逐次撤销最近有效命名。恢复原名时保留原扩展名大小写；手动和自动命名统一使用小写扩展名，JPEG统一为`.jpg`；编号也沿用JPEG规则。批量还原逐项提交，失败项可重试，不提供跨文件事务。
 
 图片与音频编号先生成冻结预览，再用唯一临时名完成两阶段移动。移动前写日志，启动时根据 current/pending 名称和文件身份恢复；证据不一致时进入 review，阻止相关范围继续改名，等待核对。此机制是当前文件安全功能，保留完整实现。
 

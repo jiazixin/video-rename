@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +23,44 @@ func TestMissingRecordFailureUsesReadableMessage(t *testing.T) {
 		}
 		if w.Code != 404 || result["code"] != "NOT_FOUND" || result["request_id"] == "" || result["message"] != "请求的记录不存在或已删除，请刷新页面后重试" {
 			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestHistoryDateFiltersCompareInstants(t *testing.T) {
+	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	for _, stamp := range []string{"2026-10-02T00:00:00Z", "2026-10-02T00:00:01.5Z", "2026-10-02T00:00:02Z"} {
+		if _, err := a.DB.Exec("INSERT INTO events(category,action,created) VALUES('success','manual',?)", stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, bounds := range [][2]string{
+		{"2026-10-02T00:00:00.000Z", "2026-10-02T00:00:02.000Z"},
+		{"2026-10-02T08:00:00+08:00", "2026-10-02T08:00:02+08:00"},
+		{"2026-10-01", "2026-10-03"},
+	} {
+		query := url.Values{"category": {"success"}, "page": {"1"}, "from": {bounds[0]}, "to": {bounds[1]}}
+		w := httptest.NewRecorder()
+		a.logs(w, httptest.NewRequest("GET", "/api/logs?"+query.Encode(), nil))
+		var result struct {
+			Total int `json:"total"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != 200 || result.Total != 3 {
+			t.Fatalf("bounds %v: status=%d body=%s", bounds, w.Code, w.Body.String())
+		}
+	}
+	for _, key := range []string{"from", "to"} {
+		w := httptest.NewRecorder()
+		a.logs(w, httptest.NewRequest("GET", "/api/logs?category=success&"+key+"=invalid", nil))
+		if w.Code != 400 {
+			t.Fatalf("invalid %s: status=%d body=%s", key, w.Code, w.Body.String())
 		}
 	}
 }

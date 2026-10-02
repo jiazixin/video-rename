@@ -5,14 +5,87 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 	"video-rename/internal/domain"
 )
+
+func TestUnreadableFramesNeverReachModel(t *testing.T) {
+	for _, protocol := range []string{"openai", "anthropic"} {
+		for _, broken := range []string{"missing", "empty", "directory"} {
+			t.Run(protocol+"/"+broken, func(t *testing.T) {
+				var calls atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					calls.Add(1)
+					fmt.Fprint(w, okResponse("没有有效画面仍然返回的标题"))
+				}))
+				defer server.Close()
+				dir := t.TempDir()
+				path := filepath.Join(dir, "frame.jpg")
+				if broken == "empty" {
+					if err := os.WriteFile(path, nil, 0600); err != nil {
+						t.Fatal(err)
+					}
+				} else if broken == "directory" {
+					path = dir
+				}
+				cfg := testConfig(t, server.URL)
+				cfg.Server.Protocol = protocol
+				client := New(cfg)
+				defer client.Close()
+				result, err := client.TitleOnce(t.Context(), "p", []domain.Frame{{Path: path}})
+				if err == nil || err.Code != domain.CodeExtractFailed || calls.Load() != 0 || result.Attempts != 0 {
+					t.Fatalf("broken screenshot reached model: result=%+v error=%v calls=%d", result, err, calls.Load())
+				}
+			})
+		}
+	}
+}
+
+func TestRetryAfterDoesNotOverflow(t *testing.T) {
+	for _, raw := range []string{"9223372036", "9223372037", "9223372036854775807", "999999999999999999999999999999"} {
+		if got := parseRetryAfter(raw); got != 9223372036*time.Second {
+			t.Fatalf("Retry-After %s wrapped: %s", raw, got)
+		}
+	}
+}
+
+func TestCloseReleasesIdleConnection(t *testing.T) {
+	closed := make(chan struct{}, 1)
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		fmt.Fprint(w, okResponse("正常标题"))
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateClosed {
+			closed <- struct{}{}
+		}
+	}
+	server.Start()
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "frame.jpg")
+	if err := os.WriteFile(path, []byte("frame"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	client := New(testConfig(t, server.URL))
+	defer client.Close()
+	if _, err := client.TitleOnce(t.Context(), "p", []domain.Frame{{Path: path}}); err != nil {
+		t.Fatal(err)
+	}
+	client.Close()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("inference client retained idle socket after Close")
+	}
+}
 
 func TestErrorRedaction(t *testing.T) {
 	const secret = "synthetic-review-secret-123"

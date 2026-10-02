@@ -532,7 +532,11 @@ func TestConsecutiveVideosDoNotShareConversation(t *testing.T) {
 			t.Fatal("wrong system context", body.Messages[0])
 		}
 		parts := body.Messages[1].Content.([]any)
-		if len(parts) != 3 || parts[2].(map[string]any)["image_url"].(map[string]any)["url"] != dataURL(path) {
+		image, err := dataURL(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(parts) != 3 || parts[2].(map[string]any)["image_url"].(map[string]any)["url"] != image {
 			t.Fatalf("wrong video context: %+v", parts)
 		}
 	}
@@ -572,7 +576,11 @@ func TestTenFramesAndRequestParameters(t *testing.T) {
 	for i, frame := range frames {
 		text := parts[1+2*i].(map[string]any)
 		image := parts[2+2*i].(map[string]any)
-		if text["type"] != "text" || !strings.Contains(text["text"].(string), formatTimestamp(frame.Actual)) || image["type"] != "image_url" || image["image_url"].(map[string]any)["url"] != dataURL(frame.Path) {
+		url, err := dataURL(frame.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if text["type"] != "text" || !strings.Contains(text["text"].(string), formatTimestamp(frame.Actual)) || image["type"] != "image_url" || image["image_url"].(map[string]any)["url"] != url {
 			t.Fatalf("frame order wrong: %d", i)
 		}
 	}

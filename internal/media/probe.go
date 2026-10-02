@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -143,7 +144,7 @@ func (p *Prober) Probe(ctx context.Context, job domain.VideoJob) (domain.VideoMe
 			ExitCode:   exitCode,
 			StderrTail: string(tail),
 		}
-		if errors.Is(runErr, exec.ErrNotFound) {
+		if errors.Is(runErr, exec.ErrNotFound) || os.IsNotExist(runErr) {
 			je.Code = domain.CodeToolNotFound
 			je.Message = "ffprobe 在运行中消失(PATH 中不再存在)"
 			je.Global = true

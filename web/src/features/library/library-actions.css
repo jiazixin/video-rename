@@ -1,17 +1,125 @@
-.action-extract{--action-ink:#28649b;--action-bg:#edf5fc;--action-border:#c6dcef;--action-hover:#dfedfa}
-.action-name{--action-ink:#7251a1;--action-bg:#f5f0fc;--action-border:#ddcfee;--action-hover:#ece2f8}
-.action-number{--action-ink:#426b70;--action-bg:#edf6f5;--action-border:#c9dfdf;--action-hover:#dfeeed}
-.action-mark{--action-ink:#287452;--action-bg:#edf7f0;--action-border:#cde6d6;--action-hover:#dfeee4}
-.action-unmark{--action-ink:#896018;--action-bg:#fff8e9;--action-border:#ebdbb3;--action-hover:#f9edcf}
-button.library-action{color:var(--action-ink);background:var(--action-bg);border-color:var(--action-border)}
-button.library-action:hover:not(:disabled){color:var(--action-ink);background:var(--action-hover);border-color:var(--action-ink)}
-button.library-action:focus-visible{outline:2px solid var(--action-ink);outline-offset:3px}
-button.library-action:disabled{filter:grayscale(.65);opacity:.45}
-.row-actions button.library-action{background:transparent;border-color:transparent;color:var(--action-ink)}
-.directory-mark-actions{flex-direction:column;align-items:flex-end;gap:8px;margin-top:0;width:100%;max-width:100%;min-width:0}
-.directory-action-row{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;max-width:100%}
-.directory-action-row>button{min-width:92px;min-height:40px;justify-content:center;flex-shrink:0;white-space:nowrap}
-.directory-refresh-summary{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-left:auto;min-width:0;flex-wrap:wrap}
-.directory-refresh-summary>button{flex-shrink:0}
-.batch-divider{width:1px;height:20px;background:var(--line);margin:0 4px;flex-shrink:0}
-@media(max-width:600px){.batch-divider{display:none}.directory-mark-actions{width:100%}.directory-action-row{width:100%}.directory-action-row>button{flex:0 0 auto;min-width:76px;min-height:44px;padding:7px 9px;font-size:11px}.directory-refresh-summary{width:100%;gap:8px;justify-content:flex-start}.directory-refresh-summary>button{margin-left:auto;min-height:44px}.library-action svg{flex-shrink:0}}
+.action-extract {
+  --action-ink: #28649b;
+  --action-bg: #edf5fc;
+  --action-border: #c6dcef;
+  --action-hover: #dfedfa;
+}
+.action-name {
+  --action-ink: #7251a1;
+  --action-bg: #f5f0fc;
+  --action-border: #ddcfee;
+  --action-hover: #ece2f8;
+}
+.action-number {
+  --action-ink: #426b70;
+  --action-bg: #edf6f5;
+  --action-border: #c9dfdf;
+  --action-hover: #dfeeed;
+}
+.action-mark {
+  --action-ink: #287452;
+  --action-bg: #edf7f0;
+  --action-border: #cde6d6;
+  --action-hover: #dfeee4;
+}
+.action-unmark {
+  --action-ink: #896018;
+  --action-bg: #fff8e9;
+  --action-border: #ebdbb3;
+  --action-hover: #f9edcf;
+}
+button.library-action {
+  color: var(--action-ink);
+  background: var(--action-bg);
+  border-color: var(--action-border);
+}
+button.library-action:hover:not(:disabled) {
+  color: var(--action-ink);
+  background: var(--action-hover);
+  border-color: var(--action-ink);
+}
+button.library-action:focus-visible {
+  outline: 2px solid var(--action-ink);
+  outline-offset: 3px;
+}
+button.library-action:disabled {
+  filter: grayscale(0.65);
+  opacity: 0.45;
+}
+.row-actions button.library-action {
+  background: transparent;
+  border-color: transparent;
+  color: var(--action-ink);
+}
+.directory-mark-actions {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 0;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+.directory-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: 100%;
+}
+.directory-action-row > button {
+  min-width: 92px;
+  min-height: 40px;
+  justify-content: center;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.directory-refresh-summary {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-left: auto;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.directory-refresh-summary > button {
+  flex-shrink: 0;
+}
+.batch-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--line);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+@media (max-width: 600px) {
+  .batch-divider {
+    display: none;
+  }
+  .directory-mark-actions {
+    width: 100%;
+  }
+  .directory-action-row {
+    width: 100%;
+  }
+  .directory-action-row > button {
+    flex: 0 0 auto;
+    min-width: 76px;
+    min-height: 44px;
+    padding: 7px 9px;
+    font-size: 11px;
+  }
+  .directory-refresh-summary {
+    width: 100%;
+    gap: 8px;
+    justify-content: flex-start;
+  }
+  .directory-refresh-summary > button {
+    margin-left: auto;
+    min-height: 44px;
+  }
+  .library-action svg {
+    flex-shrink: 0;
+  }
+}

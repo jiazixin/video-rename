@@ -14,6 +14,9 @@ func TestCountPrefersProviderUsageAndFallsBackToSavedEstimate(t *testing.T) {
 		{"anthropic cached", `{"usage":{"input_tokens":50,"output_tokens":10,"cache_creation_input_tokens":20,"cache_read_input_tokens":5}}`, 85, false, true},
 		{"fallback", `{"error":"timeout"}`, 75, true, true},
 		{"invalid usage", `{"usage":{"total_tokens":-1}}`, 75, true, true},
+		{"overflow openai", `{"usage":{"prompt_tokens":9223372036854775807,"completion_tokens":1}}`, 75, true, true},
+		{"overflow anthropic", `{"usage":{"input_tokens":9223372036854775806,"output_tokens":1,"cache_read_input_tokens":1}}`, 75, true, true},
+		{"negative cache usage", `{"usage":{"input_tokens":50,"output_tokens":10,"cache_creation_input_tokens":-1}}`, 75, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, estimated, ok := Count(request, tc.response)

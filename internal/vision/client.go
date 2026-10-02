@@ -80,6 +80,9 @@ func New(cfg *config.Config) *Client {
 	return c
 }
 
+// Close releases connections retained after this client's inference finishes.
+func (c *Client) Close() { c.http.CloseIdleConnections() }
+
 func rejectRedirect(req *http.Request, via []*http.Request) error {
 	return fmt.Errorf("重定向被禁用: %s", req.URL)
 }
@@ -165,20 +168,24 @@ func (c *Client) Title(ctx context.Context, prompt string, frames []domain.Frame
 // 组装后按真正序列化字节数复核 16 MiB 上限;返回实际保留的帧数。
 func (c *Client) buildBody(prompt string, frames []domain.Frame) ([]byte, int, *domain.JobError) {
 	for {
+		parts, readErr := c.contentParts(frames)
+		if readErr != nil {
+			return nil, 0, readErr
+		}
 		request := any(chatRequest{
 			Model: c.model,
 			Messages: []chatMessage{
 				// system 只发送业务 prompt（所选提示词 + 固定提示词）；
 				// 命名失败协议含在固定提示词默认值中，页面可编辑。
 				{Role: "system", Content: strings.TrimRight(prompt, "\n")},
-				{Role: "user", Content: c.contentParts(frames)},
+				{Role: "user", Content: parts},
 			},
 			Temperature: c.temperature,
 			MaxTokens:   c.maxTokens,
 			Stream:      false,
 		})
 		if c.protocol == "anthropic" {
-			request = c.anthropicRequest(prompt, frames)
+			request = c.anthropicRequest(prompt, parts)
 		}
 		body, err := json.Marshal(request)
 		if err == nil {
@@ -225,24 +232,31 @@ func (c *Client) buildBody(prompt string, frames []domain.Frame) ([]byte, int, *
 
 // contentParts 构造当前视频的多模态内容，不重复或改写 system 中的命名要求。
 // 其后按时间顺序交替放置时间说明与 image_url(data URL)。
-func (c *Client) contentParts(frames []domain.Frame) []contentPart {
+func (c *Client) contentParts(frames []domain.Frame) ([]contentPart, *domain.JobError) {
 	parts := make([]contentPart, 0, 1+2*len(frames))
 	parts = append(parts, contentPart{Type: "text", Text: "以下截图来自同一个视频，按时间顺序排列。"})
 	for i, fr := range frames {
+		image, err := dataURL(fr.Path)
+		if err != nil {
+			return nil, &domain.JobError{Code: domain.CodeExtractFailed, Message: fmt.Sprintf("第 %d 张截图无法读取或为空，请重新抽帧", i+1)}
+		}
 		ts := formatTimestamp(fr.Actual)
 		parts = append(parts, contentPart{Type: "text", Text: fmt.Sprintf("第 %d/%d 张截图,时间点 %s。", i+1, len(frames), ts)})
-		parts = append(parts, contentPart{Type: "image_url", ImageURL: &imageURL{URL: dataURL(fr.Path)}})
+		parts = append(parts, contentPart{Type: "image_url", ImageURL: &imageURL{URL: image}})
 	}
-	return parts
+	return parts, nil
 }
 
 // dataURL 读取 JPEG 文件并编码为 data URL。
-func dataURL(path string) string {
+func dataURL(path string) (string, error) {
 	data, err := os.ReadFile(path)
-	if err != nil || len(data) == 0 {
-		return "data:image/jpeg;base64,"
+	if err != nil {
+		return "", err
 	}
-	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(data)
+	if len(data) == 0 {
+		return "", fmt.Errorf("截图为空")
+	}
+	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(data), nil
 }
 
 func formatTimestamp(d time.Duration) string {
@@ -426,11 +440,8 @@ func parseRetryAfter(v string) time.Duration {
 	if v == "" {
 		return 0
 	}
-	if n, err := strconv.Atoi(v); err == nil {
-		if n < 0 {
-			return 0
-		}
-		return time.Duration(n) * time.Second
+	if n, err := strconv.ParseUint(v, 10, 64); err == nil || errors.Is(err, strconv.ErrRange) {
+		return time.Duration(min(n, uint64((1<<63-1)/time.Second))) * time.Second
 	}
 	if t, err := http.ParseTime(v); err == nil {
 		if d := time.Until(t); d > 0 {

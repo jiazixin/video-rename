@@ -35,7 +35,8 @@ test('图片音频标记保护自定义名称，全局和一键编号跳过，�
   await page.getByRole('option',{name:type,exact:true}).click()
   await page.getByRole('button',{name:'一键编号',exact:true}).click()
   dialog=page.getByRole('dialog')
-  await expect(dialog).toContainText(`共 1 张${type}，0 张需要修改`)
+  const unit=type==='图片'?'张':'个'
+  await expect(dialog).toContainText(`共 1 ${unit}${type}，0 ${unit}需要修改`)
   await expect(dialog.locator('tbody tr')).toHaveCount(1)
   await dialog.getByRole('button',{name:'取消',exact:true}).click()
  }

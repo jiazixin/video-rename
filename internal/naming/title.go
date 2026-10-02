@@ -8,6 +8,7 @@ import (
 	"maps"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
 
@@ -127,13 +128,14 @@ func collapseRuns(s string) string {
 // TruncateToBytes 在字节预算内按 rune 截断(不切断 UTF-8 编码),
 // 截断后去掉尾部空白和句点;预算过小导致空串时返回错误。
 func TruncateToBytes(s string, maxBytes int, ext string) (string, *domain.JobError) {
-	for len(s) > maxBytes {
-		// 去掉最后一个 rune
-		r := []rune(s)
-		if len(r) == 0 {
-			break
+	if len(s) > maxBytes {
+		// Inspect only the cut boundary; repeatedly rebuilding a long model
+		// title for each removed rune would make truncation quadratic.
+		end := max(0, maxBytes)
+		for end > 0 && !utf8.RuneStart(s[end]) {
+			end--
 		}
-		s = string(r[:len(r)-1])
+		s = s[:end]
 	}
 	s = strings.TrimRight(s, " \t.。")
 	if s == "" || s == "." || s == ".." {

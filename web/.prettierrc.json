@@ -1,0 +1,19 @@
+{
+  "semi": false,
+  "singleQuote": true,
+  "quoteProps": "preserve",
+  "trailingComma": "none",
+  "printWidth": 100,
+  "tabWidth": 2,
+  "htmlWhitespaceSensitivity": "strict",
+  "vueIndentScriptAndStyle": true,
+  "endOfLine": "lf",
+  "overrides": [
+    {
+      "files": "*.vue",
+      "options": {
+        "semi": true
+      }
+    }
+  ]
+}

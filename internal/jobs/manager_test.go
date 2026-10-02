@@ -184,6 +184,42 @@ func TestManualProtectsFileAndCancel(t *testing.T) {
 		t.Fatal(r.Status)
 	}
 }
+
+func TestToolsDisappearingStopsBatch(t *testing.T) {
+	for _, tool := range []string{"ffprobe", "ffmpeg"} {
+		t.Run(tool, func(t *testing.T) {
+			m, root := setup(t)
+			settings := systemsettings.Default()
+			settings.StabilitySeconds, settings.ExtractWorkers = 0, 1
+			if err := (systemsettings.Store{DB: m.DB}).Save(settings); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"a.mp4", "b.mp4", "c.mp4"} {
+				if err := os.WriteFile(filepath.Join(root, name), []byte("video"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			id, err := m.Create(Request{Targets: []int64{1}, Key: "vanished-tool-batch"}, "manual", 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Creation already verified both tools. Losing one before the
+			// worker starts is a batch dependency failure, not three bad videos.
+			if err := os.Remove(filepath.Join(filepath.Dir(root), tool)); err != nil {
+				t.Fatal(err)
+			}
+			m.Execute(t.Context(), id)
+			r, err := m.Get(id)
+			if err != nil || r.Status != "failed" || r.Failed != 1 || r.Discovered != 3 || !strings.Contains(r.Error, string(domain.CodeToolNotFound)) {
+				t.Fatalf("global tool failure did not stop dispatch: %+v, %v", r, err)
+			}
+			var cancelled int
+			if err := m.DB.QueryRow("SELECT count(*) FROM run_items WHERE run=? AND status='cancelled'", id).Scan(&cancelled); err != nil || cancelled != 2 {
+				t.Fatalf("unprocessed items: cancelled=%d, error=%v", cancelled, err)
+			}
+		})
+	}
+}
 func TestChangedDuringAnalysisDoesNotRename(t *testing.T) {
 	m, root := setup(t)
 	p := filepath.Join(root, "a.mp4")

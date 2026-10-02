@@ -56,7 +56,7 @@ func diagnosticJSON(raw []byte, key string, request bool) string {
 		}
 		raw, _ = json.Marshal(value, jsontext.WithIndent("  "))
 	}
-	text := string(raw)
+	text := strings.ToValidUTF8(string(raw), "�")
 	if key != "" {
 		text = strings.ReplaceAll(text, key, "[REDACTED]")
 		encoded, _ := json.Marshal(key)
@@ -64,7 +64,12 @@ func diagnosticJSON(raw []byte, key string, request bool) string {
 	}
 	const limit = 128 * 1024
 	if len(text) > limit {
-		text = text[:limit] + "\n[diagnostic truncated at 128 KiB]"
+		const suffix = "\n[diagnostic truncated at 128 KiB]"
+		end := limit - len(suffix)
+		for end > 0 && !utf8.RuneStart(text[end]) {
+			end--
+		}
+		text = text[:end] + suffix
 	}
 	return text
 }

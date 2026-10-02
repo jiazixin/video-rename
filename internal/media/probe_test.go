@@ -240,10 +240,18 @@ func TestProbeBadJSON(t *testing.T) {
 
 func TestProbeMissingBinary(t *testing.T) {
 	job, _ := fakeJob(t, 10)
-	prober := &Prober{FFprobePath: filepath.Join(t.TempDir(), "no-such-tool")}
+	path := writeScript(t, "exit 0\n")
+	resolved, err := exec.LookPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	prober := &Prober{FFprobePath: resolved}
 	_, jerr := prober.Probe(t.Context(), job)
-	if jerr == nil || jerr.Code != domain.CodeProbeExecFailed {
-		t.Fatalf("工具缺失应报 PROBE_EXEC_FAILED(启动前另有 TOOL_NOT_FOUND 检查), got %+v", jerr)
+	if jerr == nil || jerr.Code != domain.CodeToolNotFound || !jerr.Global {
+		t.Fatalf("探测前工具消失应停止批次, got %+v", jerr)
 	}
 }
 

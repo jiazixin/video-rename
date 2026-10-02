@@ -148,6 +148,11 @@ func (e *Extractor) Extract(ctx context.Context, job domain.VideoJob, meta domai
 				frame.Planned, frame.Actual = planned, retry
 			}
 		}
+		if errors.Is(ferr, errToolVanished) {
+			return set, &domain.JobError{
+				Code: domain.CodeToolNotFound, Message: errToolVanished.Error(), Global: true,
+			}
+		}
 		if ferr != nil {
 			if ctx.Err() == context.Canceled {
 				return set, &domain.JobError{Code: domain.CodeCancelled, Message: "抽帧被取消"}
@@ -254,7 +259,7 @@ func runFFmpeg(ctx context.Context, path string, args []string) error {
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		tail := tailBytes(stderr.buf.Bytes(), domain.DefaultBudgets().StderrTailLimit)
-		if errors.Is(err, exec.ErrNotFound) {
+		if errors.Is(err, exec.ErrNotFound) || os.IsNotExist(err) {
 			return errToolVanished
 		}
 		if ctx.Err() != nil {

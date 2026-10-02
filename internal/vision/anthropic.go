@@ -18,9 +18,9 @@ type anthropicSource struct {
 }
 
 // Anthropic carries the whole prompt in top-level system, not a user message.
-func (c *Client) anthropicRequest(prompt string, frames []domain.Frame) any {
-	parts := make([]anthropicPart, 0, 1+len(frames)*2)
-	for _, part := range c.contentParts(frames) {
+func (c *Client) anthropicRequest(prompt string, content []contentPart) any {
+	parts := make([]anthropicPart, 0, len(content))
+	for _, part := range content {
 		if part.Type == "text" {
 			parts = append(parts, anthropicPart{Type: "text", Text: part.Text})
 		} else {

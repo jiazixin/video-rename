@@ -7,7 +7,9 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vue-tsc --noEmit && vite build",
     "check": "vue-tsc --noEmit",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "format": "prettier --write \"src/**/*.{vue,css,ts}\"",
+    "format:check": "prettier --check \"src/**/*.{vue,css,ts}\""
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.5",
@@ -17,6 +19,7 @@
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "@vitejs/plugin-vue": "^5.2.3",
+    "prettier": "3.9.9",
     "typescript": "~5.7.3",
     "vite": "^6.2.6",
     "vue-tsc": "^2.2.8"

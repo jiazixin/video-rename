@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -137,27 +136,20 @@ WHERE status='partial_failure' AND failed>0 AND done=0 AND skipped=0`); err != n
 	return tx.Commit()
 }
 func (m *Manager) Busy(id int64) bool {
-	m.mu.Lock()
-	var targets []int64
-	for r := range maps.Values(m.active) {
-		targets = append(targets, r.targets...)
-	}
-	m.mu.Unlock()
-	for _, t := range targets {
-		if m.Library.IsWithin(id, t) || m.Library.IsWithin(t, id) {
-			return true
-		}
-	}
-	return false
+	// Mutations affect the entry's entire subtree. Reuse the persistent scope
+	// check so queued runs, paused runs, hard links and nonrecursive targets
+	// follow the same occupancy rules as another batch submission. Do not take
+	// createMu: callers may already hold Library.mu while a worker is scanning.
+	return m.checkOverlap(Request{Targets: []int64{id}, Recursive: true}, newScopeIndex(m.DB)) != nil
 }
 func (m *Manager) Tools() (string, string, error) {
 	p, e := exec.LookPath("ffprobe")
 	if e != nil {
-		return "", "", fmt.Errorf("未找到 ffprobe")
+		return "", "", &domain.JobError{Code: domain.CodeToolNotFound, Message: "未找到 ffprobe", Global: true}
 	}
 	f, e := exec.LookPath("ffmpeg")
 	if e != nil {
-		return "", "", fmt.Errorf("未找到 ffmpeg")
+		return "", "", &domain.JobError{Code: domain.CodeToolNotFound, Message: "未找到 ffmpeg", Global: true}
 	}
 	return p, f, nil
 }

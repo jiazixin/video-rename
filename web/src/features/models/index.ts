@@ -1,1 +1,1 @@
-export {default as ModelPicker} from './ModelPicker.vue'
+export { default as ModelPicker } from './ModelPicker.vue'

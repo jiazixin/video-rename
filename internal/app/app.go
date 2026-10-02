@@ -481,6 +481,19 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 		send(w, 400, map[string]string{"message": "请选择成功或失败日志"})
 		return
 	}
+	for _, key := range []string{"from", "to"} {
+		if value := q.Get(key); value != "" {
+			stamp, err := time.Parse(time.RFC3339Nano, value)
+			if err != nil {
+				stamp, err = time.Parse(time.DateOnly, value)
+			}
+			if err != nil {
+				send(w, 400, map[string]string{"message": "日期格式无效"})
+				return
+			}
+			q.Set(key, stamp.UTC().Format(time.RFC3339Nano))
+		}
+	}
 	run := int64(0)
 	if q.Get("run") != "" {
 		var err error
@@ -498,7 +511,7 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 	if limit != 50 && limit != 100 && limit != 200 {
 		limit = 100
 	}
-	where := " FROM events e LEFT JOIN runs r ON r.id=e.run WHERE e.category=? AND (?=0 OR e.run=?) AND (?='' OR instr(lower(e.old_path||e.new_path||e.message),lower(?))>0) AND (?='' OR e.action=?) AND (?='' OR e.created>=?) AND (?='' OR e.created<=?)"
+	where := " FROM events e LEFT JOIN runs r ON r.id=e.run WHERE e.category=? AND (?=0 OR e.run=?) AND (?='' OR instr(lower(e.old_path||e.new_path||e.message),lower(?))>0) AND (?='' OR e.action=?) AND (?='' OR julianday(e.created)>=julianday(?)) AND (?='' OR julianday(e.created)<=julianday(?))"
 	args := []any{category, run, run, q.Get("q"), q.Get("q"), q.Get("action"), q.Get("action"), q.Get("from"), q.Get("from"), q.Get("to"), q.Get("to")}
 	tx, err := a.DB.Read().BeginTx(r.Context(), nil)
 	if err != nil {

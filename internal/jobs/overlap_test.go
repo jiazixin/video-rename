@@ -254,3 +254,84 @@ func TestQueuedDirectoryCoversIndexedChildren(t *testing.T) {
 		t.Fatal("covered child allowed")
 	}
 }
+
+func TestQueuedAndPausedScopesBlockManualMutations(t *testing.T) {
+	for _, paused := range []bool{false, true} {
+		t.Run(fmt.Sprintf("paused=%v", paused), func(t *testing.T) {
+			m, ids := scopeFixture(t)
+			e, err := m.Library.Get(ids["deep.mp4"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			op, err := m.Library.Rename(e.ID, e.Version, "renamed.mp4", "before-queue")
+			if err != nil {
+				t.Fatal(err)
+			}
+			id, err := m.Create(Request{Targets: []int64{e.ID}, Key: "manual-mutation-scope"}, "manual", 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if paused {
+				if err := m.Pause(id); err != nil {
+					t.Fatal(err)
+				}
+			}
+			e, err = m.Library.Get(e.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.Library.Rename(e.ID, e.Version, "changed.mp4", "while-queued"); err == nil {
+				t.Fatal("queued file was manually renamed")
+			}
+			if _, err := m.Library.Restore(op.ID, "restore-while-queued"); err == nil {
+				t.Fatal("queued file was restored")
+			}
+			marks := m.Library.SetProcessed(t.Context(), []int64{e.ID}, false)
+			if marks.Changed != 0 || marks.Failed != 1 {
+				t.Fatalf("queued file protection was changed: %+v", marks)
+			}
+			dir, err := m.Library.Get(ids["outer"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.Library.Rename(dir.ID, dir.Version, "changed-directory", "parent-while-queued"); err == nil {
+				t.Fatal("ancestor of queued target was renamed")
+			}
+			if err := m.Cancel(id); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.Library.Restore(op.ID, "restore-after-cancel"); err != nil {
+				t.Fatalf("cancel did not release mutation scope: %v", err)
+			}
+		})
+	}
+}
+
+func TestBusyUsesPersistentScopeBoundaries(t *testing.T) {
+	for _, c := range []struct {
+		name, target string
+		recursive    bool
+		busy, free   []string
+	}{
+		{"nonrecursive", "outer", false, []string{"outer", "direct.mp4"}, []string{"deep.mp4", "sibling", "other.mp4"}},
+		{"recursive", "outer", true, []string{"outer", "nested", "deep.mp4"}, []string{"sibling", "other.mp4"}},
+		{"hard links and ancestors", "direct.mp4", false, []string{"direct.mp4", "alias.mp4", "outer"}, []string{"deep.mp4", "sibling", "other.mp4"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m, ids := scopeFixture(t)
+			if _, err := m.Create(Request{Targets: []int64{ids[c.target]}, Recursive: c.recursive, Key: "persistent-busy-scope"}, "manual", 0); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range c.busy {
+				if !m.Busy(ids[name]) {
+					t.Errorf("%s did not retain occupancy", name)
+				}
+			}
+			for _, name := range c.free {
+				if m.Busy(ids[name]) {
+					t.Errorf("%s outside task scope is busy", name)
+				}
+			}
+		})
+	}
+}

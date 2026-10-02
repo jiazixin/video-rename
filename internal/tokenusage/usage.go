@@ -1,7 +1,10 @@
 // Package tokenusage extracts a best-effort token count from saved model diagnostics.
 package tokenusage
 
-import "encoding/json/v2"
+import (
+	"encoding/json/v2"
+	"math"
+)
 
 // Count prefers the provider's total usage. Without it, the existing local text
 // estimate is used; image tokens and unrecorded retries cannot be reconstructed.
@@ -22,17 +25,15 @@ func Count(request, response string) (tokens int64, estimated bool, ok bool) {
 		if u.Total != nil && *u.Total >= 0 {
 			return *u.Total, false, true
 		}
-		if u.Prompt != nil && u.Completion != nil && *u.Prompt >= 0 && *u.Completion >= 0 {
-			return *u.Prompt + *u.Completion, false, true
-		}
-		if u.Input != nil && u.Output != nil && *u.Input >= 0 && *u.Output >= 0 {
-			total := *u.Input + *u.Output
-			for _, cached := range []*int64{u.CacheCreation, u.CacheRead} {
-				if cached != nil && *cached > 0 {
-					total += *cached
-				}
+		if u.Prompt != nil && u.Completion != nil {
+			if total, valid := sumUsage(u.Prompt, u.Completion); valid {
+				return total, false, true
 			}
-			return total, false, true
+		}
+		if u.Input != nil && u.Output != nil {
+			if total, valid := sumUsage(u.Input, u.Output, u.CacheCreation, u.CacheRead); valid {
+				return total, false, true
+			}
 		}
 	}
 	var sent struct {
@@ -44,4 +45,19 @@ func Count(request, response string) (tokens int64, estimated bool, ok bool) {
 		return *sent.Context.Text, true, true
 	}
 	return 0, false, false
+}
+
+// A malformed provider count must not wrap into a negative persisted total.
+func sumUsage(values ...*int64) (int64, bool) {
+	var total int64
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		if *value < 0 || *value > math.MaxInt64-total {
+			return 0, false
+		}
+		total += *value
+	}
+	return total, true
 }

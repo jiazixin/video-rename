@@ -1,3 +1,56 @@
-.picker-row .picker-entry-name{flex:1;min-width:0;text-align:left}.picker-row .directory-progress{flex:none;margin-left:auto;gap:3px}.picker-row .directory-progress .status-badge{font-size:10px;padding:2px 6px}.picker-row .directory-progress .status-dot{width:5px;height:5px}.picker-row .directory-progress small{font-size:10px}.picker-row button>svg{flex:none}.picker-row button>svg:last-child{margin-left:4px}.picker-current{flex-wrap:wrap}.picker-current>.directory-progress{margin-left:auto}.picker-list{max-height:260px}.picker-row{min-height:54px}
+.picker-row .picker-entry-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+.picker-row .directory-progress {
+  flex: none;
+  margin-left: auto;
+  gap: 3px;
+}
+.picker-row .directory-progress .status-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+}
+.picker-row .directory-progress .status-dot {
+  width: 5px;
+  height: 5px;
+}
+.picker-row .directory-progress small {
+  font-size: 10px;
+}
+.picker-row button > svg {
+  flex: none;
+}
+.picker-row button > svg:last-child {
+  margin-left: 4px;
+}
+.picker-current {
+  flex-wrap: wrap;
+}
+.picker-current > .directory-progress {
+  margin-left: auto;
+}
+.picker-list {
+  max-height: 260px;
+}
+.picker-row {
+  min-height: 54px;
+}
 
-.picker-bottom{flex-wrap:wrap}.picker-bottom>span{flex-basis:100%}.picker-selection{display:flex;gap:6px;margin-right:auto;flex-wrap:wrap}.picker-selection button{padding:5px 7px;font-size:11px}
+.picker-bottom {
+  flex-wrap: wrap;
+}
+.picker-bottom > span {
+  flex-basis: 100%;
+}
+.picker-selection {
+  display: flex;
+  gap: 6px;
+  margin-right: auto;
+  flex-wrap: wrap;
+}
+.picker-selection button {
+  padding: 5px 7px;
+  font-size: 11px;
+}

@@ -335,6 +335,35 @@ func TestExtractEmptyPlan(t *testing.T) {
 	_ = set
 }
 
+func TestExtractMissingResolvedBinaryStopsBatch(t *testing.T) {
+	path := writeScript(t, "exit 0\n")
+	resolved, err := exec.LookPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	job, _ := fakeJob(t, 100)
+	ex := testExtractor(resolved, 768, 4)
+	_, jerr := ex.Extract(t.Context(), job, domain.VideoMeta{DisplayWidth: 320, DisplayHeight: 180}, testPlan(1))
+	if jerr == nil || jerr.Code != domain.CodeToolNotFound || !jerr.Global {
+		t.Fatalf("deleted resolved ffmpeg must stop the batch: %+v", jerr)
+	}
+}
+
+func TestExtractToolVanishingBeforeRetryStopsBatch(t *testing.T) {
+	// The first failed attempt deletes its own executable. Even for a single
+	// sampling point, the failed retry must retain the global dependency error.
+	path := writeScript(t, "rm -- \"$0\"\nexit 1\n")
+	job, _ := fakeJob(t, 100)
+	ex := testExtractor(path, 768, 4)
+	_, jerr := ex.Extract(t.Context(), job, domain.VideoMeta{DisplayWidth: 320, DisplayHeight: 180}, testPlan(1))
+	if jerr == nil || jerr.Code != domain.CodeToolNotFound || !jerr.Global {
+		t.Fatalf("ffmpeg disappearing before retry must stop the batch: %+v", jerr)
+	}
+}
+
 func TestExtractCancelledContext(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "f.jpg")

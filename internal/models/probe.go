@@ -72,7 +72,9 @@ func Probe(ctx context.Context, s config.ServerConfig, timeout time.Duration) (o
 	}
 	out.Expected = strings.Join(expected, ",")
 	started := time.Now()
-	answer, status, jobErr := vision.New(&cfg).Probe(ctx, "识别图片中从左到右的四个色块颜色。仅返回英文小写颜色名，以英文逗号分隔，不要空格和解释。", domain.Frame{Path: f.Name(), Width: 640, Height: 160})
+	client := vision.New(&cfg)
+	defer client.Close()
+	answer, status, jobErr := client.Probe(ctx, "识别图片中从左到右的四个色块颜色。仅返回英文小写颜色名，以英文逗号分隔，不要空格和解释。", domain.Frame{Path: f.Name(), Width: 640, Height: 160})
 	out.ElapsedMS = time.Since(started).Milliseconds()
 	out.HTTPStatus = status
 	out.Answer = answer

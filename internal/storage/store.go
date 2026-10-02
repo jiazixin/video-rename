@@ -23,7 +23,38 @@ type Store struct {
 }
 
 func Open(path string) (*Store, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	path = abs
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return nil, err
+	}
+	// SQLite follows database symlinks. Resolve the same path before selecting
+	// its instance lock and encryption key, so aliases cannot create two owners.
+	if _, err := os.Lstat(path); err == nil {
+		path, err = filepath.EvalSymlinks(path)
+		if err != nil {
+			return nil, err
+		}
+	} else if os.IsNotExist(err) {
+		parent, err := filepath.EvalSymlinks(filepath.Dir(path))
+		if err != nil {
+			return nil, err
+		}
+		path = filepath.Join(parent, filepath.Base(path))
+	} else {
+		return nil, err
+	}
+	// Hard links keep separate lock, key and WAL paths for the same database
+	// inode. SQLite cannot safely use that layout, even after symlink resolution.
+	var stat unix.Stat_t
+	if err := unix.Stat(path, &stat); err == nil {
+		if stat.Nlink > 1 {
+			return nil, fmt.Errorf("数据库存在多个硬链接，无法安全打开：%s", path)
+		}
+	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
 	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
@@ -34,12 +65,7 @@ func Open(path string) (*Store, error) {
 		lock.Close()
 		return nil, fmt.Errorf("数据库已被另一实例使用")
 	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		lock.Close()
-		return nil, err
-	}
-	dsn := url.URL{Scheme: "file", Path: abs}
+	dsn := url.URL{Scheme: "file", Path: path}
 	options := url.Values{}
 	for _, pragma := range []string{"foreign_keys(1)", "synchronous(FULL)", "busy_timeout(5000)"} {
 		options.Add("_pragma", pragma)
