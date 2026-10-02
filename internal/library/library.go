@@ -106,31 +106,51 @@ func (l *Library) IndexedEntry(id int64) (Entry, error) {
 	return e, err
 }
 
+// indexedSnapshot omits processing state when only filesystem evidence is needed.
+func (l *Library) indexedSnapshot(id int64) (Entry, error) {
+	var e Entry
+	err := l.DB.Read().QueryRow(`SELECT id,parent,name,kind,identity,size,mtime,version
+ FROM entries WHERE id=? AND present=1`, id).Scan(&e.ID, &e.Parent, &e.Name, &e.Kind, &e.Identity, &e.Size, &e.Mtime, &e.Version)
+	return e, err
+}
+
 // Path checks every ancestor, including mount identity; symlinks are never followed.
 func (l *Library) Path(id int64) (string, error) {
+	if id <= 0 {
+		return "", fmt.Errorf("目录关系无效")
+	}
+	e, err := l.indexedSnapshot(id)
+	if err != nil {
+		return "", err
+	}
+	return l.pathForEntry(e)
+}
+
+// pathForEntry reuses only the caller's freshly read entry. Every ancestor is
+// still loaded and checked against disk on this call; no path evidence is cached.
+func (l *Library) pathForEntry(e Entry) (string, error) {
 	chain := []Entry{}
 	seen := map[int64]bool{}
-	for id != 1 {
-		if id <= 0 || seen[id] || len(chain) > 1024 {
+	for e.ID != 1 {
+		if e.ID <= 0 || seen[e.ID] || len(chain) > 1024 {
 			return "", fmt.Errorf("目录关系无效")
 		}
-		seen[id] = true
-		e, err := l.IndexedEntry(id)
-		if err != nil {
-			return "", err
-		}
+		seen[e.ID] = true
 		if e.Name == "" || filepath.Base(e.Name) != e.Name || strings.ContainsAny(e.Name, "/\\") {
 			return "", fmt.Errorf("非法路径")
 		}
 		chain = append(chain, e)
-		id = e.Parent
-	}
-	root, err := l.IndexedEntry(1)
-	if err != nil {
-		return "", err
+		if e.Parent <= 0 {
+			return "", fmt.Errorf("目录关系无效")
+		}
+		var err error
+		e, err = l.indexedSnapshot(e.Parent)
+		if err != nil {
+			return "", err
+		}
 	}
 	rs, err := domain.StatSnapshot(l.Root)
-	if err != nil || Identity(rs) != root.Identity {
+	if err != nil || Identity(rs) != e.Identity {
 		return "", fmt.Errorf("媒体根目录不可用或挂载已变化")
 	}
 	p := l.Root

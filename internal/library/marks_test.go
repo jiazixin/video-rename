@@ -2,49 +2,281 @@ package library
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 	"video-rename/internal/domain"
 	"video-rename/internal/storage"
 )
 
-func TestProcessedMarksCancellationBetweenFiles(t *testing.T) {
-	l, root, _ := fixture(t)
-	put(t, filepath.Join(root, "a.mp4"))
-	put(t, filepath.Join(root, "b.mp4"))
+func TestProcessedMarksCancellationBetweenBatches(t *testing.T) {
+	l, _, _ := markBatchFixture(t, markBatchSize+1)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	r := l.SetProcessedWithProgress(ctx, []int64{1}, true, func(result MarkResult) {
-		if result.Changed == 1 {
+		assertDurableMarkProgress(t, l, result)
+		if result.Changed == markBatchSize {
 			cancel()
 		}
 	})
-	if !r.Interrupted || r.Changed != 1 {
+	if !r.Interrupted || r.Changed != markBatchSize || r.Unchanged != 0 {
 		t.Fatalf("cancelled traversal reported as complete: %+v", r)
 	}
-	// A fresh request can finish the remaining file without losing the first mark.
+	assertDurableMarkProgress(t, l, r)
+	// A fresh request finishes the remaining file and preserves the committed batch.
 	r = l.SetProcessed(t.Context(), []int64{1}, true)
-	if r.Interrupted || r.Changed != 1 || r.Unchanged != 1 || r.Failed != 0 {
+	if r.Interrupted || r.Changed != 1 || r.Unchanged != markBatchSize || r.Failed != 0 {
 		t.Fatalf("retry did not finish remaining work: %+v", r)
 	}
 }
 
 func TestProcessedMarksCancellationBetweenTargets(t *testing.T) {
-	l, root, _ := fixture(t)
-	put(t, filepath.Join(root, "a.mp4"))
-	put(t, filepath.Join(root, "b.mp4"))
-	refresh(t, l, 1)
-	a, b := entry(t, l, 1, "a.mp4"), entry(t, l, 1, "b.mp4")
+	l, _, ids := markBatchFixture(t, markBatchSize+1)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	r := l.SetProcessedWithProgress(ctx, []int64{a.ID, b.ID}, true, func(result MarkResult) {
-		if result.Changed == 1 {
+	r := l.SetProcessedWithProgress(ctx, ids, true, func(result MarkResult) {
+		assertDurableMarkProgress(t, l, result)
+		if result.Changed == markBatchSize {
 			cancel()
 		}
 	})
-	if !r.Interrupted || r.Changed != 1 {
+	if !r.Interrupted || r.Changed != markBatchSize || r.Unchanged != 0 {
 		t.Fatalf("cancelled targets reported as complete: %+v", r)
+	}
+	assertDurableMarkProgress(t, l, r)
+}
+
+func markBatchFixture(t *testing.T, count int) (*Library, string, []int64) {
+	t.Helper()
+	l, root, _ := fixture(t)
+	for i := range count {
+		put(t, filepath.Join(root, fmt.Sprintf("%04d.mp4", i)))
+	}
+	refresh(t, l, 1)
+	rows, err := l.DB.Read().QueryContext(t.Context(), "SELECT id FROM entries WHERE parent=1 AND present=1 ORDER BY id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	ids := make([]int64, 0, count)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != count {
+		t.Fatalf("indexed %d of %d files", len(ids), count)
+	}
+	return l, root, ids
+}
+
+// The read pool sees only committed WAL state, even while a write transaction exists.
+func assertDurableMarkProgress(t *testing.T, l *Library, result MarkResult) {
+	t.Helper()
+	var count int64
+	if err := l.DB.Read().QueryRowContext(t.Context(), "SELECT count(*) FROM marks").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != result.Changed {
+		t.Fatalf("progress differs from durable marks: count=%d result=%+v", count, result)
+	}
+}
+
+func TestProcessedMarksBatchDatabaseFailureRollsBack(t *testing.T) {
+	for _, failure := range []string{"insert", "commit"} {
+		t.Run(failure, func(t *testing.T) {
+			l, _, ids := markBatchFixture(t, markBatchSize+2)
+			target := ids[markBatchSize/2]
+			trigger := fmt.Sprintf(`CREATE TRIGGER reject_mark BEFORE INSERT ON marks
+WHEN NEW.identity=(SELECT identity FROM entries WHERE id=%d)
+BEGIN SELECT RAISE(ABORT,'injected mark insert failure'); END`, target)
+			if failure == "commit" {
+				// A deferred foreign key lets every INSERT succeed, then rejects COMMIT.
+				trigger = fmt.Sprintf(`CREATE TRIGGER reject_mark AFTER INSERT ON marks
+WHEN NEW.identity=(SELECT identity FROM entries WHERE id=%d)
+BEGIN UPDATE marks SET operation=-1 WHERE identity=NEW.identity AND size=NEW.size AND mtime=NEW.mtime; END`, target)
+			}
+			if _, err := l.DB.ExecContext(t.Context(), trigger); err != nil {
+				t.Fatal(err)
+			}
+			if failure == "commit" {
+				if _, err := l.DB.ExecContext(t.Context(), "PRAGMA defer_foreign_keys=ON"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			r := l.SetProcessedWithProgress(t.Context(), ids, true, func(result MarkResult) {
+				assertDurableMarkProgress(t, l, result)
+			})
+			if r.Interrupted || r.Changed != 2 || r.Unchanged != 0 || r.Failed != markBatchSize || len(r.Failures) != 100 {
+				t.Fatalf("failed batch reported partial success: %+v", r)
+			}
+			assertDurableMarkProgress(t, l, r)
+			var firstBatchMarks int
+			if err := l.DB.Read().QueryRowContext(t.Context(), `SELECT count(*) FROM marks m
+JOIN entries e ON e.identity=m.identity AND e.size=m.size AND e.mtime=m.mtime WHERE e.id<=?`, ids[markBatchSize-1]).Scan(&firstBatchMarks); err != nil {
+				t.Fatal(err)
+			}
+			if firstBatchMarks != 0 {
+				t.Fatalf("failed transaction retained %d marks", firstBatchMarks)
+			}
+			if _, err := l.DB.ExecContext(t.Context(), "DROP TRIGGER reject_mark"); err != nil {
+				t.Fatal(err)
+			}
+			r = l.SetProcessed(t.Context(), ids, true)
+			if r.Interrupted || r.Changed != markBatchSize || r.Unchanged != 2 || r.Failed != 0 {
+				t.Fatalf("retry did not preserve later committed batch: %+v", r)
+			}
+		})
+	}
+}
+
+func TestProcessedMarksBatchValidationFailureKeepsValidPeers(t *testing.T) {
+	l, root, ids := markBatchFixture(t, 4)
+	changed, err := l.IndexedEntry(ids[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, changed.Name), []byte("changed file has a different size"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	l.Busy = func(id int64) bool { return id == ids[0] }
+	r := l.SetProcessedWithProgress(t.Context(), ids, true, func(result MarkResult) {
+		assertDurableMarkProgress(t, l, result)
+	})
+	if r.Interrupted || r.Changed != 2 || r.Unchanged != 0 || r.Failed != 2 {
+		t.Fatalf("invalid files prevented valid peers from committing: %+v", r)
+	}
+	assertDurableMarkProgress(t, l, r)
+	for _, id := range ids[:2] {
+		e, err := l.Get(id)
+		if err != nil || e.Processed != "" {
+			t.Fatalf("invalid file received a mark: %+v %v", e, err)
+		}
+	}
+}
+
+func TestProcessedMarksDuplicateMissingTargetsFailOnce(t *testing.T) {
+	l, _, ids := markBatchFixture(t, 1)
+	missing := ids[0] + 1
+	r := l.SetProcessedWithProgress(t.Context(), []int64{missing, ids[0], missing, ids[0]}, true, func(result MarkResult) {
+		assertDurableMarkProgress(t, l, result)
+	})
+	if r.Interrupted || r.Changed != 1 || r.Unchanged != 0 || r.Failed != 1 || len(r.Failures) != 1 || r.Failures[0].ID != missing {
+		t.Fatalf("duplicate targets were counted more than once: %+v", r)
+	}
+	assertDurableMarkProgress(t, l, r)
+}
+
+func TestProcessedMarksRevalidateMediaTypeBeforeCommit(t *testing.T) {
+	l, root, ids := markBatchFixture(t, 3)
+	changed, err := l.IndexedEntry(ids[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	const unsupported = "renamed.txt"
+	l.Busy = func(id int64) bool {
+		if id == ids[0] {
+			// Every target is collected before validation starts. Simulate another
+			// operation changing a later target while it waits in the batch.
+			if err := os.Rename(filepath.Join(root, changed.Name), filepath.Join(root, unsupported)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := l.DB.ExecContext(t.Context(), "UPDATE entries SET name=?,version=version+1 WHERE id=?", unsupported, changed.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return false
+	}
+	r := l.SetProcessedWithProgress(t.Context(), ids, true, func(result MarkResult) {
+		assertDurableMarkProgress(t, l, result)
+	})
+	if r.Interrupted || r.Changed != 2 || r.Unchanged != 0 || r.Failed != 1 || len(r.Failures) != 1 || r.Failures[0].ID != changed.ID {
+		t.Fatalf("changed media type received a mark: %+v", r)
+	}
+	e, err := l.Get(changed.ID)
+	if err != nil || e.Name != unsupported || e.Processed != "" {
+		t.Fatalf("unsupported renamed file received a mark: %+v %v", e, err)
+	}
+	assertDurableMarkProgress(t, l, r)
+}
+
+func TestProcessedMarksCancellationDuringBatchValidation(t *testing.T) {
+	l, _, ids := markBatchFixture(t, 8)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	l.Busy = func(id int64) bool {
+		if id == ids[4] {
+			cancel()
+		}
+		return false
+	}
+	r := l.SetProcessedWithProgress(ctx, ids, true, func(result MarkResult) {
+		assertDurableMarkProgress(t, l, result)
+	})
+	if !r.Interrupted || r.Changed != 0 || r.Unchanged != 0 {
+		t.Fatalf("cancelled uncommitted batch reported success: %+v", r)
+	}
+	assertDurableMarkProgress(t, l, r)
+	l.Busy = nil
+	r = l.SetProcessed(t.Context(), ids, true)
+	if r.Interrupted || r.Changed != 8 || r.Unchanged != 0 || r.Failed != 0 {
+		t.Fatalf("cancelled batch left partial marks: %+v", r)
+	}
+}
+
+func TestProcessedMarksProgressReleasesWriterConnection(t *testing.T) {
+	l, _, ids := markBatchFixture(t, 2)
+	r := l.SetProcessedWithProgress(t.Context(), ids, true, func(result MarkResult) {
+		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+		defer cancel()
+		if _, err := l.DB.ExecContext(ctx, "UPDATE library SET root=root WHERE id=1"); err != nil {
+			t.Fatalf("progress callback cannot acquire writer connection: %v", err)
+		}
+		assertDurableMarkProgress(t, l, result)
+	})
+	if r.Interrupted || r.Changed != 2 || r.Failed != 0 {
+		t.Fatalf("marking failed after progress callback write: %+v", r)
+	}
+}
+
+func TestProcessedMarksBatchUnmarkFailureRollsBack(t *testing.T) {
+	l, _, ids := markBatchFixture(t, 3)
+	if r := l.SetProcessed(t.Context(), ids, true); r.Changed != 3 || r.Failed != 0 {
+		t.Fatal(r)
+	}
+	trigger := fmt.Sprintf(`CREATE TRIGGER reject_unmark BEFORE DELETE ON marks
+WHEN OLD.identity=(SELECT identity FROM entries WHERE id=%d)
+BEGIN SELECT RAISE(ABORT,'injected unmark failure'); END`, ids[1])
+	if _, err := l.DB.ExecContext(t.Context(), trigger); err != nil {
+		t.Fatal(err)
+	}
+	r := l.SetProcessedWithProgress(t.Context(), ids, false, func(result MarkResult) {
+		var count int64
+		if err := l.DB.Read().QueryRowContext(t.Context(), "SELECT count(*) FROM marks").Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 3-result.Changed {
+			t.Fatalf("unmark progress differs from durable marks: count=%d result=%+v", count, result)
+		}
+	})
+	if r.Interrupted || r.Changed != 0 || r.Unchanged != 0 || r.Failed != 3 {
+		t.Fatalf("unmark failure reported partial success: %+v", r)
+	}
+	if _, err := l.DB.ExecContext(t.Context(), "DROP TRIGGER reject_unmark"); err != nil {
+		t.Fatal(err)
+	}
+	if r = l.SetProcessed(t.Context(), ids, false); r.Changed != 3 || r.Unchanged != 0 || r.Failed != 0 {
+		t.Fatalf("unmark rollback lost protected files: %+v", r)
+	}
+	if r = l.SetProcessed(t.Context(), ids, false); r.Changed != 0 || r.Unchanged != 3 || r.Failed != 0 {
+		t.Fatalf("repeated unmark changed cleared files: %+v", r)
 	}
 }
 

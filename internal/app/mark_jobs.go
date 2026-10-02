@@ -1,6 +1,7 @@
 package app
 
 import (
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -70,6 +71,7 @@ func (a *App) startMark(w http.ResponseWriter, r *http.Request, key string, targ
 	}}
 	a.markJobs[key] = job
 	a.markWG.Go(func() {
+		started := time.Now()
 		var last time.Time
 		result := a.Library.SetProcessedWithProgress(a.ctx, job.targets, job.marked, func(result library.MarkResult) {
 			if time.Since(last) < 200*time.Millisecond {
@@ -81,6 +83,11 @@ func (a *App) startMark(w http.ResponseWriter, r *http.Request, key string, targ
 			a.markMu.Unlock()
 			last = time.Now()
 		})
+		slog.Info("mark task finished", "key", key, "marked", marked,
+			"elapsed", time.Since(started), "changed", result.Changed, "unchanged", result.Unchanged,
+			"failed", result.Failed, "interrupted", result.Interrupted,
+			"refresh_duration", result.Metrics.RefreshDuration, "validation_duration", result.Metrics.ValidationDuration,
+			"write_duration", result.Metrics.WriteDuration, "committed_batches", result.Metrics.CommittedBatches)
 		a.markMu.Lock()
 		defer a.markMu.Unlock()
 		job.status.MarkResult = result

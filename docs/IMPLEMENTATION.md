@@ -31,7 +31,11 @@ library 构造受媒体根约束的父子路径，核验设备/inode；文件额
 
 prepare受全局抽帧并发与缓存容量限制；等待/调用模型的截图持有租约。暂停停止新步骤、允许在途收尾并释放待推理租约；恢复优先复用缓存。取消向媒体、模型及退避传播。全局工具或鉴权故障停止批次，普通视频失败继续其他条目。重启将活动批次和未结束条目在同一事务内收尾为中断/取消。
 
-目录标记使用应用生命周期的后台任务，相同键复用进度，断连继续执行，终态内存保留1小时。目录编号任务通过查询续租，超过20秒未查询或显式取消后安全停止；服务关闭等待两类任务退出。
+目录标记使用应用生命周期的后台任务，相同键复用进度，断连继续执行，终态内存保留1小时。标记每批最多128个文件：在Library.mu下逐文件核验活动/待核对状态、当前索引快照及磁盘身份/内容，然后才打开短事务，复用预编译语句并保持WAL + FULL同步。遍历页读取基础字段；校验复用刚读取的文件快照，祖先仍逐次查库和核验磁盘，不跨批缓存路径证据。文件校验失败独立报告，其余文件可提交；SQL或提交失败回滚本批有效文件，取消时不统计未提交文件，进度只在成功提交后推进。已有提交不受后续失败影响。
+
+标记结束输出一条`mark task finished`日志，含总耗时、目录刷新/文件校验/数据库写入耗时及已提交批次数。阶段耗时不包含全部锁等待、遍历查询和进度回报，不应将阶段之和视为完整总耗时。
+
+目录编号任务通过查询续租，超过20秒未查询或显式取消后安全停止；服务关闭等待两类任务退出。
 
 API使用Go方法路由、严格单JSON对象、未知字段拒绝及64KiB请求体限制。业务/媒体/诊断接口经过登录，写入校验同源与CSRF；秘密只存加密快照，诊断脱敏、图片负载省略。
 
@@ -70,6 +74,8 @@ go build -o bin/video-rename ./cmd/video-rename
 go test -tags=integration -count=1 ./internal/media
 # 规模测试：30万索引/约1GB库、5万文件分页、2万编号预览/标记及多选提交
 go test -tags=scale -run '^TestScale' -count=1 -v ./internal/library ./internal/jobs ./internal/app
+# 超大规模：50万真实临时文件递归标记、精确计数及SQLite完整性，独立于常规scale
+go test -tags=scale_large -run '^TestScaleLargeProcessedMarks$' -count=1 -timeout=15m -v ./internal/library
 # Linux可执行文件交叉编译（不等于Linux运行验证）
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/video-rename-linux-amd64 ./cmd/video-rename
 # 浏览器：先构建bin/video-rename，需要真实FFmpeg和Chromium
@@ -77,6 +83,6 @@ npm --prefix web exec -- playwright install chromium
 npm --prefix web run test:e2e
 ```
 
-规模测试需要约2GB以上临时空间，不纳入默认快速测试。浏览器夹具使用18790、本地假模型、临时媒体/配置/数据库；失败截图和trace位于忽略的web/test-results。真实模型质量、通知送达、Linux/CIFS性能需要相应环境实测。最新结果只记录在[验收记录](ACCEPTANCE.md)，历史计划与测量在archive中追溯。
+常规规模测试需要约2GB以上临时空间，`scale_large`建议预留5GB以上临时空间；两者均不纳入默认快速测试。浏览器夹具使用18790、本地假模型、临时媒体/配置/数据库；失败截图和trace位于忽略的web/test-results。真实模型质量、通知送达、Linux/CIFS性能需要相应环境实测。最新结果只记录在[验收记录](ACCEPTANCE.md)，历史计划与测量在archive中追溯。
 
 仓库无CI平台配置；CI直接依次调用上述原生命令。开发模式先启动Go，再运行`npm --prefix web run dev`。图标生成命令是`node scripts/generate-favicon.mjs`，来源为web/public/logo.png，需要FFmpeg。
