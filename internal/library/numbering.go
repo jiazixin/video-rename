@@ -175,31 +175,8 @@ func numberingFingerprintFailure(path string, b Numbering, actual string) error 
 	var detail strings.Builder
 	fmt.Fprintf(&detail, "编号目录校验诊断\n目录：%q\n预览时间：%s\n预览指纹：%s\n当前指纹：%s\n", path, b.Created, numberingFingerprintLabel(b.Fingerprint), numberingFingerprintLabel(actual))
 	if !describeNumberingSnapshotDiff(&detail, b.Fingerprint, actual) {
-		fmt.Fprintln(&detail, "此预览没有完整目录快照，以下仅比较参与编号的文件；更新后请重新预览。")
-		differences := 0
-		for _, item := range b.Items {
-			info, err := os.Lstat(filepath.Join(path, item.Old))
-			if err != nil {
-				fmt.Fprintf(&detail, "文件 %q：读取失败：%v\n", item.Old, err)
-				differences++
-			} else {
-				snap, err := domain.SnapshotFromInfo(info)
-				if err != nil {
-					fmt.Fprintf(&detail, "文件 %q：身份读取失败：%v\n", item.Old, err)
-					differences++
-				} else if !info.Mode().IsRegular() || Identity(snap) != item.Identity || snap.Size != item.Size || stamp(snap) != item.Mtime {
-					fmt.Fprintf(&detail, "文件 %q：类型=%s；身份 %s → %s；大小 %d → %d；修改时间 %s → %s\n", item.Old, info.Mode().Type(), item.Identity, Identity(snap), item.Size, snap.Size, item.Mtime, stamp(snap))
-					differences++
-				}
-			}
-			if differences >= 20 {
-				fmt.Fprintln(&detail, "差异仅展示前 20 项。")
-				break
-			}
-		}
-		if differences == 0 {
-			fmt.Fprintln(&detail, "参与文件的身份、大小和修改时间一致；差异可能来自其他目录条目或旧版预览指纹，当前记录不足以确定具体条目。")
-		}
+		fmt.Fprintln(&detail, "预览格式无效，无法比较目录快照。当前目录尚未开始改名，请重新预览。")
+		return &domain.JobError{Code: domain.CodeSourceChanged, Message: fmt.Sprintf("目录 %s 的预览格式无效，请重新预览", path), ProcessingLog: detail.String()}
 	}
 	fmt.Fprintln(&detail, "当前目录尚未开始改名。以上为两次读取的差异，不能据此确定变化原因；请核对具体条目后重新预览。")
 	return &domain.JobError{Code: domain.CodeSourceChanged, Message: fmt.Sprintf("目录 %s 的预览校验不一致，请查看诊断详情并重新预览", path), ProcessingLog: detail.String()}

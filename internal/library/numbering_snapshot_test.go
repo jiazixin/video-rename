@@ -2,10 +2,13 @@ package library
 
 import (
 	"encoding/json/v2"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"video-rename/internal/domain"
 )
 
 func TestNumberingSnapshotDiagnosesNonParticipatingEntries(t *testing.T) {
@@ -37,6 +40,46 @@ func TestNumberingSnapshotDiagnosesNonParticipatingEntries(t *testing.T) {
 		if !strings.Contains(detail.String(), want) {
 			t.Fatal(want, detail.String())
 		}
+	}
+}
+
+func TestNumberingRejectsInvalidPreviewFormat(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{"empty", ""},
+		{"plain", "fingerprint"},
+		{"malformed", "{"},
+		{"unsupported_version", `{"version":2,"hash":"fingerprint","entries":[]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l, root, b := numberedFixture(t)
+			before, err := directoryFingerprint(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := l.DB.Exec("UPDATE image_numberings SET fingerprint=? WHERE id=?", tc.raw, b.ID); err != nil {
+				t.Fatal(err)
+			}
+			_, err = l.ApplyNumbering(b.ID)
+			diagnostic, ok := errors.AsType[*domain.JobError](err)
+			if !ok || diagnostic.Code != domain.CodeSourceChanged || !strings.Contains(diagnostic.Message, "预览格式无效，请重新预览") {
+				t.Fatal("invalid preview accepted or misdiagnosed", err)
+			}
+			after, err := directoryFingerprint(root)
+			if err != nil || after != before {
+				t.Fatal("invalid preview changed files", err)
+			}
+			saved, err := l.Numbering(b.ID)
+			if err != nil || saved.Status != "preview" || saved.Fingerprint != tc.raw {
+				t.Fatal("invalid preview was rewritten", saved, err)
+			}
+			var operations int
+			if err := l.DB.QueryRow("SELECT count(*) FROM operations").Scan(&operations); err != nil || operations != 0 {
+				t.Fatal("invalid preview created file operations", operations, err)
+			}
+		})
 	}
 }
 func TestNumberingSnapshotReportsIdentityOnlyDrift(t *testing.T) {

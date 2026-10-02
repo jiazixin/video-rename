@@ -64,10 +64,7 @@ func numberingFingerprintLabel(raw string) string {
 	if snapshot, ok := decodeNumberingSnapshot(raw); ok {
 		return fmt.Sprintf("v%d:%s（%d 个条目）", snapshot.Version, snapshot.Hash, len(snapshot.Entries))
 	}
-	if len(raw) > 128 {
-		return "无法识别的旧版指纹"
-	}
-	return raw
+	return "无效目录快照"
 }
 
 // Compare the captured snapshots, not a second filesystem read that might
