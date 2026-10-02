@@ -13,10 +13,11 @@ type RecordItem={id:number;run:number;entry:number;path:string;source:string;sta
 type Group={items:RecordItem[];total:number;next:number;page?:number}
 type Report={success:Group;failure:Group;running:number}
 type Category='success'|'failure'
+const toast=ref<InstanceType<typeof ToastNotice>>()
 const groups=[{id:'success' as Category,label:'抽帧成功'},{id:'failure' as Category,label:'抽帧失败'}]
 const category=ref<Category>('success')
 const report=ref<Report>({success:{items:[],total:0,next:0},failure:{items:[],total:0,next:0},running:0})
-const busy=ref(false),error=ref(''),message=ref(''),q=ref(''),run=ref(''),from=ref(''),to=ref(''),limit=ref(50),batches=ref<number[]>([])
+const busy=ref(false),error=ref(''),q=ref(''),run=ref(''),from=ref(''),to=ref(''),limit=ref(50),batches=ref<number[]>([])
 const pages=ref({success:1,failure:1})
 const batchOptions=computed(()=>[{value:'',label:'全部批次'},...batches.value.map(id=>({value:String(id),label:`批次 #${id}`}))])
 const selected=ref<RecordItem>(),diagnostics=ref(''),detailError=ref(''),detailBusy=ref(false)
@@ -39,9 +40,9 @@ async function inspect(row:RecordItem){
  selected.value=row;diagnostics.value='';detailError.value='';detailBusy.value=true;const n=++detailSeq
  try{const result=await api<{processing_log:string}>(`/extractions/${row.id}`);if(n===detailSeq)diagnostics.value=result.processing_log}catch(e){if(n===detailSeq)detailError.value=(e as Error).message}finally{if(n===detailSeq)detailBusy.value=false}
 }
-async function copy(){try{await navigator.clipboard.writeText(JSON.stringify({...selected.value,processing_log:diagnostics.value},null,2));message.value='已复制抽帧详情'}catch{detailError.value='浏览器不允许复制，请手动选取文本'}}
+async function copy(){try{await navigator.clipboard.writeText(JSON.stringify({...selected.value,processing_log:diagnostics.value},null,2));toast.value?.show('已复制抽帧详情')}catch{detailError.value='浏览器不允许复制，请手动选取文本'}}
 function openClear(){clearError.value='';clearOpen.value=true}
-async function clear(){clearing.value=true;clearError.value='';try{const result=await api('/extractions/clear','POST',{all:true});message.value=result.message;clearOpen.value=false;reset()}catch(e){clearError.value=(e as Error).message}finally{clearing.value=false}}
+async function clear(){clearing.value=true;clearError.value='';try{const result=await api('/extractions/clear','POST',{all:true});toast.value?.show(result.message);clearOpen.value=false;reset()}catch(e){clearError.value=(e as Error).message}finally{clearing.value=false}}
 const timer=setInterval(()=>{if(!busy.value&&document.visibilityState==='visible')load()},3000)
 onMounted(load)
 onUnmounted(()=>{seq++;detailSeq++;controller?.abort();clearInterval(timer);clearTimeout(debounce)})
@@ -53,7 +54,7 @@ onUnmounted(()=>{seq++;detailSeq++;controller?.abort();clearInterval(timer);clea
  <div class="log-tabs" aria-label="抽帧记录状态"><button :class="{active:category==='success'}" :aria-pressed="category==='success'" @click="category='success'"><CheckCircle2 :size="18"/>成功记录</button><button :class="{active:category==='failure'}" :aria-pressed="category==='failure'" @click="category='failure'"><AlertCircle :size="18"/>失败记录</button></div>
  <div class="extraction-history">
  <div v-if="error" role="alert" class="notice error">{{error}}<button @click="load">重试</button></div>
- <ToastNotice v-model="message" />
+ <ToastNotice ref="toast" />
  <div class="panel filterbar extraction-filters">
   <div class="search-input"><Search :size="16"/><input v-model="q" aria-label="搜索抽帧记录" placeholder="搜索视频名称或失败原因…" @input="search"/></div>
   <SelectField v-model="run" label="抽帧批次" :options="batchOptions" @change="reset"/>

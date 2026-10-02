@@ -10,6 +10,7 @@ import StatusBadge from '../../components/StatusBadge.vue'
 import './runs.css'
 import Modal from '../../components/Modal.vue'
 import SelectField from '../../components/SelectField.vue'
+const toast=ref<InstanceType<typeof ToastNotice>>()
 const modelConfigID=ref(0)
 const category=ref<'all'|'manual'|'automatic'>('all'),task=ref('')
 type RunPage={items:Run[];total:number;page:number;size:number;profiles?:{id:number;title:string}[]}
@@ -41,7 +42,7 @@ function changeSize(){currentPage.value.page=1;void load()}
 watch(category,()=>{runs.value=[];void load()})
 watch([task,status,profile,duration,period,from,to],()=>{for(const value of Object.values(pagination.value))value.page=1;runs.value=[];void load()})
 const props=defineProps<{ready:boolean;view:string}>()
-const runs=ref<Run[]>([]),plans=ref<Plan[]>([]),error=ref(''),notice=ref(''),mode=ref(''),busy=ref(false),dialogError=ref(''),targets=ref<number[]>([]),recursive=ref(true)
+const runs=ref<Run[]>([]),plans=ref<Plan[]>([]),error=ref(''),mode=ref(''),busy=ref(false),dialogError=ref(''),targets=ref<number[]>([]),recursive=ref(true)
 const edit=ref<Plan>(),name=ref(''),kind=ref('daily'),hour=ref(2),minute=ref(30),days=ref([1]),cron=ref('0 */6 * * *'),timezone=ref('Asia/Shanghai'),enabled=ref(true),preview=ref<string[]>([])
 type RestoreResult={restored:number;skipped:number;failed:number;errors:string[]}
 const restoreTarget=ref<Run>(),restoring=ref(false),restoreError=ref(''),restoreResult=ref<RestoreResult>()
@@ -117,20 +118,20 @@ async function poll(){if(document.visibilityState==='visible'&&!loading.value)aw
 function manual(){modelConfigID.value=0;taskType.value='rename';mode.value='manual';targets.value=[];recursive.value=true;dialogError.value=''}
 function plan(p?:Plan){taskType.value=p?.task||'rename';modelConfigID.value=p?.model_config_id||0;edit.value=p;name.value=p?.name||'';targets.value=p?[...p.targets]:[];recursive.value=p?.recursive??true;kind.value=p?.kind||'daily';timezone.value=p?.timezone||'Asia/Shanghai';enabled.value=p?.enabled??true;cron.value=p?.expression||'0 */6 * * *';const parts=p?.expression.split(' ');minute.value=parts?Number(parts[0])||0:30;hour.value=parts?Number(parts[1])||0:2;days.value=parts&&p?.kind==='weekly'?parts[4].split(',').map(Number):[1];preview.value=[];dialogError.value='';mode.value='plan'}
 async function showPreview(){dialogError.value='';try{preview.value=await api('/schedules/preview','POST',{expression:expression.value,timezone:timezone.value})}catch(e){dialogError.value=(e as Error).message}}
-async function submit(){busy.value=true;dialogError.value='';try{const extracting=taskType.value==='extract';if(mode.value==='manual'){const r=await api('/runs','POST',{task:taskType.value,model_config_id:extracting?0:modelConfigID.value,targets:targets.value,recursive:recursive.value,key:key()});notice.value=`${extracting?'抽帧':'重命名'}批次 #${r.id} 已加入队列，可在批次记录查看进度。`}else{await api(edit.value?`/schedules/${edit.value.id}`:'/schedules',edit.value?'PATCH':'POST',{task:taskType.value,name:name.value,model_config_id:extracting?0:modelConfigID.value,targets:targets.value,recursive:recursive.value,kind:kind.value,expression:expression.value,timezone:timezone.value,enabled:enabled.value,version:edit.value?.version||0});notice.value='运行计划已保存'}mode.value='';await load()}catch(e){dialogError.value=(e as Error).message}finally{busy.value=false}}
+async function submit(){busy.value=true;dialogError.value='';try{const extracting=taskType.value==='extract';if(mode.value==='manual'){const r=await api('/runs','POST',{task:taskType.value,model_config_id:extracting?0:modelConfigID.value,targets:targets.value,recursive:recursive.value,key:key()});toast.value?.show(`${extracting?'抽帧':'重命名'}批次 #${r.id} 已加入队列，可在批次记录查看进度。`)}else{await api(edit.value?`/schedules/${edit.value.id}`:'/schedules',edit.value?'PATCH':'POST',{task:taskType.value,name:name.value,model_config_id:extracting?0:modelConfigID.value,targets:targets.value,recursive:recursive.value,kind:kind.value,expression:expression.value,timezone:timezone.value,enabled:enabled.value,version:edit.value?.version||0});toast.value?.show('运行计划已保存')}mode.value='';await load()}catch(e){dialogError.value=(e as Error).message}finally{busy.value=false}}
 async function toggle(p:Plan){try{await api(`/schedules/${p.id}`,'PATCH',{...p,enabled:!p.enabled});await load()}catch(e){error.value=(e as Error).message}}
-async function runPlan(p:Plan){try{const r=await api(`/schedules/${p.id}/run`,'POST',{key:key()});notice.value=`运行 #${r.id} 已加入队列`;await load()}catch(e){error.value=(e as Error).message}}
+async function runPlan(p:Plan){try{const r=await api(`/schedules/${p.id}/run`,'POST',{key:key()});toast.value?.show(`运行 #${r.id} 已加入队列`);await load()}catch(e){error.value=(e as Error).message}}
 async function remove(){if(!deletePlan.value)return;try{await api(`/schedules/${deletePlan.value.id}`,'DELETE',{});deletePlan.value=undefined;await load()}catch(e){error.value=(e as Error).message}}
 function askPause(r:Run){pauseTarget.value=r;pauseError.value='';detail.value=undefined}
 async function confirmPause(){
  if(!pauseTarget.value||pauseBusy.value)return
  const resume=pauseTarget.value.status==='paused'
  pauseBusy.value=true;pauseError.value=''
- try{await api(`/runs/${pauseTarget.value.id}/${resume?'resume':'pause'}`,'POST',{confirm:true});pauseTarget.value=undefined;notice.value=resume?'批次已继续运行':'批次已暂停调度，正在执行的步骤将完成后释放名额';await load()}
+ try{await api(`/runs/${pauseTarget.value.id}/${resume?'resume':'pause'}`,'POST',{confirm:true});pauseTarget.value=undefined;toast.value?.show(resume?'批次已继续运行':'批次已暂停调度，正在执行的步骤将完成后释放名额');await load()}
  catch(e){pauseError.value=(e as Error).message}finally{pauseBusy.value=false}
 }
 function askCancel(r:Run){cancelTarget.value=r;cancelError.value='';detail.value=undefined}
-async function confirmCancel(){if(!cancelTarget.value||cancelling.value)return;cancelling.value=true;try{await api(`/runs/${cancelTarget.value.id}/cancel`,'POST',{});cancelTarget.value=undefined;notice.value='已提交取消请求';await load()}catch(e){cancelError.value=(e as Error).message}finally{cancelling.value=false}}
+async function confirmCancel(){if(!cancelTarget.value||cancelling.value)return;cancelling.value=true;try{await api(`/runs/${cancelTarget.value.id}/cancel`,'POST',{});cancelTarget.value=undefined;toast.value?.show('已提交取消请求');await load()}catch(e){cancelError.value=(e as Error).message}finally{cancelling.value=false}}
 async function itemPage(requested:number){
  if(!detail.value)return
  const id=detail.value.id,n=++itemSequence;itemBusy.value=true
@@ -143,7 +144,7 @@ onMounted(()=>{poll();ticker=setInterval(()=>{if(runs.value.some(r=>active(r)&&r
 onUnmounted(()=>{alive=false;clearTimeout(timer);clearInterval(ticker)})
 </script>
 <template><section>
-<div class="page-heading"><div><h1>{{view==='plans'?'计划管理':'批次记录'}}<span class="title-dot">.</span></h1><p>{{view==='plans'?'手动发起任务，或设置自动运行时间与处理范围。':'查看任务进度、处理结果与批次详情。'}}</p></div><div class="heading-actions"><button :disabled="loading" @click="load()"><RefreshCw :size="16" :class="{spin:loading}"/>刷新</button></div></div><div v-if="error" role="alert" class="notice error">{{error}}<button @click="error='';load()">重试</button></div><ToastNotice v-model="notice" />
+<div class="page-heading"><div><h1>{{view==='plans'?'计划管理':'批次记录'}}<span class="title-dot">.</span></h1><p>{{view==='plans'?'手动发起任务，或设置自动运行时间与处理范围。':'查看任务进度、处理结果与批次详情。'}}</p></div><div class="heading-actions"><button :disabled="loading" @click="load()"><RefreshCw :size="16" :class="{spin:loading}"/>刷新</button></div></div><div v-if="error" role="alert" class="notice error">{{error}}<button @click="error='';load()">重试</button></div><ToastNotice ref="toast" />
 <template v-if="view==='plans'">
 <section class="run-section manual-plan-section" aria-label="手动计划"><div class="plan-section-heading"><div><h2><Play :size="19"/>手动计划</h2><p>按需执行一次，选择命名或抽帧以及目标目录。</p></div><button class="primary" @click="manual()"><Plus :size="17"/>新建手动计划</button></div><p class="help">提交后立即加入队列，进度与结果在 <a href="#runs">批次记录</a> 中查看。</p></section>
 <section class="run-section" aria-label="自动计划"><div class="plan-section-heading"><div><h2><CalendarDays :size="19"/>自动计划</h2><p>按小时、日、周或 Cron 定时执行命名或抽帧任务。</p></div><button class="primary" @click="plan()"><Plus :size="17"/>新建自动计划</button></div><div v-if="!plans.length" class="panel empty plans-empty"><CalendarDays :size="31"/><h3>{{loading?'正在加载计划…':'暂无自动计划'}}</h3><p>新建自动计划，按设定时间自动运行。</p></div><div v-else class="plan-grid"><article v-for="p in plans" :key="p.id" class="panel plan-card"><header><span class="plan-icon"><Clock3 :size="19"/></span><span class="badge">{{p.task==='extract'?'抽帧':'命名'}}</span><button class="switch" :class="{on:p.enabled}" role="switch" :aria-checked="p.enabled" :aria-label="`${p.enabled?'暂停':'启用'} ${p.name}`" @click="toggle(p)"><span/></button></header><h3>{{p.name}}</h3><p class="plan-expression">{{p.kind==='hourly'?'按小时':p.kind==='daily'?'按日':p.kind==='weekly'?'按周':'Cron'}} <code>{{p.expression}}</code></p><div class="plan-meta"><span><Folder :size="14"/>{{p.targets.length}} 个目录 · {{p.recursive?'含子目录':'仅当前层'}}</span><span class="plan-paths" :title="p.target_names?.join(' · ')">{{p.target_names?.join(' · ')}}</span><span>{{p.timezone}}</span></div><div class="plan-next"><span>下次运行</span><strong>{{p.enabled?time(p.next):'已暂停'}}</strong></div><p v-if="p.last" class="help">上次：{{p.last}}</p><footer><button :disabled="p.task!=='extract'&&!ready" @click="runPlan(p)"><Play :size="14"/>立即运行</button><button class="icon-btn" :aria-label="`编辑 ${p.name}`" @click="plan(p)"><PenLine :size="15"/></button><button class="icon-btn danger-button" :aria-label="`删除 ${p.name}`" @click="deletePlan=p"><Trash2 :size="15"/></button></footer></article></div></section></template>

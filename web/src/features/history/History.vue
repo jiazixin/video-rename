@@ -10,7 +10,8 @@ import Modal from '../../components/Modal.vue'
 import SelectField from '../../components/SelectField.vue'
 import FailureDiagnostics from './FailureDiagnostics.vue'
 import {ModelPicker} from '../models'
-const category=ref('success'),rows=ref<any[]>([]),busy=ref(false),error=ref(''),q=ref(''),action=ref(''),from=ref(''),to=ref(''),pageNumber=ref(1),selected=ref<any>(),detailError=ref(''),message=ref('')
+const toast=ref<InstanceType<typeof ToastNotice>>()
+const category=ref('success'),rows=ref<any[]>([]),busy=ref(false),error=ref(''),q=ref(''),action=ref(''),from=ref(''),to=ref(''),pageNumber=ref(1),selected=ref<any>(),detailError=ref('')
 const limit=ref(50),total=ref(0),multi=ref(false),retrying=ref(false),retryRuns=ref<number[]>([])
 const retryScope=ref<{all:boolean;ids:number[];name:string}>(),retryModel=ref(0),retryError=ref('')
 let retryKey=''
@@ -31,10 +32,10 @@ function selectPage(invert=false){selectionAnchor=undefined;for(const row of row
 function togglePage(){selectionAnchor=undefined;if(rows.value.every(r=>chosen.value.has(r.id)))clearSelection();else selectPage()}
 function toggleMulti(){multi.value=!multi.value;clearSelection()}
 function openClear(){clearAll.value=!chosen.value.size;clearError.value='';clearOpen.value=true}
-async function clearHistory(){if(clearing.value)return;clearing.value=true;clearError.value='';try{const result=await api('/logs/clear','POST',{category:category.value,all:clearAll.value,ids:clearAll.value?[]:[...chosen.value]});message.value=result.message;clearOpen.value=false;reset()}catch(e){clearError.value=(e as Error).message}finally{clearing.value=false}}
+async function clearHistory(){if(clearing.value)return;clearing.value=true;clearError.value='';try{const result=await api('/logs/clear','POST',{category:category.value,all:clearAll.value,ids:clearAll.value?[]:[...chosen.value]});toast.value?.show(result.message);clearOpen.value=false;reset()}catch(e){clearError.value=(e as Error).message}finally{clearing.value=false}}
 let seq=0,debounce:ReturnType<typeof setTimeout>|undefined
 async function load(preserve=false){if(category.value==='extraction')return;if(!preserve)clearSelection();const n=++seq;busy.value=true;if(!preserve)error.value='';try{const params=new URLSearchParams({paged:'1',limit:String(limit.value),category:category.value,run:run.value,q:q.value,action:action.value,page:String(pageNumber.value),from:from.value?new Date(from.value+'T00:00:00').toISOString():'',to:to.value?new Date(to.value+'T23:59:59.999').toISOString():''});const [data,available]=await Promise.all([api<any>(`/logs?${params}`),api<number[]>('/logs/batches')]);if(n===seq){rows.value=Array.isArray(data)?data:data.items;total.value=Array.isArray(data)?data.length:data.total;pageNumber.value=data.page??pageNumber.value;chosen.value=new Set([...chosen.value].filter(id=>rows.value.some(r=>r.id===id)));batches.value=available;if(run.value&&!available.includes(Number(run.value)))batches.value=[...available,Number(run.value)].sort((a,b)=>b-a)}}catch(e){if(n===seq)error.value=(e as Error).message}finally{if(n===seq)busy.value=false}}
-function tab(value:string){seq++;busy.value=false;error.value='';message.value='';category.value=value;reset()}
+function tab(value:string){seq++;busy.value=false;error.value='';toast.value?.clear();category.value=value;reset()}
 function pathParts(path: string){
  if(!path)return {directory:'—',name:'—'}
  const index=path.lastIndexOf('/')
@@ -46,8 +47,8 @@ function tokens(n:number){return n>=999_950?`${(n/1e6).toFixed(2).replace(/\.?0+
 function reset(){pageNumber.value=1;load()}
 function search(){clearTimeout(debounce);debounce=setTimeout(reset,250)}
 function changePage(value:number){pageNumber.value=value;load()}
-async function copy(){try{await navigator.clipboard.writeText(JSON.stringify(selected.value,null,2));message.value='已复制运行记录详情'}catch{detailError.value='浏览器不允许复制，请手动选取文本'}}
-async function restore(){if(!selected.value)return;busy.value=true;try{await api(`/operations/${selected.value.operation}/restore`,'POST',{key:key()});message.value='名称已还原';selected.value=undefined;reset()}catch(e){detailError.value=(e as Error).message}finally{busy.value=false}}
+async function copy(){try{await navigator.clipboard.writeText(JSON.stringify(selected.value,null,2));toast.value?.show('已复制运行记录详情')}catch{detailError.value='浏览器不允许复制，请手动选取文本'}}
+async function restore(){if(!selected.value)return;busy.value=true;try{await api(`/operations/${selected.value.operation}/restore`,'POST',{key:key()});toast.value?.show('名称已还原');selected.value=undefined;reset()}catch(e){detailError.value=(e as Error).message}finally{busy.value=false}}
 function canRetry(row:any){return row.category==='failure'&&row.action==='automatic'&&row.entry>0}
 function openRetry(all=false,row?:any){
  if(retrying.value)return
@@ -63,7 +64,7 @@ async function retry(){
  try{
   const result=await api('/logs/retry','POST',{...(scope.all?{all:true}:{ids:scope.ids}),model_config_id:retryModel.value,key:retryKey})
   if(!result.accepted.length){retryError.value=result.errors.join('；')||`没有可重试的自动命名失败记录。${result.skipped?` ${result.skipped} 条记录不支持自动重试，已保留。`:''}`;return}
-  retryRuns.value.push(...result.runs);message.value=`已提交 ${result.accepted.length} 条失败记录重试，成功后会自动移除。${result.skipped?` ${result.skipped} 条记录不支持自动重试，已保留。`:''}`
+  retryRuns.value.push(...result.runs);toast.value?.show(`已提交 ${result.accepted.length} 条失败记录重试，成功后会自动移除。${result.skipped?` ${result.skipped} 条记录不支持自动重试，已保留。`:''}`)
   error.value=result.errors.join('；');result.accepted.forEach((id:number)=>chosen.value.delete(id));retryScope.value=undefined
  }catch(e){retryError.value=(e as Error).message}finally{retrying.value=false}
 }
@@ -82,7 +83,7 @@ onMounted(()=>load());onUnmounted(()=>{seq++;clearTimeout(debounce);clearInterva
 <template><section>
 <div class="page-heading"><div><h1>运行记录<span class="title-dot">.</span></h1><p>查看文件命名、还原等操作的成功与失败结果。</p></div><div class="history-heading-actions"><button v-if="category==='failure'" :disabled="retrying||clearing" title="重试所有失败记录中的自动命名失败，不受分页、筛选或勾选限制" @click="openRetry(true)"><RefreshCw :size="16" :class="{spin:retrying}"/>{{retrying?'正在提交…':'重试'}}</button><button @click="openClear"><Trash2 :size="16"/>清除记录</button><button :disabled="busy" @click="reset"><RefreshCw :size="16" :class="{spin:busy}"/>刷新</button></div></div>
 <div class="log-tabs" aria-label="运行记录状态"><button :class="{active:category==='success'}" :aria-pressed="category==='success'" @click="tab('success')"><CheckCircle2 :size="18"/>成功记录</button><button :class="{active:category==='failure'}" :aria-pressed="category==='failure'" @click="tab('failure')"><AlertCircle :size="18"/>失败记录</button></div>
-<div v-if="error" role="alert" class="notice error">{{error}}<button @click="load()">重试</button></div><ToastNotice v-model="message" />
+<div v-if="error" role="alert" class="notice error">{{error}}<button @click="load()">重试</button></div><ToastNotice ref="toast" />
 <div class="panel"><div class="filterbar log-filters"><button :aria-pressed="multi" @click="toggleMulti">{{multi?'退出多选':'多选'}}</button><div class="search-input"><Search :size="16"/><input v-model="q" placeholder="搜索文件名或记录内容…" aria-label="搜索运行记录" @input="search"/></div><SelectField v-model="action" @change="reset" label="操作类型" :options="[{value:'',label:'全部操作'},...Object.entries(actionNames).map(([value,label])=>({value,label}))]"/><SelectField v-model="run" label="运行批次" :options="batchOptions" @change="reset"/><DateField v-model="from" label="起始日期" :max="to" @change="reset"/><span class="subtle">至</span><DateField v-model="to" label="结束日期" :min="from" @change="reset"/><div class="filter-spacer"/><span class="subtle">共 {{total}} 项 · {{rows.length}} 项 / 当前页</span></div>
 <div v-if="multi" class="batch-toolbar"><strong>已选 {{chosen.size}} 项</strong><button :disabled="busy" title="全选本页" @click="selectPage()">全选</button><button :disabled="busy" title="反选本页" @click="selectPage(true)">反选</button><button :disabled="!chosen.size" @click="clearSelection">清空</button><button v-if="category==='failure'" :disabled="busy||retrying||!retryable.length" @click="openRetry()"><RefreshCw :size="15"/>{{retrying?'正在提交…':`批量重试（${retryable.length}）`}}</button><span v-if="category==='failure'" class="subtle">{{retryRuns.length?'重试运行中，成功后自动移除失败记录':'自动命名失败可重试，确认时可选择模型'}}</span></div>
 <div class="table-scroll"><table class="history-table" :class="[category,{multi}]"><thead><tr><th v-if="multi" class="history-select"><input type="checkbox" aria-label="选择本页记录" :checked="rows.length>0&&rows.every(row=>chosen.has(row.id))" :indeterminate="rows.some(row=>chosen.has(row.id))&&!rows.every(row=>chosen.has(row.id))" @change="togglePage"/></th><th class="history-time">时间</th><th class="history-action">操作</th><th class="history-model">模型配置</th><th class="history-directory">目录</th><th class="history-old-name">旧文件名</th><th class="history-result">{{category==='success'?'新文件名':'运行批次'}}</th><th v-if="category==='success'" class="history-run">运行批次</th><th class="history-tokens">token数</th><th v-if="category==='failure'" class="history-reason">失败原因</th><th></th></tr></thead>

@@ -18,6 +18,7 @@ import AudioPlayer from './AudioPlayer.vue'
 import MediaNumbering from './MediaNumbering.vue'
 import DirectoryNumbering from './DirectoryNumbering.vue'
 defineProps<{ready:boolean}>();const emit=defineEmits<{run:[]}>()
+const toast=ref<InstanceType<typeof ToastNotice>>()
 const multi=ref(false),chosen=ref(new Map<number,Entry>()),batch=ref(''),batchError=ref(''),batchProgress=ref(''),playing=ref<Entry>()
 const preview=ref<Entry>(),imageError=ref(false),imageBusy=ref(false),galleryError=ref('')
 const deleting=ref<Entry>(),deleteError=ref(''),deletePath=ref('')
@@ -41,7 +42,7 @@ async function deleteBatch(){
    }catch(err){failed.push(e);errors.push(`${e.name}：${(err as Error).message}`)}
   }
   const summary=`已删除 ${entries.length-failed.length} 项，失败 ${failed.length} 项`
-  notice.value=summary
+  toast.value?.show(summary)
   deletingBatch.value=failed
   deleteBatchError.value=failed.length?[summary,...errors].join('\n'):''
   selectionAnchor=undefined
@@ -55,7 +56,7 @@ async function deleteEntry(){
  try{
   const e=deleting.value
   await api(`/entries/${e.id}`,'DELETE',{version:e.version,confirmed:true})
-  chosen.value.delete(e.id);deleting.value=undefined;notice.value=`已永久删除 ${e.name}`
+  chosen.value.delete(e.id);deleting.value=undefined;toast.value?.show(`已永久删除 ${e.name}`)
   await load()
  }catch(err){deleteError.value=(err as Error).message}finally{saving.value=false}
 }
@@ -91,10 +92,10 @@ async function submitBatch(){if(saving.value)return;statusSeq++;saving.value=tru
   const entries=[...(extracting?extractEntries.value:autoEntries.value)]
   const run=await api('/runs','POST',{task:extracting?'extract':'rename',targets:entries.map(e=>e.id),recursive:recursive.value,model_config_id:extracting?0:modelConfigID.value,key:key()})
   trackRun(run.id,entries)
-  notice.value=`${extracting?'抽帧':'重命名'}批次 #${run.id} 已加入队列`
+  toast.value?.show(`${extracting?'抽帧':'重命名'}批次 #${run.id} 已加入队列`)
   batch.value=''
  }
- else {const entries=[...restoreEntries.value];let done=0;const failures:string[]=[];for(const e of entries){batchProgress.value=`正在还原 ${++done} / ${entries.length}`;try{await api(`/operations/${e.restore_id}/restore`,'POST',{key:key()});chosen.value.delete(e.id)}catch(err){failures.push(`${e.name}：${(err as Error).message}`)}}notice.value=`已还原 ${entries.length-failures.length} 项，失败 ${failures.length} 项`;batchProgress.value='';if(failures.length)batchError.value=failures.join('\n');else batch.value=''}
+ else {const entries=[...restoreEntries.value];let done=0;const failures:string[]=[];for(const e of entries){batchProgress.value=`正在还原 ${++done} / ${entries.length}`;try{await api(`/operations/${e.restore_id}/restore`,'POST',{key:key()});chosen.value.delete(e.id)}catch(err){failures.push(`${e.name}：${(err as Error).message}`)}}toast.value?.show(`已还原 ${entries.length-failures.length} 项，失败 ${failures.length} 项`);batchProgress.value='';if(failures.length)batchError.value=failures.join('\n');else batch.value=''}
  void syncEntries()
  }catch(err){batchError.value=(err as Error).message}finally{saving.value=false}}
 const videoBusy=ref(false),videoNotice=ref('')
@@ -141,7 +142,7 @@ const sort=ref('name_asc')
 function toggleSort(field:string){sort.value=sort.value===`${field}_asc`?`${field}_desc`:`${field}_asc`;pageNumber.value=1;load()}
 function sortLabel(field:string){return sort.value===`${field}_asc`?'升序':sort.value===`${field}_desc`?'降序':''}
 function routeDirectory(){const value=Number(location.hash.match(/^#library\/(\d+)$/)?.[1]||1);return Number.isSafeInteger(value)&&value>0?value:1}
-const dir=ref(routeDirectory()),page=ref<Page>(),busy=ref(false),error=ref(''),notice=ref(''),q=ref(''),kind=ref(''),pageNumber=ref(1),limit=ref(100)
+const dir=ref(routeDirectory()),page=ref<Page>(),busy=ref(false),error=ref(''),q=ref(''),kind=ref(''),pageNumber=ref(1),limit=ref(100)
 watch([dir,pageNumber,q,kind,sort,limit,multi],()=>{selectionAnchor=undefined},{flush:'sync'})
 const selected=ref<Entry>(),mode=ref(''),newName=ref(''),saving=ref(false),dialogError=ref(''),recursive=ref(true),history=ref<any[]>([])
 const inlineEntry=ref<Entry>(),inlineInput=ref<HTMLInputElement>(),inlineName=ref(''),inlineExtension=ref(''),inlineVersion=ref(0),inlineSaving=ref(false),inlineError=ref('')
@@ -163,7 +164,7 @@ async function saveInlineRename(){
  inlineSaving.value=true;inlineError.value='';statusSeq++
  try{
   await api(`/entries/${e.id}/rename`,'POST',{name,version:inlineVersion.value,key:key()})
-  notice.value='名称已更新，历史已保存'
+  toast.value?.show('名称已更新，历史已保存')
   await syncEntries()
   inlineEntry.value=undefined
  }catch(err){inlineError.value=(err as Error).message;await nextTick();inlineInput.value?.focus()}
@@ -314,7 +315,7 @@ function enter(id:number,updateRoute=true){
 function search(){pageNumber.value=1;seq++;clearTimeout(timer);clearTimeout(searchTimer);searchTimer=setTimeout(load,250)}
 async function refresh(){const directory=dir.value;try{await api(`/directories/${directory}/refresh`,'POST',{});if(directory===dir.value)await load(false,false)}catch(e){if(directory===dir.value)error.value=(e as Error).message}}
 async function open(e:Entry,m:string){if(m==='auto')modelConfigID.value=0;if(m==='extract')recursive.value=true;selected.value=e;mode.value=m;dialogError.value='';newName.value=e.kind==='file'?e.name.slice(0,e.name.length-(e.name.match(/\.[^.]+$/)?.[0].length||0)):e.name;history.value=[];if(m==='restore'||m==='history'){try{history.value=await api(`/entries/${e.id}/history`)}catch(err){dialogError.value=(err as Error).message}}}
-async function submit(){if(!selected.value)return;statusSeq++;saving.value=true;dialogError.value='';try{const e=selected.value;if(mode.value==='rename'){await api(`/entries/${e.id}/rename`,'POST',{name:newName.value+extension.value,version:e.version,key:key()});notice.value='名称已更新，历史已保存'}else if(mode.value==='restore'){await api(`/operations/${e.restore_id}/restore`,'POST',{key:key()});notice.value='名称已还原，可以再次自动命名'}else{const extracting=mode.value==='extract';const run=await api('/runs','POST',{task:extracting?'extract':'rename',model_config_id:extracting?0:modelConfigID.value,targets:[e.id],recursive:recursive.value,key:key()});trackRun(run.id,[e]);notice.value=`${extracting?'抽帧':'重命名'}批次 #${run.id} 已加入队列`}
+async function submit(){if(!selected.value)return;statusSeq++;saving.value=true;dialogError.value='';try{const e=selected.value;if(mode.value==='rename'){await api(`/entries/${e.id}/rename`,'POST',{name:newName.value+extension.value,version:e.version,key:key()});toast.value?.show('名称已更新，历史已保存')}else if(mode.value==='restore'){await api(`/operations/${e.restore_id}/restore`,'POST',{key:key()});toast.value?.show('名称已还原，可以再次自动命名')}else{const extracting=mode.value==='extract';const run=await api('/runs','POST',{task:extracting?'extract':'rename',model_config_id:extracting?0:modelConfigID.value,targets:[e.id],recursive:recursive.value,key:key()});trackRun(run.id,[e]);toast.value?.show(`${extracting?'抽帧':'重命名'}批次 #${run.id} 已加入队列`)}
  mode.value='';await syncEntries()}catch(err){dialogError.value=(err as Error).message}finally{saving.value=false}}
 const marking=ref<Entry[]>([]),markValue=ref(true),markError=ref(''),markProgress=ref('')
 interface MarkResult {key:string;status:string;changed:number;unchanged:number;failed:number;interrupted:boolean;failures:{name:string;message:string}[]}
@@ -340,7 +341,7 @@ async function submitMark(){
    if(result.interrupted){markKeys=[];throw new Error('标记任务已中断，仍有目标未处理')}
   }
   markKeys=[]
-  notice.value=`${markValue.value?'已标记':'已取消标记'} ${changed} 个视频，未变更 ${unchanged} 个，失败 ${failed} 项`
+  toast.value?.show(`${markValue.value?'已标记':'已取消标记'} ${changed} 个视频，未变更 ${unchanged} 个，失败 ${failed} 项`)
   if(failed)markError.value=failures.join('\n');else marking.value=[]
  }catch(e){markError.value=`已确认变更 ${confirmed} 个视频；${(e as Error).message}。后台任务可能仍在执行，可点击确认重试查询；已完成的标记会保留。`}
  finally{markProgress.value='';saving.value=false;await syncEntries()}
@@ -377,7 +378,7 @@ onActivated(activate);onDeactivated(deactivate);onUnmounted(()=>{deactivate();di
  <div class="directory-action-row"><button class="library-action action-extract" aria-label="抽帧当前目录" :disabled="busy||!page||!!page.directory.task_status" @click="open(page!.directory,'extract')"><Images :size="16"/>抽帧</button><button class="library-action action-name" aria-label="重命名当前目录" :disabled="!ready||!page||!!page.directory.task_status" @click="open(page!.directory,'auto')"><Sparkles :size="16"/>重命名</button><DirectoryNumbering :directory="dir" :disabled="busy||!page||!!page.directory.task_status" @changed="preview=undefined;clearSelection();syncEntries()"/><button class="library-action action-mark" title="将当前目录及子目录中的现有视频标记为已处理，自动命名会跳过" :disabled="!page" @click="openMark([page!.directory],true)"><CircleCheck :size="16"/>标记</button><button class="library-action action-unmark" title="清除当前目录及子目录中视频的已处理标记，允许再次自动命名；文件名不变" :disabled="!page" @click="openMark([page!.directory],false)"><CircleMinus :size="16"/>取消标记</button></div>
  <p class="directory-action-hint">作用于当前目录及所有子目录</p>
 </div></div>
-<ToastNotice v-model="notice" /><div v-if="error" class="notice error" role="alert">{{error}}<button @click="enter(1)">返回媒体库</button><button @click="load()">重试</button></div>
+<ToastNotice ref="toast" /><div v-if="error" class="notice error" role="alert">{{error}}<button @click="enter(1)">返回媒体库</button><button @click="load()">重试</button></div>
 <div class="panel file-panel library-panel-controls">
 <div class="panel-toolbar directory-toolbar"><div class="breadcrumbs"><button @click="enter(1)"><Home :size="15"/>媒体库</button><template v-for="crumb in page?.breadcrumbs.filter(x=>x.id!==1)" :key="crumb.id"><ChevronRight :size="13"/><button @click="enter(crumb.id)">{{crumb.name}}</button></template></div><div class="directory-summary"><DirectoryStatus v-if="page?.directory.progress" :entry="page.directory"/><div class="directory-refresh-summary"><DirectoryContents inline :contents="page?.directory.contents"/><button :disabled="busy" @click="refresh"><RefreshCw :size="16" :class="{spin:busy}"/>刷新</button></div></div></div>
 <div class="filterbar"><button :aria-pressed="multi" @click="multi=!multi;clearSelection()">{{multi?'退出多选':'多选'}}</button><div class="search-input"><Search :size="16"/><input v-model="q" placeholder="搜索当前目录…" aria-label="搜索当前目录" @input="search"/></div><SelectField v-model="kind" @change="pageNumber=1;load()" label="类型筛选" :options="[{value:'',label:'全部类型'},{value:'directory',label:'目录'},{value:'video',label:'视频'},{value:'image',label:'图片'},{value:'audio',label:'音频'},{value:'other',label:'其他文件'}]"/><MediaNumbering v-if="kind==='image'||kind==='audio'" :media="kind" :directory="dir" :query="q" :sort="sort" :disabled="busy||!page||!!page.refreshing||!!page.directory.task_status" @changed="preview=undefined;clearSelection();syncEntries()"/><div class="filter-spacer"/><span class="subtle">共 {{page?.total??0}} 项 · {{page?.items.length||0}} 项 / 当前页</span></div>
