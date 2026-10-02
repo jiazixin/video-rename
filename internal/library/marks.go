@@ -24,10 +24,13 @@ type MarkResult struct {
 }
 
 type MarkMetrics struct {
-	RefreshDuration    time.Duration
-	ValidationDuration time.Duration
-	WriteDuration      time.Duration
-	CommittedBatches   int64
+	RefreshDuration              time.Duration
+	RefreshReadDirectoryDuration time.Duration
+	RefreshMetadataDuration      time.Duration
+	RefreshIndexDuration         time.Duration
+	ValidationDuration           time.Duration
+	WriteDuration                time.Duration
+	CommittedBatches             int64
 }
 
 const markBatchSize = 128
@@ -112,8 +115,11 @@ func (l *Library) SetProcessedWithProgress(ctx context.Context, ids []int64, mar
 			return
 		}
 		start := time.Now()
-		err := l.Refresh(ctx, e.ID)
+		refreshMetrics, err := l.refreshWithMetrics(ctx, e.ID)
 		result.Metrics.RefreshDuration += time.Since(start)
+		result.Metrics.RefreshReadDirectoryDuration += refreshMetrics.ReadDirectoryDuration
+		result.Metrics.RefreshMetadataDuration += refreshMetrics.MetadataDuration
+		result.Metrics.RefreshIndexDuration += refreshMetrics.IndexDuration
 		if err != nil {
 			fail(e.ID, err)
 			return

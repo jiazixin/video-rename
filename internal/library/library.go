@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -211,126 +210,6 @@ func kindOf(st os.FileInfo) string {
 		return "file"
 	}
 	return "other"
-}
-func (l *Library) Refresh(ctx context.Context, id int64) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if err := l.checkNumberingAvailable(id); err != nil {
-		return err
-	}
-	p, err := l.Path(id)
-	if err != nil {
-		return err
-	}
-	e, err := l.Get(id)
-	if err != nil || e.Kind != "directory" {
-		return fmt.Errorf("不是目录")
-	}
-	f, err := os.Open(p)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return l.refreshDirectory(ctx, id, f.ReadDir)
-}
-
-// refreshDirectory requires l.mu to keep application mutations out of the scan.
-func (l *Library) refreshDirectory(ctx context.Context, id int64, readDir func(int) ([]os.DirEntry, error)) error {
-	gen := time.Now().UnixNano()
-	fail := func(e error) error {
-		_, _ = l.DB.Exec("INSERT INTO directory_state(dir,error) VALUES(?,?) ON CONFLICT(dir) DO UPDATE SET error=excluded.error", id, e.Error())
-		return e
-	}
-	for {
-		if err := ctx.Err(); err != nil {
-			return fail(err)
-		}
-		batch, re := readDir(128)
-		// CIFS metadata reads can block. Gather a bounded batch before taking
-		// the database connection so submissions and status queries can proceed.
-		type scannedEntry struct {
-			name, kind string
-			snapshot   domain.Snapshot
-		}
-		scanned := make([]scannedEntry, 0, len(batch))
-		for _, de := range batch {
-			if err := ctx.Err(); err != nil {
-				return fail(err)
-			}
-			info, er := de.Info()
-			if er != nil {
-				return fail(er)
-			}
-			snap, er := domain.SnapshotFromInfo(info)
-			if er != nil {
-				return fail(er)
-			}
-			scanned = append(scanned, scannedEntry{de.Name(), kindOf(info), snap})
-		}
-		tx, err := l.DB.BeginTx(ctx, nil)
-		if err != nil {
-			return fail(err)
-		}
-		for _, item := range scanned {
-			snap := item.snapshot
-			var eid int64
-			var identity string
-			er := tx.QueryRow("SELECT id,identity FROM entries WHERE parent=? AND name=? AND present=1", id, item.name).Scan(&eid, &identity)
-			if er != nil && !errors.Is(er, sql.ErrNoRows) {
-				tx.Rollback()
-				return fail(er)
-			}
-			if er == nil && identity != Identity(snap) {
-				if _, er = tx.Exec("UPDATE entries SET present=0 WHERE id=?", eid); er != nil {
-					tx.Rollback()
-					return fail(er)
-				}
-				eid = 0
-			}
-			if eid == 0 {
-				res, er := tx.Exec("INSERT INTO entries(parent,name,kind,identity,size,mtime,observed) VALUES(?,?,?,?,?,?,?)", id, item.name, item.kind, Identity(snap), snap.Size, stamp(snap), storage.Now())
-				if er != nil {
-					tx.Rollback()
-					return fail(er)
-				}
-				eid, _ = res.LastInsertId()
-			} else {
-				_, er = tx.Exec("UPDATE entries SET version=version+CASE WHEN size<>? OR mtime<>? THEN 1 ELSE 0 END,size=?,mtime=?,kind=?,observed=? WHERE id=?", snap.Size, stamp(snap), snap.Size, stamp(snap), item.kind, storage.Now(), eid)
-				if er != nil {
-					tx.Rollback()
-					return fail(er)
-				}
-			}
-			if _, er = tx.Exec("INSERT INTO directory_items VALUES(?,?,?,?,?,?,?)", id, gen, eid, item.name, item.kind, snap.Size, stamp(snap)); er != nil {
-				tx.Rollback()
-				return fail(er)
-			}
-		}
-		if err = tx.Commit(); err != nil {
-			return fail(err)
-		}
-		if errors.Is(re, io.EOF) {
-			break
-		}
-		if re != nil {
-			return fail(re)
-		}
-	}
-	tx, err := l.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return fail(err)
-	}
-	defer tx.Rollback()
-	if _, err = tx.Exec("UPDATE entries SET present=0 WHERE parent=? AND id NOT IN(SELECT entry FROM directory_items WHERE dir=? AND generation=?)", id, id, gen); err != nil {
-		return err
-	}
-	if _, err = tx.Exec("INSERT INTO directory_state(dir,generation,refreshed,error) VALUES(?,?,?,'') ON CONFLICT(dir) DO UPDATE SET generation=excluded.generation,refreshed=excluded.refreshed,error=''", id, gen, storage.Now()); err != nil {
-		return err
-	}
-	if _, err = tx.Exec("DELETE FROM directory_items WHERE dir=? AND generation<>?", id, gen); err != nil {
-		return err
-	}
-	return tx.Commit()
 }
 func (l *Library) StartRefresh(ctx context.Context, id int64) {
 	l.refreshMu.Lock()

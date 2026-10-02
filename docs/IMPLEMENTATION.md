@@ -33,7 +33,9 @@ prepare受全局抽帧并发与缓存容量限制；等待/调用模型的截图
 
 目录标记使用应用生命周期的后台任务，相同键复用进度，断连继续执行，终态内存保留1小时。标记每批最多128个文件：在Library.mu下逐文件核验活动/待核对状态、当前索引快照及磁盘身份/内容，然后才打开短事务，复用预编译语句并保持WAL + FULL同步。遍历页读取基础字段；校验复用刚读取的文件快照，祖先仍逐次查库和核验磁盘，不跨批缓存路径证据。文件校验失败独立报告，其余文件可提交；SQL或提交失败回滚本批有效文件，取消时不统计未提交文件，进度只在成功提交后推进。已有提交不受后续失败影响。
 
-标记结束输出一条`mark task finished`日志，含总耗时、目录刷新/文件校验/数据库写入耗时及已提交批次数。阶段耗时不包含全部锁等待、遍历查询和进度回报，不应将阶段之和视为完整总耗时。
+目录刷新每页最多128项，以最多4个worker读取属性，按枚举顺序写入索引；整页属性成功后才打开短事务，复用SQL语句，仍更新observed并保持identity替换与version规则。属性失败停止后续项并完成较早项，以确定顺序报告错误；取消停止新读取，等待在途Info退出后返回，系统调用本身无法中断。慢文件系统不占用写连接。页事务失败整页回滚，旧完整generation保留；最终发布事务失败也在回滚后记录可见错误，重试刷新可恢复。
+
+标记结束输出一条`mark task finished`日志，含总耗时、目录刷新/文件校验/标记写入耗时及已提交标记批次数。刷新细分为`refresh_readdir_duration`（目录枚举）、`refresh_metadata_duration`（并发属性读取的墙钟时间）和`refresh_index_duration`（索引页事务、提交、发布及错误记录）。这三项属于`refresh_duration`，不能重复相加；Go可能在ReadDir中获取属性，文件系统开销需同时看前两项。`write_duration`仅指标记事务，不包括索引写入。阶段耗时不包含全部锁等待、遍历查询和进度回报，不应将阶段之和视为完整总耗时。
 
 目录编号任务通过查询续租，超过20秒未查询或显式取消后安全停止；服务关闭等待两类任务退出。
 
@@ -76,6 +78,8 @@ go test -tags=integration -count=1 ./internal/media
 go test -tags=scale -run '^TestScale' -count=1 -v ./internal/library ./internal/jobs ./internal/app
 # 超大规模：50万真实临时文件递归标记、精确计数及SQLite完整性，独立于常规scale
 go test -tags=scale_large -run '^TestScaleLargeProcessedMarks$' -count=1 -timeout=15m -v ./internal/library
+# 属性延迟实验：512临时文件，每次Info注入2ms延迟；用于对比并发，不能代表真实SMB吞吐
+go test -tags=scale -run '^TestScaleRefreshDelayedMetadata$' -count=1 -v ./internal/library
 # Linux可执行文件交叉编译（不等于Linux运行验证）
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/video-rename-linux-amd64 ./cmd/video-rename
 # 浏览器：先构建bin/video-rename，需要真实FFmpeg和Chromium

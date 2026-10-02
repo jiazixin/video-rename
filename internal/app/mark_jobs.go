@@ -87,6 +87,9 @@ func (a *App) startMark(w http.ResponseWriter, r *http.Request, key string, targ
 			"elapsed", time.Since(started), "changed", result.Changed, "unchanged", result.Unchanged,
 			"failed", result.Failed, "interrupted", result.Interrupted,
 			"refresh_duration", result.Metrics.RefreshDuration, "validation_duration", result.Metrics.ValidationDuration,
+			"refresh_readdir_duration", result.Metrics.RefreshReadDirectoryDuration,
+			"refresh_metadata_duration", result.Metrics.RefreshMetadataDuration,
+			"refresh_index_duration", result.Metrics.RefreshIndexDuration,
 			"write_duration", result.Metrics.WriteDuration, "committed_batches", result.Metrics.CommittedBatches)
 		a.markMu.Lock()
 		defer a.markMu.Unlock()
