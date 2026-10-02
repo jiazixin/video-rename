@@ -15,7 +15,7 @@ func TestPersistenceAndRejectedSave(t *testing.T) {
 	}
 	store := Store{DB: db}
 	value, err := store.Get()
-	if err != nil || value.Sampling.ParsedStrategy != config.StrategyHybrid {
+	if err != nil || value.Sampling.ParsedStrategy != config.StrategyDuration {
 		t.Fatal(value, err)
 	}
 	value.Sampling.MaxFrames = 32

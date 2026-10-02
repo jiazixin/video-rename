@@ -101,11 +101,11 @@ type ParsedSizeRule struct {
 // defaultDurationRules 默认时长分档。
 func defaultDurationRules() []DurationRule {
 	return []DurationRule{
-		{new("30s"), 3},
-		{new("2m"), 5},
-		{new("10m"), 8},
-		{new("30m"), 10},
-		{nil, 12},
+		{new("30s"), 8},
+		{new("2m"), 12},
+		{new("10m"), 24},
+		{new("30m"), 32},
+		{nil, 32},
 	}
 }
 
@@ -125,8 +125,8 @@ func defaults() *Config {
 		Listen: "127.0.0.1", Port: 8790, Storage: "../data", TempStorage: "../.cache",
 		Workers: 2,
 		Sampling: SamplingConfig{
-			Strategy:      string(StrategyHybrid),
-			MaxFrames:     12,
+			Strategy:      string(StrategyDuration),
+			MaxFrames:     32,
 			SkipStart:     0.05,
 			SkipEnd:       0.05,
 			DurationRules: defaultDurationRules(),

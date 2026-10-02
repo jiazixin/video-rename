@@ -5,7 +5,18 @@ test('抽帧设置保存、档位校验、刷新与窄屏',async({page})=>{
  await page.getByLabel('密码',{exact:true}).fill('test-password-123')
  await page.getByRole('button',{name:'登录',exact:true}).click()
  await page.getByRole('button',{name:'系统设置',exact:true}).click();await page.getByRole('button',{name:'抽帧设置',exact:true}).click()
- await expect(page.getByLabel('每个视频最大帧数')).toHaveValue('12')
+ await expect(page.getByRole('combobox',{name:'抽帧策略'})).toContainText('按视频时长')
+ await expect(page.getByLabel('每个视频最大帧数')).toHaveValue('32')
+ await expect(page.getByLabel('跳过开头（%）')).toHaveValue('5')
+ await expect(page.getByLabel('跳过末尾（%）')).toHaveValue('5')
+ await expect(page.getByLabel('截图最长边（像素）')).toHaveValue('768')
+ await expect(page.getByLabel('JPEG 质量档位',{exact:true})).toHaveValue('4')
+ for (const [i,limit] of ['30s','2m','10m','30m'].entries()) {
+  await expect(page.getByLabel(`时长上限 ${i+1}`,{exact:true})).toHaveValue(limit)
+ }
+ for (const [i,frames] of ['8','12','24','32','32'].entries()) {
+  await expect(page.getByLabel(`时长档位帧数 ${i+1}`,{exact:true})).toHaveValue(frames)
+ }
  await page.getByLabel('每个视频最大帧数').fill('32')
  await page.getByLabel('截图最长边（像素）').fill('1024')
  await page.getByLabel('JPEG 质量档位',{exact:true}).fill('3')

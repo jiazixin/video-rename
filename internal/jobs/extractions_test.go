@@ -216,7 +216,7 @@ func TestExtractionScansBeyondLibraryPagesAndFreezesSampling(t *testing.T) {
 	}
 	changed := original
 	changed.Images.JPEGQuality = 6
-	changed.Sampling.MaxFrames = original.Sampling.MaxFrames + 1
+	changed.Sampling.MaxFrames = original.Sampling.MaxFrames - 1
 	if err = settings.Save(changed); err != nil {
 		t.Fatal(err)
 	}

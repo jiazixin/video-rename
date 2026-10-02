@@ -43,16 +43,16 @@ func TestLoadMinimalAppliesDefaults(t *testing.T) {
 	if cfg.Workers != 2 {
 		t.Errorf("workers 默认值 = %d, 期望 2", cfg.Workers)
 	}
-	if cfg.Sampling.MaxFrames != 12 || cfg.Sampling.SkipStart != 0.05 || cfg.Sampling.SkipEnd != 0.05 {
+	if cfg.Sampling.MaxFrames != 32 || cfg.Sampling.SkipStart != 0.05 || cfg.Sampling.SkipEnd != 0.05 {
 		t.Errorf("sampling 默认值异常: %+v", cfg.Sampling)
 	}
-	if cfg.Sampling.ParsedStrategy != StrategyHybrid {
-		t.Errorf("strategy 默认值 = %v, 期望 hybrid", cfg.Sampling.ParsedStrategy)
+	if cfg.Sampling.ParsedStrategy != StrategyDuration {
+		t.Errorf("strategy 默认值 = %v, 期望 duration", cfg.Sampling.ParsedStrategy)
 	}
-	if len(cfg.Sampling.ParsedDuration) != 5 || cfg.Sampling.ParsedDuration[0].Max != 30*time.Second || cfg.Sampling.ParsedDuration[0].Frames != 3 {
+	if len(cfg.Sampling.ParsedDuration) != 5 || cfg.Sampling.ParsedDuration[0].Max != 30*time.Second || cfg.Sampling.ParsedDuration[0].Frames != 8 {
 		t.Errorf("duration 默认表异常: %+v", cfg.Sampling.ParsedDuration)
 	}
-	if cfg.Sampling.ParsedDuration[4].Max < time.Duration(1<<62) || cfg.Sampling.ParsedDuration[4].Frames != 12 {
+	if cfg.Sampling.ParsedDuration[4].Max < time.Duration(1<<62) || cfg.Sampling.ParsedDuration[4].Frames != 32 {
 		t.Errorf("duration 兜底档异常: %+v", cfg.Sampling.ParsedDuration[4])
 	}
 	if len(cfg.Sampling.ParsedSize) != 4 || cfg.Sampling.ParsedSize[2].Max != 1024*1024*1024 {

@@ -37,10 +37,10 @@ func TestPlanDefaultExamples(t *testing.T) {
 		size     int64
 		wantN    int
 	}{
-		{"8MiB 20秒 500p", 20 * time.Second, 8 * 1024 * 1024, 3},
-		{"120MiB 90秒 1080p", 90 * time.Second, 120 * 1024 * 1024, 5},
-		{"3GiB 60秒 4K", 60 * time.Second, 3 * 1024 * 1024 * 1024, 7},
-		{"80MiB 1小时 低码率", time.Hour, 80 * 1024 * 1024, 12},
+		{"8MiB 20秒 500p", 20 * time.Second, 8 * 1024 * 1024, 8},
+		{"120MiB 90秒 1080p", 90 * time.Second, 120 * 1024 * 1024, 12},
+		{"3GiB 60秒 4K", 60 * time.Second, 3 * 1024 * 1024 * 1024, 12},
+		{"80MiB 1小时 低码率", time.Hour, 80 * 1024 * 1024, 32},
 		{"5MiB 0.4秒", 400 * time.Millisecond, 5 * 1024 * 1024, 1},
 	}
 	for _, tc := range cases {
@@ -59,17 +59,29 @@ func TestPlanDefaultExamples(t *testing.T) {
 
 func TestPlanExactThresholds(t *testing.T) {
 	s := NewSampler(loadDefaultSampling(t))
-	// 恰好 30s 命中 ≤30s 档(Nd=3);30s+1ms 命中 ≤2m 档(Nd=5)
-	plan, _ := s.Plan(30*time.Second, 0)
-	if plan.BaseN != 3 {
-		t.Errorf("30s 恰在边界: N0 = %d, 期望 3", plan.BaseN)
+	for _, tc := range []struct {
+		duration time.Duration
+		want     int
+	}{
+		{30 * time.Second, 8},
+		{30*time.Second + time.Millisecond, 12},
+		{2 * time.Minute, 12},
+		{2*time.Minute + time.Millisecond, 24},
+		{10 * time.Minute, 24},
+		{10*time.Minute + time.Millisecond, 32},
+		{30 * time.Minute, 32},
+		{30*time.Minute + time.Millisecond, 32},
+	} {
+		plan, err := s.Plan(tc.duration, 0)
+		if err != nil || plan.BaseN != tc.want || plan.TargetN != tc.want {
+			t.Errorf("时长 %v: plan=%+v, err=%v, 期望 %d 帧", tc.duration, plan, err, tc.want)
+		}
 	}
-	plan, _ = s.Plan(30*time.Second+time.Millisecond, 0)
-	if plan.BaseN != 5 {
-		t.Errorf("30s+1ms: N0 = %d, 期望 5", plan.BaseN)
-	}
+	sc := loadDefaultSampling(t)
+	sc.ParsedStrategy = config.StrategySize
+	s = NewSampler(sc)
 	// 恰好 50 MiB 命中 ≤50(Ns=3);50MiB+1 命中 ≤200(Ns=5)
-	plan, _ = s.Plan(10*time.Second, 50*1024*1024)
+	plan, _ := s.Plan(10*time.Second, 50*1024*1024)
 	if plan.BaseN != 3 {
 		t.Errorf("50MiB 边界: N0 = %d, 期望 3", plan.BaseN)
 	}
@@ -100,13 +112,13 @@ func TestPlanMaxFramesClamp(t *testing.T) {
 
 func TestPlanStrategies(t *testing.T) {
 	sc := loadDefaultSampling(t)
-	// 3GiB 60秒:size→12,duration→5,hybrid→7
-	for strategy, want := range map[string]int{"size": 12, "duration": 5, "hybrid": 7} {
+	// 3GiB 20秒:size→12,duration→8,hybrid→10
+	for strategy, want := range map[string]int{"size": 12, "duration": 8, "hybrid": 10} {
 		s2 := sc
 		s2.Strategy = strategy
 		s2.ParsedStrategy = config.Strategy(strategy)
 		s := NewSampler(s2)
-		plan, err := s.Plan(60*time.Second, 3<<30)
+		plan, err := s.Plan(20*time.Second, 3<<30)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -122,8 +134,8 @@ func TestPlanTimePointsAreMidpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A=4.5, Z=85.5, L=81, N=5 → 每段中点
-	want := []time.Duration{12600, 28800, 45000, 61200, 77400} // 毫秒
+	// A=4.5, Z=85.5, L=81, N=12 → 每段中点
+	want := []time.Duration{7875, 14625, 21375, 28125, 34875, 41625, 48375, 55125, 61875, 68625, 75375, 82125} // 毫秒
 	for i, w := range want {
 		if plan.Times[i] != w*time.Millisecond {
 			t.Errorf("t[%d] = %v, 期望 %v", i, plan.Times[i], w*time.Millisecond)
