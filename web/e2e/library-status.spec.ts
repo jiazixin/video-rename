@@ -1,0 +1,307 @@
+import { test, expect, type Page } from '@playwright/test'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+type Entry = { id: number; name: string; version: number; processed: string; restore_id: number }
+
+async function fixture(page: Page, name: string, files: string[], directories: string[] = []) {
+  const { mediaPath } = JSON.parse(readFileSync('test-results/fixture.json', 'utf8'))
+  const path = join(mediaPath, name)
+  mkdirSync(path, { recursive: true })
+  for (const directory of directories) mkdirSync(join(path, directory), { recursive: true })
+  for (const file of files) writeFileSync(join(path, file), 'isolated processing-status fixture')
+  const login = await page.request.post('/api/auth/login', {
+    data: { username: 'admin', password: 'test-password-123' }
+  })
+  expect(login.ok()).toBe(true)
+  const session = await login.json()
+  const headers = { 'X-CSRF-Token': session.csrf }
+  expect((await page.request.post('/api/directories/1/refresh', { headers, data: {} })).ok()).toBe(
+    true
+  )
+  let directory: Entry | undefined
+  await expect
+    .poll(async () => {
+      const result = await (
+        await page.request.get('/api/directories/1/entries?page=1&limit=200')
+      ).json()
+      directory = result.items.find((entry: Entry) => entry.name === name)
+      return !!directory && !result.refreshing
+    })
+    .toBe(true)
+  const id = directory!.id
+  expect(
+    (await page.request.post(`/api/directories/${id}/refresh`, { headers, data: {} })).ok()
+  ).toBe(true)
+  await expect
+    .poll(async () => {
+      const result = await (
+        await page.request.get(`/api/directories/${id}/entries?page=1&limit=200`)
+      ).json()
+      return !result.refreshing && result.total === files.length + directories.length
+    })
+    .toBe(true)
+  const entries = new Map<string, Entry>()
+  for (let number = 1; number <= Math.ceil((files.length + directories.length) / 200); number++) {
+    const result = await (
+      await page.request.get(`/api/directories/${id}/entries?page=${number}&limit=200`)
+    ).json()
+    for (const entry of result.items as Entry[]) entries.set(entry.name, entry)
+  }
+  async function mark(names: string[]) {
+    for (let offset = 0; offset < names.length; offset += 100) {
+      const targets = names.slice(offset, offset + 100).map((file) => entries.get(file)!.id)
+      const request = await page.request.post('/api/entries/processed', {
+        headers,
+        data: { targets, marked: true, key: `status-${id}-${offset}` }
+      })
+      expect(request.ok()).toBe(true)
+      await expect
+        .poll(async () => {
+          const current = await (
+            await page.request.get(`/api/entries/status?ids=${targets.join(',')}`)
+          ).json()
+          return (
+            current.length === targets.length &&
+            current.every((entry: Entry) => entry.processed === 'marked')
+          )
+        })
+        .toBe(true)
+    }
+  }
+  async function rename(oldName: string, nextName: string) {
+    const entry = entries.get(oldName)!
+    const result = await page.request.post(`/api/entries/${entry.id}/rename`, {
+      headers,
+      data: { name: nextName, version: entry.version, key: `status-rename-${entry.id}` }
+    })
+    expect(result.ok()).toBe(true)
+    const current = await (await page.request.get(`/api/entries/status?ids=${entry.id}`)).json()
+    entries.delete(oldName)
+    entries.set(nextName, current[0])
+  }
+  async function open() {
+    await page.goto('/')
+    await page.getByRole('button', { name, exact: true }).click()
+    await expect(page.locator('.file-table tbody tr')).toHaveCount(
+      Math.min(100, files.length + directories.length)
+    )
+  }
+  return { id, entries, headers, mark, rename, open }
+}
+
+const rows = (page: Page) => page.locator('.file-table tbody tr')
+const names = (page: Page) => rows(page).locator('.filename-cell .name-text')
+
+async function select(page: Page, label: string, option: string) {
+  await page.getByRole('combobox', { name: label, exact: true }).click()
+  await page.getByRole('option', { name: option, exact: true }).click()
+}
+
+test('处理状态与搜索、类型共同筛选，翻页只显示匹配文件并在切换后回第一页', async ({ page }) => {
+  const clips = Array.from(
+    { length: 230 },
+    (_, index) => `clip${String(index).padStart(3, '0')}.mp4`
+  )
+  const setup = await fixture(
+    page,
+    '状态筛选-分页',
+    [...clips, 'marked.png', 'pending.png'],
+    ['clip-folder']
+  )
+  await setup.mark([...clips.slice(0, 125), 'marked.png'])
+  await setup.open()
+  await select(page, '类型筛选', '视频')
+  await select(page, '处理状态筛选', '已标记')
+  await expect(page.getByText('共 126 项 · 100 项 / 当前页', { exact: true })).toBeVisible()
+  await expect(names(page)).toHaveText(['clip-folder', ...clips.slice(0, 99)])
+  await page.getByRole('button', { name: '下一页', exact: true }).click()
+  await expect(names(page)).toHaveText(clips.slice(99, 125))
+  await expect(rows(page).locator('td:nth-child(4)')).toHaveText(Array(26).fill('手动标记已处理'))
+  await expect(page.locator('.pagination .page-current')).toHaveText('2')
+
+  await select(page, '处理状态筛选', '未处理')
+  await expect(page.locator('.pagination .page-current')).toHaveText('1')
+  await expect(names(page)).toHaveText(['clip-folder', ...clips.slice(125, 224)])
+  await expect(page.getByText('共 106 项 · 100 项 / 当前页', { exact: true })).toBeVisible()
+  await page.getByLabel('搜索当前目录', { exact: true }).fill('clip22')
+  await expect(names(page)).toHaveText(clips.slice(220))
+  await expect(rows(page).locator('td:nth-child(4)')).toHaveText(Array(10).fill('未处理'))
+  await select(page, '处理状态筛选', '已处理')
+  await expect(rows(page)).toHaveCount(0)
+  await page.getByLabel('搜索当前目录', { exact: true }).fill('')
+  await select(page, '类型筛选', '图片')
+  await expect(names(page)).toHaveText(['clip-folder', 'marked.png'])
+  await select(page, '处理状态筛选', '未处理')
+  await expect(names(page)).toHaveText(['clip-folder', 'pending.png'])
+  await expect(page.getByRole('alert')).toHaveCount(0)
+})
+
+test('处理状态表头按状态分组及自然名称双向排序，进入目录后返回保留筛选和排序', async ({ page }) => {
+  const setup = await fixture(
+    page,
+    '状态筛选-排序',
+    ['a-z2.mp4', 'a-z10.mp4', 'a-m2.mp4', 'a-m10.mp4', 'raw2.mp4', 'raw10.mp4'],
+    ['a-folder2', 'a-folder10']
+  )
+  await setup.mark(['a-m2.mp4', 'a-m10.mp4'])
+  await setup.rename('raw2.mp4', 'a-a2.mp4')
+  await setup.rename('raw10.mp4', 'a-a10.mp4')
+  await setup.open()
+  const sort = page.getByRole('button', { name: '切换处理状态排序', exact: true })
+  const header = page.getByRole('columnheader').filter({ has: sort })
+  await expect(header).toHaveAttribute('aria-sort', 'none')
+  await sort.click()
+  await expect(header).toHaveAttribute('aria-sort', 'ascending')
+  await expect(names(page)).toHaveText([
+    'a-folder2',
+    'a-folder10',
+    'a-z2.mp4',
+    'a-z10.mp4',
+    'a-m2.mp4',
+    'a-m10.mp4',
+    'a-a2.mp4',
+    'a-a10.mp4'
+  ])
+  await sort.click()
+  await expect(header).toHaveAttribute('aria-sort', 'descending')
+  await expect(names(page)).toHaveText([
+    'a-folder10',
+    'a-folder2',
+    'a-a10.mp4',
+    'a-a2.mp4',
+    'a-m10.mp4',
+    'a-m2.mp4',
+    'a-z10.mp4',
+    'a-z2.mp4'
+  ])
+  await page.screenshot({ path: 'test-results/library-status-desktop.png' })
+  await select(page, '处理状态筛选', '已处理')
+  await expect(names(page)).toHaveText([
+    'a-folder10',
+    'a-folder2',
+    'a-a10.mp4',
+    'a-a2.mp4',
+    'a-m10.mp4',
+    'a-m2.mp4'
+  ])
+  await select(page, '处理状态筛选', '手动命名')
+  await select(page, '类型筛选', '视频')
+  await page.getByLabel('搜索当前目录', { exact: true }).fill('a-')
+  await expect(names(page)).toHaveText(['a-folder10', 'a-folder2', 'a-a10.mp4', 'a-a2.mp4'])
+  await page.getByRole('button', { name: 'a-folder10', exact: true }).click()
+  await expect(page.getByRole('combobox', { name: '处理状态筛选', exact: true })).toHaveText(
+    '全部状态'
+  )
+  await expect(page.getByRole('combobox', { name: '类型筛选', exact: true })).toHaveText('全部类型')
+  await expect(page.getByLabel('搜索当前目录', { exact: true })).toHaveValue('')
+  await page
+    .locator('.breadcrumbs')
+    .getByRole('button', { name: '状态筛选-排序', exact: true })
+    .click()
+  await expect(page.getByRole('combobox', { name: '处理状态筛选', exact: true })).toHaveText(
+    '手动命名'
+  )
+  await expect(page.getByRole('combobox', { name: '类型筛选', exact: true })).toHaveText('视频')
+  await expect(page.getByLabel('搜索当前目录', { exact: true })).toHaveValue('a-')
+  await expect(header).toHaveAttribute('aria-sort', 'descending')
+  await expect(names(page)).toHaveText(['a-folder10', 'a-folder2', 'a-a10.mp4', 'a-a2.mp4'])
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  const filter = page.getByRole('combobox', { name: '处理状态筛选', exact: true })
+  await filter.focus()
+  await filter.press('Enter')
+  await filter.press('Home')
+  await filter.press('ArrowDown')
+  await filter.press('Enter')
+  await expect(filter).toHaveText('未处理')
+  await expect(names(page)).toHaveText(['a-folder10', 'a-folder2', 'a-z10.mp4', 'a-z2.mp4'])
+  const filterBounds = await filter.boundingBox()
+  expect(filterBounds!.x).toBeGreaterThanOrEqual(0)
+  expect(filterBounds!.x + filterBounds!.width).toBeLessThanOrEqual(390)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: 'test-results/library-status-mobile.png' })
+})
+
+test('图片和音频一键编号预览遵循处理状态筛选，还原后的文件重新归入未处理', async ({ page }) => {
+  const setup = await fixture(page, '状态筛选-编号', [
+    'marked.png',
+    'pending2.png',
+    'pending10.png',
+    'raw.png',
+    'marked.mp3',
+    'pending2.mp3',
+    'pending10.mp3',
+    'raw.mp3'
+  ])
+  await setup.mark(['marked.png', 'marked.mp3'])
+  await setup.rename('raw.png', 'manual.png')
+  await setup.rename('raw.mp3', 'manual.mp3')
+  await setup.open()
+  for (const [kind, extension, unit] of [
+    ['图片', 'png', '张'],
+    ['音频', 'mp3', '个']
+  ]) {
+    await select(page, '类型筛选', kind)
+    await select(page, '处理状态筛选', '手动命名')
+    await expect(names(page)).toHaveText([`manual.${extension}`])
+    await page.getByRole('button', { name: '一键编号', exact: true }).click()
+    let dialog = page.getByRole('dialog', { name: `${kind}编号预览`, exact: true })
+    await expect(dialog).toContainText(`共 1 ${unit}${kind}`)
+    await expect(dialog.locator('tbody tr')).toHaveCount(1)
+    await expect(dialog.locator('tbody tr')).toContainText(`manual.${extension}`)
+    await dialog.getByRole('button', { name: '取消', exact: true }).click()
+    await select(page, '处理状态筛选', '未处理')
+    await expect(names(page)).toHaveText([`pending2.${extension}`, `pending10.${extension}`])
+    await page.getByRole('button', { name: '一键编号', exact: true }).click()
+    dialog = page.getByRole('dialog', { name: `${kind}编号预览`, exact: true })
+    await expect(dialog).toContainText(`共 2 ${unit}${kind}`)
+    await expect(dialog.locator('tbody tr')).toHaveCount(2)
+    await expect(dialog.locator('tbody tr').first()).toContainText(`pending2.${extension}`)
+    await expect(dialog.locator('tbody tr').last()).toContainText(`pending10.${extension}`)
+    await dialog.getByRole('button', { name: '取消', exact: true }).click()
+  }
+  const restored = setup.entries.get('manual.mp3')!
+  expect(
+    (
+      await page.request.post(`/api/operations/${restored.restore_id}/restore`, {
+        headers: setup.headers,
+        data: { key: `status-restore-${restored.id}` }
+      })
+    ).ok()
+  ).toBe(true)
+  await page.getByRole('button', { name: '刷新', exact: true }).click()
+  await expect(names(page)).toHaveText(['pending2.mp3', 'pending10.mp3', 'raw.mp3'])
+  await select(page, '处理状态筛选', '已处理')
+  await expect(names(page)).toHaveText(['marked.mp3'])
+  await expect(page.getByRole('alert')).toHaveCount(0)
+})
+
+test('未处理筛选中的标记和手动改名立即移除行，并保留其他勾选', async ({ page }) => {
+  const setup = await fixture(page, '状态筛选-变更', ['clip1.mp4', 'clip2.mp4', 'clip3.mp4'])
+  await setup.open()
+  await select(page, '处理状态筛选', '未处理')
+  await page.getByRole('button', { name: '多选', exact: true }).click()
+  await page.getByLabel('选择 clip2.mp4', { exact: true }).check()
+  await page.getByRole('button', { name: '标记已处理 clip1.mp4', exact: true }).click()
+  await page.getByRole('button', { name: '确认标记', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(names(page)).toHaveText(['clip2.mp4', 'clip3.mp4'])
+  await expect(page.getByText('共 2 项 · 2 项 / 当前页', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('选择 clip2.mp4', { exact: true })).toBeChecked()
+  await expect(page.locator('.batch-toolbar strong')).toHaveText('已选 1 项')
+
+  await page
+    .getByRole('button', { name: '双击或按 Enter 重命名 clip2.mp4', exact: true })
+    .dblclick()
+  const editor = page.getByRole('textbox', { name: '编辑 clip2.mp4', exact: true })
+  await editor.fill('renamed2')
+  await editor.press('Enter')
+  await expect(names(page)).toHaveText(['clip3.mp4'])
+  await expect(page.getByText('共 1 项 · 1 项 / 当前页', { exact: true })).toBeVisible()
+  await expect(page.locator('.batch-toolbar strong')).toHaveText('已选 1 项')
+  await select(page, '处理状态筛选', '全部状态')
+  await expect(names(page)).toHaveText(['clip1.mp4', 'clip3.mp4', 'renamed2.mp4'])
+  await expect(page.getByLabel('选择 renamed2.mp4', { exact: true })).toBeChecked()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+})

@@ -83,17 +83,9 @@ func New(db *storage.Store, root string) (*Library, error) {
 func (l *Library) Get(id int64) (Entry, error) {
 	var e Entry
 	err := l.DB.Read().QueryRow(`SELECT e.id,e.parent,e.name,e.kind,e.identity,e.size,e.mtime,e.version,
- COALESCE((SELECT source FROM marks m WHERE m.identity=e.identity AND m.size=e.size AND m.mtime=e.mtime),''),
+	 `+entryProcessedSQL+`,
  COALESCE((SELECT id FROM operations o WHERE o.entry=e.id AND o.status='committed' AND o.undone=0 AND o.undo_of=0 ORDER BY id DESC LIMIT 1),0)
- ,COALESCE((SELECT CASE WHEN r.status='paused' THEN 'paused' ELSE i.status END FROM run_items i JOIN runs r ON r.id=i.run WHERE i.entry=e.id AND i.status IN ('queued','running') AND r.status IN ('queued','scanning','running','paused','cancelling') ORDER BY i.id DESC LIMIT 1),
- (WITH RECURSIVE ancestors(id,parent,depth) AS (
- SELECT e.id,e.parent,0 UNION ALL SELECT p.id,p.parent,a.depth+1 FROM entries p JOIN ancestors a ON p.id=a.parent WHERE a.depth<1024
- ) SELECT CASE WHEN e.kind='directory' OR r.status='paused' THEN r.status ELSE 'queued' END
- FROM runs r JOIN json_each(r.targets) target JOIN entries t ON t.id=target.value
- WHERE r.status IN ('queued','scanning','running','paused','cancelling')
- AND (t.id=e.id OR (t.kind='file' AND e.kind='file' AND t.identity=e.identity) OR (t.kind='directory' AND EXISTS(SELECT 1 FROM ancestors a WHERE a.id=t.id AND (r.recursive=1 OR (a.depth=1 AND e.kind='file')))))
- AND (e.kind='directory' OR NOT EXISTS(SELECT 1 FROM run_items i WHERE i.run=r.id AND i.identity=e.identity))
- ORDER BY r.id LIMIT 1),'')
+	 ,`+entryTaskStatusSQL+`
 ,COALESCE((SELECT created FROM operations o WHERE o.entry=e.id AND o.status='committed' ORDER BY id DESC LIMIT 1),'')
  FROM entries e WHERE e.id=? AND e.present=1`, id).Scan(&e.ID, &e.Parent, &e.Name, &e.Kind, &e.Identity, &e.Size, &e.Mtime, &e.Version, &e.Processed, &e.RestoreID, &e.TaskStatus, &e.RenamedAt)
 	return e, err
@@ -259,18 +251,29 @@ func (l *Library) ListSorted(ctx context.Context, id int64, offset, limit int, g
 	return l.ListOrdered(ctx, id, offset, limit, generation, q, kind, force, sortBy)
 }
 func (l *Library) ListOrdered(ctx context.Context, id int64, offset, limit int, generation int64, q, kind string, force bool, sortBy string) (Page, error) {
-	return l.listOrdered(ctx, id, offset, limit, generation, q, kind, force, sortBy, 0)
+	return l.ListOrderedFiltered(ctx, id, offset, limit, generation, q, kind, "", force, sortBy)
+}
+
+func (l *Library) ListOrderedFiltered(ctx context.Context, id int64, offset, limit int, generation int64, q, kind, status string, force bool, sortBy string) (Page, error) {
+	return l.listOrdered(ctx, id, offset, limit, generation, q, kind, status, force, sortBy, 0)
 }
 
 // ListPage reads a fresh page without carrying a cursor from an older index.
 // Count and page boundaries come from one snapshot, even during a rescan.
 func (l *Library) ListPage(ctx context.Context, id int64, page, limit int, q, kind, sortBy string) (Page, error) {
-	return l.listOrdered(ctx, id, 0, limit, 0, q, kind, false, sortBy, max(1, page))
+	return l.ListPageFiltered(ctx, id, page, limit, q, kind, "", sortBy)
 }
 
-func (l *Library) listOrdered(ctx context.Context, id int64, offset, limit int, generation int64, q, kind string, force bool, sortBy string, pageNumber int) (Page, error) {
+func (l *Library) ListPageFiltered(ctx context.Context, id int64, page, limit int, q, kind, status, sortBy string) (Page, error) {
+	return l.listOrdered(ctx, id, 0, limit, 0, q, kind, status, false, sortBy, max(1, page))
+}
+
+func (l *Library) listOrdered(ctx context.Context, id int64, offset, limit int, generation int64, q, kind, status string, force bool, sortBy string, pageNumber int) (Page, error) {
 	p := Page{Items: []Entry{}, Breadcrumbs: []Entry{}}
-	var err error
+	statusFilter, err := processingStatusFilter(status)
+	if err != nil {
+		return p, err
+	}
 	p.Directory, err = l.Get(id)
 	if err != nil {
 		return p, err
@@ -335,6 +338,9 @@ func (l *Library) listOrdered(ctx context.Context, id int64, offset, limit int, 
 		if kind != "other" {
 			filter = "(" + filter + " OR kind='directory')"
 		}
+	}
+	if status != "" {
+		filter = "(" + filter + ") AND (kind='directory' OR " + statusFilter + ")"
 	}
 	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter, id, p.Generation, q, kind, kind).Scan(&p.Total); err != nil {
 		return p, err
@@ -426,6 +432,8 @@ func directoryOrder(sortBy string) (string, string) {
 		value = "julianday(mtime)"
 	case "renamed_asc", "renamed_desc":
 		value = "COALESCE((SELECT created FROM operations o WHERE o.entry=directory_items.entry AND o.status='committed' ORDER BY id DESC LIMIT 1),'')"
+	case "status_asc", "status_desc":
+		value = directoryStatusOrderSQL
 	case "name_asc", "name_desc":
 	default:
 		sortBy = "name_asc"

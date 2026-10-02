@@ -198,6 +198,15 @@
     e.kind === 'directory' || (e.kind === 'file' && (video(e) || isImage(e) || isAudio(e)));
   const protectedMedia = (e: Entry) => (isImage(e) || isAudio(e)) && e.processed === 'marked';
   const marked = (e: Entry) => (isImage(e) || isAudio(e) ? protectedMedia(e) : !!e.processed);
+  function matchesProcessingStatus(e: Entry) {
+    if (!processingStatus.value || e.kind === 'directory') return true;
+    const value = e.task_status || e.processed || 'unprocessed';
+    if (processingStatus.value === 'active')
+      return ['queued', 'scanning', 'running', 'paused', 'cancelling'].includes(value);
+    if (processingStatus.value === 'processed')
+      return ['marked', 'manual', 'automatic'].includes(value);
+    return value === processingStatus.value;
+  }
   const markEntries = computed(() => [...chosen.value.values()].filter(markable));
   const restoreEntries = computed(() =>
     [...chosen.value.values()].filter((e) => e.restore_id && !e.task_status)
@@ -349,6 +358,7 @@
           limit: '200',
           q: q.value,
           kind: list.kind,
+          status: processingStatus.value,
           sort: sort.value,
           generation
         });
@@ -416,10 +426,11 @@
     error = ref(''),
     q = ref(''),
     kind = ref(''),
+    processingStatus = ref(''),
     pageNumber = ref(1),
     limit = ref(100);
   watch(
-    [dir, pageNumber, q, kind, sort, limit, multi],
+    [dir, pageNumber, q, kind, processingStatus, sort, limit, multi],
     () => {
       selectionAnchor = undefined;
     },
@@ -580,6 +591,12 @@
         else chosen.value.delete(id);
       }
       error.value = '';
+      // A status change can move a file into or out of the filtered result.
+      // Recount the whole directory while retaining matching rows and selections.
+      if (processingStatus.value) {
+        await load(true);
+        return;
+      }
       if (trackedRuns.size || entries.some((e) => e.task_status || e.progress?.active))
         scheduleSync();
     } catch (e) {
@@ -602,6 +619,7 @@
         limit: String(limit.value),
         q: q.value,
         kind: kind.value,
+        status: processingStatus.value,
         sort: sort.value
       });
       const p = await api<Page>(`/directories/${dir.value}/entries?${params}`);
@@ -620,7 +638,10 @@
         if (n !== seq) return;
         const latest = new Map(entries.map((e) => [e.id, e]));
         const visible = new Set(page.value.items.map((e) => e.id));
-        const rows = page.value.items.filter((e) => latest.has(e.id)).map((e) => latest.get(e.id)!);
+        const rows = page.value.items
+          .filter((e) => latest.has(e.id))
+          .map((e) => latest.get(e.id)!)
+          .filter(matchesProcessingStatus);
         p.items = [
           ...rows,
           ...p.items
@@ -652,7 +673,10 @@
       )
         scheduleSync();
     } catch (e) {
-      if (n === seq) error.value = (e as Error).message;
+      if (n === seq) {
+        error.value = (e as Error).message;
+        if (quiet && processingStatus.value) scheduleSync();
+      }
     } finally {
       if (n === seq) busy.value = false;
     }
@@ -661,6 +685,7 @@
     pageNumber: number;
     q: string;
     kind: string;
+    status: string;
     sort: string;
     limit: number;
     scrollY: number;
@@ -852,6 +877,7 @@
       pageNumber: pageNumber.value,
       q: q.value,
       kind: kind.value,
+      status: processingStatus.value,
       sort: sort.value,
       limit: limit.value,
       scrollY: window.scrollY,
@@ -871,6 +897,7 @@
     pageNumber.value = saved?.pageNumber || 1;
     q.value = saved?.q || '';
     kind.value = saved?.kind ?? '';
+    processingStatus.value = saved?.status ?? '';
     sort.value = saved?.sort ?? sort.value;
     limit.value = saved?.limit ?? limit.value;
     page.value = snapshots.get(id);
@@ -1237,11 +1264,28 @@
               { value: 'audio', label: '音频' },
               { value: 'other', label: '其他文件' }
             ]"
+          /><SelectField
+            v-model="processingStatus"
+            @change="
+              pageNumber = 1;
+              load();
+            "
+            label="处理状态筛选"
+            :options="[
+              { value: '', label: '全部状态' },
+              { value: 'unprocessed', label: '未处理' },
+              { value: 'processed', label: '已处理' },
+              { value: 'manual', label: '手动命名' },
+              { value: 'automatic', label: '自动命名' },
+              { value: 'marked', label: '已标记' },
+              { value: 'active', label: '处理中' }
+            ]"
           /><MediaNumbering
             v-if="kind === 'image' || kind === 'audio'"
             :media="kind"
             :directory="dir"
             :query="q"
+            :status="processingStatus"
             :sort="sort"
             :disabled="busy || !page || !!page.refreshing || !!page.directory.task_status"
             @changed="

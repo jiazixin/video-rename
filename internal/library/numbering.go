@@ -215,6 +215,14 @@ func (l *Library) lockNumbering(ctx context.Context) error {
 }
 
 func (l *Library) PreviewNumberingContext(ctx context.Context, parent int64, media, query, sortBy string, settings domain.NumberingSettings) (Numbering, error) {
+	return l.PreviewNumberingFilteredContext(ctx, parent, media, query, "", sortBy, settings)
+}
+
+func (l *Library) PreviewNumberingFilteredContext(ctx context.Context, parent int64, media, query, status, sortBy string, settings domain.NumberingSettings) (Numbering, error) {
+	statusFilter, err := processingStatusFilter(status)
+	if err != nil {
+		return Numbering{}, err
+	}
 	if err := l.lockNumbering(ctx); err != nil {
 		return Numbering{}, err
 	}
@@ -260,7 +268,7 @@ func (l *Library) PreviewNumberingContext(ctx context.Context, parent int64, med
 	if strings.HasSuffix(sortBy, "_desc") {
 		order = "DESC"
 	}
-	rows, err := l.DB.QueryContext(ctx, `SELECT entry,instr(lower(name),lower(?))>0 FROM directory_items WHERE dir=? AND generation=(SELECT generation FROM directory_state WHERE dir=?) AND kind='file' ORDER BY `+value+` `+order+`,name COLLATE NATURAL_NAME `+order+`,entry `+order, query, parent, parent)
+	rows, err := l.DB.QueryContext(ctx, `SELECT entry,instr(lower(name),lower(?))>0 AND (`+statusFilter+`) FROM directory_items WHERE dir=? AND generation=(SELECT generation FROM directory_state WHERE dir=?) AND kind='file' ORDER BY `+value+` `+order+`,name COLLATE NATURAL_NAME `+order+`,entry `+order, query, parent, parent)
 	if err != nil {
 		return Numbering{}, err
 	}

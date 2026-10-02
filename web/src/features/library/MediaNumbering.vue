@@ -22,6 +22,7 @@
   const props = defineProps<{
     directory: number;
     query: string;
+    status?: string;
     sort: string;
     disabled: boolean;
     media: 'image' | 'audio';
@@ -72,6 +73,7 @@
         : await api<Batch>(`/directories/${parent}/numberings/preview`, 'POST', {
             media: props.media,
             query: props.query,
+            status: props.status || '',
             sort: props.sort
           });
     } catch (e) {
@@ -162,11 +164,11 @@
         }}，{{ preview.total - preview.changed }} {{ unit }}保持不变。</p
       >
       <p v-if="!preview.undo_of" class="help"
-        >仅当前目录内符合搜索条件的{{
+        >仅当前目录内符合搜索和处理状态筛选条件的{{
           noun
         }}，包含所有分页。按系统设置中保存的编号规则处理，实际号码与扩展名以本次预览为准。已标记的{{
           noun
-        }}跳过编号并保留名称；搜索隐藏或已标记的{{ noun }}会保留其号码。{{ untouched }}。</p
+        }}跳过编号并保留名称；筛选隐藏或已标记的{{ noun }}会保留其号码。{{ untouched }}。</p
       >
       <p v-else class="help"
         >整批恢复本次编号前的名称和扩展名大小写。文件有后续修改或名称被占用时会停止。</p

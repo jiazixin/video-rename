@@ -16,7 +16,8 @@
     { field: 'renamed', label: '重命名时间' },
     { field: 'actions', label: '操作' }
   ];
-  const sortable = (field: string) => ['name', 'size', 'mtime', 'renamed'].includes(field);
+  const sortable = (field: string) =>
+    ['name', 'size', 'status', 'mtime', 'renamed'].includes(field);
 </script>
 
 <template>

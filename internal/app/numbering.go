@@ -57,9 +57,10 @@ func (a *App) numberingRoutes(api *http.ServeMux) {
 	})
 	api.HandleFunc("POST /api/directories/{id}/numberings/preview", func(w http.ResponseWriter, r *http.Request) {
 		var v struct {
-			Media string `json:"media"`
-			Query string `json:"query"`
-			Sort  string `json:"sort"`
+			Media  string `json:"media"`
+			Query  string `json:"query"`
+			Status string `json:"status"`
+			Sort   string `json:"sort"`
 		}
 		if !decode(w, r, &v) {
 			return
@@ -73,7 +74,7 @@ func (a *App) numberingRoutes(api *http.ServeMux) {
 			numberingFailure(w, err)
 			return
 		}
-		b, err := a.Library.PreviewNumbering(number(r.PathValue("id")), v.Media, v.Query, v.Sort, settings)
+		b, err := a.Library.PreviewNumberingFilteredContext(r.Context(), number(r.PathValue("id")), v.Media, v.Query, v.Status, v.Sort, settings)
 		if err != nil {
 			numberingFailure(w, err)
 			return
