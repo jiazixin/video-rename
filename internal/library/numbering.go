@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -407,23 +408,20 @@ func numberingMatch(path string, i NumberingItem) bool {
 	return err == nil && Identity(s) == i.Identity && s.Size == i.Size && stamp(s) == i.Mtime
 }
 
-// The directory listing distinguishes a real destination from a case alias.
-// Some mounts give alternate-case lookups another inode. Do not use that alias
-// inode as proof of an external occupant; actual source identity checks and
-// no-replace moves remain mandatory when applying the plan.
-func numberingTargetMoves(name string, target domain.Snapshot, names map[string][]string, changed map[string]NumberingItem) bool {
+// Resolve an occupied target using only names returned by ReadDir. Looking up a
+// future case alias (e.g. 5.jpeg for 5.JPEG) can populate a separate SMB dentry
+// that survives moving the actual source to its temporary name.
+func numberingTargetMoves(name string, names map[string][]string, changed map[string]NumberingItem) (NumberingItem, bool) {
 	candidates := names[strings.ToLower(name)]
-	for _, actual := range candidates {
-		if actual == name {
-			item, ok := changed[actual]
-			return ok && Identity(target) == item.Identity && target.Size == item.Size && stamp(target) == item.Mtime
-		}
+	if slices.Contains(candidates, name) {
+		item, ok := changed[name]
+		return item, ok
 	}
 	if len(candidates) != 1 || !strings.EqualFold(candidates[0], name) {
-		return false
+		return NumberingItem{}, false
 	}
 	item, ok := changed[candidates[0]]
-	return ok && target.Size == item.Size && stamp(target) == item.Mtime
+	return item, ok
 }
 
 // Preview failures have no committed journal. Return evidence to the numbering
@@ -511,17 +509,27 @@ func (l *Library) saveNumberingPreviewContext(ctx context.Context, b Numbering, 
 		if i.Old == i.New {
 			continue
 		}
-		if target, err := os.Lstat(filepath.Join(path, i.New)); err == nil {
-			// Case-only aliases are safe because all changed files first move to temp names.
-			snapshot, err := domain.SnapshotFromInfo(target)
-			if err != nil {
-				return Numbering{}, err
-			}
-			if !target.Mode().IsRegular() || !numberingTargetMoves(i.New, snapshot, names, changed) {
-				return Numbering{}, numberingConflict(path, b, *i, target, names[strings.ToLower(i.New)])
-			}
-		} else if !os.IsNotExist(err) {
+		candidates := names[strings.ToLower(i.New)]
+		if len(candidates) == 0 {
+			// The final no-replace syscall still rejects any later occupant.
+			continue
+		}
+		moving, moves := numberingTargetMoves(i.New, names, changed)
+		actual := candidates[0]
+		if slices.Contains(candidates, i.New) {
+			actual = i.New
+		}
+		// Inspect the real entry, never the not-yet-created lowercase alias.
+		target, err := os.Lstat(filepath.Join(path, actual))
+		if err != nil {
 			return Numbering{}, err
+		}
+		snapshot, err := domain.SnapshotFromInfo(target)
+		if err != nil {
+			return Numbering{}, err
+		}
+		if !moves || !target.Mode().IsRegular() || Identity(snapshot) != moving.Identity || snapshot.Size != moving.Size || stamp(snapshot) != moving.Mtime {
+			return Numbering{}, numberingConflict(path, b, *i, target, candidates)
 		}
 	}
 	b.Total = len(b.Items)

@@ -450,28 +450,21 @@ func TestNumberingRecoveryNeverOverwritesExternalFile(t *testing.T) {
 	assertOriginals(t, root, b)
 }
 
-func TestNumberingTargetMovesWithDifferentCaseAliasIdentity(t *testing.T) {
-	snapshot := domain.Snapshot{Dev: 52, Ino: 100, Size: 4361526, ModTime: time.Unix(100, 0)}
-	source := NumberingItem{Old: "1.JPG", New: "1.jpg", Identity: Identity(snapshot), Size: snapshot.Size, Mtime: stamp(snapshot)}
-	alias := snapshot
-	alias.Ino = 1593055
+func TestNumberingTargetMovesResolvesActualEntry(t *testing.T) {
+	source := NumberingItem{Old: "1.JPG", New: "1.jpg"}
 	cases := []struct {
-		name     string
-		target   string
-		names    []string
-		changed  map[string]NumberingItem
-		snapshot domain.Snapshot
-		want     bool
+		name    string
+		target  string
+		names   []string
+		changed map[string]NumberingItem
+		want    bool
 	}{
-		{"case alias with different inode", "1.jpg", []string{"1.JPG"}, map[string]NumberingItem{"1.JPG": source}, alias, true},
-		{"exact moving source", "1.JPG", []string{"1.JPG"}, map[string]NumberingItem{"1.JPG": source}, snapshot, true},
-		{"replaced exact source", "1.JPG", []string{"1.JPG"}, map[string]NumberingItem{"1.JPG": source}, alias, false},
-		{"independent lowercase file even with same identity", "1.jpg", []string{"1.JPG", "1.jpg"}, map[string]NumberingItem{"1.JPG": source}, snapshot, false},
-		{"unchanged uppercase file", "1.jpg", []string{"1.JPG"}, nil, alias, false},
-		{"ambiguous case aliases", "1.jpg", []string{"1.JPG", "1.JpG"}, map[string]NumberingItem{"1.JPG": source}, alias, false},
-		{"unlisted target", "1.jpg", nil, map[string]NumberingItem{"1.JPG": source}, alias, false},
-		{"different size", "1.jpg", []string{"1.JPG"}, map[string]NumberingItem{"1.JPG": source}, domain.Snapshot{Dev: 52, Ino: 1593055, Size: 1, ModTime: snapshot.ModTime}, false},
-		{"different modification time", "1.jpg", []string{"1.JPG"}, map[string]NumberingItem{"1.JPG": source}, domain.Snapshot{Dev: 52, Ino: 1593055, Size: snapshot.Size, ModTime: snapshot.ModTime.Add(time.Second)}, false},
+		{"case alias uses actual source", "1.jpg", []string{"1.JPG"}, map[string]NumberingItem{"1.JPG": source}, true},
+		{"exact moving source", "1.JPG", []string{"1.JPG"}, map[string]NumberingItem{"1.JPG": source}, true},
+		{"independent lowercase file", "1.jpg", []string{"1.JPG", "1.jpg"}, map[string]NumberingItem{"1.JPG": source}, false},
+		{"unchanged uppercase file", "1.jpg", []string{"1.JPG"}, nil, false},
+		{"ambiguous case aliases", "1.jpg", []string{"1.JPG", "1.JpG"}, map[string]NumberingItem{"1.JPG": source}, false},
+		{"unlisted target", "1.jpg", nil, map[string]NumberingItem{"1.JPG": source}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -480,9 +473,120 @@ func TestNumberingTargetMovesWithDifferentCaseAliasIdentity(t *testing.T) {
 				key := strings.ToLower(name)
 				names[key] = append(names[key], name)
 			}
-			if got := numberingTargetMoves(tc.target, tc.snapshot, names, tc.changed); got != tc.want {
-				t.Fatalf("got %v want %v", got, tc.want)
+			got, moves := numberingTargetMoves(tc.target, names, tc.changed)
+			if moves != tc.want || (moves && got.Old != source.Old) {
+				t.Fatalf("got %+v, moves=%v want %v", got, moves, tc.want)
 			}
+		})
+	}
+}
+
+func TestNumberingPreviewChecksActualCaseSourceSnapshot(t *testing.T) {
+	for _, field := range []string{"identity", "size", "mtime"} {
+		t.Run(field, func(t *testing.T) {
+			l, root, _ := fixture(t)
+			name := "5.JPEG"
+			if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0600); err != nil {
+				t.Fatal(err)
+			}
+			refresh(t, l, 1)
+			e := entry(t, l, 1, name)
+			item := NumberingItem{Entry: e.ID, Old: name, New: "5.jpeg", Version: e.Version, Identity: e.Identity, Size: e.Size, Mtime: e.Mtime}
+			switch field {
+			case "identity":
+				item.Identity = "0:0"
+			case "size":
+				item.Size++
+			case "mtime":
+				item.Mtime = time.Time{}.Format(time.RFC3339Nano)
+			}
+			batch := Numbering{ID: numberingToken(), Parent: 1, Media: "image", Status: "preview", Created: time.Now().UTC().Format(time.RFC3339Nano), Items: []NumberingItem{item}}
+			_, err := l.saveNumberingPreview(batch, root)
+			diagnostic, ok := errors.AsType[*domain.JobError](err)
+			if !ok || diagnostic.Code != domain.CodeRenameConflict {
+				t.Fatalf("stale %s accepted: %v", field, err)
+			}
+			assertOriginals(t, root, batch)
+			if _, err := l.Numbering(batch.ID); err == nil {
+				t.Fatal("failed preview was persisted")
+			}
+		})
+	}
+}
+
+func TestNumberingCompactUppercaseFromTwoStagesAllFilesAndRestores(t *testing.T) {
+	for _, tc := range []struct{ media, sort string }{
+		{"image", "name_asc"}, {"image", "name_desc"},
+		{"audio", "name_asc"}, {"audio", "name_desc"},
+		{"mixed", "name_asc"}, {"mixed", "name_desc"},
+	} {
+		t.Run(tc.media+"/"+tc.sort, func(t *testing.T) {
+			l, root, _ := fixture(t)
+			ext := "JPEG"
+			if tc.media == "audio" {
+				ext = "MP3"
+			}
+			for n := 2; n <= 42; n++ {
+				name := fmt.Sprintf("%d.%s", n, ext)
+				if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			refresh(t, l, 1)
+			preview, err := l.PreviewNumbering(1, tc.media, "", tc.sort, domain.DefaultNumberingSettings())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if preview.Total != 41 || preview.Changed != 41 {
+				t.Fatalf("unexpected preview: %+v", preview)
+			}
+			for idx, item := range preview.Items {
+				oldNumber := idx + 2
+				if tc.sort == "name_desc" {
+					oldNumber = 42 - idx
+				}
+				if item.Old != fmt.Sprintf("%d.%s", oldNumber, ext) || item.New != fmt.Sprintf("%d.%s", idx+1, strings.ToLower(ext)) {
+					t.Fatalf("unexpected mapping: %+v", item)
+				}
+			}
+			checkStages := func(batch Numbering) {
+				t.Helper()
+				result, err := l.ApplyNumberingContext(t.Context(), batch.ID, func(done, total int) {
+					if done != 1 {
+						return
+					}
+					if total != 41 {
+						t.Fatalf("unexpected total: %d", total)
+					}
+					journal, err := l.Numbering(batch.ID)
+					if err != nil {
+						t.Fatal(err)
+					}
+					// At the first final move, every later file must already be at
+					// its own temporary name, both on disk and in the journal.
+					for _, item := range journal.Items[1:] {
+						if item.Current != item.Temp || !numberingMatch(filepath.Join(root, item.Temp), item) {
+							t.Fatalf("file was not staged before final moves: %+v", item)
+						}
+					}
+				})
+				if err != nil || result.Status != "committed" {
+					t.Fatalf("result=%+v err=%v", result, err)
+				}
+			}
+			checkStages(preview)
+			for _, item := range preview.Items {
+				data, err := os.ReadFile(filepath.Join(root, item.New))
+				if err != nil || string(data) != item.Old {
+					t.Fatalf("wrong file at %s: %q %v", item.New, data, err)
+				}
+			}
+			undo, err := l.PreviewNumberingRestore(preview.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkStages(undo)
+			assertOriginals(t, root, preview)
 		})
 	}
 }
