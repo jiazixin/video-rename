@@ -327,7 +327,7 @@ func (l *Library) PreviewNumberingContext(ctx context.Context, parent int64, med
 		switch {
 		case !sameClass:
 			peers = append(peers, e)
-		case c.selected:
+		case c.selected && e.Processed != "marked":
 			selected = append(selected, e)
 		default:
 			outside = append(outside, e)
@@ -357,15 +357,15 @@ func (l *Library) PreviewNumberingContext(ctx context.Context, parent int64, med
 	}
 	items := numberingNames(selected, outside, peers, rules, peerRules.Prefix)
 	if media == "mixed" {
-		items = mixedNumberingNames(selected, settings)
+		items = mixedNumberingNames(selected, outside, settings)
 	}
 	b := Numbering{ID: numberingToken(), Parent: parent, Created: storage.Now(), Status: "preview", Fingerprint: before, Media: m.value, Items: items}
 	return l.saveNumberingPreviewContext(ctx, b, path)
 }
 
 // Plan both classes together so they share one fingerprint and rollback journal.
-func mixedNumberingNames(entries []Entry, settings domain.NumberingSettings) []NumberingItem {
-	var images, audio []Entry
+func mixedNumberingNames(entries, outside []Entry, settings domain.NumberingSettings) []NumberingItem {
+	var images, audio, keptImages, keptAudio []Entry
 	for _, e := range entries {
 		if IsImage(e.Name) {
 			images = append(images, e)
@@ -373,18 +373,29 @@ func mixedNumberingNames(entries []Entry, settings domain.NumberingSettings) []N
 			audio = append(audio, e)
 		}
 	}
-	var peers []Entry
-	if settings.Shared && !settings.Audio.Compact {
-		peers = audio
+	for _, e := range outside {
+		if IsImage(e.Name) {
+			keptImages = append(keptImages, e)
+		} else {
+			keptAudio = append(keptAudio, e)
+		}
 	}
-	items := numberingNames(images, nil, peers, settings.Image, settings.Audio.Prefix)
+	var peers []Entry
+	if settings.Shared {
+		peers = append(peers, keptAudio...)
+		if !settings.Audio.Compact {
+			peers = append(peers, audio...)
+		}
+	}
+	items := numberingNames(images, keptImages, peers, settings.Image, settings.Audio.Prefix)
 	peers = nil
 	if settings.Shared {
+		peers = append(peers, keptImages...)
 		for _, item := range items {
 			peers = append(peers, Entry{Name: item.New})
 		}
 	}
-	return append(items, numberingNames(audio, nil, peers, settings.Audio, settings.Image.Prefix)...)
+	return append(items, numberingNames(audio, keptAudio, peers, settings.Audio, settings.Image.Prefix)...)
 }
 
 func numberingMatch(path string, i NumberingItem) bool {
@@ -681,6 +692,9 @@ func (l *Library) ApplyNumberingContext(ctx context.Context, id string, progress
 		e, err := l.Get(i.Entry)
 		if err != nil {
 			return b, err
+		}
+		if b.UndoOf == "" && e.Processed == "marked" {
+			return b, fmt.Errorf("%s %s 已标记为跳过编号，请重新预览", mediaLabel(b.Media), e.Name)
 		}
 		if e.Parent != b.Parent || e.Version != i.Version || e.Name != i.Old || !numberingMatch(filepath.Join(path, i.Old), i) {
 			return b, fmt.Errorf("%s %s 已变化，请重新预览", mediaLabel(b.Media), i.Old)

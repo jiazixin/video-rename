@@ -47,21 +47,21 @@ func (l *Library) PreviewNumberingTreeWithProgress(ctx context.Context, parent i
 		if err != nil {
 			return nil, err
 		}
-		rows, err := l.DB.QueryContext(ctx, `SELECT id,kind,name FROM entries WHERE parent=? AND present=1 ORDER BY name COLLATE NATURAL_NAME,id`, id)
+		rows, err := l.DB.QueryContext(ctx, `SELECT e.id,e.kind,e.name,COALESCE((SELECT source FROM marks m WHERE m.identity=e.identity AND m.size=e.size AND m.mtime=e.mtime),'') FROM entries e WHERE e.parent=? AND e.present=1 ORDER BY e.name COLLATE NATURAL_NAME,e.id`, id)
 		if err != nil {
 			return nil, err
 		}
 		hasMedia := false
 		for rows.Next() {
 			var child int64
-			var kind, name string
-			if err = rows.Scan(&child, &kind, &name); err != nil {
+			var kind, name, processed string
+			if err = rows.Scan(&child, &kind, &name, &processed); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			if kind == "directory" {
 				pending = append(pending, child)
-			} else if kind == "file" && (IsImage(name) || IsAudio(name)) {
+			} else if kind == "file" && (IsImage(name) || IsAudio(name)) && processed != "marked" {
 				hasMedia = true
 			}
 		}

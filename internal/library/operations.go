@@ -313,7 +313,8 @@ func (l *Library) finishTx(tx *sql.Tx, o Operation, oldrel, newrel string) error
 			return err
 		}
 	} else if o.Kind == "file" {
-		if _, err = tx.Exec("INSERT INTO marks VALUES(?,?,?,?,?) ON CONFLICT(identity,size,mtime) DO UPDATE SET source=excluded.source,operation=excluded.operation", o.Identity, o.Size, o.Mtime, o.Source, o.ID); err != nil {
+		keepMark := IsImage(o.New) || IsAudio(o.New)
+		if _, err = tx.Exec("INSERT INTO marks VALUES(?,?,?,?,?) ON CONFLICT(identity,size,mtime) DO UPDATE SET source=CASE WHEN marks.source='marked' AND ? THEN marks.source ELSE excluded.source END,operation=CASE WHEN marks.source='marked' AND ? THEN marks.operation ELSE excluded.operation END", o.Identity, o.Size, o.Mtime, o.Source, o.ID, keepMark, keepMark); err != nil {
 			return err
 		}
 	}

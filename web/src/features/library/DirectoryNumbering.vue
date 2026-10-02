@@ -83,7 +83,7 @@ async function recover(batch:Batch){busy.value=true;error.value='';diagnostics.v
    <p class="help">索引或预览将停止，重新打开需要重新预览。正在编号时，当前未完成目录会恢复原名，已完成目录保留。</p>
   </div>
   <div v-else class="numbering-body">
-  <p class="help">当前目录及所有层级子目录的图片和音频，按文件夹独立编号，不受搜索、类型筛选或分页影响。使用已保存的编号规则，按名称自然升序排列；默认图片、音频分别编号，启用共用序号时先图片后音频。</p>
+  <p class="help">当前目录及所有层级子目录的图片和音频，按文件夹独立编号，不受搜索、类型筛选或分页影响。已标记的图片和音频跳过编号并保留名称，已有号码仍会被保留。使用已保存的编号规则，按名称自然升序排列；默认图片、音频分别编号，启用共用序号时先图片后音频。</p>
   <div class="numbering-tools"><button :disabled="busy" @click="preview">重新预览</button><button :disabled="busy" @click="openHistory"><History :size="15"/>编号记录</button></div>
   <p v-if="busy" class="help">关闭前会再次确认；正在改名的目录会安全恢复，已完成的目录保留。</p>
   <p v-if="busy" role="status">{{progress||'正在处理，请稍候…'}}</p>

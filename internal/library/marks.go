@@ -64,7 +64,7 @@ func (l *Library) SetProcessedWithProgress(ctx context.Context, ids []int64, mar
 			fail(id, err)
 			return
 		}
-		if e.Kind == "file" && discovery.IsVideoExtension(e.Name) {
+		if e.Kind == "file" && (discovery.IsVideoExtension(e.Name) || IsImage(e.Name) || IsAudio(e.Name)) {
 			n, err := l.setFileProcessed(ctx, id, marked)
 			if err != nil {
 				fail(id, err)
@@ -154,6 +154,11 @@ func (l *Library) setFileProcessed(ctx context.Context, id int64, marked bool) (
 	query := "DELETE FROM marks WHERE identity=? AND size=? AND mtime=?"
 	if marked {
 		query = "INSERT INTO marks(identity,size,mtime,source,operation) VALUES(?,?,?,'marked',NULL) ON CONFLICT(identity,size,mtime) DO NOTHING"
+		// Numbering also writes a manual processing state. An explicit media
+		// mark must replace it so users can protect an already numbered file.
+		if IsImage(e.Name) || IsAudio(e.Name) {
+			query = "INSERT INTO marks(identity,size,mtime,source,operation) VALUES(?,?,?,'marked',NULL) ON CONFLICT(identity,size,mtime) DO UPDATE SET source='marked',operation=NULL WHERE source<>'marked'"
+		}
 	}
 	res, err := l.DB.ExecContext(ctx, query, e.Identity, e.Size, e.Mtime)
 	if err != nil {

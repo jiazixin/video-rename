@@ -56,13 +56,15 @@ func TestProcessedMarksRecursiveAndPersistent(t *testing.T) {
 	put(t, filepath.Join(root, "dir", "a.mp4"))
 	put(t, filepath.Join(root, "dir", "nested", "b.mp4"))
 	put(t, filepath.Join(root, "dir", "image.jpg"))
+	put(t, filepath.Join(root, "dir", "nested", "song.mp3"))
+	put(t, filepath.Join(root, "dir", "notes.txt"))
 	if err := os.Symlink(t.TempDir(), filepath.Join(root, "dir", "link")); err != nil {
 		t.Fatal(err)
 	}
 	refresh(t, l, 1)
 	d := entry(t, l, 1, "dir")
 	r := l.SetProcessed(t.Context(), []int64{d.ID, d.ID}, true)
-	if r.Changed != 2 || r.Failed != 0 {
+	if r.Changed != 4 || r.Failed != 0 {
 		t.Fatalf("%+v", r)
 	}
 	a := entry(t, l, d.ID, "a.mp4")
@@ -92,9 +94,61 @@ func TestProcessedMarksRecursiveAndPersistent(t *testing.T) {
 	if a.Processed != "marked" {
 		t.Fatal("mark lost on restart")
 	}
+	image := entry(t, l, d.ID, "image.jpg")
+	if image.Processed != "marked" || image.RestoreID != 0 {
+		t.Fatalf("image protection lost on restart: %+v", image)
+	}
+	if notes := entry(t, l, d.ID, "notes.txt"); notes.Processed != "" {
+		t.Fatal("marked unsupported file")
+	}
 	r = l.SetProcessed(t.Context(), []int64{d.ID}, false)
-	if r.Changed != 2 || r.Failed != 0 {
+	if r.Changed != 4 || r.Failed != 0 {
 		t.Fatalf("%+v", r)
+	}
+}
+
+func TestMediaMarksProtectManualNamesAndNumberedFiles(t *testing.T) {
+	for _, ext := range []string{"jpg", "mp3"} {
+		t.Run(ext, func(t *testing.T) {
+			l, root, _ := fixture(t)
+			name := "original." + ext
+			put(t, filepath.Join(root, name))
+			refresh(t, l, 1)
+			e := entry(t, l, 1, name)
+			if r := l.SetProcessed(t.Context(), []int64{e.ID}, true); r.Changed != 1 || r.Failed != 0 {
+				t.Fatal(r)
+			}
+			op, err := l.Rename(e.ID, e.Version, "my-name."+ext, "manual-protected-name")
+			if err != nil {
+				t.Fatal(err)
+			}
+			e, err = l.Get(e.ID)
+			if err != nil || e.Processed != "marked" || e.RestoreID != op.ID {
+				t.Fatalf("manual rename lost protection/history: %+v %v", e, err)
+			}
+			if r := l.SetProcessed(t.Context(), []int64{e.ID}, false); r.Changed != 1 || r.Failed != 0 {
+				t.Fatal(r)
+			}
+			settings := domain.DefaultNumberingSettings()
+			batches, err := l.PreviewNumberingTree(t.Context(), 1, settings)
+			if err != nil || len(batches) != 1 {
+				t.Fatalf("unmarked file cannot be numbered: %+v %v", batches, err)
+			}
+			if _, err = l.ApplyNumbering(batches[0].ID); err != nil {
+				t.Fatal(err)
+			}
+			batches, err = l.PreviewNumberingTree(t.Context(), 1, settings)
+			if err != nil || len(batches) != 1 || batches[0].Total != 1 {
+				t.Fatalf("numbering history incorrectly protects file: %+v %v", batches, err)
+			}
+			if r := l.SetProcessed(t.Context(), []int64{e.ID}, true); r.Changed != 1 || r.Failed != 0 {
+				t.Fatalf("cannot protect numbered file: %+v", r)
+			}
+			batches, err = l.PreviewNumberingTree(t.Context(), 1, settings)
+			if err != nil || len(batches) != 0 {
+				t.Fatalf("all-protected directory should be skipped: %+v %v", batches, err)
+			}
+		})
 	}
 }
 

@@ -38,6 +38,10 @@ for(const dir of ['','子目录','子目录/孙目录','另一个目录']){
  mkdirSync(join(treeDir,dir),{recursive:true})
  for(const name of ['photo.JPG','song.MP3','clip.mp4'])writeFileSync(join(treeDir,dir,name),name)
 }
+const markDir=join(media,'标记保护测试')
+for(const dir of ['', '子目录'])mkdirSync(join(markDir,dir),{recursive:true})
+for(const name of ['1.JPG','2.MP3','自己的图片.png','自己的音频.flac','photo.JPG','song.MP3'])writeFileSync(join(markDir,name),name)
+for(const name of ['自己的图片.JPG','自己的音频.MP3'])writeFileSync(join(markDir,'子目录',name),name)
 const conflictDir=join(media,'编号冲突测试','子目录')
 mkdirSync(join(conflictDir,'1.jpg'),{recursive:true})
 writeFileSync(join(conflictDir,'photo.jpg'),'numbering conflict fixture')

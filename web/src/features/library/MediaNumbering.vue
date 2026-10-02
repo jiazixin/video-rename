@@ -40,7 +40,7 @@ async function recover(batch:Batch){busy.value=true;error.value='';diagnostics.v
   <NumberingDiagnostics v-if="diagnostics" :message="error" :diagnostics="diagnostics"/>
   <template v-if="preview">
    <p>共 {{preview.total}} 张{{noun}}，{{preview.changed}} 张需要{{preview.undo_of?'还原':'修改'}}，{{preview.total-preview.changed}} 张保持不变。</p>
-   <p v-if="!preview.undo_of" class="help">仅当前目录内符合搜索条件的{{noun}}，包含所有分页。已有唯一编号保留，重复编号按当前排序保留第一张，其余从最大编号后续排；不同格式共用序号，扩展名小写。搜索隐藏的{{noun}}会保留其号码。{{untouched}}。</p>
+   <p v-if="!preview.undo_of" class="help">仅当前目录内符合搜索条件的{{noun}}，包含所有分页。已有唯一编号保留，重复编号按当前排序保留第一张，其余从最大编号后续排；不同格式共用序号，扩展名小写。已标记的{{noun}}跳过编号并保留名称；搜索隐藏或已标记的{{noun}}会保留其号码。{{untouched}}。</p>
    <p v-else class="help">整批恢复本次编号前的名称和扩展名大小写。文件有后续修改或名称被占用时会停止。</p>
    <div class="table-scroll numbering-preview"><table><thead><tr><th>原名</th><th>{{preview.undo_of?'还原为':'新名'}}</th></tr></thead><tbody><tr v-for="item in visible" :key="item.entry"><td>{{item.old_name}}</td><td>{{item.new_name}}<small v-if="item.old_name===item.new_name">（不变）</small></td></tr></tbody></table></div>
    <div class="pagination"><PageNavigation :page="page+1" :total-pages="Math.ceil(preview.total/100)" :disabled="busy" previous-label="上页" next-label="下页" @change="page=$event-1"/></div>
