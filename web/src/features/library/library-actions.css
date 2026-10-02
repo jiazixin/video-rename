@@ -8,8 +8,8 @@ button.library-action:hover:not(:disabled){color:var(--action-ink);background:va
 button.library-action:focus-visible{outline:2px solid var(--action-ink);outline-offset:3px}
 button.library-action:disabled{filter:grayscale(.65);opacity:.45}
 .row-actions button.library-action{background:transparent;border-color:transparent;color:var(--action-ink)}
-.directory-mark-actions{flex-direction:column;align-items:flex-start;gap:8px;margin-top:0;max-width:100%;min-width:0}
-.directory-action-row{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:8px;max-width:100%}
+.directory-mark-actions{flex-direction:column;align-items:flex-end;gap:8px;margin-top:0;width:100%;max-width:100%;min-width:0}
+.directory-action-row{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;max-width:100%}
 .directory-action-row>button{min-width:92px;min-height:40px;justify-content:center;flex-shrink:0;white-space:nowrap}
 .directory-refresh-summary{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-left:auto;min-width:0;flex-wrap:wrap}
 .directory-refresh-summary>button{flex-shrink:0}
