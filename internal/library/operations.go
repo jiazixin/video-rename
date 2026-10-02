@@ -85,7 +85,7 @@ func (l *Library) Rename(id, version int64, name, key string) (o Operation, err 
 	}
 	if e.Kind == "file" {
 		ext := filepath.Ext(name)
-		name = strings.TrimSuffix(name, ext) + strings.ToLower(ext)
+		name = strings.TrimSuffix(name, ext) + naming.NormalizeExtension(ext)
 	}
 	if existing, er := scanOp(l.DB.QueryRow("SELECT "+operationColumns+" FROM operations WHERE request_key=?", key)); er == nil {
 		if existing.Entry == id && existing.New == name && existing.Status == "committed" {
@@ -101,9 +101,6 @@ func (l *Library) Rename(id, version int64, name, key string) (o Operation, err 
 	}
 	if e.Version != version {
 		return o, fmt.Errorf("文件已变化，请刷新后重试")
-	}
-	if e.Kind == "file" && !strings.EqualFold(filepath.Ext(name), filepath.Ext(e.Name)) {
-		return o, fmt.Errorf("必须保留原扩展名")
 	}
 	return l.commit(e, name, "manual", key, 0, 0)
 }

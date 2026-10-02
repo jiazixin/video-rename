@@ -134,6 +134,10 @@ func TestNumberingRuleOptions(t *testing.T) {
 	if kept[0] != "1.JPG" {
 		t.Fatal(kept)
 	}
+	jpeg := names(entries("1.JPEG", "2.jpeg"), nil, nil, domain.MediaNumberingRules{Lowercase: false}, "")
+	if jpeg[0] != "1.jpg" || jpeg[1] != "2.jpg" {
+		t.Fatal(jpeg)
+	}
 	// Only prefix+digits names count as numbered once a prefix is set.
 	prefixed := names(entries("IMG_2.JPG", "2.png", "plain.jpg"), nil, nil, domain.MediaNumberingRules{Padding: 2, Lowercase: true, Prefix: "IMG_"}, "")
 	if prefixed[0] != "IMG_02.jpg" || prefixed[1] != "IMG_03.png" || prefixed[2] != "IMG_04.jpg" {
@@ -522,9 +526,9 @@ func TestNumberingCompactUppercaseFromTwoStagesAllFilesAndRestores(t *testing.T)
 	} {
 		t.Run(tc.media+"/"+tc.sort, func(t *testing.T) {
 			l, root, _ := fixture(t)
-			ext := "JPEG"
+			ext, targetExt := "JPEG", "jpg"
 			if tc.media == "audio" {
-				ext = "MP3"
+				ext, targetExt = "MP3", "mp3"
 			}
 			for n := 2; n <= 42; n++ {
 				name := fmt.Sprintf("%d.%s", n, ext)
@@ -545,7 +549,7 @@ func TestNumberingCompactUppercaseFromTwoStagesAllFilesAndRestores(t *testing.T)
 				if tc.sort == "name_desc" {
 					oldNumber = 42 - idx
 				}
-				if item.Old != fmt.Sprintf("%d.%s", oldNumber, ext) || item.New != fmt.Sprintf("%d.%s", idx+1, strings.ToLower(ext)) {
+				if item.Old != fmt.Sprintf("%d.%s", oldNumber, ext) || item.New != fmt.Sprintf("%d.%s", idx+1, targetExt) {
 					t.Fatalf("unexpected mapping: %+v", item)
 				}
 			}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"video-rename/internal/domain"
+	"video-rename/internal/naming"
 	"video-rename/internal/rename"
 	"video-rename/internal/storage"
 )
@@ -160,8 +161,8 @@ func numberingNames(selected, outside, peers []Entry, r domain.MediaNumberingRul
 		}
 		used[n.String()] = true
 		ext := filepath.Ext(e.Name)
-		if r.Lowercase {
-			ext = strings.ToLower(ext)
+		if r.Lowercase || strings.EqualFold(ext, ".jpeg") {
+			ext = naming.NormalizeExtension(ext)
 		}
 		result = append(result, NumberingItem{Entry: e.ID, Old: e.Name, New: r.Prefix + padNumber(n, r.Padding) + ext, Version: e.Version, Identity: e.Identity, Size: e.Size, Mtime: e.Mtime})
 	}

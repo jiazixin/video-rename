@@ -111,7 +111,7 @@ func TestConflictTraversalReplacementAndIdempotency(t *testing.T) {
 	put(t, filepath.Join(root, "occupied.mp4"))
 	refresh(t, l, 1)
 	e := entry(t, l, 1, "a.mp4")
-	for _, name := range []string{"../escape.mp4", "bad/name.mp4", "occupied.mp4", "bad.mkv"} {
+	for _, name := range []string{"../escape.mp4", "bad/name.mp4", "occupied.mp4", "bad."} {
 		if _, err := l.Rename(e.ID, e.Version, name, "bad:"+name); err == nil {
 			t.Fatalf("accepted %q", name)
 		}
@@ -432,5 +432,48 @@ func TestAutomaticSuccessResolvesOnlyMatchingFailures(t *testing.T) {
 	}
 	if err = l.DB.QueryRow("SELECT count(*) FROM events WHERE category='success' AND entry=?", e.ID).Scan(&count); err != nil || count != 1 {
 		t.Fatal(count, err)
+	}
+}
+
+func TestManualExtensionChangeAndRestore(t *testing.T) {
+	for _, tc := range []struct{ old, requested, want string }{
+		{"clip.mp4", "clip.MKV", "clip.mkv"},
+		{"photo.JPEG", "photo.JPEG", "photo.jpg"},
+		{"photo.png", "photo.JpEg", "photo.jpg"},
+		{"photo.jpeg", "renamed.jpeg", "renamed.jpg"},
+	} {
+		t.Run(tc.old+"/"+tc.requested, func(t *testing.T) {
+			l, root, _ := fixture(t)
+			put(t, filepath.Join(root, tc.old))
+			refresh(t, l, 1)
+			e := entry(t, l, 1, tc.old)
+			// Changing only the extension must still reject an occupied target.
+			put(t, filepath.Join(root, tc.want))
+			if _, err := l.Rename(e.ID, e.Version, tc.requested, "conflict"); err == nil {
+				t.Fatal("extension change overwrote an occupied target")
+			}
+			if err := os.Remove(filepath.Join(root, tc.want)); err != nil {
+				t.Fatal(err)
+			}
+			op, err := l.Rename(e.ID, e.Version, tc.requested, "extension")
+			if err != nil || op.New != tc.want {
+				t.Fatalf("op=%+v err=%v", op, err)
+			}
+			data, err := os.ReadFile(filepath.Join(root, tc.want))
+			if err != nil || string(data) != "video fixture" {
+				t.Fatalf("data=%q err=%v", data, err)
+			}
+			retry, err := l.Rename(e.ID, e.Version, tc.requested, "extension")
+			if err != nil || retry.ID != op.ID {
+				t.Fatalf("retry=%+v err=%v", retry, err)
+			}
+			if _, err := l.Restore(op.ID, "restore-extension"); err != nil {
+				t.Fatal(err)
+			}
+			files, err := os.ReadDir(root)
+			if err != nil || len(files) != 1 || files[0].Name() != tc.old {
+				t.Fatalf("files=%v err=%v", files, err)
+			}
+		})
 	}
 }

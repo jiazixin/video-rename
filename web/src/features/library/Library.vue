@@ -148,21 +148,36 @@ function routeDirectory(){const value=Number(location.hash.match(/^#library\/(\d
 const dir=ref(routeDirectory()),page=ref<Page>(),busy=ref(false),error=ref(''),q=ref(''),kind=ref(''),pageNumber=ref(1),limit=ref(100)
 watch([dir,pageNumber,q,kind,sort,limit,multi],()=>{selectionAnchor=undefined},{flush:'sync'})
 const selected=ref<Entry>(),mode=ref(''),newName=ref(''),saving=ref(false),dialogError=ref(''),recursive=ref(true),history=ref<any[]>([])
+const inlineFullName=ref(false)
+function normalizedExtension(name:string){const ext=name.match(/\.[^.]+$/)?.[0]?.toLowerCase()||'';return ext==='.jpeg'?'.jpg':ext}
 const inlineEntry=ref<Entry>(),inlineInput=ref<HTMLInputElement>(),inlineName=ref(''),inlineExtension=ref(''),inlineVersion=ref(0),inlineSaving=ref(false),inlineError=ref('')
 function setInlineInput(el:unknown){inlineInput.value=el instanceof HTMLInputElement?el:undefined}
 function cancelInlineRename(){if(inlineSaving.value)return;inlineEntry.value=undefined;inlineError.value=''}
 async function beginInlineRename(e:Entry){
  if(e.kind!=='file'||inlineSaving.value)return
- inlineEntry.value=e;inlineVersion.value=e.version;inlineError.value=''
- inlineExtension.value=e.name.match(/\.[^.]+$/)?.[0]?.toLowerCase()||''
+ inlineFullName.value=false;inlineEntry.value=e;inlineVersion.value=e.version;inlineError.value=''
+ inlineExtension.value=normalizedExtension(e.name)
  inlineName.value=e.name.slice(0,e.name.length-(e.name.match(/\.[^.]+$/)?.[0].length||0))
  await nextTick();inlineInput.value?.focus();inlineInput.value?.select()
+}
+async function editInlineExtension(){
+ if(inlineSaving.value)return
+ // Move focus before removing the suffix button so keyboard activation does
+ // not look like leaving the editor.
+ inlineInput.value?.focus()
+ const start=inlineName.value.length+1
+ inlineName.value+=inlineExtension.value;inlineFullName.value=true
+ await nextTick();inlineInput.value?.focus();inlineInput.value?.setSelectionRange(start,inlineName.value.length)
+}
+function inlineFocusOut(event:FocusEvent){
+ if(event.relatedTarget instanceof Node&&(event.currentTarget as HTMLElement).contains(event.relatedTarget))return
+ cancelInlineRename()
 }
 async function saveInlineRename(){
  const e=inlineEntry.value
  if(!e||inlineSaving.value)return
  if(!inlineName.value.trim()){inlineError.value='请输入文件名';return}
- const name=inlineName.value+inlineExtension.value
+ const name=inlineName.value+(inlineFullName.value?'':inlineExtension.value)
  if(name===e.name){cancelInlineRename();return}
  inlineSaving.value=true;inlineError.value='';statusSeq++
  try{
@@ -176,7 +191,7 @@ async function saveInlineRename(){
 const trackedRuns=new Set<number>()
 let disposed=false,statusSeq=0
 let seq=0,timer:ReturnType<typeof setTimeout>|undefined,searchTimer:ReturnType<typeof setTimeout>|undefined
-const extension=computed(()=>selected.value?.kind==='file'?selected.value.name.match(/\.[^.]+$/)?.[0]?.toLowerCase()||'':'')
+const extension=computed(()=>selected.value?.kind==='file'?normalizedExtension(selected.value.name):'')
 function scheduleSync(){clearTimeout(timer);if(!disposed&&active)timer=setTimeout(()=>{if(saving.value)scheduleSync();else void syncEntries()},1500)}
 function trackRun(id:number,entries:Entry[]){trackedRuns.add(id);for(const e of entries)if(e.kind==='file'&&!e.processed)e.task_status='queued';scheduleSync()}
 async function syncEntries(){
@@ -403,7 +418,7 @@ onActivated(activate);onDeactivated(deactivate);onUnmounted(()=>{deactivate();di
 <div class="panel file-panel library-file-rows">
 <div class="table-scroll" @scroll="syncTableScroll"><table ref="fileTable" class="file-table"><LibraryTableHeader :multi="multi" :sort="sort" sizing/>
 <tbody><tr v-for="e in page?.items" :key="e.id" :data-entry-id="e.id" :class="{'is-selected':multi&&chosen.has(e.id),'return-anchor':returnAnchor===e.id}"><td v-if="multi" class="selection-cell"><input v-if="selectable(e)" type="checkbox" :aria-label="`选择 ${e.name}`" :checked="chosen.has(e.id)" @click="selectEntry(e,$event)" title="按住 Shift 点击可连续选择当前页条目"/></td>
-<td class="filename-cell"><div class="file-name"><button v-if="e.kind==='file'&&video(e)" class="file-symbol video-symbol" :aria-label="`播放视频 ${e.name}`" @click="play(e)"><FileVideo :size="21"/></button><button v-else-if="isImage(e)" class="file-symbol image-symbol" :aria-label="`预览图片 ${e.name}`" @click="showImage(e)"><ImageIcon :size="21"/></button><button v-else-if="isAudio(e)" class="file-symbol audio-symbol" :aria-label="`播放音频 ${e.name}`" @click="playAudio(e)"><FileAudio :size="21"/></button><span v-else class="file-symbol" :class="{directory:e.kind==='directory'}"><Folder v-if="e.kind==='directory'" :size="21"/><Link v-else-if="e.kind==='symlink'" :size="21"/><FileVideo v-else-if="video(e)" :size="21"/><File v-else :size="21"/></span><div v-if="inlineEntry?.id===e.id" class="inline-rename"><div class="inline-rename-field"><input :ref="setInlineInput" v-model="inlineName" :aria-label="`编辑 ${e.name}`" :readonly="inlineSaving" maxlength="240" @keydown.enter.prevent="saveInlineRename" @keydown.esc.prevent="cancelInlineRename" @blur="cancelInlineRename"/><span>{{inlineExtension}}</span></div><small v-if="inlineError" role="alert">{{inlineError}}</small></div><button v-else-if="e.kind==='directory'" class="name-button" :title="e.name" @click="enter(e.id)"><span class="name-text">{{e.name}}</span><ChevronRight :size="14"/></button><button v-else-if="e.kind==='file'" type="button" class="name-text inline-rename-trigger" :title="`双击重命名 ${e.name}`" :aria-label="`双击或按 Enter 重命名 ${e.name}`" @dblclick="beginInlineRename(e)" @keydown.enter.prevent="beginInlineRename(e)" @keydown.f2.prevent="beginInlineRename(e)">{{e.name}}</button><span v-else class="name-text" :title="e.name">{{e.name}}</span></div></td>
+<td class="filename-cell"><div class="file-name"><button v-if="e.kind==='file'&&video(e)" class="file-symbol video-symbol" :aria-label="`播放视频 ${e.name}`" @click="play(e)"><FileVideo :size="21"/></button><button v-else-if="isImage(e)" class="file-symbol image-symbol" :aria-label="`预览图片 ${e.name}`" @click="showImage(e)"><ImageIcon :size="21"/></button><button v-else-if="isAudio(e)" class="file-symbol audio-symbol" :aria-label="`播放音频 ${e.name}`" @click="playAudio(e)"><FileAudio :size="21"/></button><span v-else class="file-symbol" :class="{directory:e.kind==='directory'}"><Folder v-if="e.kind==='directory'" :size="21"/><Link v-else-if="e.kind==='symlink'" :size="21"/><FileVideo v-else-if="video(e)" :size="21"/><File v-else :size="21"/></span><div v-if="inlineEntry?.id===e.id" class="inline-rename"><div class="inline-rename-field" @focusout="inlineFocusOut" @keydown.esc.prevent="cancelInlineRename"><input :ref="setInlineInput" v-model="inlineName" :aria-label="`编辑 ${e.name}`" :readonly="inlineSaving" maxlength="240" @keydown.enter.prevent="saveInlineRename"/><button v-if="inlineExtension&&!inlineFullName" type="button" class="rename-extension" aria-label="修改后缀名" title="点击修改后缀名" :disabled="inlineSaving" @mousedown.prevent @click="editInlineExtension">{{inlineExtension}}</button></div><small v-if="inlineError" role="alert">{{inlineError}}</small></div><button v-else-if="e.kind==='directory'" class="name-button" :title="e.name" @click="enter(e.id)"><span class="name-text">{{e.name}}</span><ChevronRight :size="14"/></button><button v-else-if="e.kind==='file'" type="button" class="name-text inline-rename-trigger" :title="`双击重命名 ${e.name}`" :aria-label="`双击或按 Enter 重命名 ${e.name}`" @dblclick="beginInlineRename(e)" @keydown.enter.prevent="beginInlineRename(e)" @keydown.f2.prevent="beginInlineRename(e)">{{e.name}}</button><span v-else class="name-text" :title="e.name">{{e.name}}</span></div></td>
 <td class="subtle mono">{{e.kind==='directory'?'—':size(e.size)}}</td><td class="subtle contents-cell"><DirectoryContents v-if="e.kind==='directory'" :contents="e.contents"/><span v-else>—</span></td><td><DirectoryStatus v-if="e.kind==='directory'" :entry="e"/><StatusBadge v-else :status="e.task_status||e.processed||'unprocessed'">{{status(e)}}</StatusBadge></td><td class="subtle date-cell"><DateTime :value="e.mtime"/></td><td class="subtle date-cell"><DateTime :value="e.renamed_at"/></td>
 <td><div class="row-actions" v-if="e.kind==='file'||e.kind==='directory'"><button v-if="isImage(e)" :aria-label="`查看图片 ${e.name}`" title="查看图片" @click="showImage(e)"><ImageIcon :size="15"/></button><button v-if="e.kind==='directory'" title="重命名" :aria-label="`重命名 ${e.name}`" @click="open(e,'rename')"><PenLine :size="15"/></button><button class="library-action action-name" v-if="e.kind==='directory'||video(e)" :disabled="!ready||!!e.processed||!!e.task_status" :aria-label="`自动命名 ${e.name}`" :title="e.processed?'已处理，自动任务将跳过':'自动命名'" @click="open(e,'auto')"><Sparkles :size="15"/></button><button class="library-action action-mark" v-if="markable(e)&&(e.kind==='directory'||!marked(e))" :aria-label="`标记已处理 ${e.name}`" :title="isImage(e)||isAudio(e)?'标记跳过编号':'标记已处理'" :disabled="!!e.task_status" @click="openMark([e],true)"><CircleCheck :size="15"/></button><button class="library-action action-unmark" v-if="markable(e)&&(e.kind==='directory'||marked(e))" :aria-label="`取消已处理标记 ${e.name}`" title="取消已处理标记" :disabled="!!e.task_status" @click="openMark([e],false)"><CircleMinus :size="15"/></button><button v-if="e.restore_id" :aria-label="`还原 ${e.name}`" title="还原" @click="open(e,'restore')"><Undo2 :size="15"/></button><button title="命名历史" :aria-label="`历史 ${e.name}`" @click="open(e,'history')"><History :size="15"/></button><button class="delete-action" title="永久删除" :aria-label="`删除 ${e.name}`" :disabled="!!e.task_status||!!e.progress?.active" @click="confirmDelete(e)"><Trash2 :size="15"/></button></div><span v-else class="subtle">不可操作</span></td></tr></tbody></table>
 <div v-if="!page?.items.length" class="empty"><Folder :size="35"/><h3>{{busy||page?.refreshing?'正在读取目录':'这里还没有内容'}}</h3><p>{{busy||page?.refreshing?'首次进入时会建立当前层的目录索引。':q?'没有符合搜索条件的条目。':'可以返回上级目录，或刷新查看最新文件。'}}</p></div></div>
@@ -492,7 +507,9 @@ onActivated(activate);onDeactivated(deactivate);onUnmounted(()=>{deactivate();di
 .inline-rename-field{display:flex;align-items:center;min-width:0;border:1px solid #89bca7;border-radius:6px;background:white;box-shadow:0 0 0 2px #e3f2e9}
 .inline-rename-field input{min-width:0;width:100%;padding:6px 8px;border:0;background:transparent;font:inherit;color:var(--ink)}
 .inline-rename-field input:focus{outline:0}
-.inline-rename-field span{padding-right:8px;white-space:nowrap;color:var(--ash)}
+.rename-extension{flex-shrink:0;border:0;background:transparent;padding:6px 8px;white-space:nowrap;color:var(--ash);font:inherit;cursor:text}
+.rename-extension:hover{color:var(--ink);background:#f1f7f3}
+.rename-extension:focus-visible{outline:2px solid #89bca7;outline-offset:-2px}
 .inline-rename small{display:block;margin-top:5px;color:#b44444;overflow-wrap:anywhere}
 .file-table{min-width:1120px}
 .file-table .contents-cell{min-width:76px;white-space:nowrap;font-size:11px}

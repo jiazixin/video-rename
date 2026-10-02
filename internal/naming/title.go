@@ -17,6 +17,15 @@ import (
 // 文件名硬上限。
 const MaxFilenameBytes = 240 // 完整文件名字节上限
 
+// NormalizeExtension 统一扩展名小写，并将 JPEG 使用的后缀规范为 .jpg。
+func NormalizeExtension(ext string) string {
+	ext = strings.ToLower(ext)
+	if ext == ".jpeg" {
+		return ".jpg"
+	}
+	return ext
+}
+
 // windowsReserved Windows 保留名称(含后接点的形式)。
 var windowsReserved = buildReserved()
 

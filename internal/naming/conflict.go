@@ -37,7 +37,7 @@ func (a *Allocator) Allocate(dir, title, ext string, job domain.VideoJob) (Alloc
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	ext = strings.ToLower(ext)
+	ext = NormalizeExtension(ext)
 
 	for n := 1; n <= 9999; n++ {
 		reserve := 0
