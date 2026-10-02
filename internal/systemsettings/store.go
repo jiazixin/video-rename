@@ -86,12 +86,24 @@ func (s Store) Save(v Settings) error {
 	if err := v.Validate(); err != nil {
 		return err
 	}
-	raw, err := json.Marshal(v.Policy)
+	tx, err := s.DB.Begin()
 	if err != nil {
 		return err
 	}
-	_, err = s.DB.Exec("INSERT INTO system_settings(id,extract_workers,cache_gb,stability_seconds,policy) VALUES(1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET extract_workers=excluded.extract_workers,cache_gb=excluded.cache_gb,stability_seconds=excluded.stability_seconds,policy=excluded.policy", v.ExtractWorkers, v.CacheGB, v.StabilitySeconds, string(raw))
-	return err
+	defer tx.Rollback()
+	policy, err := loadPolicy(tx.QueryRow("SELECT policy FROM system_settings WHERE id=1"))
+	if err != nil {
+		return err
+	}
+	policy.Policy = v.Policy
+	raw, err := json.Marshal(policy)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec("INSERT INTO system_settings(id,extract_workers,cache_gb,stability_seconds,policy) VALUES(1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET extract_workers=excluded.extract_workers,cache_gb=excluded.cache_gb,stability_seconds=excluded.stability_seconds,policy=excluded.policy", v.ExtractWorkers, v.CacheGB, v.StabilitySeconds, string(raw)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Numbering returns the persisted numbering rules; empty or missing values

@@ -64,6 +64,7 @@ func (l *Library) Delete(id, version int64) error {
 	if _, err := l.Path(id); err != nil {
 		return err
 	}
+	l.indexEpoch.Add(1)
 	if err := root.RemoveAll(rel); err != nil {
 		return fmt.Errorf("删除未完成，目录可能已部分删除，请刷新后核对: %w", err)
 	}

@@ -77,6 +77,38 @@ export interface Page {
   directory: Entry
   breadcrumbs: Entry[]
 }
+export interface DirectoryState {
+  generation: string
+  refreshing: boolean
+  refreshed: string
+  error: string
+}
+export interface LibraryScanSettings {
+  enabled: boolean
+  interval_minutes: number
+  targets: number[]
+}
+export interface LibraryScanStatus {
+  id: string
+  status:
+    'idle' | 'scanning' | 'cancelling' | 'completed' | 'partial_failure' | 'failed' | 'cancelled'
+  source: string
+  targets: number[]
+  started: string
+  finished: string
+  next_scan: string
+  current_path: string
+  directories: number
+  files: number
+  added: number
+  changed: number
+  removed: number
+  errors: { path: string; message: string }[]
+}
+export interface LibraryScanState {
+  settings: LibraryScanSettings
+  status: LibraryScanStatus
+}
 export interface Run {
   task?: 'rename' | 'extract'
   target_names?: string[]

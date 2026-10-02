@@ -4,6 +4,7 @@
   import { api, type ModelProfile } from '../../app/api';
   import Modal from '../../components/Modal.vue';
   import SelectField from '../../components/SelectField.vue';
+  import { LibraryScanSettings } from '../library';
   type Settings = {
     extract_workers: number;
     cache_gb: number;
@@ -442,6 +443,7 @@
         ></footer
       >
     </form>
+    <LibraryScanSettings />
     <Modal v-if="clearDialog" title="确认清空缓存？" @close="!clearing && (clearDialog = false)"
       ><p
         >将删除当前未被任务使用的截图缓存。后续命名需要重新抽帧，不影响原视频、命名结果和运行记录。</p

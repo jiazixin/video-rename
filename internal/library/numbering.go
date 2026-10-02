@@ -782,6 +782,7 @@ func (l *Library) moveNumbering(b *Numbering, i *NumberingItem, path, target str
 	if err != nil || Identity(snap) != i.Identity || snap.Size != i.Size || stamp(snap) != i.Mtime {
 		return fmt.Errorf("%s %s 身份或内容已变化", mediaLabel(b.Media), i.Current)
 	}
+	l.indexEpoch.Add(1)
 	if _, err := l.DB.Exec("UPDATE image_numbering_items SET pending_name=? WHERE batch=? AND entry=?", target, b.ID, i.Entry); err != nil {
 		return err
 	}

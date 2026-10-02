@@ -10,6 +10,7 @@
     ChevronRight,
     ChevronLeft,
     RefreshCw,
+    ScanLine,
     Search,
     ArrowUpRight,
     PenLine,
@@ -32,6 +33,7 @@
     size,
     type Entry,
     type Page,
+    type DirectoryState,
     statusNames,
     type Run
   } from '../../app/api';
@@ -48,6 +50,8 @@
   import AudioPlayer from './AudioPlayer.vue';
   import MediaNumbering from './MediaNumbering.vue';
   import DirectoryNumbering from './DirectoryNumbering.vue';
+  import ScanStatus from './ScanStatus.vue';
+  import { useLibraryScan } from './library-scan';
   defineProps<{ ready: boolean }>();
   const emit = defineEmits<{ run: [] }>();
   const toast = ref<InstanceType<typeof ToastNotice>>();
@@ -585,7 +589,7 @@
       }
     }
   }
-  async function load(quiet = false, keepRows = true) {
+  async function load(quiet = false, keepRows = true, canApply?: () => boolean) {
     if (!quiet) selectionAnchor = undefined;
     const n = ++seq;
     clearTimeout(timer);
@@ -624,8 +628,16 @@
             .slice(0, Math.max(0, limit.value - rows.length))
         ];
       }
+      // An automatic update may return after selection or editing has begun.
+      // Leave the old rows intact until the user explicitly applies the update.
+      if (canApply && !canApply()) {
+        if (trackedRuns.size) scheduleSync();
+        return;
+      }
       pageNumber.value = p.page ?? requestedPage;
       page.value = p;
+      if (currentDirectoryState.value?.generation === p.generation)
+        directoryUpdateAvailable.value = false;
       if (inlineEntry.value && !p.items.some((e) => e.id === inlineEntry.value?.id))
         cancelInlineRename();
       await restorePosition(n, p);
@@ -706,7 +718,75 @@
   let pendingPosition: DirectoryPosition | undefined;
   const nativeScrollRestoration = window.history.scrollRestoration;
   let active = false,
-    parkedScrollY = 0;
+    parkedScrollY = 0,
+    positionSerial = 0;
+  const currentDirectoryState = ref<DirectoryState>(),
+    directoryUpdateAvailable = ref(false),
+    directoryPollError = ref('');
+  const scan = useLibraryScan(pollDirectoryState);
+  const {
+    state: scanState,
+    error: scanError,
+    actionError: scanActionError,
+    submitting: scanSubmitting,
+    scanning
+  } = scan;
+  // Never replace a list while the user is selecting, editing or viewing media.
+  // The explicit update button keeps selected IDs and the current page intact.
+  function listInUse(ignoreSelection = false) {
+    return (
+      (!ignoreSelection && chosen.value.size > 0) ||
+      saving.value ||
+      inlineEntry.value ||
+      document.querySelector('[role="dialog"]') ||
+      document.activeElement?.matches('input,textarea,[contenteditable="true"]')
+    );
+  }
+  async function pollDirectoryState(signal: AbortSignal) {
+    const directory = dir.value,
+      request = seq;
+    if (!page.value || busy.value || !active) return;
+    try {
+      const state = await api<DirectoryState>(
+        `/directories/${directory}/state`,
+        'GET',
+        undefined,
+        signal
+      );
+      if (signal.aborted || !active || directory !== dir.value || request !== seq) return;
+      currentDirectoryState.value = state;
+      directoryPollError.value = state.error ? `目录扫描未完成：${state.error}` : '';
+      directoryUpdateAvailable.value = state.generation !== page.value?.generation;
+      if (directoryUpdateAvailable.value && !listInUse()) await applyDirectoryUpdate();
+    } catch (e) {
+      if (!signal.aborted && active && directory === dir.value && request === seq)
+        directoryPollError.value = `目录更新检查失败：${(e as Error).message}`;
+    }
+  }
+  async function applyDirectoryUpdate(manual = false) {
+    if (
+      busy.value ||
+      saving.value ||
+      inlineEntry.value ||
+      document.querySelector('[role="dialog"]')
+    )
+      return;
+    const directory = dir.value,
+      top = window.scrollY,
+      position = positionSerial;
+    // A quiet load keeps filters, page number and selected IDs. Request the
+    // current sorted page so new files become visible without another disk scan.
+    await load(true, false, () => active && !document.hidden && !listInUse(manual));
+    if (active && directory === dir.value && position === positionSerial) {
+      await nextTick();
+      window.scrollTo({ top, behavior: 'instant' });
+    }
+  }
+  watch(dir, () => {
+    currentDirectoryState.value = undefined;
+    directoryUpdateAvailable.value = false;
+    directoryPollError.value = '';
+  });
   async function restorePosition(request: number, result: Page) {
     const saved = pendingPosition;
     if (!saved || (result.refreshing && !result.items.some((e) => e.id === saved.anchor))) return;
@@ -743,6 +823,7 @@
   }
   function cancelPendingPosition() {
     pendingPosition = undefined;
+    positionSerial++;
   }
   function scrollKey(event: KeyboardEvent) {
     if (['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' '].includes(event.key))
@@ -975,6 +1056,7 @@
   function activate() {
     if (active) return;
     active = true;
+    scan.startPolling();
     window.history.scrollRestoration = 'manual';
     window.addEventListener('wheel', cancelPendingPosition, { passive: true });
     window.addEventListener('touchmove', cancelPendingPosition, { passive: true });
@@ -997,6 +1079,7 @@
     parkedScrollY = window.scrollY;
     stopObservingLayout();
     active = false;
+    scan.stopPolling();
     seq++;
     statusSeq++;
     closeDialog();
@@ -1071,6 +1154,28 @@
       >{{ error }}<button @click="enter(1)">返回媒体库</button
       ><button @click="load()">重试</button></div
     >
+    <div
+      v-if="scanError || scanActionError || directoryPollError"
+      class="notice error"
+      role="alert"
+    >
+      {{ scanActionError || scanError || directoryPollError
+      }}<button @click="scan.refresh">重试状态读取</button>
+    </div>
+    <ScanStatus
+      v-if="scanState?.status.started"
+      class="library-scan-status"
+      :status="scanState.status"
+      :submitting="scanSubmitting"
+      @cancel="scan.cancel" />
+    <div v-if="directoryUpdateAvailable" class="directory-update-notice">
+      <span>目录有更新，保留当前选择和操作。</span
+      ><button
+        :disabled="busy || saving || !!inlineEntry || !!playing || !!audioPlaying || !!preview"
+        @click="applyDirectoryUpdate(true)"
+        >更新文件列表</button
+      >
+    </div>
     <div class="panel file-panel library-directory-overview">
       <div class="panel-toolbar directory-toolbar"
         ><div class="breadcrumbs"
@@ -1087,6 +1192,15 @@
               :disabled="busy"
               @click="refresh"
               ><RefreshCw :size="16" :class="{ spin: busy }" />刷新</button
+            ><span class="directory-scan-control"
+              ><button
+                class="directory-recursive-scan"
+                aria-label="扫描当前目录及子目录"
+                title="重新读取当前目录及全部子目录，只同步文件列表"
+                :disabled="busy || !page || scanSubmitting || scanning"
+                @click="scan.start([dir])"
+                ><ScanLine :size="16" />扫描子目录</button
+              ></span
             ></div
           ></div
         ></div
@@ -1662,6 +1776,22 @@
 </template>
 
 <style scoped>
+  .library-scan-status {
+    margin-bottom: 12px;
+  }
+  .directory-update-notice {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+    padding: 12px 16px;
+    border: 1px solid #d6e8dc;
+    border-radius: 9px;
+    background: #f1f8f3;
+    font-size: 13px;
+  }
   .library-fixed-controls {
     position: sticky;
     top: 0;
@@ -1756,6 +1886,9 @@
     }
   }
   @media (max-width: 600px) {
+    .directory-recursive-scan {
+      min-height: 44px;
+    }
     .library-page .page-heading h1 {
       font-size: 22px;
       margin-bottom: 0;

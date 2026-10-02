@@ -34,6 +34,11 @@ func (l *Library) Refresh(ctx context.Context, id int64) error {
 }
 
 func (l *Library) refreshWithMetrics(ctx context.Context, id int64) (metrics RefreshMetrics, err error) {
+	release, err := l.lockDirectoryScan(ctx, id)
+	if err != nil {
+		return metrics, err
+	}
+	defer release()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if err = ctx.Err(); err != nil {
@@ -124,6 +129,20 @@ type scannedDirectoryEntry struct {
 // cancellation. DirEntry.Info cannot interrupt an in-flight filesystem syscall.
 // Each worker owns a distinct result slot; persistence keeps enumeration order.
 func refreshMetadata(ctx context.Context, batch []os.DirEntry) ([]scannedDirectoryEntry, error) {
+	return readDirectoryMetadata(ctx, batch, func(de os.DirEntry) (scannedDirectoryEntry, error) {
+		info, err := de.Info()
+		if err != nil {
+			return scannedDirectoryEntry{}, err
+		}
+		snap, err := domain.SnapshotFromInfo(info)
+		if err != nil {
+			return scannedDirectoryEntry{}, err
+		}
+		return scannedDirectoryEntry{de.Name(), kindOf(info), Identity(snap), stamp(snap), snap.Size}, nil
+	})
+}
+
+func readDirectoryMetadata(ctx context.Context, batch []os.DirEntry, inspect func(os.DirEntry) (scannedDirectoryEntry, error)) ([]scannedDirectoryEntry, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -140,15 +159,8 @@ func refreshMetadata(ctx context.Context, batch []os.DirEntry) ([]scannedDirecto
 				if i >= len(batch) || int64(i) > firstFailure.Load() || ctx.Err() != nil {
 					return
 				}
-				de := batch[i]
-				info, err := de.Info()
-				if err == nil {
-					var snap domain.Snapshot
-					snap, err = domain.SnapshotFromInfo(info)
-					if err == nil {
-						scanned[i] = scannedDirectoryEntry{de.Name(), kindOf(info), Identity(snap), stamp(snap), snap.Size}
-					}
-				}
+				var err error
+				scanned[i], err = inspect(batch[i])
 				if err != nil {
 					errorsByIndex[i] = err
 					// Stop later work but finish every earlier reserved index,
@@ -251,7 +263,11 @@ func (l *Library) indexRefreshPage(ctx context.Context, id, gen int64, scanned [
 	if err = ctx.Err(); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	l.indexEpoch.Add(1)
+	return nil
 }
 
 func (l *Library) publishRefresh(ctx context.Context, id, gen int64) error {
@@ -272,5 +288,9 @@ func (l *Library) publishRefresh(ctx context.Context, id, gen int64) error {
 	if err = ctx.Err(); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	l.indexEpoch.Add(1)
+	return nil
 }

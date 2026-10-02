@@ -238,6 +238,8 @@ func (l *Library) commit(e Entry, name, source, key string, undo, run int64, dia
 	if name == e.Name && source == "manual" {
 		return Operation{Entry: e.ID, Old: name, New: name, Status: "unchanged"}, nil
 	}
+	// Invalidate scans before journaling or moving, including uncertain outcomes.
+	l.indexEpoch.Add(1)
 	target := filepath.Join(filepath.Dir(p), name)
 	oldrel, _ := filepath.Rel(l.Root, p)
 	newrel, _ := filepath.Rel(l.Root, target)

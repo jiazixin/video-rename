@@ -22,10 +22,12 @@ import (
 	"video-rename/internal/config"
 	"video-rename/internal/jobs"
 	"video-rename/internal/library"
+	"video-rename/internal/libraryscan"
 	"video-rename/internal/models"
 	"video-rename/internal/notifications"
 	"video-rename/internal/scheduler"
 	"video-rename/internal/storage"
+	"video-rename/internal/systemsettings"
 	webassets "video-rename/web"
 )
 
@@ -33,6 +35,7 @@ type App struct {
 	Notifications   *notifications.Service
 	DB              *storage.Store
 	Library         *library.Library
+	Scanner         *libraryscan.Manager
 	Jobs            *jobs.Manager
 	Scheduler       *scheduler.Scheduler
 	Auth            *auth.Auth
@@ -72,12 +75,13 @@ func New(cfg *config.Config) (*App, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &App{Notifications: notifications.New(db), DB: db, Library: l, Jobs: j, Scheduler: s, Auth: auth.New(db, cfg.Auth), ctx: ctx, cancel: cancel}, nil
+	return &App{Notifications: notifications.New(db), DB: db, Library: l, Scanner: libraryscan.New(l, systemsettings.Store{DB: db}), Jobs: j, Scheduler: s, Auth: auth.New(db, cfg.Auth), ctx: ctx, cancel: cancel}, nil
 }
 func (a *App) Start() {
 	a.wg.Go(func() { a.Notifications.Loop(a.ctx) })
 	a.wg.Go(func() { a.Jobs.Loop(a.ctx) })
 	a.wg.Go(func() { a.Scheduler.Loop(a.ctx) })
+	a.wg.Go(func() { a.Scanner.Loop(a.ctx) })
 }
 func (a *App) Close() error {
 	a.markMu.Lock()
@@ -87,6 +91,7 @@ func (a *App) Close() error {
 	a.numberingClosed = true
 	a.numberingMu.Unlock()
 	a.cancel()
+	a.Scanner.Close()
 	a.numberingWG.Wait()
 	a.markWG.Wait()
 	a.wg.Wait()
@@ -144,6 +149,7 @@ func (a *App) Handler() http.Handler {
 	a.notificationRoutes(api)
 	a.samplingRoutes(api)
 	a.systemSettingsRoutes(api)
+	a.libraryScanRoutes(api)
 	a.numberingRoutes(api)
 	api.HandleFunc("GET /api/logs/{id}/diagnostics", a.logDiagnostics)
 	api.HandleFunc("GET /api/extractions", a.extractions)

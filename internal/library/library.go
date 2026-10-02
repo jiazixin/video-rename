@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"video-rename/internal/domain"
@@ -39,6 +40,9 @@ type Library struct {
 	mu         sync.Mutex
 	refreshMu  sync.Mutex
 	refreshing map[int64]bool
+	scanning   map[int64]bool
+	dirScans   map[int64]*directoryScanLock
+	indexEpoch atomic.Uint64
 	scanSlots  chan struct{}
 	Busy       func(int64) bool
 	broken     error
@@ -213,7 +217,7 @@ func kindOf(st os.FileInfo) string {
 }
 func (l *Library) StartRefresh(ctx context.Context, id int64) {
 	l.refreshMu.Lock()
-	if l.refreshing[id] || l.closed || ctx.Err() != nil {
+	if l.refreshing[id] || l.scanning[id] || l.closed || ctx.Err() != nil {
 		l.refreshMu.Unlock()
 		return
 	}
@@ -290,7 +294,7 @@ func (l *Library) listOrdered(ctx context.Context, id int64, offset, limit int, 
 		l.StartRefresh(ctx, id)
 	}
 	l.refreshMu.Lock()
-	p.Refreshing = l.refreshing[id]
+	p.Refreshing = l.refreshing[id] || l.scanning[id]
 	l.refreshMu.Unlock()
 	if generation != 0 && p.Generation != generation {
 		return p, fmt.Errorf("目录已刷新，请返回第一页")
