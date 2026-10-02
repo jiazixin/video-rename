@@ -102,11 +102,13 @@ func send(w http.ResponseWriter, status int, v any) {
 func failure(w http.ResponseWriter, err error) {
 	status := 409
 	code := "CONFLICT"
+	message := err.Error()
 	if errors.Is(err, sql.ErrNoRows) {
 		status = 404
 		code = "NOT_FOUND"
+		message = "请求的记录不存在或已删除，请刷新页面后重试"
 	}
-	send(w, status, map[string]string{"code": code, "message": err.Error(), "request_id": auth.Token()})
+	send(w, status, map[string]string{"code": code, "message": message, "request_id": auth.Token()})
 }
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)

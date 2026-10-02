@@ -1,8 +1,11 @@
 package app
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"video-rename/internal/jobs"
 )
 
@@ -58,6 +61,10 @@ func (a *App) retryHistory(w http.ResponseWriter, r *http.Request) {
 			item := record{id: id}
 			err := a.DB.Read().QueryRowContext(r.Context(), "SELECT entry FROM events WHERE id=? AND category='failure' AND action='automatic' AND entry>0", id).Scan(&item.entry)
 			if err != nil {
+				if !errors.Is(err, sql.ErrNoRows) {
+					failure(w, err)
+					return
+				}
 				problems = append(problems, fmt.Sprintf("记录 #%d 不存在或不支持自动重试", id))
 				continue
 			}
@@ -77,7 +84,14 @@ func (a *App) retryHistory(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if _, err := a.Library.Path(entry); err != nil {
-			problems = append(problems, fmt.Sprintf("记录 #%d：%s", id, err))
+			message := err.Error()
+			switch {
+			case errors.Is(err, sql.ErrNoRows):
+				message = "文件或上级目录已不在索引中，请到文件目录刷新并重新提交命名；若文件已删除，可清除对应失败记录"
+			case errors.Is(err, os.ErrNotExist):
+				message = "文件或上级目录不存在，请检查媒体挂载并刷新所在目录后重试；若文件已删除，请清除对应失败记录"
+			}
+			problems = append(problems, fmt.Sprintf("记录 #%d：%s", id, message))
 			continue
 		}
 		item := &target{entry: entry, ids: []int64{id}}
@@ -91,7 +105,11 @@ func (a *App) retryHistory(w http.ResponseWriter, r *http.Request) {
 		}
 		run, err := a.Jobs.Create(jobs.Request{Targets: targets, ModelConfigID: input.ModelConfigID, Key: input.Key}, "manual", 0)
 		if err != nil {
-			problems = append(problems, fmt.Sprintf("%d 个文件未提交：%s", len(items), err))
+			message := err.Error()
+			if errors.Is(err, sql.ErrNoRows) {
+				message = "重试目标的索引已失效，请到文件目录刷新并重新提交命名"
+			}
+			problems = append(problems, fmt.Sprintf("%d 个文件未提交：%s", len(items), message))
 		} else {
 			runs = append(runs, run)
 			for _, item := range items {

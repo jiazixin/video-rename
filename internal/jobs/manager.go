@@ -236,6 +236,9 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	if r.Task == "rename" {
 		prompt, err = (models.Store{DB: m.DB}).Get(r.ModelConfigID)
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return 0, fmt.Errorf("所选模型配置不存在或已删除，请重新选择模型配置")
+			}
 			return 0, fmt.Errorf("请选择有效的模型配置: %w", err)
 		}
 		if err = prompt.Validate(); err != nil {

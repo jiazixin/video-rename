@@ -180,6 +180,9 @@ func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 	if invalid.Code != 200 || len(rejected.Accepted) != 0 || len(rejected.Runs) != 0 || len(rejected.Errors) == 0 {
 		t.Fatal(invalid.Body.String())
 	}
+	if strings.Contains(invalid.Body.String(), "sql:") || !strings.Contains(invalid.Body.String(), "模型配置不存在或已删除") {
+		t.Fatal(invalid.Body.String())
+	}
 	w := httptest.NewRecorder()
 	a.retryHistory(w, httptest.NewRequest("POST", "/api/logs/retry", strings.NewReader(`{"all":true,"model_config_id":2,"key":"all-failures-request"}`)))
 	var result struct {
@@ -286,5 +289,100 @@ func TestRetryAllHistoryEmptyAndInvalidScope(t *testing.T) {
 		if w.Code != tc.code {
 			t.Fatal(tc.body, w.Code, w.Body.String())
 		}
+	}
+}
+
+func TestRetryHistoryMissingFilesDoNotBlockValidTargets(t *testing.T) {
+	for _, all := range []bool{true, false} {
+		t.Run(fmt.Sprintf("all=%t", all), func(t *testing.T) {
+			root := t.TempDir()
+			a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer a.Close()
+			profile, err := (models.Store{DB: a.DB}).Get(1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			profile.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test", Timeout: "2s", MaxTokens: 128}
+			if _, err = (models.Store{DB: a.DB}).Save(profile); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.Mkdir(filepath.Join(root, "parent"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"valid.mp4", "unindexed.mp4", "deleted.mp4", "parent/nested.mp4"} {
+				if err = os.WriteFile(filepath.Join(root, name), []byte("video"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err = a.Library.Refresh(t.Context(), 1); err != nil {
+				t.Fatal(err)
+			}
+			var parent int64
+			if err = a.DB.QueryRow("SELECT id FROM entries WHERE name='parent'").Scan(&parent); err != nil {
+				t.Fatal(err)
+			}
+			if err = a.Library.Refresh(t.Context(), parent); err != nil {
+				t.Fatal(err)
+			}
+			for i, name := range []string{"valid.mp4", "unindexed.mp4", "deleted.mp4", "nested.mp4", "valid.mp4"} {
+				if _, err = a.DB.Exec("INSERT INTO events(id,category,action,entry,old_path,created) SELECT ?,'failure','automatic',id,name,'now' FROM entries WHERE name=?", i+1, name); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err = a.DB.Exec("INSERT INTO events(id,category,action,entry,created) VALUES(6,'failure','automatic',99999,'now'),(7,'failure','manual',0,'now')"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = a.DB.Exec("UPDATE entries SET present=0 WHERE name IN ('unindexed.mp4','parent')"); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.Remove(filepath.Join(root, "deleted.mp4")); err != nil {
+				t.Fatal(err)
+			}
+			payload := map[string]any{"model_config_id": 1, "key": "mixed-files-retry"}
+			if all {
+				payload["all"] = true
+			} else {
+				payload["ids"] = []int64{1, 2, 3, 4, 5, 6, 7}
+			}
+			body, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			w := httptest.NewRecorder()
+			a.retryHistory(w, httptest.NewRequest("POST", "/api/logs/retry", strings.NewReader(string(body))))
+			var result struct {
+				Accepted []int64  `json:"accepted"`
+				Runs     []int64  `json:"runs"`
+				Errors   []string `json:"errors"`
+				Skipped  int      `json:"skipped"`
+			}
+			if err = json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			if w.Code != 200 || len(result.Accepted) != 2 || !slices.Contains(result.Accepted, 1) || !slices.Contains(result.Accepted, 5) || len(result.Runs) != 1 {
+				t.Fatal(w.Body.String())
+			}
+			wantErrors, wantSkipped := 5, 0
+			if all {
+				wantErrors, wantSkipped = 4, 1
+			}
+			if len(result.Errors) != wantErrors || result.Skipped != wantSkipped || strings.Contains(w.Body.String(), "sql:") || strings.Contains(w.Body.String(), "no such file") {
+				t.Fatal(w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), "文件或上级目录已不在索引中") || !strings.Contains(w.Body.String(), "文件或上级目录不存在") {
+				t.Fatal(w.Body.String())
+			}
+			run, err := a.Jobs.Get(result.Runs[0])
+			if err != nil || len(run.Targets) != 1 {
+				t.Fatal(run, err)
+			}
+			var count int
+			if err = a.DB.QueryRow("SELECT count(*) FROM events WHERE category='failure'").Scan(&count); err != nil || count != 7 {
+				t.Fatal(count, err)
+			}
+		})
 	}
 }

@@ -1,6 +1,9 @@
 package app
 
 import (
+	"database/sql"
+	"encoding/json/v2"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -8,6 +11,20 @@ import (
 	"testing"
 	"video-rename/internal/config"
 )
+
+func TestMissingRecordFailureUsesReadableMessage(t *testing.T) {
+	for _, err := range []error{sql.ErrNoRows, fmt.Errorf("load record: %w", sql.ErrNoRows)} {
+		w := httptest.NewRecorder()
+		failure(w, err)
+		var result map[string]string
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != 404 || result["code"] != "NOT_FOUND" || result["request_id"] == "" || result["message"] != "请求的记录不存在或已删除，请刷新页面后重试" {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+}
 
 func TestStaticSPAAndProtectedAPI(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "media")

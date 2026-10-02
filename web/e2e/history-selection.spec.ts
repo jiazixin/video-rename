@@ -15,6 +15,39 @@ async function openHistory(page:Page){
  await expect(page.getByText('共 251 项 · 4 项 / 当前页')).toBeVisible()
 }
 
+test('宽屏成功和失败记录及诊断行占满表格，多选和窄屏保持列对齐',async({page})=>{
+ await page.setViewportSize({width:2560,height:1440})
+ await page.route('**/api/logs/*/diagnostics',route=>route.fulfill({json:{request:'长请求内容'.repeat(600),response:'模型响应'}}))
+ await openHistory(page)
+ const table=page.locator('.history-table')
+ async function expectAligned(){
+  const edges=await table.evaluate(element=>{
+   const bounds=element.getBoundingClientRect()
+   const header=element.querySelector('thead tr')!
+   const rows=element.querySelectorAll('tbody tr')
+   return {right:bounds.right,header:header.lastElementChild!.getBoundingClientRect().right,
+    record:rows[0].lastElementChild!.getBoundingClientRect().right,diagnostics:rows[1].firstElementChild!.getBoundingClientRect().right}
+  })
+  for(const right of [edges.header,edges.record,edges.diagnostics])expect(Math.abs(right-edges.right)).toBeLessThan(2)
+ }
+ for(const category of ['成功记录','失败记录']){
+  await page.getByRole('button',{name:category,exact:true}).click()
+  await expect(page.getByText('共 251 项 · 4 项 / 当前页')).toBeVisible()
+  await expectAligned()
+  await table.getByRole('button',{name:'原始请求',exact:true}).first().click()
+  await expect(table.locator('.diagnostic-content').first()).toContainText('长请求内容')
+  await expectAligned()
+  await page.getByRole('button',{name:'多选',exact:true}).click()
+  await expectAligned()
+  await page.screenshot({path:`test-results/history-wide-${category}.png`})
+  await page.setViewportSize({width:390,height:844})
+  await expectAligned()
+  await page.setViewportSize({width:2560,height:1440})
+  await page.getByRole('button',{name:'退出多选',exact:true}).click()
+  await table.getByRole('button',{name:'原始请求',exact:true}).first().click()
+ }
+})
+
 test('成功失败记录按需开启多选，支持全选反选清空与 Shift 连选',async({page})=>{
  await openHistory(page)
  await expect(page.locator('.history-heading-actions').getByRole('button',{name:'重试',exact:true})).toHaveCount(0)
