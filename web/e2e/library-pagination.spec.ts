@@ -239,9 +239,26 @@ test('长列表下滑后操作、分页与表头保持可用，窄屏表头同�
  expect(await actions.allTextContents()).toEqual(['抽帧','重命名','编号','标记','取消标记'])
  const tops=await actions.evaluateAll(buttons=>buttons.map(button=>button.getBoundingClientRect().top))
  expect(Math.max(...tops)-Math.min(...tops)).toBeLessThan(1)
+ const title=(await page.getByRole('heading',{name:'文件目录.'}).boundingBox())!
+ expect(tops[0]).toBeGreaterThanOrEqual(title.y+title.height)
+ await page.screenshot({path:'test-results/library-actions-desktop.png'})
  await page.evaluate(()=>window.scrollTo(0,1600))
  await expect.poll(()=>controls.evaluate(el=>Math.abs(el.getBoundingClientRect().top))).toBeLessThan(1)
  await expect.poll(aligned).toBeLessThan(2)
+ // Sample immediately after each scroll, before a JS scroll handler could move
+ // the header, to catch the old frame-by-frame vertical jitter.
+ const jitter=await page.evaluate(async()=>{
+  let largest=0
+  for(let i=0;i<30;i++){
+   window.scrollTo(0,700+i*17)
+   const controls=document.querySelector('.library-fixed-controls')!.getBoundingClientRect()
+   const head=document.querySelector('.library-table-header thead')!.getBoundingClientRect()
+   largest=Math.max(largest,Math.abs(controls.bottom-head.top))
+   await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()))
+  }
+  return largest
+ })
+ expect(jitter).toBeLessThan(2)
  await page.getByRole('button',{name:'多选',exact:true}).click()
  await expect.poll(aligned).toBeLessThan(2)
  await page.getByRole('button',{name:'全选',exact:true}).click()
@@ -259,15 +276,16 @@ test('长列表下滑后操作、分页与表头保持可用，窄屏表头同�
   const rect=el.getBoundingClientRect(),nav=el.querySelector('.page-navigation')!.getBoundingClientRect()
   return nav.bottom<=rect.bottom
  })).toBe(true)
- const mobileTops=await actions.evaluateAll(buttons=>buttons.map(button=>button.getBoundingClientRect().top))
- expect(Math.max(...mobileTops)-Math.min(...mobileTops)).toBeLessThan(1)
+ const mobileButtons=await actions.evaluateAll(buttons=>buttons.map(button=>{const r=button.getBoundingClientRect();return {left:r.left,right:r.right}}))
+ for(const button of mobileButtons){expect(button.left).toBeGreaterThanOrEqual(0);expect(button.right).toBeLessThanOrEqual(390)}
  await page.locator('.library-file-rows .table-scroll').evaluate(el=>{el.scrollLeft=400})
- const columns=await page.evaluate(()=>{
-  const head=document.querySelector('.file-table th.filename-cell')!.getBoundingClientRect()
-  const cell=document.querySelector('.file-table td.filename-cell')!.getBoundingClientRect()
-  return {difference:Math.abs(head.left-cell.left),top:head.top,bottom:head.bottom}
+ const columnPositions=()=>page.evaluate(()=>{
+  const heads=Array.from(document.querySelectorAll('.library-table-header th'),cell=>cell.getBoundingClientRect())
+  const cells=Array.from(document.querySelectorAll('.library-file-rows tbody tr:first-child td'),cell=>cell.getBoundingClientRect())
+  return {difference:Math.max(...heads.map((head,i)=>Math.max(Math.abs(head.left-cells[i].left),Math.abs(head.width-cells[i].width)))),top:heads[0].top,bottom:heads[0].bottom}
  })
- expect(columns.difference).toBeLessThan(1)
+ await expect.poll(async()=>(await columnPositions()).difference).toBeLessThan(1)
+ const columns=await columnPositions()
  expect(columns.top).toBeGreaterThan(0)
  expect(columns.bottom).toBeLessThan(844)
  await page.screenshot({path:'test-results/library-fixed-header-mobile.png'})

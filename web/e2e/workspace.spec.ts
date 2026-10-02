@@ -452,7 +452,7 @@ test('手动处理标记、目录递归与跨页批量取消',async({page})=>{
  await expect(page.getByRole('dialog')).toContainText('所有子目录')
  await page.getByRole('button',{name:'确认标记',exact:true}).click()
  await expect(page.getByRole('dialog')).toHaveCount(0)
- await expect(page.getByRole('status').filter({hasText:'失败 0 项'})).toBeVisible()
+ await expect(page.getByRole('status').filter({hasText:'已标记 230 个视频，未变更 0 个，失败 0 项'})).toBeVisible()
  await expect(page.locator('tbody tr').filter({has:page.getByRole('button',{name:'分页测试',exact:true})})).toContainText('全部已处理')
  await page.getByRole('button',{name:'分页测试',exact:true}).click()
  await expect(page.locator('tbody tr')).toHaveCount(100)

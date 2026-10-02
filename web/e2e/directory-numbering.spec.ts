@@ -8,9 +8,8 @@ test('顶部编号不依赖视图，递归索引并按文件夹编号，刷新�
  await page.getByRole('button',{name:'递归编号测试',exact:true}).click()
  await expect(page.getByText('photo.JPG',{exact:true})).toBeVisible()
  const actions=page.locator('.directory-mark-actions')
- await expect(actions.locator('.directory-action-row').nth(0).getByRole('button')).toHaveText(['抽帧','重命名','编号'])
- await expect(actions.locator('.directory-action-row').nth(1).getByRole('button')).toHaveText(['标记','取消标记'])
- await expect(actions).toContainText('作用于当前目录及所有子目录')
+ await expect(actions.getByRole('button')).toHaveText(['抽帧','重命名','编号','标记','取消标记'])
+ await expect(page.getByText('作用于当前目录及所有子目录',{exact:true})).toHaveCount(0)
  await page.getByLabel('搜索当前目录').fill('clip')
  await expect(page.locator('.file-table tbody tr')).toHaveCount(1)
  await actions.getByRole('button',{name:'编号',exact:true}).click()
@@ -36,10 +35,9 @@ test('顶部编号不依赖视图，递归索引并按文件夹编号，刷新�
  await expect(dialog).toContainText('已还原 2 个文件，完成 1 个目录。')
  await dialog.getByRole('button',{name:'关闭',exact:true}).last().click()
  await page.setViewportSize({width:390,height:844})
- const rows=actions.locator('.directory-action-row')
- const first=(await rows.nth(0).boundingBox())!,second=(await rows.nth(1).boundingBox())!
- expect(second.y).toBeGreaterThanOrEqual(first.y+first.height)
- expect(first.x+first.width).toBeLessThanOrEqual(390)
+ const title=(await page.getByRole('heading',{name:'文件目录.'}).boundingBox())!
+ const bounds=await actions.getByRole('button').evaluateAll(buttons=>buttons.map(button=>{const r=button.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,height:r.height}}))
+ for(const bound of bounds){expect(bound.top).toBeGreaterThanOrEqual(title.y+title.height);expect(bound.left).toBeGreaterThanOrEqual(0);expect(bound.right).toBeLessThanOrEqual(390);expect(bound.height).toBeGreaterThanOrEqual(44)}
  await page.screenshot({path:'test-results/directory-actions-mobile.png'})
  await page.getByRole('button',{name:'子目录',exact:true}).click()
  await page.getByRole('button',{name:'孙目录',exact:true}).click()

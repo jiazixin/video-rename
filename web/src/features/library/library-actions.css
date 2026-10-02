@@ -8,10 +8,9 @@ button.library-action:hover:not(:disabled){color:var(--action-ink);background:va
 button.library-action:focus-visible{outline:2px solid var(--action-ink);outline-offset:3px}
 button.library-action:disabled{filter:grayscale(.65);opacity:.45}
 .row-actions button.library-action{background:transparent;border-color:transparent;color:var(--action-ink)}
-.directory-mark-actions{flex-direction:column;align-items:flex-end;gap:8px;margin-top:0;max-width:100%;min-width:0}
-.directory-action-row{display:flex;justify-content:flex-start;gap:8px;max-width:100%;overflow-x:auto;padding:4px;margin:-4px;scrollbar-width:thin}
-.directory-action-row>button{min-width:92px;justify-content:center;flex-shrink:0}
-.directory-action-hint{margin:0;font-size:11px;color:var(--ash)}
+.directory-mark-actions{flex-direction:column;align-items:flex-start;gap:8px;margin-top:0;max-width:100%;min-width:0}
+.directory-action-row{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:8px;max-width:100%}
+.directory-action-row>button{min-width:92px;min-height:40px;justify-content:center;flex-shrink:0;white-space:nowrap}
 .directory-refresh-summary{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-left:auto;min-width:0;flex-wrap:wrap}
 .directory-refresh-summary>button{flex-shrink:0}
 .batch-divider{width:1px;height:20px;background:var(--line);margin:0 4px;flex-shrink:0}

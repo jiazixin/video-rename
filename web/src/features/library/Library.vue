@@ -2,13 +2,14 @@
 import PageNavigation from '../../components/PageNavigation.vue'
 import ToastNotice from '../../components/ToastNotice.vue'
 import { ref,onActivated,onDeactivated,onUnmounted,computed,nextTick,watch } from 'vue'
-import {Folder,FileVideo,FileAudio,File,ArrowDownUp,ChevronRight,ChevronLeft,RefreshCw,Search,ArrowUpRight,PenLine,Undo2,Sparkles,Home,History,ArrowRight,Link,Image as ImageIcon,CircleCheck,CircleMinus,Images} from 'lucide-vue-next'
+import {Folder,FileVideo,FileAudio,File,ChevronRight,ChevronLeft,RefreshCw,Search,ArrowUpRight,PenLine,Undo2,Sparkles,Home,History,ArrowRight,Link,Image as ImageIcon,CircleCheck,CircleMinus,Images} from 'lucide-vue-next'
 import './library-actions.css'
 import {api,key,time,size,type Entry,type Page,statusNames,type Run} from '../../app/api'
 import {ModelPicker} from '../models'
 import StatusBadge from '../../components/StatusBadge.vue'
 import DirectoryStatus from './DirectoryStatus.vue'
 import DirectoryContents from './DirectoryContents.vue'
+import LibraryTableHeader from './LibraryTableHeader.vue'
 import DateTime from '../../components/DateTime.vue'
 import Modal from '../../components/Modal.vue'
 import { Trash2 } from 'lucide-vue-next'
@@ -140,7 +141,6 @@ function playAudio(e:Entry){audioPlaying.value=e}
 const modelConfigID=ref(0)
 const sort=ref('name_asc')
 function toggleSort(field:string){sort.value=sort.value===`${field}_asc`?`${field}_desc`:`${field}_asc`;pageNumber.value=1;load()}
-function sortLabel(field:string){return sort.value===`${field}_asc`?'升序':sort.value===`${field}_desc`?'降序':''}
 function routeDirectory(){const value=Number(location.hash.match(/^#library\/(\d+)$/)?.[1]||1);return Number.isSafeInteger(value)&&value>0?value:1}
 const dir=ref(routeDirectory()),page=ref<Page>(),busy=ref(false),error=ref(''),q=ref(''),kind=ref(''),pageNumber=ref(1),limit=ref(100)
 watch([dir,pageNumber,q,kind,sort,limit,multi],()=>{selectionAnchor=undefined},{flush:'sync'})
@@ -230,31 +230,36 @@ const positions=new Map<number,DirectoryPosition>()
 const snapshots=new Map<number,Page>()
 const listRoot=ref<HTMLElement>(),returnAnchor=ref<number>()
 const fixedControls=ref<HTMLElement>(),fileTable=ref<HTMLTableElement>()
+const headerScroll=ref<HTMLElement>()
+const headerColumns=ref<number[]>([]),headerWidth=ref(0)
 let layoutObserver:ResizeObserver|undefined,headerFrame=0
-// The table keeps its horizontal scroll container. Move the real header within
-// that table so its columns and sorting controls always stay aligned with rows.
-function updateFixedHeader(){
+// Keep the visible header in the sticky controls. Only column geometry changes
+// need measuring; vertical scrolling is handled entirely by CSS.
+function updateHeaderLayout(){
  headerFrame=0
- const controls=fixedControls.value,table=fileTable.value,head=table?.tHead
- if(!controls||!table||!head)return
- const rect=table.getBoundingClientRect()
- const offset=Math.max(0,Math.min(controls.getBoundingClientRect().bottom-rect.top,table.offsetHeight-head.offsetHeight))
- head.style.transform=`translateY(${offset}px)`
+ const table=fileTable.value,head=table?.tHead
+ if(!table||!head)return
+ headerColumns.value=Array.from(head.rows[0].cells,cell=>cell.getBoundingClientRect().width)
+ headerWidth.value=table.getBoundingClientRect().width
+ if(headerScroll.value)headerScroll.value.scrollLeft=table.parentElement!.scrollLeft
 }
-function scheduleFixedHeader(){if(!headerFrame)headerFrame=requestAnimationFrame(updateFixedHeader)}
+function scheduleHeaderLayout(){if(!headerFrame)headerFrame=requestAnimationFrame(updateHeaderLayout)}
+function syncTableScroll(event:Event){
+ const source=event.currentTarget as HTMLElement
+ const target=source===headerScroll.value?fileTable.value?.parentElement:headerScroll.value
+ if(target&&target.scrollLeft!==source.scrollLeft)target.scrollLeft=source.scrollLeft
+}
 function observeLayout(){
- layoutObserver=new ResizeObserver(scheduleFixedHeader)
+ layoutObserver=new ResizeObserver(scheduleHeaderLayout)
  if(fixedControls.value)layoutObserver.observe(fixedControls.value)
  if(fileTable.value)layoutObserver.observe(fileTable.value)
- window.addEventListener('scroll',scheduleFixedHeader,{passive:true})
- window.addEventListener('resize',scheduleFixedHeader)
- scheduleFixedHeader()
+ scheduleHeaderLayout()
 }
 function stopObservingLayout(){
  layoutObserver?.disconnect();layoutObserver=undefined
- window.removeEventListener('scroll',scheduleFixedHeader);window.removeEventListener('resize',scheduleFixedHeader)
  cancelAnimationFrame(headerFrame);headerFrame=0
 }
+watch([multi,sort,page],()=>{void nextTick(scheduleHeaderLayout)})
 let pendingPosition:DirectoryPosition|undefined
 const nativeScrollRestoration=window.history.scrollRestoration
 let active=false,parkedScrollY=0
@@ -374,9 +379,8 @@ onActivated(activate);onDeactivated(deactivate);onUnmounted(()=>{deactivate();di
 </script>
 <template><section ref="listRoot" class="library-page">
 <div ref="fixedControls" class="library-fixed-controls">
-<div class="page-heading"><div><h1>文件目录<span class="title-dot">.</span></h1></div><div class="heading-actions directory-mark-actions">
+<div class="page-heading library-heading"><h1>文件目录<span class="title-dot">.</span></h1><div class="heading-actions directory-mark-actions" role="group" aria-label="当前目录操作">
  <div class="directory-action-row"><button class="library-action action-extract" aria-label="抽帧当前目录" :disabled="busy||!page||!!page.directory.task_status" @click="open(page!.directory,'extract')"><Images :size="16"/>抽帧</button><button class="library-action action-name" aria-label="重命名当前目录" :disabled="!ready||!page||!!page.directory.task_status" @click="open(page!.directory,'auto')"><Sparkles :size="16"/>重命名</button><DirectoryNumbering :directory="dir" :disabled="busy||!page||!!page.directory.task_status" @changed="preview=undefined;clearSelection();syncEntries()"/><button class="library-action action-mark" title="将当前目录及子目录中的现有视频标记为已处理，自动命名会跳过" :disabled="!page" @click="openMark([page!.directory],true)"><CircleCheck :size="16"/>标记</button><button class="library-action action-unmark" title="清除当前目录及子目录中视频的已处理标记，允许再次自动命名；文件名不变" :disabled="!page" @click="openMark([page!.directory],false)"><CircleMinus :size="16"/>取消标记</button></div>
- <p class="directory-action-hint">作用于当前目录及所有子目录</p>
 </div></div>
 <ToastNotice ref="toast" /><div v-if="error" class="notice error" role="alert">{{error}}<button @click="enter(1)">返回媒体库</button><button @click="load()">重试</button></div>
 <div class="panel file-panel library-panel-controls">
@@ -384,9 +388,15 @@ onActivated(activate);onDeactivated(deactivate);onUnmounted(()=>{deactivate();di
 <div class="filterbar"><button :aria-pressed="multi" @click="multi=!multi;clearSelection()">{{multi?'退出多选':'多选'}}</button><div class="search-input"><Search :size="16"/><input v-model="q" placeholder="搜索当前目录…" aria-label="搜索当前目录" @input="search"/></div><SelectField v-model="kind" @change="pageNumber=1;load()" label="类型筛选" :options="[{value:'',label:'全部类型'},{value:'directory',label:'目录'},{value:'video',label:'视频'},{value:'image',label:'图片'},{value:'audio',label:'音频'},{value:'other',label:'其他文件'}]"/><MediaNumbering v-if="kind==='image'||kind==='audio'" :media="kind" :directory="dir" :query="q" :sort="sort" :disabled="busy||!page||!!page.refreshing||!!page.directory.task_status" @changed="preview=undefined;clearSelection();syncEntries()"/><div class="filter-spacer"/><span class="subtle">共 {{page?.total??0}} 项 · {{page?.items.length||0}} 项 / 当前页</span></div>
 <div v-if="multi" class="batch-toolbar"><strong>已选 {{chosen.size}} 项</strong><button title="全选本页" @click="selectPage()">全选</button><button title="反选本页" @click="selectPage(true)">反选</button><button :disabled="!chosen.size" @click="clearSelection()">清空</button><span class="batch-delete-group"><span class="batch-divider" aria-hidden="true"/><button class="delete-confirm" :disabled="saving||!chosen.size" @click="confirmBatchDelete"><Trash2 :size="15"/>删除</button><span class="batch-divider" aria-hidden="true"/></span><button class="library-action action-extract" :disabled="!extractEntries.length" @click="startBatch('extract')"><Images :size="15"/>抽帧</button><button class="library-action action-name" :disabled="!ready||!autoEntries.length" @click="startBatch('auto')"><Sparkles :size="15"/>命名</button><span class="batch-divider" aria-hidden="true"/><button class="library-action action-mark" title="将选中目标中的视频标记为已处理，目录包含子目录" :disabled="!markEntries.length" @click="openMark(markEntries,true)"><CircleCheck :size="15"/>标记已处理</button><button class="library-action action-unmark" title="清除选中目标中视频的已处理标记，文件名不变" :disabled="!markEntries.length" @click="openMark(markEntries,false)"><CircleMinus :size="15"/>取消标记</button><button :disabled="!restoreEntries.length" @click="startBatch('restore')"><Undo2 :size="15"/>还原</button></div>
 <div v-if="page?.error" class="notice error">目录同步失败：{{page.error}}</div><div class="pagination"><span class="subtle">{{page?.refreshed?`更新于 ${time(page.refreshed)}`:'等待首次同步'}}</span><SelectField v-model="limit" @change="pageNumber=1;load()" label="每页条目数" :options="[{value:50,label:'50 项 / 页'},{value:100,label:'100 项 / 页'},{value:200,label:'200 项 / 页'}]"/><PageNavigation :page="pageNumber" :total-pages="Math.max(1,Math.ceil((page?.total||0)/limit))" :disabled="busy" @change="pageNumber=$event;load()"/></div></div>
+<div ref="headerScroll" class="library-table-header" @scroll="syncTableScroll">
+ <table class="file-table" :style="{width:headerWidth?`${headerWidth}px`:undefined}">
+  <colgroup><col v-for="(width,index) in headerColumns" :key="index" :style="{width:`${width}px`}"/></colgroup>
+  <LibraryTableHeader :multi="multi" :sort="sort" @sort="toggleSort"/>
+ </table>
+</div>
 </div>
 <div class="panel file-panel library-file-rows">
-<div class="table-scroll"><table ref="fileTable" class="file-table"><thead><tr><th v-if="multi" class="selection-cell">选择</th><th class="filename-cell"><button class="table-sort" aria-label="切换名称排序" @click="toggleSort('name')"><span>名称<template v-if="sortLabel('name')"> · {{sortLabel('name')}}</template></span><ArrowDownUp :size="12"/></button></th><th><button class="table-sort" aria-label="切换大小排序" @click="toggleSort('size')"><span>大小<template v-if="sortLabel('size')"> · {{sortLabel('size')}}</template></span><ArrowDownUp :size="12"/></button></th><th class="contents-cell" title="仅统计该目录的直接子项；进入目录完成索引后显示">目录内容</th><th>处理状态</th><th><button class="table-sort" aria-label="切换文件修改时间排序" @click="toggleSort('mtime')"><span>文件修改时间<template v-if="sortLabel('mtime')"> · {{sortLabel('mtime')}}</template></span><ArrowDownUp :size="12"/></button></th><th><button class="table-sort" aria-label="切换重命名时间排序" @click="toggleSort('renamed')"><span>重命名时间<template v-if="sortLabel('renamed')"> · {{sortLabel('renamed')}}</template></span><ArrowDownUp :size="12"/></button></th><th>操作</th></tr></thead>
+<div class="table-scroll" @scroll="syncTableScroll"><table ref="fileTable" class="file-table"><LibraryTableHeader :multi="multi" :sort="sort" sizing/>
 <tbody><tr v-for="e in page?.items" :key="e.id" :data-entry-id="e.id" :class="{'is-selected':multi&&chosen.has(e.id),'return-anchor':returnAnchor===e.id}"><td v-if="multi" class="selection-cell"><input v-if="selectable(e)" type="checkbox" :aria-label="`选择 ${e.name}`" :checked="chosen.has(e.id)" @click="selectEntry(e,$event)" title="按住 Shift 点击可连续选择当前页条目"/></td>
 <td class="filename-cell"><div class="file-name"><button v-if="e.kind==='file'&&video(e)" class="file-symbol video-symbol" :aria-label="`播放视频 ${e.name}`" @click="play(e)"><FileVideo :size="21"/></button><button v-else-if="isImage(e)" class="file-symbol image-symbol" :aria-label="`预览图片 ${e.name}`" @click="showImage(e)"><ImageIcon :size="21"/></button><button v-else-if="isAudio(e)" class="file-symbol audio-symbol" :aria-label="`播放音频 ${e.name}`" @click="playAudio(e)"><FileAudio :size="21"/></button><span v-else class="file-symbol" :class="{directory:e.kind==='directory'}"><Folder v-if="e.kind==='directory'" :size="21"/><Link v-else-if="e.kind==='symlink'" :size="21"/><FileVideo v-else-if="video(e)" :size="21"/><File v-else :size="21"/></span><div v-if="inlineEntry?.id===e.id" class="inline-rename"><div class="inline-rename-field"><input :ref="setInlineInput" v-model="inlineName" :aria-label="`编辑 ${e.name}`" :readonly="inlineSaving" maxlength="240" @keydown.enter.prevent="saveInlineRename" @keydown.esc.prevent="cancelInlineRename" @blur="cancelInlineRename"/><span>{{inlineExtension}}</span></div><small v-if="inlineError" role="alert">{{inlineError}}</small></div><button v-else-if="e.kind==='directory'" class="name-button" :title="e.name" @click="enter(e.id)"><span class="name-text">{{e.name}}</span><ChevronRight :size="14"/></button><button v-else-if="e.kind==='file'" type="button" class="name-text inline-rename-trigger" :title="`双击重命名 ${e.name}`" :aria-label="`双击或按 Enter 重命名 ${e.name}`" @dblclick="beginInlineRename(e)" @keydown.enter.prevent="beginInlineRename(e)" @keydown.f2.prevent="beginInlineRename(e)">{{e.name}}</button><span v-else class="name-text" :title="e.name">{{e.name}}</span></div></td>
 <td class="subtle mono">{{e.kind==='directory'?'—':size(e.size)}}</td><td class="subtle contents-cell"><DirectoryContents v-if="e.kind==='directory'" :contents="e.contents"/><span v-else>—</span></td><td><DirectoryStatus v-if="e.kind==='directory'" :entry="e"/><StatusBadge v-else :status="e.task_status||e.processed||'unprocessed'">{{status(e)}}</StatusBadge></td><td class="subtle date-cell"><DateTime :value="e.mtime"/></td><td class="subtle date-cell"><DateTime :value="e.renamed_at"/></td>
@@ -423,10 +433,17 @@ onActivated(activate);onDeactivated(deactivate);onUnmounted(()=>{deactivate();di
 
 <style scoped>
 .library-fixed-controls{position:sticky;top:0;z-index:6;background:white;padding-top:12px;margin-top:-12px}
+.library-heading{flex-direction:column;align-items:flex-start;gap:16px;margin-bottom:24px}
+.library-heading h1{margin:0;white-space:nowrap}
+.library-table-header{position:absolute;top:100%;left:0;right:0;border:1px solid var(--line);border-top:0;background:#fafbfc;overflow-x:auto;scrollbar-width:none}
+.library-table-header::-webkit-scrollbar{display:none}
+.library-table-header .file-table{table-layout:fixed;border-collapse:separate;border-spacing:0}
+.library-table-header :deep(th){width:auto}
+.library-table-header :deep(th:last-child){text-align:right}
 .library-panel-controls{border-radius:12px 12px 0 0;overflow:visible}
 .library-file-rows{border-top:0;border-radius:0 0 12px 12px}
 .library-file-rows .file-table{border-collapse:separate;border-spacing:0}
-.library-file-rows thead{position:relative;z-index:4;background:#fafbfc;box-shadow:0 1px 0 var(--line)}
+.library-file-rows :deep(thead){visibility:hidden}
 .library-panel-controls .pagination{border-top:0}
 .library-panel-controls .filterbar{flex-wrap:wrap}
 @media(max-width:800px){
@@ -449,12 +466,12 @@ onActivated(activate);onDeactivated(deactivate);onUnmounted(()=>{deactivate();di
  .library-panel-controls .filter-spacer{display:none}
  .library-fixed-controls .pagination>.subtle{display:none}
  .library-fixed-controls .pagination>.select-field{margin:0 auto}
- .library-fixed-controls{max-height:calc(75dvh - 48px);overflow-y:auto;scrollbar-width:thin}
+
 }
 
 .file-table tr.return-anchor{background:#e3f2e9;box-shadow:inset 3px 0 #398366}
 .file-table .row-actions button{width:36px;min-height:36px;padding:0}
-.file-table th:last-child,.file-table td:last-child{text-align:right}
+.file-table :deep(th:last-child),.file-table td:last-child{text-align:right}
 .file-table .row-actions{justify-content:flex-end}
 .batch-toolbar button.delete-confirm,button.delete-confirm{background:#b14545;border-color:#b14545;color:white}
 .batch-toolbar button.delete-confirm:hover:not(:disabled),button.delete-confirm:hover:not(:disabled){background:#943737;border-color:#943737;color:white}
