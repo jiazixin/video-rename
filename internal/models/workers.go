@@ -10,7 +10,7 @@ import (
 // replacing the batch's immutable request settings.
 func (s Store) Workers(ctx context.Context, id int64) (int, error) {
 	var raw string
-	if err := s.DB.QueryRowContext(ctx, "SELECT settings FROM model_configs WHERE id=?", id).Scan(&raw); err != nil {
+	if err := s.DB.Read().QueryRowContext(ctx, "SELECT settings FROM model_configs WHERE id=?", id).Scan(&raw); err != nil {
 		return 0, err
 	}
 	settings := struct {

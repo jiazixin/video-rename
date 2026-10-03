@@ -64,10 +64,10 @@ func (s Store) scan(row interface{ Scan(...any) error }) (p Profile, err error) 
 	return
 }
 func (s Store) Get(id int64) (Profile, error) {
-	return s.scan(s.DB.QueryRow("SELECT "+columns+" FROM model_configs c LEFT JOIN prompts p ON p.id=c.prompt_id WHERE c.id=?", id))
+	return s.scan(s.DB.Read().QueryRow("SELECT "+columns+" FROM model_configs c LEFT JOIN prompts p ON p.id=c.prompt_id WHERE c.id=?", id))
 }
 func (s Store) List() ([]Profile, error) {
-	rows, err := s.DB.Query("SELECT " + columns + " FROM model_configs c LEFT JOIN prompts p ON p.id=c.prompt_id ORDER BY c.id")
+	rows, err := s.DB.Read().Query("SELECT " + columns + " FROM model_configs c LEFT JOIN prompts p ON p.id=c.prompt_id ORDER BY c.id")
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func (s Store) resolve(p *Profile) error {
 	if p.PromptID <= 0 {
 		return fmt.Errorf("请选择提示词")
 	}
-	err := s.DB.QueryRow("SELECT title,body FROM prompts WHERE id=?", p.PromptID).Scan(&p.PromptTitle, &p.Body)
+	err := s.DB.Read().QueryRow("SELECT title,body FROM prompts WHERE id=?", p.PromptID).Scan(&p.PromptTitle, &p.Body)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("请选择提示词")
 	}
@@ -215,7 +215,7 @@ func (s Store) SetDefault(id int64) error {
 	return tx.Commit()
 }
 func (s Store) DefaultID() (id int64, err error) {
-	err = s.DB.QueryRow("SELECT id FROM model_configs WHERE is_default=1").Scan(&id)
+	err = s.DB.Read().QueryRow("SELECT id FROM model_configs WHERE is_default=1").Scan(&id)
 	return
 }
 

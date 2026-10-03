@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +13,151 @@ import (
 	"video-rename/internal/config"
 	"video-rename/internal/storage"
 )
+
+func TestSessionValidationWhileWriterBusy(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "sessions.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	a := New(db, config.AuthConfig{Username: "admin", Password: "test-password"})
+	freshExpiry := time.Now().Add(sessionLifetime).Unix()
+	for _, session := range []struct {
+		token, fingerprint string
+		expiry             int64
+	}{
+		{"valid", a.fingerprint, freshExpiry},
+		{"expired", a.fingerprint, time.Now().Add(-time.Hour).Unix()},
+		{"changed-password", "other-fingerprint", freshExpiry},
+	} {
+		if _, err := db.Exec("INSERT INTO sessions VALUES(?,?,?,?)", hash(session.token), "committed-csrf", session.expiry, session.fingerprint); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tx, err := db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("DELETE FROM sessions WHERE token=?", hash("valid")); err != nil {
+		t.Fatal(err)
+	}
+	handler := a.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	for _, tc := range []struct {
+		name, path, method, token, csrf string
+		status                          int
+	}{
+		{"session", "/api/auth/session", "GET", "valid", "", 200},
+		{"authenticated request", "/api/data", "GET", "valid", "", 204},
+		{"authenticated mutation", "/api/data", "POST", "valid", "committed-csrf", 204},
+		{"invalid CSRF", "/api/data", "POST", "valid", "wrong-csrf", 403},
+		{"unknown token", "/api/data", "GET", "unknown", "", 401},
+		{"expired token", "/api/data", "GET", "expired", "", 401},
+		{"changed password", "/api/data", "GET", "changed-password", "", 401},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := httptest.NewRequest(tc.method, "http://example.test"+tc.path, strings.NewReader("{}"))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("X-CSRF-Token", tc.csrf)
+			request.AddCookie(&http.Cookie{Name: "vr_session", Value: tc.token})
+			done := make(chan *httptest.ResponseRecorder, 1)
+			go func() {
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, request)
+				done <- response
+			}()
+			select {
+			case response := <-done:
+				if response.Code != tc.status {
+					t.Fatalf("status=%d body=%s, want %d", response.Code, response.Body.String(), tc.status)
+				}
+				if cookies := response.Result().Cookies(); len(cookies) != 0 {
+					t.Fatal("fresh session unexpectedly renewed", cookies)
+				}
+				if tc.path == "/api/auth/session" {
+					var session map[string]string
+					if err := json.Unmarshal(response.Body.Bytes(), &session); err != nil || session["csrf"] != "committed-csrf" {
+						t.Fatal("session did not use committed credentials", session, err)
+					}
+				}
+			case <-time.After(time.Second):
+				t.Fatal("session validation waited for the writer")
+			}
+		})
+		if t.Failed() {
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest("GET", "http://example.test/api/data", nil)
+	request.AddCookie(&http.Cookie{Name: "vr_session", Value: "valid"})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != 401 {
+		t.Fatal("committed session revocation was not observed", response.Code)
+	}
+}
+
+func TestSessionValidationReadWaitHonorsCancellation(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "sessions.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	a := New(db, config.AuthConfig{Username: "admin", Password: "test-password"})
+	if _, err := db.Exec("INSERT INTO sessions VALUES(?,?,?,?)", hash("valid"), "csrf", time.Now().Add(sessionLifetime).Unix(), a.fingerprint); err != nil {
+		t.Fatal(err)
+	}
+	var held []*sql.Conn
+	defer func() {
+		for _, conn := range held {
+			conn.Close()
+		}
+	}()
+	for range db.Read().Stats().MaxOpenConnections {
+		conn, err := db.Read().Conn(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, conn)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	request := httptest.NewRequest("GET", "http://example.test/api/auth/session", nil).WithContext(ctx)
+	request.AddCookie(&http.Cookie{Name: "vr_session", Value: "valid"})
+	handler := a.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	done := make(chan *httptest.ResponseRecorder, 1)
+	before := db.Read().Stats().WaitCount
+	go func() {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		done <- response
+	}()
+	poll := time.NewTicker(time.Millisecond)
+	defer poll.Stop()
+	wait := time.NewTimer(time.Second)
+	defer wait.Stop()
+	for db.Read().Stats().WaitCount == before {
+		select {
+		case response := <-done:
+			t.Fatalf("request returned before the read pool was available: %d", response.Code)
+		case <-poll.C:
+		case <-wait.C:
+			t.Fatal("session query did not wait on the exhausted read pool")
+		}
+	}
+	cancel()
+	select {
+	case response := <-done:
+		if response.Code != 500 || !strings.Contains(response.Body.String(), "服务暂不可用") {
+			t.Fatalf("cancelled query response=%d body=%s", response.Code, response.Body.String())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("session query did not stop after request cancellation")
+	}
+}
 
 func TestSessionCSRFAndLogout(t *testing.T) {
 	db, e := storage.Open(filepath.Join(t.TempDir(), "db.sqlite"))

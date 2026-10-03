@@ -144,13 +144,62 @@ func (l *Library) Restore(id int64, key string) (Operation, error) {
 	return l.commit(e, old.Old, "restore", key, id, 0)
 }
 func (l *Library) AutoCommit(id int64, snap domain.Snapshot, title, key string, run int64, diagnostics ...domain.ModelDiagnostics) (Operation, error) {
+	return l.autoCommit(id, snap, title, key, run, 0, diagnostics...)
+}
+
+// RetryAutoCommit permits one explicit retry of the current automatic rename.
+// The existing mark stays intact until the new rename commits successfully.
+func (l *Library) RetryAutoCommit(id int64, snap domain.Snapshot, title, key string, run, operation int64, diagnostics ...domain.ModelDiagnostics) (Operation, error) {
+	if operation <= 0 {
+		return Operation{}, fmt.Errorf("请选择有效的自动命名成功记录")
+	}
+	return l.autoCommit(id, snap, title, key, run, operation, diagnostics...)
+}
+
+func (l *Library) CheckAutomaticRetry(id, operation int64) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e, err := l.Get(id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("文件已不在索引中，请刷新文件目录后核对")
+		}
+		return err
+	}
+	return l.checkAutomaticRetry(e, operation)
+}
+
+func (l *Library) checkAutomaticRetry(e Entry, operation int64) error {
+	if operation <= 0 {
+		return fmt.Errorf("该成功记录没有有效的自动命名操作，无法重试")
+	}
+	o, err := l.Operation(operation)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("自动命名操作不存在，无法根据该成功记录重试")
+		}
+		return err
+	}
+	if e.Kind != "file" || e.Processed != "automatic" || e.RestoreID != operation ||
+		o.Entry != e.ID || o.Source != "automatic" || o.Status != "committed" || o.Undone ||
+		o.New != e.Name || o.Identity != e.Identity || o.Size != e.Size || o.Mtime != e.Mtime {
+		return fmt.Errorf("只可重试当前有效的自动命名结果；文件已变化、已还原、另行改名或显式标记时请先核对")
+	}
+	return l.CheckAvailable(e.ID)
+}
+
+func (l *Library) autoCommit(id int64, snap domain.Snapshot, title, key string, run, retryOperation int64, diagnostics ...domain.ModelDiagnostics) (Operation, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e, err := l.Get(id)
 	if err != nil {
 		return Operation{}, err
 	}
-	if e.Processed != "" {
+	if retryOperation > 0 {
+		if err := l.checkAutomaticRetry(e, retryOperation); err != nil {
+			return Operation{}, err
+		}
+	} else if e.Processed != "" {
 		return Operation{}, fmt.Errorf("文件已处理")
 	}
 	p, err := l.Path(id)

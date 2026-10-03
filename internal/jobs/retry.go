@@ -21,6 +21,7 @@ import (
 )
 
 type retryPolicy struct {
+	RetryOperations  map[int64]int64
 	Enabled          bool
 	Count            int
 	FallbackID       int64

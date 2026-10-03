@@ -28,6 +28,7 @@
     error = ref(''),
     q = ref(''),
     action = ref(''),
+    source = ref(''),
     from = ref(''),
     to = ref(''),
     pageNumber = ref(1),
@@ -40,14 +41,12 @@
     multi = ref(false),
     retrying = ref(false),
     retryRuns = ref<number[]>([]);
-  const retryScope = ref<{ all: boolean; ids: number[]; name: string }>(),
+  const retryScope = ref<{ all: boolean; ids: number[]; name: string; category: string }>(),
     retryModel = ref(0),
     retryError = ref('');
   let retryKey = '';
   let selectionAnchor: number | undefined;
-  const retryable = computed(() =>
-    rows.value.filter((r) => chosen.value.has(r.id) && r.action === 'automatic' && r.entry > 0)
-  );
+  const retryable = computed(() => rows.value.filter((r) => chosen.value.has(r.id) && canRetry(r)));
   const run = ref(''),
     batches = ref<number[]>([]);
   const batchOptions = computed(() => [
@@ -134,6 +133,7 @@
         run: run.value,
         q: q.value,
         action: action.value,
+        model_source: source.value,
         page: String(pageNumber.value),
         from: from.value ? new Date(from.value + 'T00:00:00').toISOString() : '',
         to: to.value ? new Date(to.value + 'T23:59:59.999').toISOString() : ''
@@ -179,7 +179,25 @@
     return row.model_config_title || row.model || '—';
   }
   function modelHint(row: any) {
-    return [row.model_config_title, row.model].filter(Boolean).join(' · ') || '未记录模型';
+    return (
+      [row.model_config_title, row.model, row.action === 'automatic' ? modelSourceHint(row) : '']
+        .filter(Boolean)
+        .join(' · ') || '未记录模型'
+    );
+  }
+  function modelSource(row: any) {
+    return row.model_source === 'primary'
+      ? '主模型'
+      : row.model_source === 'fallback'
+        ? '兜底模型'
+        : '未记录';
+  }
+  function modelSourceHint(row: any) {
+    if (!['primary', 'fallback'].includes(row.model_source))
+      return '没有对应的模型请求记录，显示批次选定的配置，无法确认实际模型来源';
+    return row.category === 'success'
+      ? `本次标题由${modelSource(row)}生成`
+      : `最后一次模型请求使用${modelSource(row)}`;
   }
   function tokens(n: number) {
     return n >= 999_950
@@ -229,13 +247,22 @@
     }
   }
   function canRetry(row: any) {
-    return row.category === 'failure' && row.action === 'automatic' && row.entry > 0;
+    return (
+      row.action === 'automatic' &&
+      row.entry > 0 &&
+      (row.category === 'failure' || (row.category === 'success' && row.operation > 0))
+    );
   }
   function openRetry(all = false, row?: any) {
     if (retrying.value) return;
     const ids = all ? [] : row ? [row.id] : retryable.value.map((r) => r.id);
     if (!all && !ids.length) return;
-    retryScope.value = { all, ids, name: row ? pathParts(row.old_path).name : '' };
+    retryScope.value = {
+      all,
+      ids,
+      name: row ? pathParts(row.category === 'success' ? row.new_path : row.old_path).name : '',
+      category: category.value
+    };
     retryModel.value = 0;
     retryError.value = '';
     retryKey = key();
@@ -248,6 +275,7 @@
     retryError.value = '';
     try {
       const result = await api('/logs/retry', 'POST', {
+        category: scope.category,
         ...(scope.all ? { all: true } : { ids: scope.ids }),
         model_config_id: retryModel.value,
         key: retryKey
@@ -255,12 +283,12 @@
       if (!result.accepted.length) {
         retryError.value =
           result.errors.join('；') ||
-          `没有可重试的自动命名失败记录。${result.skipped ? ` ${result.skipped} 条记录不支持自动重试，已保留。` : ''}`;
+          `没有可重试的自动命名${scope.category === 'success' ? '成功' : '失败'}记录。${result.skipped ? ` ${result.skipped} 条记录不支持自动重试，已保留。` : ''}`;
         return;
       }
       retryRuns.value.push(...result.runs);
       toast.value?.show(
-        `已提交 ${result.accepted.length} 条失败记录重试，成功后会自动移除。${result.skipped ? ` ${result.skipped} 条记录不支持自动重试，已保留。` : ''}`
+        `已提交 ${result.accepted.length} 条${scope.category === 'success' ? '成功' : '失败'}记录重试，${scope.category === 'success' ? '原记录保留，完成后新增命名记录' : '成功后会自动移除'}。${result.skipped ? ` ${result.skipped} 条记录不支持自动重试，已保留。` : ''}`
       );
       error.value = result.errors.join('；');
       result.accepted.forEach((id: number) => chosen.value.delete(id));
@@ -277,6 +305,7 @@
     if (polling || busy.value) return;
     polling = true;
     try {
+      const hadRetries = retryRuns.value.length > 0;
       if (retryRuns.value.length) {
         const results = await Promise.all(retryRuns.value.map((id) => api(`/runs/${id}`)));
         retryRuns.value = results
@@ -285,7 +314,7 @@
           )
           .map((r) => r.id);
       }
-      if (category.value === 'failure') {
+      if (category.value === 'failure' || hadRetries) {
         await load(true);
         if (!rows.value.length && pageNumber.value > 1) {
           pageNumber.value--;
@@ -311,6 +340,14 @@
         ><h1>运行记录<span class="title-dot">.</span></h1
         ><p>查看文件命名、还原等操作的成功与失败结果。</p></div
       ><div class="history-heading-actions"
+        ><button
+          v-if="category === 'success'"
+          :disabled="busy || retrying || clearing || !retryable.length"
+          title="使用所选模型重新命名选中的自动命名成功记录"
+          @click="openRetry()"
+          ><RefreshCw :size="16" :class="{ spin: retrying }" />{{
+            retrying ? '正在提交…' : '重试选中'
+          }}</button
         ><button
           v-if="category === 'failure'"
           :disabled="retrying || clearing"
@@ -361,6 +398,16 @@
             ...Object.entries(actionNames).map(([value, label]) => ({ value, label }))
           ]"
         /><SelectField
+          v-model="source"
+          label="模型来源"
+          :options="[
+            { value: '', label: '全部模型来源' },
+            { value: 'primary', label: '主模型' },
+            { value: 'fallback', label: '兜底模型' },
+            { value: 'unknown', label: '来源未记录' }
+          ]"
+          @change="reset"
+        /><SelectField
           v-model="run"
           label="批次"
           :options="batchOptions"
@@ -377,17 +424,16 @@
         ><button :disabled="busy" title="全选本页" @click="selectPage()">全选</button
         ><button :disabled="busy" title="反选本页" @click="selectPage(true)">反选</button
         ><button :disabled="!chosen.size" @click="clearSelection">清空</button
-        ><button
-          v-if="category === 'failure'"
-          :disabled="busy || retrying || !retryable.length"
-          @click="openRetry()"
+        ><button :disabled="busy || retrying || !retryable.length" @click="openRetry()"
           ><RefreshCw :size="15" />{{
             retrying ? '正在提交…' : `批量重试（${retryable.length}）`
           }}</button
-        ><span v-if="category === 'failure'" class="subtle">{{
-          retryRuns.length
-            ? '重试运行中，成功后自动移除失败记录'
-            : '自动命名失败可重试，确认时可选择模型'
+        ><span class="subtle">{{
+          category === 'success'
+            ? '仅重试选中的有效自动命名结果，保留已处理标记和原记录'
+            : retryRuns.length
+              ? '重试运行中，成功后自动移除失败记录'
+              : '自动命名失败可重试，确认时可选择模型'
         }}</span></div
       >
       <div class="table-scroll history-table-scroll"
@@ -427,7 +473,16 @@
                     actionNames[row.action] || row.action
                   }}</span></td
                 ><td
-                  ><span class="table-model" :title="modelHint(row)">{{ modelName(row) }}</span></td
+                  ><div class="history-model-content"
+                    ><span class="table-model" :title="modelHint(row)">{{ modelName(row) }}</span
+                    ><span
+                      v-if="row.action === 'automatic'"
+                      class="history-model-source"
+                      :data-source="row.model_source"
+                      :title="modelSourceHint(row)"
+                      >{{ modelSource(row) }}</span
+                    ></div
+                  ></td
                 ><td class="subtle history-run-value"
                   ><span :title="row.run ? `批次 #${row.run}` : '没有关联的批次'">{{
                     row.run ? `#${row.run}` : category === 'success' ? '手动操作' : '—'
@@ -490,7 +545,7 @@
             category === 'success' ? '还没有成功记录' : '没有失败记录'
           }}</h3
           ><p>{{
-            q || action || run || from || to
+            q || action || source || run || from || to
               ? '可以调整筛选条件后再试。'
               : category === 'success'
                 ? '完成一次命名后，就能在这里查看。'
@@ -525,6 +580,16 @@
       ><dt>新路径</dt><dd>{{ selected.new_path || '—' }}</dd
       ><dt>批次</dt><dd>{{ selected.run ? `#${selected.run}` : '—' }}</dd
       ><dt>模型配置</dt><dd :title="modelHint(selected)">{{ modelName(selected) }}</dd
+      ><template v-if="selected.action === 'automatic'"
+        ><dt>{{ selected.category === 'success' ? '模型来源' : '最后请求来源' }}</dt
+        ><dd
+          ><span
+            class="history-model-source"
+            :data-source="selected.model_source"
+            :title="modelSourceHint(selected)"
+            >{{ modelSource(selected) }}</span
+          ></dd
+        ><dt>模型 ID</dt><dd>{{ selected.model || '—' }}</dd></template
       ><dt>详情</dt><dd>{{ selected.message || '操作已成功完成' }}</dd></dl
     ><FailureDiagnostics
       :key="selected.id"
@@ -549,13 +614,23 @@
       ></div
     ></Modal
   >
-  <Modal v-if="retryScope" title="重试失败记录" @close="!retrying && (retryScope = undefined)"
+  <Modal
+    v-if="retryScope"
+    :title="retryScope.category === 'success' ? '重试成功记录' : '重试失败记录'"
+    @close="!retrying && (retryScope = undefined)"
     ><p v-if="retryScope.all">重试全部自动命名失败记录，包括其他页，不受筛选条件限制。</p
     ><p v-else-if="retryScope.name">重试文件：{{ retryScope.name }}</p
-    ><p v-else>重试选中的 {{ retryScope.ids.length }} 条自动命名失败记录。</p
+    ><p v-else
+      >重试选中的 {{ retryScope.ids.length }} 条自动命名{{
+        retryScope.category === 'success' ? '成功' : '失败'
+      }}记录。</p
     ><div :inert="retrying"><ModelPicker v-model="retryModel" /></div
     ><p class="help"
-      >使用所选模型配置的最新设置创建一个批次。同一文件只提交一次，成功后自动移除旧失败记录。</p
+      >使用所选模型配置的最新设置创建一个批次。同一文件只提交一次。{{
+        retryScope.category === 'success'
+          ? '本次会重新生成并修改当前文件名；仅对选中的有效自动命名结果允许本次重试。已处理标记始终保留，失败或取消仍受保护；原成功记录保留，新结果另行记录。手动改名、显式标记或已被后续改名取代的记录不支持重试。'
+          : '成功后自动移除旧失败记录。'
+      }}</p
     ><div v-if="retryError" class="notice error" role="alert">{{ retryError }}</div
     ><div class="modal-actions"
       ><button :disabled="retrying" @click="retryScope = undefined">取消</button
@@ -596,3 +671,34 @@
     ></Modal
   >
 </template>
+<style scoped>
+  .history-table.success {
+    --history-actions-width: 108px;
+  }
+  .history-model-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+  }
+  .history-model-source {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 10px;
+    line-height: 1.5;
+    white-space: nowrap;
+    color: #656d77;
+    background: #f0f1f4;
+  }
+  .history-model-source[data-source='primary'] {
+    color: #2468af;
+    background: #edf4fc;
+  }
+  .history-model-source[data-source='fallback'] {
+    color: #946200;
+    background: #fff4df;
+  }
+</style>

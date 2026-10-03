@@ -126,7 +126,7 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 		var expiry int64
 		var fingerprint string
 		if err == nil {
-			err = a.DB.QueryRow("SELECT csrf,expires,fingerprint FROM sessions WHERE token=?", hash(cookie.Value)).Scan(&csrf, &expiry, &fingerprint)
+			err = a.DB.Read().QueryRowContext(r.Context(), "SELECT csrf,expires,fingerprint FROM sessions WHERE token=?", hash(cookie.Value)).Scan(&csrf, &expiry, &fingerprint)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				fail(w, 500, "服务暂不可用")
 				return

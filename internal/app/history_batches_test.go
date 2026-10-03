@@ -121,11 +121,125 @@ VALUES('manual','[]',1,'completed','now','history-model-run','旅行模型配置
 		response := httptest.NewRecorder()
 		a.logs(response, httptest.NewRequest("GET", "/api/logs?category="+category, nil))
 		var rows []struct {
-			Model string `json:"model"`
-			Title string `json:"model_config_title"`
+			Model  string `json:"model"`
+			Title  string `json:"model_config_title"`
+			Source string `json:"model_source"`
 		}
-		if err = json.Unmarshal(response.Body.Bytes(), &rows); err != nil || len(rows) != 1 || rows[0].Model != "glm-4.6v" || rows[0].Title != "旅行模型配置" {
+		if err = json.Unmarshal(response.Body.Bytes(), &rows); err != nil || len(rows) != 1 || rows[0].Model != "glm-4.6v" || rows[0].Title != "旅行模型配置" || rows[0].Source != "unknown" {
 			t.Fatalf("%s model snapshot: %+v, %v", category, rows, err)
 		}
+	}
+}
+
+func TestHistoryUsesActualModelAttempt(t *testing.T) {
+	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	for _, query := range []string{
+		`INSERT INTO entries(id,name,kind,identity,size,mtime,observed) VALUES
+		(2,'fallback.mp4','file','file-2',0,'now','now'),
+		(3,'primary.mp4','file','file-3',0,'now','now'),
+		(4,'failed.mp4','file','file-4',0,'now','now'),
+		(5,'unknown.mp4','file','file-5',0,'now','now'),
+		(6,'no-success.mp4','file','file-6',0,'now','now')`,
+		`INSERT INTO runs(id,source,targets,recursive,status,created,request_key,model_config_title,config_summary) VALUES
+		(101,'manual','[]',0,'completed','now','actual-model-1','批次主配置','{"model":"batch-primary"}'),
+		(102,'manual','[]',0,'completed','now','actual-model-2','另一个批次','{"model":"other-batch"}')`,
+		`INSERT INTO run_items(id,run,entry,identity,size,mtime) VALUES
+		(201,101,2,'file-2',0,'now'),(202,101,3,'file-3',0,'now'),
+		(203,101,4,'file-4',0,'now'),(204,101,5,'file-5',0,'now'),
+		(205,101,6,'file-6',0,'now'),(206,102,2,'file-2',0,'now')`,
+		`INSERT INTO model_attempts(item,attempt,model_config_id,model_config_title,model,fallback,started,duration_ms,status,message) VALUES
+		(201,1,1,'主配置快照','primary-model',0,'now',1,'failed',''),
+		(201,2,2,'兜底配置快照','fallback-model',1,'now',1,'success',''),
+		(202,1,1,'主配置快照','primary-model',0,'now',1,'failed',''),
+		(202,2,1,'主配置快照','primary-model',0,'now',1,'success',''),
+		(203,1,1,'主配置快照','primary-model',0,'now',1,'failed',''),
+		(203,2,2,'兜底配置快照','fallback-model',1,'now',1,'failed',''),
+		(205,1,1,'主配置快照','primary-model',0,'now',1,'failed',''),
+		(206,9,3,'其他批次配置','other-model',0,'now',1,'success','')`,
+		`INSERT INTO events(category,action,entry,run,old_path,created) VALUES
+		('success','automatic',2,101,'fallback.mp4','now'),
+		('success','automatic',3,101,'primary.mp4','now'),
+		('success','automatic',5,101,'unknown.mp4','now'),
+		('success','automatic',6,101,'no-success.mp4','now'),
+		('success','manual',2,101,'manual.mp4','now'),
+		('success','restore',2,101,'restore.mp4','now'),
+		('success','automatic',2,102,'other-run.mp4','now'),
+		('failure','automatic',4,101,'failed.mp4','now'),
+		('failure','automatic',3,101,'rename-failed.mp4','now')`,
+	} {
+		if _, err := a.DB.Exec(query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	type record struct {
+		Path   string `json:"old_path"`
+		Model  string `json:"model"`
+		Title  string `json:"model_config_title"`
+		Source string `json:"model_source"`
+	}
+	expected := map[string]map[string]record{
+		"success": {
+			"fallback.mp4":   {"fallback.mp4", "fallback-model", "兜底配置快照", "fallback"},
+			"primary.mp4":    {"primary.mp4", "primary-model", "主配置快照", "primary"},
+			"unknown.mp4":    {"unknown.mp4", "batch-primary", "批次主配置", "unknown"},
+			"no-success.mp4": {"no-success.mp4", "batch-primary", "批次主配置", "unknown"},
+			"manual.mp4":     {"manual.mp4", "batch-primary", "批次主配置", ""},
+			"restore.mp4":    {"restore.mp4", "batch-primary", "批次主配置", ""},
+			"other-run.mp4":  {"other-run.mp4", "other-model", "其他批次配置", "primary"},
+		},
+		"failure": {
+			"failed.mp4":        {"failed.mp4", "fallback-model", "兜底配置快照", "fallback"},
+			"rename-failed.mp4": {"rename-failed.mp4", "primary-model", "主配置快照", "primary"},
+		},
+	}
+	for category, all := range expected {
+		for _, source := range []string{"", "primary", "fallback", "unknown"} {
+			want := map[string]record{}
+			for path, row := range all {
+				if source == "" || row.Source == source {
+					want[path] = row
+				}
+			}
+			for _, suffix := range []string{"", "&paged=1", "&page=1"} {
+				t.Run(category+source+suffix, func(t *testing.T) {
+					w := httptest.NewRecorder()
+					a.logs(w, httptest.NewRequest("GET", "/api/logs?category="+category+"&model_source="+source+suffix, nil))
+					if w.Code != 200 {
+						t.Fatal(w.Code, w.Body.String())
+					}
+					var rows []record
+					if suffix == "" {
+						err = json.Unmarshal(w.Body.Bytes(), &rows)
+					} else {
+						var page struct {
+							Items []record `json:"items"`
+							Total int      `json:"total"`
+						}
+						err = json.Unmarshal(w.Body.Bytes(), &page)
+						rows = page.Items
+						if page.Total != len(want) {
+							t.Fatalf("total=%d, want %d", page.Total, len(want))
+						}
+					}
+					if err != nil || len(rows) != len(want) {
+						t.Fatal(rows, err)
+					}
+					for _, row := range rows {
+						if row != want[row.Path] {
+							t.Fatalf("got %+v, want %+v", row, want[row.Path])
+						}
+					}
+				})
+			}
+		}
+	}
+	w := httptest.NewRecorder()
+	a.logs(w, httptest.NewRequest("GET", "/api/logs?category=success&model_source=invalid", nil))
+	if w.Code != 400 {
+		t.Fatal("invalid model source accepted", w.Code, w.Body.String())
 	}
 }

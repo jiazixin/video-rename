@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -54,11 +55,13 @@ type Run struct {
 	Plan             int64          `json:"plan"`
 }
 type Request struct {
-	Task          string  `json:"task"`
-	ModelConfigID int64   `json:"model_config_id"`
-	Targets       []int64 `json:"targets"`
-	Recursive     bool    `json:"recursive"`
-	Key           string  `json:"key"`
+	// Set only by the history retry handler; generic run JSON cannot bypass marks.
+	RetryOperations map[int64]int64 `json:"-"`
+	Task            string          `json:"task"`
+	ModelConfigID   int64           `json:"model_config_id"`
+	Targets         []int64         `json:"targets"`
+	Recursive       bool            `json:"recursive"`
+	Key             string          `json:"key"`
 }
 type Manager struct {
 	DB           *storage.Store
@@ -175,6 +178,16 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 		return 0, err
 	}
 	r.Targets = normalized
+	if len(r.RetryOperations) > 0 {
+		if r.Task != "rename" || r.Recursive || source != "manual" || plan != 0 || len(r.RetryOperations) != len(r.Targets) {
+			return 0, fmt.Errorf("成功记录重试只能用于明确选中的视频文件")
+		}
+		for _, entry := range r.Targets {
+			if r.RetryOperations[entry] <= 0 {
+				return 0, fmt.Errorf("成功记录重试缺少对应的命名操作")
+			}
+		}
+	}
 	if r.Task == "rename" && r.ModelConfigID == 0 {
 		var err error
 		r.ModelConfigID, err = (models.Store{DB: m.DB}).DefaultID()
@@ -187,11 +200,18 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	var oldTargets string
 	var oldRecursive bool
 	var oldTask string
-	err = m.DB.QueryRow("SELECT id,targets,recursive,model_config_id,task FROM runs WHERE request_key=?", r.Key).Scan(&old, &oldTargets, &oldRecursive, &oldModelConfigID, &oldTask)
+	var oldRetryRaw string
+	err = m.DB.QueryRow("SELECT id,targets,recursive,model_config_id,task,retry_snapshot FROM runs WHERE request_key=?", r.Key).Scan(&old, &oldTargets, &oldRecursive, &oldModelConfigID, &oldTask, &oldRetryRaw)
 	if err == nil {
+		var oldRetry retryPolicy
+		if oldRetryRaw != "" {
+			if err := json.Unmarshal([]byte(oldRetryRaw), &oldRetry); err != nil {
+				return 0, err
+			}
+		}
 		current, _ := json.Marshal(r.Targets)
-		if oldTargets != string(current) || oldRecursive != r.Recursive || oldModelConfigID != r.ModelConfigID || oldTask != r.Task {
-			return 0, fmt.Errorf("请求键已被不同的运行范围、任务类型或模型配置使用")
+		if oldTargets != string(current) || oldRecursive != r.Recursive || oldModelConfigID != r.ModelConfigID || oldTask != r.Task || !maps.Equal(oldRetry.RetryOperations, r.RetryOperations) {
+			return 0, fmt.Errorf("请求键已被不同的运行范围、任务类型、模型配置或重试记录使用")
 		}
 		return old, nil
 	}
@@ -200,6 +220,11 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	}
 	if err = m.checkOverlap(r, index); err != nil {
 		return 0, err
+	}
+	for entry, operation := range r.RetryOperations {
+		if err := m.Library.CheckAutomaticRetry(entry, operation); err != nil {
+			return 0, err
+		}
 	}
 	if _, _, err = m.Tools(); err != nil {
 		return 0, err
@@ -256,6 +281,7 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	retry.RetryOperations = maps.Clone(r.RetryOperations)
 	retryRaw, err := json.Marshal(retry)
 	if err != nil {
 		return 0, err
@@ -631,9 +657,12 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.C
 		}
 	}
 	e, err := m.Library.Get(it.Entry)
-	if err == nil && e.Processed != "" && batch.Task != "extract" {
+	if err == nil && e.Processed != "" && batch.Task != "extract" && batch.retry.RetryOperations[it.Entry] == 0 {
 		finish("skipped", "已处理，跳过")
 		return
+	}
+	if err == nil && batch.retry.RetryOperations[it.Entry] > 0 {
+		err = m.Library.CheckAutomaticRetry(it.Entry, batch.retry.RetryOperations[it.Entry])
 	}
 	var p string
 	if err == nil {
@@ -681,7 +710,11 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.C
 					defer func() { lease.Release(committed) }()
 				}
 				if err == nil && ctx.Err() == nil {
-					_, err = m.Library.AutoCommit(e.ID, snap, title, fmt.Sprintf("run:%d:item:%d", run, it.ID), run, exchange)
+					if operation := batch.retry.RetryOperations[e.ID]; operation > 0 {
+						_, err = m.Library.RetryAutoCommit(e.ID, snap, title, fmt.Sprintf("run:%d:item:%d", run, it.ID), run, operation, exchange)
+					} else {
+						_, err = m.Library.AutoCommit(e.ID, snap, title, fmt.Sprintf("run:%d:item:%d", run, it.ID), run, exchange)
+					}
 					committed = err == nil
 				}
 			}

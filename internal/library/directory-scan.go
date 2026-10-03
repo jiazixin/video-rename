@@ -71,6 +71,15 @@ type scanBaseline struct {
 	failed     bool
 }
 
+type scanOrphan struct {
+	entry, parent int64
+	observed      string
+}
+
+const promoteScanCandidatesSQL = `UPDATE entries SET present=1,observed=?
+ WHERE id IN (SELECT s.entry FROM directory_scan.snapshot s LEFT JOIN directory_scan.baseline b ON b.id=s.entry WHERE b.id IS NULL)
+ AND parent=? AND observed=? AND present=0`
+
 // ScanDirectory performs two bounded metadata passes outside Library.mu. A local
 // disposable SQLite file holds the observations, so large directories do not
 // require an in-memory copy. Only changed directories build a new generation.
@@ -91,6 +100,11 @@ type DirectoryScanner struct {
 func (l *Library) NewDirectoryScanner(ctx context.Context) (*DirectoryScanner, error) {
 	stage, path, err := newScanStage(ctx)
 	if err != nil {
+		return nil, err
+	}
+	if err = l.captureScanOrphans(ctx, stage); err != nil {
+		stage.Close()
+		os.Remove(path)
 		return nil, err
 	}
 	return &DirectoryScanner{library: l, stage: stage, path: path}, nil
@@ -136,6 +150,9 @@ func (l *Library) scanDirectoryWithMetadata(ctx context.Context, id int64, read 
 		return ScanDirectoryResult{}, err
 	}
 	defer func() { stage.Close(); _ = os.Remove(path) }()
+	if err = l.captureScanOrphans(ctx, stage); err != nil {
+		return ScanDirectoryResult{}, err
+	}
 	return l.scanDirectoryWithStage(ctx, id, stage, path, read, inspect)
 }
 
@@ -233,7 +250,7 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *s
 			if !published {
 				cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 				defer cancel()
-				l.cleanScanStaging(cleanupCtx, id, gen, marker, false)
+				l.cleanScanStaging(cleanupCtx, stage, id, gen, marker, false)
 			}
 		}()
 		if err = l.buildScanGeneration(ctx, id, gen, marker, stage); err != nil {
@@ -279,7 +296,7 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *s
 	// Reclaim interrupted staging even when this directory has not changed. Old
 	// generations are no longer visible; bounded writes let user operations
 	// acquire both the mutex and writer between pages.
-	l.cleanScanStaging(ctx, id, gen, marker, true)
+	l.cleanScanStaging(ctx, stage, id, gen, marker, true)
 	return result, nil
 }
 
@@ -300,13 +317,68 @@ func newScanStage(ctx context.Context) (*sql.DB, string, error) {
 	 CREATE TABLE baseline(id INTEGER PRIMARY KEY,name TEXT NOT NULL UNIQUE,kind TEXT NOT NULL,identity TEXT NOT NULL,size INTEGER NOT NULL,mtime TEXT NOT NULL,version INTEGER NOT NULL);
 	 CREATE TABLE snapshot(name TEXT PRIMARY KEY,kind TEXT NOT NULL,identity TEXT NOT NULL,size INTEGER NOT NULL,mtime TEXT NOT NULL,entry INTEGER NOT NULL DEFAULT 0);
 	 CREATE INDEX snapshot_entry ON snapshot(entry);
-	 CREATE TABLE verification(name TEXT PRIMARY KEY,kind TEXT NOT NULL,identity TEXT NOT NULL,size INTEGER NOT NULL,mtime TEXT NOT NULL);`)
+	 CREATE TABLE verification(name TEXT PRIMARY KEY,kind TEXT NOT NULL,identity TEXT NOT NULL,size INTEGER NOT NULL,mtime TEXT NOT NULL);
+	 CREATE TABLE orphan_candidates(entry INTEGER PRIMARY KEY,parent INTEGER NOT NULL,observed TEXT NOT NULL);
+	 CREATE INDEX orphan_parent_entry ON orphan_candidates(parent,entry);`)
 	if err != nil {
 		db.Close()
 		os.Remove(path)
 		return nil, "", err
 	}
 	return db, path, nil
+}
+
+// Older cleanup deleted generation rows before their candidates. If the process
+// stopped between those writes, the candidates no longer have directory_items.
+// Capture them once per recursive round through the read pool, then seek the
+// temporary parent index instead of rescanning all entries for every directory.
+func (l *Library) captureScanOrphans(ctx context.Context, stage *sql.DB) error {
+	rows, err := l.DB.Read().QueryContext(ctx, `SELECT e.id,e.parent,e.observed FROM entries e
+	 WHERE e.present=0 AND e.observed LIKE 'directory-scan:%'
+	 AND NOT EXISTS(SELECT 1 FROM directory_items i WHERE i.dir=e.parent AND i.entry=e.id)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	batch := make([]scanOrphan, 0, refreshPageSize)
+	flush := func() error {
+		tx, err := stage.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		stmt, err := tx.PrepareContext(ctx, "INSERT INTO orphan_candidates VALUES(?,?,?)")
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+		for _, item := range batch {
+			if _, err = stmt.ExecContext(ctx, item.entry, item.parent, item.observed); err != nil {
+				return err
+			}
+		}
+		batch = batch[:0]
+		return tx.Commit()
+	}
+	for rows.Next() {
+		var item scanOrphan
+		if err = rows.Scan(&item.entry, &item.parent, &item.observed); err != nil {
+			return err
+		}
+		batch = append(batch, item)
+		if len(batch) == refreshPageSize {
+			if err = flush(); err != nil {
+				return err
+			}
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	if len(batch) > 0 {
+		return flush()
+	}
+	return nil
 }
 
 func (l *Library) captureScanBaseline(ctx context.Context, id int64, stage *sql.DB) (baseline scanBaseline, err error) {
@@ -644,7 +716,7 @@ func (l *Library) publishDirectoryScan(ctx context.Context, id, gen int64, marke
 		 (SELECT b.id FROM directory_scan.baseline b WHERE NOT EXISTS(SELECT 1 FROM directory_scan.snapshot s WHERE s.entry=b.id))`); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, "UPDATE entries SET present=1,observed=? WHERE parent=? AND observed=? AND present=0", storage.Now(), id, marker); err != nil {
+		if _, err = tx.ExecContext(ctx, promoteScanCandidatesSQL, storage.Now(), id, marker); err != nil {
 			return err
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE entries AS e SET
@@ -668,35 +740,138 @@ func (l *Library) publishDirectoryScan(ctx context.Context, id, gen int64, marke
 	return nil
 }
 
-func (l *Library) cleanScanStaging(ctx context.Context, id, gen int64, marker string, published bool) {
+func (l *Library) cleanScanStaging(ctx context.Context, stage *sql.DB, id, gen int64, marker string, published bool) {
 	comparison := "="
 	if published {
 		comparison = "<>"
 	}
 	for ctx.Err() == nil {
-		res, err := l.DB.ExecContext(ctx, "DELETE FROM directory_items WHERE rowid IN (SELECT rowid FROM directory_items WHERE dir=? AND generation"+comparison+"? AND generation<>COALESCE((SELECT generation FROM directory_state WHERE dir=?),0) LIMIT ?)", id, gen, id, refreshPageSize)
+		count, err := l.cleanScanGenerationPage(ctx, id, gen, marker, comparison, published)
 		if err != nil {
 			return
 		}
-		count, err := res.RowsAffected()
-		if err != nil || count == 0 {
+		if count == 0 {
 			break
 		}
 	}
-	filter, value := "observed=?", marker
-	if published {
-		// Reclaim invisible candidates left by an earlier interrupted process,
-		// after their unpublished directory_items have been removed above.
-		filter, value = "observed LIKE ?", "directory-scan:%"
-	}
+	var after int64
 	for ctx.Err() == nil {
-		res, err := l.DB.ExecContext(ctx, "DELETE FROM entries WHERE id IN (SELECT id FROM entries WHERE parent=? AND present=0 AND "+filter+" AND NOT EXISTS(SELECT 1 FROM directory_items i WHERE i.dir=entries.parent AND i.entry=entries.id) LIMIT ?)", id, value, refreshPageSize)
+		rows, err := stage.QueryContext(ctx, "SELECT entry,observed FROM orphan_candidates WHERE parent=? AND entry>? ORDER BY entry LIMIT ?", id, after, refreshPageSize)
 		if err != nil {
 			return
 		}
-		count, err := res.RowsAffected()
-		if err != nil || count == 0 {
+		orphans := make([]scanOrphan, 0, refreshPageSize)
+		for rows.Next() {
+			var item scanOrphan
+			if err = rows.Scan(&item.entry, &item.observed); err != nil {
+				break
+			}
+			orphans = append(orphans, item)
+		}
+		if err == nil {
+			err = rows.Err()
+		}
+		rows.Close()
+		if err != nil || len(orphans) == 0 {
 			return
 		}
+		tx, err := l.DB.BeginTx(ctx, nil)
+		if err != nil {
+			return
+		}
+		err = deleteCapturedScanOrphans(ctx, tx, id, marker, published, orphans)
+		if err == nil {
+			err = tx.Commit()
+		}
+		tx.Rollback()
+		if err != nil {
+			return
+		}
+		after = orphans[len(orphans)-1].entry
 	}
+}
+
+// Removing obsolete generation rows and their invisible candidates in one
+// transaction prevents cleanup interruption from creating new orphan entries.
+// The indexed generation rows also identify candidates whose page committed
+// before a local stage update failed.
+func (l *Library) cleanScanGenerationPage(ctx context.Context, id, gen int64, marker, comparison string, published bool) (int, error) {
+	tx, err := l.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, "SELECT rowid,entry FROM directory_items WHERE dir=? AND generation"+comparison+"? AND generation<>COALESCE((SELECT generation FROM directory_state WHERE dir=?),0) LIMIT ?", id, gen, id, refreshPageSize)
+	if err != nil {
+		return 0, err
+	}
+	var rowIDs, entries []int64
+	for rows.Next() {
+		var row, entry int64
+		if err = rows.Scan(&row, &entry); err != nil {
+			break
+		}
+		rowIDs = append(rowIDs, row)
+		entries = append(entries, entry)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	rows.Close()
+	if err != nil || len(rowIDs) == 0 {
+		return 0, err
+	}
+	stmt, err := tx.PrepareContext(ctx, "DELETE FROM directory_items WHERE rowid=?")
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+	for _, row := range rowIDs {
+		if _, err = stmt.ExecContext(ctx, row); err != nil {
+			return 0, err
+		}
+	}
+	if err = deleteScanCandidates(ctx, tx, id, marker, published, entries); err != nil {
+		return 0, err
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, err
+	}
+	return len(rowIDs), nil
+}
+
+func deleteScanCandidates(ctx context.Context, tx *sql.Tx, id int64, marker string, published bool, entries []int64) error {
+	filter, value := "observed=?", marker
+	if published {
+		filter, value = "observed LIKE ?", "directory-scan:%"
+	}
+	stmt, err := tx.PrepareContext(ctx, "DELETE FROM entries WHERE id=? AND parent=? AND present=0 AND "+filter+" AND NOT EXISTS(SELECT 1 FROM directory_items i WHERE i.dir=entries.parent AND i.entry=entries.id)")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, entry := range entries {
+		if _, err = stmt.ExecContext(ctx, entry, id, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deleteCapturedScanOrphans(ctx context.Context, tx *sql.Tx, id int64, marker string, published bool, orphans []scanOrphan) error {
+	stmt, err := tx.PrepareContext(ctx, `DELETE FROM entries WHERE id=? AND parent=? AND present=0 AND observed=?
+	 AND NOT EXISTS(SELECT 1 FROM directory_items i WHERE i.dir=entries.parent AND i.entry=entries.id)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, item := range orphans {
+		if !published && item.observed != marker {
+			continue
+		}
+		if _, err = stmt.ExecContext(ctx, item.entry, id, item.observed); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -632,8 +632,163 @@ func TestScanCleanupCannotDeletePublishedGeneration(t *testing.T) {
 	}
 	// A failed Commit may have an uncertain outcome. Cleanup must independently
 	// protect a durable published generation, even when its caller reports failure.
-	l.cleanScanStaging(t.Context(), 1, state.Generation, "directory-scan:1:uncertain", false)
+	stage, path, err := newScanStage(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { stage.Close(); _ = os.Remove(path) }()
+	l.cleanScanStaging(t.Context(), stage, 1, state.Generation, "directory-scan:1:uncertain", false)
 	assertScanIndexCounts(t, l, state.Generation, 1, 0)
+}
+
+func TestDirectoryScannerReclaimsLegacyOrphansAcrossDirectories(t *testing.T) {
+	l, root, _ := fixture(t)
+	for _, name := range []string{"a", "b"} {
+		if err := os.Mkdir(filepath.Join(root, name), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	refresh(t, l, 1)
+	a, b := entry(t, l, 1, "a").ID, entry(t, l, 1, "b").ID
+	for _, parent := range []int64{a, b} {
+		for n := range 140 {
+			scanTestCandidate(t, l, parent, fmt.Sprintf("orphan-%d.mp4", n), "directory-scan:legacy")
+		}
+	}
+	retained := scanTestCandidate(t, l, a, "retained.mp4", "retained-history")
+	scanner, err := l.NewDirectoryScanner(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { scanner.Close() })
+	var captured int
+	if err := scanner.stage.QueryRow("SELECT count(*) FROM orphan_candidates").Scan(&captured); err != nil || captured != 280 {
+		t.Fatalf("legacy orphan capture: count=%d err=%v", captured, err)
+	}
+	for _, parent := range []int64{a, b} {
+		if _, err := scanner.ScanDirectory(t.Context(), parent); err != nil {
+			t.Fatal(err)
+		}
+		var remaining int
+		if err := l.DB.QueryRow("SELECT count(*) FROM entries WHERE parent=? AND observed LIKE 'directory-scan:%'", parent).Scan(&remaining); err != nil || remaining != 0 {
+			t.Fatalf("directory %d retained %d legacy orphans: %v", parent, remaining, err)
+		}
+	}
+	var exists bool
+	if err := l.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM entries WHERE id=?)", retained).Scan(&exists); err != nil || !exists {
+		t.Fatalf("cleanup removed unrelated history: exists=%v err=%v", exists, err)
+	}
+}
+
+func TestScanCapturedOrphansAreRecheckedBeforeDeletion(t *testing.T) {
+	for _, change := range []string{"visible", "referenced", "different-marker", "different-scan-marker"} {
+		t.Run(change, func(t *testing.T) {
+			l, _, _ := fixture(t)
+			candidate := scanTestCandidate(t, l, 1, "orphan.mp4", "directory-scan:legacy")
+			scanner, err := l.NewDirectoryScanner(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { scanner.Close() })
+			switch change {
+			case "visible":
+				_, err = l.DB.Exec("UPDATE entries SET present=1 WHERE id=?", candidate)
+			case "referenced":
+				_, err = l.DB.Exec("INSERT INTO directory_state(dir,generation) VALUES(1,7); INSERT INTO directory_items VALUES(1,7,?,'orphan.mp4','file',1,'now')", candidate)
+			case "different-marker":
+				_, err = l.DB.Exec("UPDATE entries SET observed='retained-history' WHERE id=?", candidate)
+			case "different-scan-marker":
+				_, err = l.DB.Exec("UPDATE entries SET observed='directory-scan:new-observation' WHERE id=?", candidate)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			l.cleanScanStaging(t.Context(), scanner.stage, 1, 7, "directory-scan:current", true)
+			var exists bool
+			if err := l.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM entries WHERE id=?)", candidate).Scan(&exists); err != nil || !exists {
+				t.Fatalf("captured candidate deleted after %s: exists=%v err=%v", change, exists, err)
+			}
+		})
+	}
+}
+
+func TestScanCleanupCandidateFailureKeepsGenerationRows(t *testing.T) {
+	l, _, _ := fixture(t)
+	candidate := scanTestCandidate(t, l, 1, "pending.mp4", "directory-scan:interrupted")
+	if _, err := l.DB.Exec(`INSERT INTO directory_state(dir,generation) VALUES(1,7);
+	 INSERT INTO directory_items VALUES(1,8,?,'pending.mp4','file',1,'now');
+	 CREATE TRIGGER reject_candidate_cleanup BEFORE DELETE ON entries
+	 WHEN OLD.observed LIKE 'directory-scan:%' BEGIN SELECT RAISE(ABORT,'cleanup failure'); END`, candidate); err != nil {
+		t.Fatal(err)
+	}
+	scanner, err := l.NewDirectoryScanner(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { scanner.Close() })
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	l.cleanScanStaging(ctx, scanner.stage, 1, 7, "directory-scan:current", true)
+	l.cleanScanStaging(t.Context(), scanner.stage, 1, 7, "directory-scan:current", true)
+	var candidates, items int
+	if err := l.DB.QueryRow(`SELECT (SELECT count(*) FROM entries WHERE id=?),(SELECT count(*) FROM directory_items WHERE dir=1 AND generation=8)`, candidate).Scan(&candidates, &items); err != nil || candidates != 1 || items != 1 {
+		t.Fatalf("failed candidate cleanup left orphaned state: candidates=%d items=%d err=%v", candidates, items, err)
+	}
+	if _, err := l.DB.Exec("DROP TRIGGER reject_candidate_cleanup"); err != nil {
+		t.Fatal(err)
+	}
+	l.cleanScanStaging(t.Context(), scanner.stage, 1, 7, "directory-scan:current", true)
+	if err := l.DB.QueryRow(`SELECT (SELECT count(*) FROM entries WHERE id=?),(SELECT count(*) FROM directory_items WHERE dir=1 AND generation=8)`, candidate).Scan(&candidates, &items); err != nil || candidates != 0 || items != 0 {
+		t.Fatalf("cleanup retry failed: candidates=%d items=%d err=%v", candidates, items, err)
+	}
+}
+
+func TestScanCleanupFindsCommittedPageAfterStageUpdateFailure(t *testing.T) {
+	l, root, _ := fixture(t)
+	put(t, filepath.Join(root, "new.mp4"))
+	stage, path, err := newScanStage(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { stage.Close(); _ = os.Remove(path) }()
+	baseline, err := l.captureScanBaseline(t.Context(), 1, stage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := openScanDirectory(root, baseline.chain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = collectScanMetadata(t.Context(), stage, "snapshot", dir, func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) })
+	dir.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stage.Exec("CREATE TRIGGER reject_stage_update BEFORE UPDATE OF entry ON snapshot BEGIN SELECT RAISE(ABORT,'stage failure'); END"); err != nil {
+		t.Fatal(err)
+	}
+	const marker = "directory-scan:stage-failure"
+	if err := l.buildScanGeneration(t.Context(), 1, 8, marker, stage); err == nil {
+		t.Fatal("stage update failure was ignored")
+	}
+	l.cleanScanStaging(t.Context(), stage, 1, 8, marker, false)
+	var candidates, items int
+	if err := l.DB.QueryRow(`SELECT (SELECT count(*) FROM entries WHERE observed=?),(SELECT count(*) FROM directory_items WHERE dir=1 AND generation=8)`, marker).Scan(&candidates, &items); err != nil || candidates != 0 || items != 0 {
+		t.Fatalf("cleanup missed the committed page: candidates=%d items=%d err=%v", candidates, items, err)
+	}
+}
+
+func scanTestCandidate(t *testing.T, l *Library, parent int64, name, marker string) int64 {
+	t.Helper()
+	res, err := l.DB.Exec("INSERT INTO entries(parent,name,kind,identity,size,mtime,present,observed) VALUES(?,?,'file',?,1,'now',0,?)", parent, name, name, marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 func TestDirectoryScannerReusesStageAfterFailureAndCancellation(t *testing.T) {

@@ -2,13 +2,93 @@ package models
 
 import (
 	"encoding/json/v2"
+	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"video-rename/internal/config"
 	"video-rename/internal/prompts"
 	"video-rename/internal/storage"
 )
+
+func TestModelReadsWhileWriterBusy(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "models.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := Store{DB: db}
+	if err := s.Seed(); err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.Get(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.BaseURL, p.Model, p.APIKey, p.Workers = "http://localhost/v1", "test-model", "test-secret", 4
+	p, err = s.Save(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	settings := p.ServerConfig
+	settings.Workers = 9
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec("UPDATE model_configs SET title='uncommitted model',settings=?,is_default=0 WHERE id=?", string(raw), p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec("UPDATE prompts SET title='uncommitted prompt',body='uncommitted body' WHERE id=?", p.PromptID); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- func() error {
+			got, err := s.Get(p.ID)
+			if err != nil || !reflect.DeepEqual(got, p) {
+				return fmt.Errorf("Get did not read committed profile: got=%+v err=%v", got, err)
+			}
+			profiles, err := s.List()
+			if err != nil || len(profiles) != 1 || !reflect.DeepEqual(profiles[0], p) {
+				return fmt.Errorf("List did not read committed profiles: count=%d err=%v", len(profiles), err)
+			}
+			if id, err := s.DefaultID(); err != nil || id != p.ID {
+				return fmt.Errorf("DefaultID=%d err=%v, want %d", id, err, p.ID)
+			}
+			if workers, err := s.Workers(t.Context(), p.ID); err != nil || workers != p.Workers {
+				return fmt.Errorf("Workers=%d err=%v, want %d", workers, err, p.Workers)
+			}
+			resolved := Profile{PromptID: p.PromptID}
+			if err := s.resolve(&resolved); err != nil || resolved.PromptTitle != p.PromptTitle || resolved.Body != p.Body {
+				return fmt.Errorf("resolve did not read committed prompt: title=%q body=%q err=%v", resolved.PromptTitle, resolved.Body, err)
+			}
+			return nil
+		}()
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("model reads waited for the writer")
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(p.ID)
+	if err != nil || got.Title != "uncommitted model" || got.Body != "uncommitted body" || got.Workers != 9 || got.Default {
+		t.Fatalf("Get did not observe committed update: got=%+v err=%v", got, err)
+	}
+}
 
 // newPrompt creates a library entry so profiles have a reference to carry.
 func newPrompt(t *testing.T, s Store, title, body string) prompts.Profile {

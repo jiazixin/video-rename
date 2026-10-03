@@ -66,7 +66,6 @@
             :class="{ active: page === item.id }"
             :aria-label="item.name"
             :aria-current="page === item.id ? 'page' : undefined"
-            :title="item.name"
             @click="emit('navigate', item.id)"
             ><component :is="item.icon" :size="20" :stroke-width="1.8" /><span>{{
               item.name

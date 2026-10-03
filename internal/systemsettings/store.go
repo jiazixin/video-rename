@@ -73,7 +73,7 @@ type Store struct{ DB *storage.Store }
 func (s Store) Get() (Settings, error) {
 	v := Default()
 	var policy string
-	err := s.DB.QueryRow("SELECT extract_workers,cache_gb,stability_seconds,policy FROM system_settings WHERE id=1").Scan(&v.ExtractWorkers, &v.CacheGB, &v.StabilitySeconds, &policy)
+	err := s.DB.Read().QueryRow("SELECT extract_workers,cache_gb,stability_seconds,policy FROM system_settings WHERE id=1").Scan(&v.ExtractWorkers, &v.CacheGB, &v.StabilitySeconds, &policy)
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, nil
 	}
@@ -111,7 +111,7 @@ func (s Store) Save(v Settings) error {
 func (s Store) Numbering() (domain.NumberingSettings, error) {
 	v := domain.DefaultNumberingSettings()
 	var raw string
-	err := s.DB.QueryRow("SELECT numbering FROM system_settings WHERE id=1").Scan(&raw)
+	err := s.DB.Read().QueryRow("SELECT numbering FROM system_settings WHERE id=1").Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, nil
 	}
@@ -143,7 +143,7 @@ func (s Store) SaveNumbering(v domain.NumberingSettings) error {
 // output protocol.
 func (s Store) FixedPrompt() (string, error) {
 	var v string
-	err := s.DB.QueryRow("SELECT fixed_prompt FROM system_settings WHERE id=1").Scan(&v)
+	err := s.DB.Read().QueryRow("SELECT fixed_prompt FROM system_settings WHERE id=1").Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DefaultFixedPrompt, nil
 	}

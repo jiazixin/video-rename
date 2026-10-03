@@ -487,6 +487,11 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 		send(w, 400, map[string]string{"message": "请选择成功或失败日志"})
 		return
 	}
+	modelSource := q.Get("model_source")
+	if modelSource != "" && modelSource != "primary" && modelSource != "fallback" && modelSource != "unknown" {
+		send(w, 400, map[string]string{"message": "请选择有效的模型来源"})
+		return
+	}
 	for _, key := range []string{"from", "to"} {
 		if value := q.Get(key); value != "" {
 			stamp, err := time.Parse(time.RFC3339Nano, value)
@@ -517,8 +522,27 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 	if limit != 50 && limit != 100 && limit != 200 {
 		limit = 100
 	}
-	where := " FROM events e LEFT JOIN runs r ON r.id=e.run WHERE e.category=? AND (?=0 OR e.run=?) AND (?='' OR instr(lower(e.old_path||e.new_path||e.message),lower(?))>0) AND (?='' OR e.action=?) AND (?='' OR julianday(e.created)>=julianday(?)) AND (?='' OR julianday(e.created)<=julianday(?))"
+	from := " FROM events e LEFT JOIN runs r ON r.id=e.run"
+	where := " WHERE e.category=? AND (?=0 OR e.run=?) AND (?='' OR instr(lower(e.old_path||e.new_path||e.message),lower(?))>0) AND (?='' OR e.action=?) AND (?='' OR julianday(e.created)>=julianday(?)) AND (?='' OR julianday(e.created)<=julianday(?))"
 	args := []any{category, run, run, q.Get("q"), q.Get("q"), q.Get("action"), q.Get("action"), q.Get("from"), q.Get("from"), q.Get("to"), q.Get("to")}
+	// Success records use the attempt that produced the title; failures use the
+	// last request. Match both batch and entry, and leave non-model actions alone.
+	attemptJoin := ` LEFT JOIN model_attempts a ON (a.item,a.attempt)=(
+		SELECT ma.item,ma.attempt FROM run_items i JOIN model_attempts ma ON ma.item=i.id
+		WHERE i.run=e.run AND i.entry=e.entry AND e.action='automatic'
+		AND (e.category='failure' OR ma.status='success')
+		ORDER BY i.id DESC,ma.attempt DESC LIMIT 1)`
+	countFrom := from
+	if modelSource != "" {
+		countFrom += attemptJoin
+		where += " AND e.action='automatic'"
+		if modelSource == "unknown" {
+			where += " AND a.item IS NULL"
+		} else {
+			where += " AND a.fallback=?"
+			args = append(args, modelSource == "fallback")
+		}
+	}
 	tx, err := a.DB.Read().BeginTx(r.Context(), nil)
 	if err != nil {
 		failure(w, err)
@@ -526,7 +550,7 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 	var total int64
-	if err := tx.QueryRowContext(r.Context(), "SELECT COUNT(*)"+where, args...).Scan(&total); err != nil {
+	if err := tx.QueryRowContext(r.Context(), "SELECT COUNT(*)"+countFrom+where, args...).Scan(&total); err != nil {
 		failure(w, err)
 		return
 	}
@@ -536,7 +560,7 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 		offset = (page - 1) * limit
 		before = 1 << 62
 	}
-	rows, err := tx.QueryContext(r.Context(), "SELECT e.id,e.category,e.action,e.entry,e.operation,e.run,e.old_path,e.new_path,e.message,e.created,COALESCE(r.config_summary,''),COALESCE(r.model_config_title,''),COALESCE((SELECT SUM(t.tokens) FROM token_usage_records t JOIN run_items i ON i.id=t.item WHERE t.run=e.run AND i.entry=e.entry),0),COALESCE((SELECT MAX(t.estimated_records) FROM token_usage_records t JOIN run_items i ON i.id=t.item WHERE t.run=e.run AND i.entry=e.entry),0)"+where+" AND e.id<? ORDER BY e.id DESC LIMIT ? OFFSET ?", append(args, before, limit+1, offset)...)
+	rows, err := tx.QueryContext(r.Context(), "SELECT e.id,e.category,e.action,e.entry,e.operation,e.run,e.old_path,e.new_path,e.message,e.created,COALESCE(r.config_summary,''),COALESCE(a.model_config_title,r.model_config_title,''),COALESCE(a.model,''),a.fallback,COALESCE((SELECT SUM(t.tokens) FROM token_usage_records t JOIN run_items i ON i.id=t.item WHERE t.run=e.run AND i.entry=e.entry),0),COALESCE((SELECT MAX(t.estimated_records) FROM token_usage_records t JOIN run_items i ON i.id=t.item WHERE t.run=e.run AND i.entry=e.entry),0)"+from+attemptJoin+where+" AND e.id<? ORDER BY e.id DESC LIMIT ? OFFSET ?", append(args, before, limit+1, offset)...)
 	if err != nil {
 		failure(w, err)
 		return
@@ -545,9 +569,10 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
 	for rows.Next() {
 		var id, entry, op, run int64
-		var cat, action, old, new, msg, created, summary, modelTitle string
+		var cat, action, old, new, msg, created, summary, modelTitle, attemptModel string
+		var fallback sql.NullBool
 		var tokens, tokenEstimated int64
-		if err = rows.Scan(&id, &cat, &action, &entry, &op, &run, &old, &new, &msg, &created, &summary, &modelTitle, &tokens, &tokenEstimated); err != nil {
+		if err = rows.Scan(&id, &cat, &action, &entry, &op, &run, &old, &new, &msg, &created, &summary, &modelTitle, &attemptModel, &fallback, &tokens, &tokenEstimated); err != nil {
 			failure(w, err)
 			return
 		}
@@ -555,7 +580,18 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 			Model string `json:"model"`
 		}
 		_ = json.Unmarshal([]byte(summary), &snapshot)
-		out = append(out, map[string]any{"id": id, "category": cat, "action": action, "entry": entry, "operation": op, "run": run, "old_path": old, "new_path": new, "message": msg, "created": created, "model": snapshot.Model, "model_config_title": modelTitle, "tokens": tokens, "token_estimated": tokenEstimated > 0})
+		modelSource := ""
+		if action == "automatic" {
+			modelSource = "unknown"
+			if fallback.Valid {
+				snapshot.Model = attemptModel
+				modelSource = "primary"
+				if fallback.Bool {
+					modelSource = "fallback"
+				}
+			}
+		}
+		out = append(out, map[string]any{"id": id, "category": cat, "action": action, "entry": entry, "operation": op, "run": run, "old_path": old, "new_path": new, "message": msg, "created": created, "model": snapshot.Model, "model_config_title": modelTitle, "model_source": modelSource, "tokens": tokens, "token_estimated": tokenEstimated > 0})
 	}
 	if err := rows.Err(); err != nil {
 		failure(w, err)

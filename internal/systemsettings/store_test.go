@@ -1,11 +1,83 @@
 package systemsettings
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+	"video-rename/internal/domain"
 	"video-rename/internal/storage"
 )
+
+func TestSettingsReadsRemainAvailableDuringWrite(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "settings.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store := Store{DB: db}
+	settings := Default()
+	settings.ExtractWorkers = 3
+	if err := store.Save(settings); err != nil {
+		t.Fatal(err)
+	}
+	numbering := domain.DefaultNumberingSettings()
+	if err := store.SaveNumbering(numbering); err != nil {
+		t.Fatal(err)
+	}
+	const prompt = "只输出已提交的标题。"
+	if _, err := store.SaveFixedPrompt(prompt); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("UPDATE system_settings SET extract_workers=17,numbering='{',fixed_prompt='未提交'"); err != nil {
+		t.Fatal(err)
+	}
+	for _, check := range []struct {
+		name string
+		read func() error
+	}{
+		{"processing", func() error {
+			value, err := store.Get()
+			if err == nil && value != settings {
+				err = fmt.Errorf("settings: got %+v, want %+v", value, settings)
+			}
+			return err
+		}},
+		{"numbering", func() error {
+			value, err := store.Numbering()
+			if err == nil && value != numbering {
+				err = fmt.Errorf("numbering: got %+v, want %+v", value, numbering)
+			}
+			return err
+		}},
+		{"fixed prompt", func() error {
+			value, err := store.FixedPrompt()
+			if err == nil && value != prompt {
+				err = fmt.Errorf("prompt: got %q, want %q", value, prompt)
+			}
+			return err
+		}},
+	} {
+		done := make(chan error, 1)
+		go func() { done <- check.read() }()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("%s: %v", check.name, err)
+			}
+		case <-time.After(time.Second):
+			tx.Rollback()
+			<-done
+			t.Fatalf("%s read waited for the writer connection", check.name)
+		}
+	}
+}
 
 func TestStabilityDefaultsValidationAndRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.sqlite")
