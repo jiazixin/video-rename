@@ -18,7 +18,8 @@ import (
 )
 
 // ErrDirectoryScanChanged asks the caller to retry instead of publishing stale evidence.
-var ErrDirectoryScanChanged = errors.New("目录在扫描期间发生变化，请稍后重试")
+// A mismatch alone does not prove that a user or program changed the directory.
+var ErrDirectoryScanChanged = errors.New("目录扫描校验不一致，请稍后重试")
 
 // Counts refer to indexed entries; Files counts regular files of every media type.
 // Replacing a name with another identity counts as one removal and one addition.
@@ -162,9 +163,6 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *s
 	if err != nil {
 		return result, err
 	}
-	if l.indexEpoch.Load() != baseline.epoch {
-		return result, ErrDirectoryScanChanged
-	}
 	pinned, err := openScanDirectory(l.Root, baseline.chain)
 	if err != nil {
 		return result, err
@@ -186,7 +184,7 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *s
 		}
 		before, scanErr := scanDirectorySnapshot(dir)
 		if scanErr == nil && table == "verification" && !before.Same(observed) {
-			scanErr = ErrDirectoryScanChanged
+			scanErr = scanSnapshotDifference("两遍读取之间的目录属性", observed, before)
 		}
 		if scanErr == nil {
 			scanErr = collectScanMetadata(ctx, stage, table, dir, read, inspect)
@@ -202,17 +200,16 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *s
 			return result, statErr
 		}
 		if !before.Same(after) {
-			return result, ErrDirectoryScanChanged
+			phase := "首次读取期间的目录属性"
+			if table == "verification" {
+				phase = "复核读取期间的目录属性"
+			}
+			return result, scanSnapshotDifference(phase, before, after)
 		}
 		observed = after
 	}
-	var different bool
-	if err = stage.QueryRowContext(ctx, `SELECT EXISTS(SELECT name,kind,identity,size,mtime FROM snapshot EXCEPT SELECT name,kind,identity,size,mtime FROM verification)
-	 OR EXISTS(SELECT name,kind,identity,size,mtime FROM verification EXCEPT SELECT name,kind,identity,size,mtime FROM snapshot)`).Scan(&different); err != nil {
+	if err = scanMetadataDifference(ctx, stage); err != nil {
 		return result, err
-	}
-	if different {
-		return result, ErrDirectoryScanChanged
 	}
 	if _, err = stage.ExecContext(ctx, `UPDATE snapshot SET entry=COALESCE((SELECT id FROM baseline b WHERE b.name=snapshot.name AND b.identity=snapshot.identity),0)`); err != nil {
 		return result, err
@@ -239,7 +236,7 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *s
 				l.cleanScanStaging(cleanupCtx, id, gen, marker, false)
 			}
 		}()
-		if err = l.buildScanGeneration(ctx, id, gen, marker, baseline.epoch, stage); err != nil {
+		if err = l.buildScanGeneration(ctx, id, gen, marker, stage); err != nil {
 			return result, err
 		}
 	}
@@ -273,7 +270,7 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *s
 		return result, err
 	}
 	if !current.Same(observed) {
-		return result, ErrDirectoryScanChanged
+		return result, scanSnapshotDifference("发布前的目录属性", observed, current)
 	}
 	if err = l.publishDirectoryScan(ctx, id, gen, marker, baseline, path, rebuild); err != nil {
 		return result, err
@@ -517,12 +514,9 @@ type stagedScanItem struct {
 	entry int64
 }
 
-func (l *Library) buildScanGeneration(ctx context.Context, id, gen int64, marker string, epoch uint64, stage *sql.DB) error {
+func (l *Library) buildScanGeneration(ctx context.Context, id, gen int64, marker string, stage *sql.DB) error {
 	var after string
 	for {
-		if l.indexEpoch.Load() != epoch {
-			return ErrDirectoryScanChanged
-		}
 		rows, err := stage.QueryContext(ctx, "SELECT name,kind,identity,size,mtime,entry FROM snapshot WHERE name>? ORDER BY name LIMIT ?", after, refreshPageSize)
 		if err != nil {
 			return err
@@ -613,9 +607,6 @@ func (l *Library) publishDirectoryScan(ctx context.Context, id, gen int64, marke
 		return err
 	}
 	defer l.mu.Unlock()
-	if l.indexEpoch.Load() != baseline.epoch {
-		return ErrDirectoryScanChanged
-	}
 	if l.broken != nil {
 		return fmt.Errorf("操作已停止，需要重启恢复: %w", l.broken)
 	}
@@ -641,7 +632,12 @@ func (l *Library) publishDirectoryScan(ctx context.Context, id, gen int64, marke
 		return err
 	}
 	if generation != baseline.generation {
-		return ErrDirectoryScanChanged
+		return fmt.Errorf("%w（当前目录索引版本：%d → %d）", ErrDirectoryScanChanged, baseline.generation, generation)
+	}
+	if l.indexEpoch.Load() != baseline.epoch {
+		if err = validateScanBaseline(ctx, tx, id, baseline); err != nil {
+			return err
+		}
 	}
 	if rebuild {
 		if _, err = tx.ExecContext(ctx, `UPDATE entries SET present=0 WHERE id IN

@@ -203,6 +203,90 @@ func TestCancelAndDuplicateStartsReuseOneRound(t *testing.T) {
 	}
 }
 
+func TestDirectoryScanChangedRetriesOnceAndCountsOnlySuccessfulScan(t *testing.T) {
+	m, l, root, _ := fixture(t)
+	put(t, filepath.Join(root, "one.mp4"))
+	put(t, filepath.Join(root, "two.mp4"))
+	var calls atomic.Int64
+	m.scan = func(ctx context.Context, id int64) (library.ScanDirectoryResult, error) {
+		if calls.Add(1) == 1 {
+			return library.ScanDirectoryResult{Files: 100, Added: 100, Changed: 100, Removed: 100},
+				fmt.Errorf("首次属性读取不一致：%w", library.ErrDirectoryScanChanged)
+		}
+		return l.ScanDirectory(ctx, id)
+	}
+	if _, err := m.Start(t.Context(), []int64{1}, "manual"); err != nil {
+		t.Fatal(err)
+	}
+	s := finished(t, m)
+	if calls.Load() != 2 || s.Status != "completed" || s.Directories != 1 || s.Files != 2 || s.Added != 2 || s.Changed != 0 || s.Removed != 0 || len(s.Errors) != 0 {
+		t.Fatalf("retry did not publish/count exactly one successful scan: calls=%d status=%+v", calls.Load(), s)
+	}
+	entryID(t, l, 1, "one.mp4")
+	entryID(t, l, 1, "two.mp4")
+}
+
+func TestDirectoryScanChangedPersistentFailureRetriesOnlyOnce(t *testing.T) {
+	m, _, _, _ := fixture(t)
+	var calls atomic.Int64
+	m.scan = func(context.Context, int64) (library.ScanDirectoryResult, error) {
+		attempt := calls.Add(1)
+		return library.ScanDirectoryResult{Files: 100, Added: 100},
+			fmt.Errorf("第 %d 次属性读取不一致：%w", attempt, library.ErrDirectoryScanChanged)
+	}
+	if _, err := m.Start(t.Context(), []int64{1}, "manual"); err != nil {
+		t.Fatal(err)
+	}
+	s := finished(t, m)
+	if calls.Load() != 2 || s.Status != "failed" || s.Directories != 0 || s.Files != 0 || s.Added != 0 || len(s.Errors) != 1 {
+		t.Fatalf("persistent inconsistency was not bounded/reported once: calls=%d status=%+v", calls.Load(), s)
+	}
+	if !strings.Contains(s.Errors[0].Message, "第 1 次属性读取不一致") || !strings.Contains(s.Errors[0].Message, "第 2 次属性读取不一致") {
+		t.Fatalf("retry failure lost an observation: %+v", s.Errors)
+	}
+}
+
+func TestDirectoryScanChangedDoesNotRetryAfterCancellation(t *testing.T) {
+	m, _, _, _ := fixture(t)
+	entered, released := make(chan struct{}), make(chan struct{})
+	release := sync.OnceFunc(func() { close(released) })
+	t.Cleanup(release)
+	var calls atomic.Int64
+	m.scan = func(context.Context, int64) (library.ScanDirectoryResult, error) {
+		calls.Add(1)
+		close(entered)
+		<-released // The in-flight NAS call returns its own mismatch after cancellation.
+		return library.ScanDirectoryResult{Files: 100}, library.ErrDirectoryScanChanged
+	}
+	if _, err := m.Start(t.Context(), []int64{1}, "manual"); err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	m.Cancel()
+	release()
+	s := finished(t, m)
+	if calls.Load() != 1 || s.Status != "cancelled" || s.Directories != 0 || s.Files != 0 || len(s.Errors) != 0 {
+		t.Fatalf("cancelled mismatch triggered more work: calls=%d status=%+v", calls.Load(), s)
+	}
+}
+
+func TestDirectoryScanOrdinaryFailureDoesNotRetry(t *testing.T) {
+	m, _, _, _ := fixture(t)
+	var calls atomic.Int64
+	wantErr := errors.New("NAS 目录读取失败")
+	m.scan = func(context.Context, int64) (library.ScanDirectoryResult, error) {
+		calls.Add(1)
+		return library.ScanDirectoryResult{Files: 100}, wantErr
+	}
+	if _, err := m.Start(t.Context(), []int64{1}, "manual"); err != nil {
+		t.Fatal(err)
+	}
+	s := finished(t, m)
+	if calls.Load() != 1 || s.Status != "failed" || s.Directories != 0 || s.Files != 0 || len(s.Errors) != 1 || s.Errors[0].Message != wantErr.Error() {
+		t.Fatalf("ordinary failure was retried or misreported: calls=%d status=%+v", calls.Load(), s)
+	}
+}
+
 func TestCloseWaitsForInFlightFilesystemCallAndRejectsNewWork(t *testing.T) {
 	m, _, _, _ := fixture(t)
 	entered, release := make(chan struct{}), make(chan struct{})

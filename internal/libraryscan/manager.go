@@ -415,6 +415,17 @@ func (m *Manager) scanOne(ctx context.Context, id int64, scan func(context.Conte
 	m.status.CurrentPath = path
 	m.mu.Unlock()
 	result, err := scan(ctx, id)
+	if errors.Is(err, library.ErrDirectoryScanChanged) && ctx.Err() == nil {
+		// Retry the complete scan once so a transient NAS observation can settle.
+		// A missing or replaced root must stop the round before another read.
+		if _, rootErr := m.library.Path(1); rootErr == nil && ctx.Err() == nil {
+			firstErr := err
+			result, err = scan(ctx, id)
+			if err != nil {
+				err = fmt.Errorf("重试扫描失败：%w；首次扫描：%v", err, firstErr)
+			}
+		}
+	}
 	if err != nil && ctx.Err() != nil {
 		return false, false
 	}

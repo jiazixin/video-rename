@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -167,6 +168,165 @@ func TestScanDirectorySlowMetadataDoesNotBlockRename(t *testing.T) {
 	}
 }
 
+func TestScanDirectoryIgnoresUnrelatedIndexChanges(t *testing.T) {
+	for _, rebuild := range []bool{false, true} {
+		for _, operation := range []struct {
+			name       string
+			changeFile bool
+			background bool
+		}{
+			{name: "refresh-unchanged"},
+			{name: "refresh-changed", changeFile: true},
+			{name: "scan-changed", changeFile: true, background: true},
+		} {
+			t.Run(fmt.Sprintf("rebuild=%v/%s", rebuild, operation.name), func(t *testing.T) {
+				l, root, _ := fixture(t)
+				for _, name := range []string{"a", "b"} {
+					if err := os.Mkdir(filepath.Join(root, name), 0700); err != nil {
+						t.Fatal(err)
+					}
+					put(t, filepath.Join(root, name, "video.mp4"))
+				}
+				refresh(t, l, 1)
+				a, b := entry(t, l, 1, "a").ID, entry(t, l, 1, "b").ID
+				refresh(t, l, a)
+				refresh(t, l, b)
+				before, err := l.DirectoryState(t.Context(), a)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if rebuild {
+					put(t, filepath.Join(root, "a", "added.mp4"))
+				}
+				var first *os.File
+				changed := false
+				result, err := l.scanDirectory(t.Context(), a, func(dir *os.File, n int) ([]os.DirEntry, error) {
+					if first == nil {
+						first = dir
+					} else if dir != first && !changed {
+						changed = true
+						if operation.changeFile {
+							if err := os.WriteFile(filepath.Join(root, "b", "video.mp4"), []byte("unrelated file changed during the scan"), 0600); err != nil {
+								return nil, err
+							}
+						}
+						if operation.background {
+							if _, err := l.ScanDirectory(t.Context(), b); err != nil {
+								return nil, err
+							}
+						} else if err := l.Refresh(t.Context(), b); err != nil {
+							return nil, err
+						}
+					}
+					return dir.ReadDir(n)
+				})
+				if err != nil {
+					t.Fatalf("unrelated directory update invalidated the scan: %v", err)
+				}
+				if !changed {
+					t.Fatal("unrelated directory was not updated during the scan")
+				}
+				wantFiles, wantAdded := int64(1), int64(0)
+				if rebuild {
+					wantFiles, wantAdded = 2, 1
+				}
+				if result.Files != wantFiles || result.Added != wantAdded || result.Changed+result.Removed != 0 {
+					t.Fatalf("unrelated changes affected scan counts: %+v", result)
+				}
+				after, err := l.DirectoryState(t.Context(), a)
+				if err != nil || after.Error != "" || after.Refreshing || (after.Generation != before.Generation) != rebuild {
+					t.Fatalf("scan did not publish the expected generation: before=%+v after=%+v err=%v", before, after, err)
+				}
+			})
+		}
+	}
+}
+
+func TestScanDirectoryIgnoresUnchangedAncestorRefresh(t *testing.T) {
+	l, root, _ := fixture(t)
+	inside := filepath.Join(root, "inside")
+	if err := os.Mkdir(inside, 0700); err != nil {
+		t.Fatal(err)
+	}
+	put(t, filepath.Join(inside, "video.mp4"))
+	refresh(t, l, 1)
+	id := entry(t, l, 1, "inside").ID
+	refresh(t, l, id)
+	before, err := l.DirectoryState(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshed := false
+	result, err := l.scanDirectory(t.Context(), id, func(dir *os.File, n int) ([]os.DirEntry, error) {
+		if !refreshed {
+			refreshed = true
+			if err := l.Refresh(t.Context(), 1); err != nil {
+				return nil, err
+			}
+		}
+		return dir.ReadDir(n)
+	})
+	if err != nil || result.Files != 1 || result.Added+result.Changed+result.Removed != 0 {
+		t.Fatalf("unchanged ancestor refresh invalidated the scan: %+v %v", result, err)
+	}
+	after, err := l.DirectoryState(t.Context(), id)
+	if err != nil || after.Generation != before.Generation || after.Error != "" {
+		t.Fatalf("unchanged ancestor refresh affected the generation: before=%+v after=%+v err=%v", before, after, err)
+	}
+}
+
+func TestScanDirectoryRejectsRestoredEntryVersionChange(t *testing.T) {
+	l, root, _ := fixture(t)
+	put(t, filepath.Join(root, "video.mp4"))
+	refresh(t, l, 1)
+	before, err := l.DirectoryState(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := entry(t, l, 1, "video.mp4")
+	disk, err := domain.StatSnapshot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := false
+	_, err = l.scanDirectory(t.Context(), 1, func(dir *os.File, n int) ([]os.DirEntry, error) {
+		if !restored {
+			restored = true
+			op, err := l.Rename(file.ID, file.Version, "renamed.mp4", "scan-rename-restore")
+			if err != nil {
+				return nil, err
+			}
+			if _, err := l.Restore(op.ID, "scan-restore-version"); err != nil {
+				return nil, err
+			}
+			// Restore directory metadata too, so the file's increased index
+			// version is the only remaining evidence of the committed operations.
+			if err := os.Chtimes(root, disk.ModTime, disk.ModTime); err != nil {
+				return nil, err
+			}
+			current, err := domain.StatSnapshot(root)
+			if err != nil {
+				return nil, err
+			}
+			if !current.Same(disk) {
+				return nil, errors.New("test did not restore the directory snapshot")
+			}
+		}
+		return dir.ReadDir(n)
+	})
+	if !errors.Is(err, ErrDirectoryScanChanged) {
+		t.Fatalf("restored entry's version change was accepted: %v", err)
+	}
+	current := entry(t, l, 1, "video.mp4")
+	if current.ID != file.ID || current.Identity != file.Identity || current.Size != file.Size || current.Mtime != file.Mtime || current.Version != file.Version+2 {
+		t.Fatalf("rename/restore did not preserve content and change only the version: before=%+v after=%+v", file, current)
+	}
+	after, err := l.DirectoryState(t.Context(), 1)
+	if err != nil || after.Generation != before.Generation || after.Error == "" {
+		t.Fatalf("stale scan replaced the restored entry's generation: %+v %v", after, err)
+	}
+}
+
 func TestScanDirectoryMetadataFailureKeepsIndexAndCleansScratch(t *testing.T) {
 	l, root, _ := fixture(t)
 	put(t, filepath.Join(root, "old.mp4"))
@@ -293,6 +453,11 @@ func TestScanDirectoryRejectsContentChangeBetweenPasses(t *testing.T) {
 	})
 	if !errors.Is(err, ErrDirectoryScanChanged) {
 		t.Fatalf("content change was published: %v", err)
+	}
+	for _, evidence := range []string{"条目两遍读取", "writing.mp4", "首次", "复核"} {
+		if !strings.Contains(err.Error(), evidence) {
+			t.Fatalf("content change diagnostic omitted %q: %v", evidence, err)
+		}
 	}
 	after, _ := l.DirectoryState(t.Context(), 1)
 	if after.Generation != before.Generation {
@@ -424,7 +589,7 @@ func TestScanDirectoryReclaimsInterruptedCandidatesAfterRestart(t *testing.T) {
 			if _, err := stage.Exec(`UPDATE snapshot SET entry=COALESCE((SELECT id FROM baseline b WHERE b.name=snapshot.name AND b.identity=snapshot.identity),0)`); err != nil {
 				t.Fatal(err)
 			}
-			if err := l.buildScanGeneration(t.Context(), 1, baseline.generation+1, "directory-scan:1:interrupted", baseline.epoch, stage); err != nil {
+			if err := l.buildScanGeneration(t.Context(), 1, baseline.generation+1, "directory-scan:1:interrupted", stage); err != nil {
 				t.Fatal(err)
 			}
 			// Retain the bounded staging commits as if the process stopped before
