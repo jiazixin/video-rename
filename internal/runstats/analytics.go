@@ -96,6 +96,7 @@ type ProfilePerf struct {
 }
 type ScatterPoint struct {
 	Run          int64  `json:"run"`
+	Task         string `json:"task"`
 	Items        int64  `json:"items"`
 	Ms           int64  `json:"ms"`
 	Status       string `json:"status"`
@@ -109,6 +110,7 @@ type FailureGroup struct {
 }
 type BatchRow struct {
 	ID           int64  `json:"id"`
+	Task         string `json:"task"`
 	Status       string `json:"status"`
 	Source       string `json:"source"`
 	ProfileID    int64  `json:"profile_id"`
@@ -149,6 +151,7 @@ type runRow struct {
 	profileTitle              string
 	model, provider, protocol string
 	source                    string
+	task                      string
 	status, created           string
 	started, finished         string
 	startMs, finishedMs       int64
@@ -268,7 +271,7 @@ func Analytics(db *storage.Store, q AnalysisQuery) (*Report, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT id,source,plan,config_summary,model_config_id,model_config_title,status,created,started,finished,discovered,done,skipped,failed,error FROM runs ORDER BY id`)
+	rows, err := tx.Query(`SELECT id,task,source,plan,config_summary,model_config_id,model_config_title,status,created,started,finished,discovered,done,skipped,failed,error FROM runs ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +280,7 @@ func Analytics(db *storage.Store, q AnalysisQuery) (*Report, error) {
 		var r runRow
 		var plan, profileID int64
 		var source, summary, title string
-		if err = rows.Scan(&r.id, &source, &plan, &summary, &profileID, &title, &r.status, &r.created, &r.started, &r.finished, &r.discovered, &r.done, &r.skipped, &r.failed, &r.errorText); err != nil {
+		if err = rows.Scan(&r.id, &r.task, &source, &plan, &summary, &profileID, &title, &r.status, &r.created, &r.started, &r.finished, &r.discovered, &r.done, &r.skipped, &r.failed, &r.errorText); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -415,6 +418,10 @@ func Analytics(db *storage.Store, q AnalysisQuery) (*Report, error) {
 				group.lastMs = r.finishedMs
 			}
 		}
+		// Extraction contributes to run totals, but never to model comparisons.
+		if r.task != "rename" || r.profileID <= 0 {
+			continue
+		}
 		profile := profileStats[r.profileID]
 		if profile == nil {
 			profile = &ProfilePerf{ID: r.profileID, Title: r.profileTitle, Model: r.model, Provider: r.provider, Protocol: r.protocol}
@@ -434,7 +441,9 @@ func Analytics(db *storage.Store, q AnalysisQuery) (*Report, error) {
 		if it.status == "done" || it.status == "failed" {
 			if it.startedMs > 0 && it.finishedMsItem > it.startedMs {
 				itemDurations = append(itemDurations, it.finishedMsItem-it.startedMs)
-				profileDurations[r.profileID] = append(profileDurations[r.profileID], it.finishedMsItem-it.startedMs)
+				if r.task == "rename" && r.profileID > 0 {
+					profileDurations[r.profileID] = append(profileDurations[r.profileID], it.finishedMsItem-it.startedMs)
+				}
 				count, sum := avgPerRun[it.run][0], avgPerRun[it.run][1]
 				avgPerRun[it.run] = [2]int64{count + 1, sum + it.finishedMsItem - it.startedMs}
 				totals.TimedItems++
@@ -525,7 +534,7 @@ func Analytics(db *storage.Store, q AnalysisQuery) (*Report, error) {
 		if r.durationMs == 0 {
 			continue
 		}
-		scatter = append(scatter, ScatterPoint{Run: r.id, Items: r.discovered, Ms: r.durationMs, Status: r.status, Source: r.source, ProfileTitle: r.profileTitle})
+		scatter = append(scatter, ScatterPoint{Run: r.id, Task: r.task, Items: r.discovered, Ms: r.durationMs, Status: r.status, Source: r.source, ProfileTitle: r.profileTitle})
 	}
 	// Most recent batches matter most for the size/duration view; cap the payload.
 	slices.SortFunc(scatter, func(a, b ScatterPoint) int { return cmp.Compare(b.Run, a.Run) })
@@ -559,7 +568,7 @@ func Analytics(db *storage.Store, q AnalysisQuery) (*Report, error) {
 		if count, sum := avgPerRun[r.id][0], avgPerRun[r.id][1]; count > 0 {
 			avg = sum / count
 		}
-		report.Batches.Items = append(report.Batches.Items, BatchRow{ID: r.id, Status: r.status, Source: r.source, ProfileID: r.profileID, ProfileTitle: r.profileTitle, Model: r.model, Provider: r.provider, Protocol: r.protocol, Created: r.created, Started: r.started, Finished: r.finished, Discovered: r.discovered, Done: r.done, Skipped: r.skipped, Failed: r.failed, DurationMs: r.durationMs, AvgItemMs: avg})
+		report.Batches.Items = append(report.Batches.Items, BatchRow{ID: r.id, Task: r.task, Status: r.status, Source: r.source, ProfileID: r.profileID, ProfileTitle: r.profileTitle, Model: r.model, Provider: r.provider, Protocol: r.protocol, Created: r.created, Started: r.started, Finished: r.finished, Discovered: r.discovered, Done: r.done, Skipped: r.skipped, Failed: r.failed, DurationMs: r.durationMs, AvgItemMs: avg})
 	}
 	options, err := reportOptions(tx)
 	if err != nil {

@@ -2151,10 +2151,27 @@ textarea:focus-visible {
   overflow-wrap: anywhere;
   min-width: 0;
 }
+.history-table-scroll {
+  container-type: inline-size;
+}
 .history-table {
+  --history-min-width: 1080px;
+  --history-selection-width: 0px;
+  --history-actions-width: 64px;
+  --history-fixed-width: calc(
+    488px + var(--history-actions-width) + var(--history-selection-width)
+  );
+  /* Resolve flexible columns from the scroll container, including on narrow screens. */
+  --history-content-width: calc(max(var(--history-min-width), 100cqi) - var(--history-fixed-width));
   table-layout: fixed;
-  min-width: 1122px;
+  min-width: var(--history-min-width);
   width: 100%;
+}
+.history-table.failure {
+  --history-actions-width: 108px;
+}
+.history-table.multi {
+  --history-selection-width: 42px;
 }
 .history-table th.history-time {
   width: 96px;
@@ -2166,28 +2183,32 @@ textarea:focus-visible {
   width: 140px;
 }
 .history-table th.history-directory {
-  width: 132px;
+  width: calc(var(--history-content-width) * 0.24);
 }
 .history-table th.history-old-name {
-  width: 160px;
+  width: calc(var(--history-content-width) * 0.38);
 }
 .history-table.success th.history-result {
-  width: 160px;
+  width: calc(var(--history-content-width) * 0.38);
 }
-.history-table.success th.history-run {
-  width: 110px;
+.history-table th.history-run {
+  width: 76px;
 }
-.history-table.failure th.history-result {
-  width: 104px;
+.history-table th.history-tokens {
+  width: 84px;
 }
-.history-table.failure th.history-tokens {
-  width: 120px;
+.history-table.failure th.history-old-name {
+  width: calc(var(--history-content-width) * 0.34);
 }
-.history-table.success th:last-child {
-  width: 65px;
+.history-table.failure th.history-reason {
+  width: calc(var(--history-content-width) * 0.42);
 }
-.history-table.failure th:last-child {
-  width: 104px;
+.history-table th:last-child {
+  width: var(--history-actions-width);
+}
+.history-table .log-directory {
+  min-width: 0;
+  max-width: 100%;
 }
 .history-row-actions {
   white-space: nowrap;
@@ -2209,6 +2230,19 @@ textarea:focus-visible {
 .history-table td {
   padding-left: 14px;
   padding-right: 14px;
+}
+.history-table th.history-run,
+.history-table th.history-tokens,
+.history-table td.history-run-value,
+.history-table td.history-token-value {
+  padding-left: 8px;
+  padding-right: 8px;
+  white-space: nowrap;
+}
+.history-run-value span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .action-badge {
   display: inline-flex;

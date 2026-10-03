@@ -1,6 +1,7 @@
 <script setup lang="ts">
   import { computed, onMounted, onUnmounted, ref } from 'vue';
   export interface ScatterPoint {
+    task: 'rename' | 'extract';
     run: number;
     items: number;
     ms: number;
@@ -191,7 +192,11 @@
       <span
         >{{ placed[active]!.items.toLocaleString() }} 个目标 ·
         {{ placed[active]!.source === 'manual' ? '手动' : '自动计划' }} ·
-        {{ placed[active]!.profile_title || '未命名配置' }}</span
+        {{
+          placed[active]!.task === 'extract'
+            ? '抽帧'
+            : placed[active]!.profile_title || '未命名配置'
+        }}</span
       >
       <span>状态：{{ statusName(placed[active]!.status) }}</span>
     </div>

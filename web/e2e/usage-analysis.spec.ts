@@ -11,9 +11,9 @@ async function login(page:any){
 function fixture(){
  const hour=3600_000,now=Date.now()
  const bucket=(i:number,finished:number,avg:number,done:number,skipped:number,failed:number)=>({from:new Date(now-(6-i)*hour).toISOString(),to:new Date(now-(5-i)*hour).toISOString(),finished_batches:finished,avg_batch_ms:avg,done,skipped,failed})
- const batch=(id:number,status:string,source:string,discovered:number,done:number,skipped:number,failed:number,duration:number)=>({id,status,source,profile_id:1,profile_title:'默认视频命名',model:'vision-a',provider:'custom',protocol:'openai',created:new Date(now-6*hour).toISOString(),started:new Date(now-5*hour).toISOString(),finished:new Date(now-2*hour).toISOString(),discovered,done,skipped,failed,duration_ms:duration,avg_item_ms:Math.round(duration/Math.max(done,1))})
+ const batch=(id:number,status:string,source:string,discovered:number,done:number,skipped:number,failed:number,duration:number)=>({id,task:'rename',status,source,profile_id:1,profile_title:'默认视频命名',model:'vision-a',provider:'custom',protocol:'openai',created:new Date(now-6*hour).toISOString(),started:new Date(now-5*hour).toISOString(),finished:new Date(now-2*hour).toISOString(),discovered,done,skipped,failed,duration_ms:duration,avg_item_ms:Math.round(duration/Math.max(done,1))})
  const rows=[batch(31,'completed','manual',10,8,2,0,3_600_000),batch(12,'partial_failure','scheduled',4,3,0,1,1_800_000),batch(7,'cancelled','manual',2,0,0,0,600_000)]
- const scatterRows=rows.map(b=>({run:b.id,items:b.discovered,ms:b.duration_ms,status:b.status,source:b.source,profile_title:b.profile_title}))
+ const scatterRows=rows.map(b=>({run:b.id,task:b.task,items:b.discovered,ms:b.duration_ms,status:b.status,source:b.source,profile_title:b.profile_title}))
  return {
   range:{from:new Date(now-24*hour).toISOString(),to:new Date(now).toISOString(),timezone:'Asia/Shanghai',interval:'hour'},
   totals:{batches:3,completed:2,partial_failure:1,failed_batches:0,cancelled:1,interrupted:0,active:0,done:8,skipped:2,failed:1,timed_items:6,avg_batch_ms:1_800_000,avg_item_ms:45_000,p50_item_ms:40_000,p95_item_ms:70_000,throughput_per_hour:0.46},
@@ -185,4 +185,57 @@ test('非法 JSON 响应显示错误并可重试',async({page})=>{
  await page.getByRole('button',{name:'重试',exact:true}).click()
  await expect(page.getByRole('alert')).toHaveCount(0)
  await expect(page.locator('.usage-kpi').first()).toBeVisible()
+})
+
+
+test('抽帧明细说明不使用模型且仅抽帧时没有模型性能比较',async({page})=>{
+ await login(page)
+ const data=fixture()
+ const extraction={...data.batches.items[0]!,task:'extract',profile_id:0,profile_title:'',model:'',provider:'',protocol:''}
+ const scheduledExtraction={...extraction,id:7,source:'scheduled',status:'running',finished:'',duration_ms:0}
+ const unnamedModel={...data.batches.items[1]!,id:9,model:''}
+ data.batches.items=[extraction,data.batches.items[1]!,scheduledExtraction,unnamedModel]
+ data.batches.total=4
+ data.profiles=data.profiles.slice(0,1)
+ data.scatter=[{run:extraction.id,task:extraction.task,items:extraction.discovered,ms:extraction.duration_ms,status:extraction.status,source:extraction.source,profile_title:''}]
+ data.options.profiles.unshift({id:0,title:''})
+ let extractionFiltered=false
+ await page.route('**/api/runs/analytics*',route=>{
+  extractionFiltered=new URL(route.request().url()).searchParams.get('profile')==='0'
+  const response=structuredClone(data)
+  if(extractionFiltered){
+   response.profiles=[]
+   response.batches.items=[extraction,scheduledExtraction]
+   response.batches.total=2
+  }
+  return route.fulfill({json:response})
+ })
+ await page.goto('/#usage/analysis')
+ const detail=page.locator('.panel').filter({has:page.getByRole('heading',{name:'批次明细',exact:true})})
+ const comparison=page.locator('.panel').filter({has:page.getByRole('heading',{name:'模型配置性能比较',exact:true})})
+ for(const id of [31,7]){
+  const row=detail.locator('tbody tr').filter({has:page.getByText(`#${id}`,{exact:true})})
+  await expect(row.getByText('抽帧',{exact:true})).toBeVisible()
+  await expect(row.getByRole('cell',{name:'不使用模型',exact:true})).toBeVisible()
+ }
+ await expect(detail.getByText('配置 #0',{exact:true})).toHaveCount(0)
+ await expect(detail.getByRole('cell',{name:'vision-a',exact:true})).toBeVisible()
+ await expect(detail.getByRole('cell',{name:'未记录模型',exact:true})).toBeVisible()
+ await expect(comparison.locator('tbody tr')).toHaveCount(1)
+ await expect(comparison.getByText('配置 #0',{exact:true})).toHaveCount(0)
+ const scatter=page.locator('.analysis-scatter svg')
+ await scatter.focus()
+ await scatter.press('ArrowRight')
+ await expect(page.locator('.analysis-scatter .trend-tooltip')).toContainText('抽帧')
+ await expect(page.locator('.analysis-scatter .trend-tooltip')).not.toContainText('未命名配置')
+ await detail.screenshot({path:'test-results/usage-analysis-extraction-desktop.png',animations:'disabled'})
+ await page.getByRole('combobox',{name:'模型配置'}).click()
+ await page.getByRole('option',{name:'无模型配置（抽帧）',exact:true}).click()
+ await expect(comparison.getByText('区间内没有可比较的命名批次',{exact:true})).toBeVisible()
+ expect(extractionFiltered).toBe(true)
+ await expect(detail.locator('tbody tr')).toHaveCount(2)
+ await page.setViewportSize({width:390,height:844})
+ await expect(detail.getByText('抽帧',{exact:true})).toHaveCount(2)
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy()
+ await detail.screenshot({path:'test-results/usage-analysis-extraction-mobile.png',animations:'disabled'})
 })

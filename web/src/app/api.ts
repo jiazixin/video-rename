@@ -354,6 +354,7 @@ export interface AnalysisProfile {
   throughput_per_hour: number
 }
 export interface AnalysisScatter {
+  task: 'rename' | 'extract'
   run: number
   items: number
   ms: number
@@ -367,6 +368,7 @@ export interface AnalysisFailure {
   last_at: string
 }
 export interface AnalysisBatch {
+  task: 'rename' | 'extract'
   id: number
   status: string
   source: string

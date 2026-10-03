@@ -1,6 +1,7 @@
 package runstats
 
 import (
+	"cmp"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -29,6 +30,7 @@ type seedItem struct {
 type seedBatch struct {
 	id                                 int64
 	source                             string
+	task                               string
 	plan                               int64
 	profile                            int64
 	title                              string
@@ -42,8 +44,12 @@ func at(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 
 func seedBatch2(t *testing.T, db *storage.Store, b seedBatch) {
 	t.Helper()
-	if _, err := db.Exec(`INSERT INTO runs(id,source,targets,recursive,status,created,started,finished,discovered,done,skipped,failed,error,request_key,plan,config_summary,model_config_id,model_config_title) VALUES(?,?,'[]',1,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		b.id, b.source, b.status, b.created, b.started, b.finished, b.discovered, b.done, b.skipped, b.failed, b.err, fmt.Sprint("key-", b.id), b.plan, `{"model":"vision","provider":"custom","protocol":"openai"}`, b.profile, b.title); err != nil {
+	summary := `{"model":"vision","provider":"custom","protocol":"openai"}`
+	if b.task == "extract" {
+		summary = `{}`
+	}
+	if _, err := db.Exec(`INSERT INTO runs(id,task,source,targets,recursive,status,created,started,finished,discovered,done,skipped,failed,error,request_key,plan,config_summary,model_config_id,model_config_title) VALUES(?,?,?,'[]',1,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		b.id, cmp.Or(b.task, "rename"), b.source, b.status, b.created, b.started, b.finished, b.discovered, b.done, b.skipped, b.failed, b.err, fmt.Sprint("key-", b.id), b.plan, summary, b.profile, b.title); err != nil {
 		t.Fatal(err)
 	}
 	for i, item := range b.items {
@@ -307,11 +313,50 @@ func TestQueuedCancellationAndRenamedProfiles(t *testing.T) {
 func TestFilterExtractionWithoutModel(t *testing.T) {
 	db := analyticsDB(t)
 	base := time.Date(2026, 9, 27, 0, 0, 0, 0, time.UTC)
-	for _, id := range []int64{1, 2} {
-		seedBatch2(t, db, seedBatch{id: id, profile: id - 1, source: "manual", status: "queued", created: at(base)})
+	for _, b := range []seedBatch{
+		{id: 1, task: "extract", source: "manual", status: "completed", done: 1, discovered: 1,
+			created: at(base), started: at(base), finished: at(base.Add(5 * time.Second)),
+			items: []seedItem{{status: "done", started: base.UnixMilli(), finished: base.Add(5 * time.Second).UnixMilli()}}},
+		{id: 2, task: "rename", profile: 1, title: "命名模型", source: "manual", status: "completed", done: 1, discovered: 1,
+			created: at(base), started: at(base), finished: at(base.Add(time.Minute)),
+			items: []seedItem{{status: "done", started: base.UnixMilli(), finished: base.Add(time.Minute).UnixMilli()}}},
+		{id: 3, task: "extract", source: "schedule", plan: 1, status: "running", created: at(base)},
+	} {
+		seedBatch2(t, db, b)
 	}
-	report, err := Analytics(db, AnalysisQuery{To: base.Add(time.Hour).UnixMilli(), ProfileSet: true, Profile: 0})
-	if err != nil || report.Totals.Batches != 1 || report.Batches.Items[0].ProfileID != 0 {
-		t.Fatal(report, err)
+	report, err := Analytics(db, AnalysisQuery{To: base.Add(time.Hour).UnixMilli()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Totals.Batches != 3 || report.Totals.Done != 2 || report.Totals.Active != 1 || report.Totals.AvgItemMs != 32_500 || report.Totals.AvgBatchMs != 32_500 {
+		t.Fatal("extraction missing from overall totals", report.Totals)
+	}
+	if len(report.Profiles) != 1 || report.Profiles[0].ID != 1 || report.Profiles[0].Batches != 1 || report.Profiles[0].Done != 1 || report.Profiles[0].AvgItemMs != 60_000 || report.Profiles[0].P50ItemMs != 60_000 || report.Profiles[0].P95ItemMs != 60_000 || report.Profiles[0].ThroughputPerHour != 1 {
+		t.Fatal("extraction included in model comparison", report.Profiles)
+	}
+	if len(report.Options.Profiles) != 2 || report.Options.Profiles[0].ID != 0 {
+		t.Fatal("extraction filter missing", report.Options)
+	}
+	var trendDone, timedItems int64
+	for _, b := range report.Trend {
+		trendDone += b.Done
+	}
+	for _, b := range report.Distribution {
+		timedItems += b.Count
+	}
+	if trendDone != 2 || timedItems != 2 || len(report.Scatter) != 2 || report.Scatter[1].Task != "extract" {
+		t.Fatal("extraction missing from charts", report.Trend, report.Distribution, report.Scatter)
+	}
+	report, err = Analytics(db, AnalysisQuery{To: base.Add(time.Hour).UnixMilli(), ProfileSet: true, Profile: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Totals.Batches != 2 || len(report.Profiles) != 0 || len(report.Batches.Items) != 2 || report.Totals.AvgItemMs != 5_000 {
+		t.Fatal("extraction-only report", report)
+	}
+	for _, b := range report.Batches.Items {
+		if b.Task != "extract" || b.ProfileID != 0 || b.ProfileTitle != "" || b.Model != "" {
+			t.Fatal("extraction batch metadata", b)
+		}
 	}
 }

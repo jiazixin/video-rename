@@ -1,12 +1,12 @@
 import {test,expect,type Page} from '@playwright/test'
 
-async function openHistory(page:Page){
+async function openHistory(page:Page,longContent=false){
  await page.route('**/api/model-configs',route=>route.fulfill({json:[{id:1,title:'原模型',ready:true,is_default:true,body:'原提示词'},{id:2,title:'备用模型',ready:true,is_default:false,body:'新提示词'}]}))
  await page.route('**/api/logs/batches',route=>route.fulfill({json:[7]}))
  await page.route('**/api/logs?*',route=>{
   const params=new URL(route.request().url()).searchParams
   const category=params.get('category'),index=Number(params.get('page'))||1
-  const items=Array.from({length:4},(_,i)=>({id:10-i,entry:10-i,category,action:'automatic',run:7,old_path:`目录/片段${10-i}.mp4`,new_path:'新名称.mp4',created:'2026-09-30T08:00:00Z'}))
+  const items=Array.from({length:4},(_,i)=>({id:10-i,entry:10-i,category,action:'automatic',run:7,old_path:longContent?`素材库/旅行记录/2026年秋天/片段${10-i}_`+'山间晨雾与日出'.repeat(8)+'.mp4':`目录/片段${10-i}.mp4`,new_path:longContent?'素材库/旅行记录/2026年秋天/'+'秋日清晨山间云海与日出'.repeat(8)+'.mp4':'新名称.mp4',model_config_title:'原模型',model:'vision-test',tokens:123456,token_estimated:true,message:'TITLE_INVALID: 模型返回了多行标题，需要重试生成符合命名规则的标题。',created:'2026-09-30T08:00:00Z'}))
   return route.fulfill({json:{items,total:251,page:index}})
  })
  await page.request.post('/api/auth/login',{data:{username:'admin',password:'test-password-123'}})
@@ -18,7 +18,7 @@ async function openHistory(page:Page){
 test('宽屏成功和失败记录及诊断行占满表格，多选和窄屏保持列对齐',async({page})=>{
  await page.setViewportSize({width:2560,height:1440})
  await page.route('**/api/logs/*/diagnostics',route=>route.fulfill({json:{request:'长请求内容'.repeat(600),response:'模型响应'}}))
- await openHistory(page)
+ await openHistory(page,true)
  const table=page.locator('.history-table')
  async function expectAligned(){
   const edges=await table.evaluate(element=>{
@@ -34,6 +34,24 @@ test('宽屏成功和失败记录及诊断行占满表格，多选和窄屏保�
   await page.getByRole('button',{name:category,exact:true}).click()
   await expect(page.getByText('共 251 项 · 4 项 / 当前页')).toBeVisible()
   await expectAligned()
+  const finalColumn=category==='成功记录'?'新文件名':'失败原因'
+  await expect(table.locator('thead th')).toHaveText(['时间','操作','模型配置','批次','token数','目录','旧文件名',finalColumn,''])
+  await expect(table.locator('tbody tr').first().locator('td').nth(3)).toHaveText('#7')
+  await expect(table.locator('tbody tr').first().locator('td').nth(4)).toHaveText('≈123.5K')
+  const compactWidths:number[][]=[]
+  for(const width of [1440,2560]){
+   await page.setViewportSize({width,height:1440})
+   const widths=await table.locator('thead th').evaluateAll(cells=>cells.map(cell=>cell.getBoundingClientRect().width))
+   compactWidths.push(widths.slice(3,5))
+   expect(widths[3]).toBeLessThan(90)
+   expect(widths[4]).toBeLessThan(100)
+   expect(widths[6]).toBeGreaterThan(widths[5]!)
+   expect(widths[6]).toBeGreaterThan(widths[4]!*1.8)
+   expect(widths[7]).toBeGreaterThanOrEqual(widths[6]!-2)
+   await expectAligned()
+   await table.screenshot({path:`test-results/history-columns-${category}-${width}.png`,animations:'disabled'})
+  }
+  for(let i=0;i<2;i++)expect(Math.abs(compactWidths[0]![i]!-compactWidths[1]![i]!)).toBeLessThan(2)
   await table.getByRole('button',{name:'原始请求',exact:true}).first().click()
   await expect(table.locator('.diagnostic-content').first()).toContainText('长请求内容')
   await expectAligned()

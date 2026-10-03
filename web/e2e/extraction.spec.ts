@@ -126,6 +126,16 @@ test('三个独立抽帧入口、真实缓存复用及统一成功失败记录',
   expect(automatic.success.items[0].finished).toBeTruthy()
   expect(automatic.success.items[0].duration_ms).toBeGreaterThanOrEqual(0)
 
+  const analytics=await(await page.request.get('/api/runs/analytics')).json()
+  expect(analytics.batches.items.find((b:any)=>b.id===first)).toMatchObject({task:'extract',profile_id:0,profile_title:'',model:''})
+  expect(analytics.batches.items.find((b:any)=>b.id===renamed.id)).toMatchObject({task:'rename',profile_id:profile.id,model:'视觉模型 · 本地测试'})
+  expect(analytics.profiles.some((p:any)=>p.id===0)).toBe(false)
+  expect(analytics.profiles.find((p:any)=>p.id===profile.id)).toMatchObject({batches:1,done:1})
+  const extractionAnalytics=await(await page.request.get('/api/runs/analytics?profile=0')).json()
+  expect(extractionAnalytics.profiles).toEqual([])
+  expect(extractionAnalytics.batches.total).toBeGreaterThanOrEqual(4)
+  expect(extractionAnalytics.batches.items.every((b:any)=>b.task==='extract')).toBe(true)
+
   await page.getByRole('button',{name:'抽帧记录',exact:true}).click()
   await expect(page.locator('.log-tabs button')).toHaveText(['成功记录','失败记录'])
   const success=page.getByRole('region',{name:'抽帧成功',exact:true}),failure=page.getByRole('region',{name:'抽帧失败',exact:true})

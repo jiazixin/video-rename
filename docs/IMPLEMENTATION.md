@@ -60,7 +60,7 @@ API使用Go方法路由、严格单JSON对象、未知字段拒绝及64KiB请求
 
 诊断复制统一使用 `web/src/lib/clipboard/clipboard.ts`：安全上下文优先 Clipboard API，缺失或拒绝时尝试原生选区复制；恢复焦点、选区与滚动，失败保留诊断原文并提示手动选取。窄屏Prompt卡片的标题和操作分行，长标题完整换行。
 
-token_usage_records以(item,attempt)幂等，单事务推进请求账本和run_token_usage；按实际尝试配置归属，缺usage时只粗估文字。model_attempts保存各次请求诊断。runstats按实际开始/完成计算耗时，排队取消不计耗时；P50/P95为nearest-rank。统计区间为[from,to)，按IANA时区分桶；历史与抽帧日期筛选比较时间值，SQLite日期函数按毫秒精度处理，亚毫秒边界可能舍入。
+token_usage_records以(item,attempt)幂等，单事务推进请求账本和run_token_usage；按实际尝试配置归属，缺usage时只粗估文字。model_attempts保存各次请求诊断。runstats按实际开始/完成计算耗时，排队取消不计耗时；P50/P95为nearest-rank。独立抽帧计入整体运行统计、趋势和批次明细，明细按记录的task标注抽帧且不使用模型；模型配置性能比较仅统计带模型配置的命名批次，不计入抽帧的结果和耗时。统计区间为[from,to)，按IANA时区分桶；历史与抽帧日期筛选比较时间值，SQLite日期函数按毫秒精度处理，亚毫秒边界可能舍入。
 
 ## 构建与验证
 

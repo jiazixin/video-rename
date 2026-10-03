@@ -449,7 +449,7 @@
         </div>
         <div class="panel">
           <div class="panel-toolbar"
-            ><h2>模型配置性能比较</h2><span class="subtle">按批次数量排序</span></div
+            ><h2>模型配置性能比较</h2><span class="subtle">仅命名批次 · 按批次数量排序</span></div
           >
           <div v-if="report.profiles.length" class="table-scroll"
             ><table>
@@ -486,7 +486,7 @@
               >
             </table></div
           >
-          <div v-else class="empty compact">区间内没有可比较的批次</div>
+          <div v-else class="empty compact">区间内没有可比较的命名批次</div>
         </div>
         <div class="panel">
           <div class="panel-toolbar"
@@ -586,7 +586,7 @@
                   <td
                     ><strong>#{{ b.id }}</strong
                     ><small class="run-source">{{
-                      b.profile_title || `配置 #${b.profile_id}`
+                      b.task === 'extract' ? '抽帧' : b.profile_title || `配置 #${b.profile_id}`
                     }}</small></td
                   >
                   <td
@@ -598,8 +598,12 @@
                   <td
                     ><span
                       class="table-model"
-                      :title="[b.provider, b.protocol, b.model].filter(Boolean).join(' · ')"
-                      >{{ b.model || '未记录模型' }}</span
+                      :title="
+                        b.task === 'extract'
+                          ? '独立抽帧不调用模型'
+                          : [b.provider, b.protocol, b.model].filter(Boolean).join(' · ')
+                      "
+                      >{{ b.task === 'extract' ? '不使用模型' : b.model || '未记录模型' }}</span
                     ></td
                   >
                   <td>{{ b.discovered.toLocaleString() }}</td>

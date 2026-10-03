@@ -362,7 +362,7 @@
           ]"
         /><SelectField
           v-model="run"
-          label="运行批次"
+          label="批次"
           :options="batchOptions"
           @change="reset"
         /><DateField v-model="from" label="起始日期" :max="to" @change="reset" /><span
@@ -390,7 +390,7 @@
             : '自动命名失败可重试，确认时可选择模型'
         }}</span></div
       >
-      <div class="table-scroll"
+      <div class="table-scroll history-table-scroll"
         ><table class="history-table" :class="[category, { multi }]"
           ><thead
             ><tr
@@ -405,12 +405,11 @@
                   "
                   @change="togglePage" /></th
               ><th class="history-time">时间</th><th class="history-action">操作</th
-              ><th class="history-model">模型配置</th><th class="history-directory">目录</th
+              ><th class="history-model">模型配置</th><th class="history-run">批次</th
+              ><th class="history-tokens">token数</th><th class="history-directory">目录</th
               ><th class="history-old-name">旧文件名</th
-              ><th class="history-result">{{ category === 'success' ? '新文件名' : '运行批次' }}</th
-              ><th v-if="category === 'success'" class="history-run">运行批次</th
-              ><th class="history-tokens">token数</th
-              ><th v-if="category === 'failure'" class="history-reason">失败原因</th><th></th></tr
+              ><th v-if="category === 'success'" class="history-result">新文件名</th
+              ><th v-else class="history-reason">失败原因</th><th></th></tr
           ></thead>
           <tbody
             ><template v-for="row in rows" :key="row.id"
@@ -429,28 +428,12 @@
                   }}</span></td
                 ><td
                   ><span class="table-model" :title="modelHint(row)">{{ modelName(row) }}</span></td
-                ><td
-                  ><span
-                    class="log-directory"
-                    :title="pathParts(row.old_path || row.new_path).directory"
-                    >{{ pathParts(row.old_path || row.new_path).directory }}</span
-                  ></td
-                ><td
-                  ><span class="history-filename" :title="pathParts(row.old_path).name">{{
-                    pathParts(row.old_path).name
+                ><td class="subtle history-run-value"
+                  ><span :title="row.run ? `批次 #${row.run}` : '没有关联的批次'">{{
+                    row.run ? `#${row.run}` : category === 'success' ? '手动操作' : '—'
                   }}</span></td
                 ><td
-                  ><span
-                    v-if="category === 'success'"
-                    class="history-filename"
-                    :title="pathParts(row.new_path).name"
-                    >{{ pathParts(row.new_path).name }}</span
-                  ><span v-else class="subtle">{{ row.run ? `#${row.run}` : '—' }}</span></td
-                ><td v-if="category === 'success'" class="subtle">{{
-                  row.run ? `#${row.run}` : '手动操作'
-                }}</td
-                ><td
-                  class="subtle run-tokens"
+                  class="subtle run-tokens history-token-value"
                   :title="
                     row.tokens
                       ? row.token_estimated
@@ -461,7 +444,21 @@
                   >{{
                     row.tokens ? (row.token_estimated ? '≈' : '') + tokens(row.tokens) : '—'
                   }}</td
-                ><td v-if="category === 'failure'" class="subtle"
+                ><td
+                  ><span
+                    class="log-directory"
+                    :title="pathParts(row.old_path || row.new_path).directory"
+                    >{{ pathParts(row.old_path || row.new_path).directory }}</span
+                  ></td
+                ><td
+                  ><span class="history-filename" :title="pathParts(row.old_path).name">{{
+                    pathParts(row.old_path).name
+                  }}</span></td
+                ><td v-if="category === 'success'"
+                  ><span class="history-filename" :title="pathParts(row.new_path).name">{{
+                    pathParts(row.new_path).name
+                  }}</span></td
+                ><td v-else class="subtle"
                   ><span class="error-summary" :title="row.message">{{ row.message }}</span></td
                 ><td class="history-row-actions"
                   ><button
@@ -526,7 +523,7 @@
       ><dd>{{ actionNames[selected.action] || selected.action }}</dd
       ><dt>原路径</dt><dd>{{ selected.old_path || '—' }}</dd
       ><dt>新路径</dt><dd>{{ selected.new_path || '—' }}</dd
-      ><dt>运行批次</dt><dd>{{ selected.run ? `#${selected.run}` : '—' }}</dd
+      ><dt>批次</dt><dd>{{ selected.run ? `#${selected.run}` : '—' }}</dd
       ><dt>模型配置</dt><dd :title="modelHint(selected)">{{ modelName(selected) }}</dd
       ><dt>详情</dt><dd>{{ selected.message || '操作已成功完成' }}</dd></dl
     ><FailureDiagnostics
