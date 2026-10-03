@@ -18,60 +18,18 @@
       : p.processed === p.total
         ? 'completed'
         : p.processed
-          ? 'partial'
+          ? 'scanning'
           : 'unprocessed';
   }
-  const number = (value: number) => value.toLocaleString('zh-CN');
 </script>
 <template>
-  <span
-    class="directory-progress"
-    title="包含子目录，按最近扫描的视频统计"
-    :data-directory-status="directoryTone(entry)"
+  <span class="directory-progress" title="包含子目录，按最近扫描的视频统计"
     ><StatusBadge :status="directoryTone(entry)">{{ directoryStatus(entry) }}</StatusBadge
-    ><small
-      v-if="entry.progress?.total"
-      class="directory-progress-count"
-      :aria-label="`已处理 ${entry.progress.processed} / ${entry.progress.total}${entry.progress.unknown ? '，统计尚未完成' : ''}`"
-      >{{ number(entry.progress.processed) }} / {{ number(entry.progress.total)
+    ><small v-if="entry.progress?.total" class="subtle"
+      >已处理 {{ entry.progress.processed }} / {{ entry.progress.total
       }}{{ entry.progress.unknown ? ' · 已发现' : '' }}</small
-    ><small v-if="entry.progress?.active" class="directory-progress-active"
+    ><small v-if="entry.progress?.active" class="subtle"
       >{{ entry.progress.active }} 个处理中</small
     ></span
   >
 </template>
-<style scoped>
-  .directory-progress {
-    display: inline-flex;
-    flex-direction: row;
-    align-items: center;
-    justify-content: center;
-    flex-wrap: wrap;
-    min-width: 0;
-    gap: 4px 8px;
-    vertical-align: middle;
-  }
-  .directory-progress :deep(.status-badge) {
-    padding: 2px 0;
-    border: 0;
-    background: transparent;
-    border-radius: 0;
-    font-size: 11px;
-    gap: 5px;
-    line-height: 1.6;
-  }
-  .directory-progress :deep(.status-badge[data-status='partial']) {
-    color: #927039;
-  }
-  .directory-progress-count,
-  .directory-progress-active {
-    font-size: 10px;
-    line-height: 1.6;
-    color: var(--ash);
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-  }
-  .directory-progress-active {
-    color: #2468af;
-  }
-</style>

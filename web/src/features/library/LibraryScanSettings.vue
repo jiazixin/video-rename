@@ -37,7 +37,7 @@
 <template>
   <section class="panel library-scan-settings">
     <header
-      ><span class="eyebrow">05 · 媒体索引</span><h2>后台目录扫描</h2
+      ><span class="eyebrow">媒体索引</span><h2>后台目录扫描</h2
       ><p class="help"
         >定期发现各目录内新增或变化的文件，只同步文件列表，不触发命名和抽帧。</p
       ></header
@@ -111,7 +111,6 @@
 </template>
 <style scoped>
   .library-scan-settings {
-    margin-top: 24px;
     padding: 26px;
   }
   .library-scan-settings h2 {

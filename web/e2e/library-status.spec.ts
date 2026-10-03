@@ -372,7 +372,6 @@ test('未处理隐藏全部处理目录，递归标记后即时移除目录并�
   await select(page, '处理状态筛选', '未处理')
   await expect(names(page)).toHaveText(['待处理', '待统计', '部分完成'])
   await expect(page.getByText('共 3 项 · 3 项 / 当前页', { exact: true })).toBeVisible()
-  await expect(page.locator('.library-status-scope')).toContainText('全部子目录内的视频状态')
   await page.getByRole('button', { name: '多选', exact: true }).click()
   await page.getByLabel('选择 待处理', { exact: true }).check()
   await page.getByRole('button', { name: '标记已处理 部分完成', exact: true }).click()

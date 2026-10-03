@@ -19,6 +19,7 @@ test('后台扫描默认一小时，范围与间隔保存后重开保持，窄�
   expect(original.interval_minutes).toBe(60)
   try {
     await page.getByRole('button', { name: '系统设置', exact: true }).click()
+    await page.getByRole('button', { name: '后台目录扫描', exact: true }).click()
     const panel = page.locator('.library-scan-settings')
     await expect(panel.getByLabel('扫描间隔（分钟）', { exact: true })).toHaveValue('60')
     await panel.getByLabel('扫描间隔（分钟）', { exact: true }).fill('120')
@@ -459,6 +460,7 @@ test('扫描失败和取消反馈清晰，不覆盖尚未保存的扫描间隔',
   })
   await login(page)
   await page.getByRole('button', { name: '系统设置', exact: true }).click()
+  await page.getByRole('button', { name: '后台目录扫描', exact: true }).click()
   const panel = page.locator('.library-scan-settings')
   await expect(panel).toContainText('正在扫描')
   await panel.getByLabel('扫描间隔（分钟）', { exact: true }).fill('120')
@@ -498,6 +500,7 @@ test('扫描中长路径和大计数保持布局，范围整行且窄屏不溢�
   )
   await login(page)
   await page.getByRole('button', { name: '系统设置', exact: true }).click()
+  await page.getByRole('button', { name: '后台目录扫描', exact: true }).click()
   const panel = page.locator('.library-scan-settings')
   await panel.scrollIntoViewIfNeeded()
   await expect(panel).toContainText('正在扫描')

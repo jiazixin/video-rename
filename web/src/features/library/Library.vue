@@ -1336,9 +1336,6 @@
             >共 {{ page?.total ?? 0 }} 项 · {{ page?.items.length || 0 }} 项 / 当前页</span
           ></div
         >
-        <p v-if="processingStatus" class="library-status-scope help" role="status">
-          文件按自身状态筛选；目录按全部子目录内的视频状态筛选，未完成统计的目录保留在未处理中。
-        </p>
         <div v-if="multi" class="batch-toolbar"
           ><strong>已选 {{ chosen.size }} 项</strong
           ><button title="全选本页" @click="selectPage()">全选</button

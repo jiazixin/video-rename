@@ -35,6 +35,7 @@
       : 'library';
     settingsTab.value = [
       'processing',
+      'scan',
       'numbering',
       'prompts',
       'models',
