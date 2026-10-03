@@ -61,7 +61,7 @@ test('取消运行必须确认，继续运行和关闭均不提交取消',async(
  const row=page.locator('.run-entry').first()
  await row.getByRole('button',{name:'取消',exact:true}).click();await expect(page.getByRole('dialog',{name:'取消运行'})).toBeVisible();expect(cancellations).toBe(0);await page.getByRole('button',{name:'继续运行',exact:true}).click();expect(cancellations).toBe(0)
  await row.getByRole('button',{name:'取消',exact:true}).click();await page.keyboard.press('Escape');await expect(page.getByRole('dialog')).toHaveCount(0);expect(cancellations).toBe(0)
- await row.getByRole('button',{name:'详情',exact:true}).click();await page.getByRole('button',{name:'取消运行',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(1);await page.screenshot({path:'test-results/cancel-confirm.png',animations:'disabled'});await page.getByRole('button',{name:'确认取消',exact:true}).click();await expect(row).toContainText('已取消',{timeout:10000});expect(cancellations).toBe(1)
+ await row.getByRole('button',{name:'详情',exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'取消',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(1);await page.screenshot({path:'test-results/cancel-confirm.png',animations:'disabled'});await page.getByRole('button',{name:'确认取消',exact:true}).click();await expect(row).toContainText('已取消',{timeout:10000});expect(cancellations).toBe(1)
 })
 
 test('状态颜色、每页居中和日志日历',async({page})=>{
@@ -600,7 +600,7 @@ test('运行详情显示目录文件清单与翻页、成功历史诊断',async(
  await expect(dialog).toContainText('原视频100.mp4')
  await expect(dialog.locator('.run-item')).toHaveCount(1)
  await page.screenshot({path:'test-results/run-detail-files.png',fullPage:true})
- await dialog.locator('.modal-actions').getByRole('button',{name:'关闭',exact:true}).click()
+ await dialog.locator(':scope > header').getByRole('button',{name:'关闭',exact:true}).click()
  await page.route('**/api/logs?*',r=>r.fulfill({json:[{id:9902,category:'success',action:'automatic',run:9901,created:'2026-09-21T01:00:00Z',old_path:'目录/a.mp4',new_path:'目录/新标题.mp4'}]}))
  await page.route('**/api/logs/9902/diagnostics',r=>r.fulfill({json:{request:'{"messages":["脱敏请求"]}',response:'{"choices":["新标题"],"usage":{"total_tokens":123}}'}}))
  await page.getByRole('button',{name:'运行记录',exact:true}).click()

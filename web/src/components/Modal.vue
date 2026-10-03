@@ -21,6 +21,7 @@
 <script setup lang="ts">
   import { onMounted, onUnmounted, ref } from 'vue';
   import { X } from 'lucide-vue-next';
+  defineOptions({ inheritAttrs: false });
   defineProps<{ title: string; wide?: boolean; player?: boolean; contained?: boolean }>();
   const emit = defineEmits<{ close: [] }>();
   const panel = ref<HTMLElement>();
@@ -32,11 +33,13 @@
     }
     if (e.key === 'Tab') {
       const items = panel.value?.querySelectorAll<HTMLElement>(
-        'button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex="0"]'
+        'button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),summary,[tabindex="0"]'
       );
       if (!items?.length) return;
-      const first = items[0],
-        last = items[items.length - 1];
+      const visible = Array.from(items).filter((item) => item.getClientRects().length);
+      const first = visible[0],
+        last = visible[visible.length - 1];
+      if (!first || !last) return;
       if (e.shiftKey && document.activeElement === first) {
         e.preventDefault();
         last.focus();
@@ -61,6 +64,7 @@
   <Teleport to="body"
     ><div class="modal-backdrop" @mousedown.self.prevent="emit('close')"
       ><section
+        v-bind="$attrs"
         ref="panel"
         role="dialog"
         aria-modal="true"
@@ -68,7 +72,9 @@
         class="modal"
         :class="{ wide, 'player-modal': player, 'contained-modal': contained }"
         ><header
-          ><h2>{{ title }}</h2
+          ><div class="modal-heading"
+            ><h2>{{ title }}</h2
+            ><slot name="header" /></div
           ><button class="icon-btn" aria-label="关闭" @click="emit('close')"
             ><X :size="20" /></button></header
         ><div class="modal-content"><slot /></div
@@ -78,6 +84,9 @@
 </template>
 
 <style scoped>
+  .modal-heading {
+    min-width: 0;
+  }
   .modal-content {
     overflow-wrap: anywhere;
   }

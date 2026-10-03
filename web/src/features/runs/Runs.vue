@@ -28,6 +28,7 @@
   import StatusBadge from '../../components/StatusBadge.vue';
   import './runs.css';
   import Modal from '../../components/Modal.vue';
+  import RunDetail from './RunDetail.vue';
   import SelectField from '../../components/SelectField.vue';
   const toast = ref<InstanceType<typeof ToastNotice>>();
   const modelConfigID = ref(0);
@@ -1039,124 +1040,18 @@
       ><button class="danger-button" @click="remove"><Trash2 :size="16" />删除计划</button></div
     ></Modal
   >
-  <Modal v-if="detail" :title="`运行 #${detail.id}`" wide @close="detail = undefined"
-    ><div class="run-summary"
-      ><div
-        ><span>已完成</span><strong>{{ detail.done }}</strong></div
-      ><div
-        ><span>已跳过</span><strong>{{ detail.skipped }}</strong></div
-      ><div
-        ><span>失败</span><strong>{{ detail.failed }}</strong></div
-      ></div
-    ><p v-if="detail.task !== 'extract'" class="help"
-      >{{
-        detail.request_config?.retry_enabled
-          ? `失败最多重试 ${detail.request_config.retry_count} 次`
-          : '自动重试已关闭'
-      }}
-      · 兜底模型：{{ detail.request_config?.fallback_model_title || '不使用' }}</p
-    ><details v-if="detail.prompt_body" class="prompt-preview"
-      ><summary>提示词：{{ detail.model_config_title }}</summary
-      ><p>{{ detail.prompt_body }}</p></details
-    ><div class="run-targets"
-      ><h3>目标目录与文件</h3
-      ><ul
-        ><li v-for="(target, i) in detail.targets" :key="target">{{
-          detail.target_names?.[i] || `条目 #${target}`
-        }}</li></ul
-      ><p class="help">{{ detail.recursive ? '包含子目录' : '仅所选目标的当前层' }}</p></div
-    ><p>{{ statusNames[detail.status] }} · 提交时间：{{ time(detail.created) }}</p
-    ><p class="help"
-      >开始时间：{{ detail.started ? time(detail.started) : '—' }} · 结束时间：{{
-        detail.finished ? time(detail.finished) : '—'
-      }}</p
-    ><p class="help">总耗时：{{ elapsed(detail) }}（不含排队等待，含暂停时间）</p
-    ><div v-if="detail.error" class="notice error">{{ detail.error }}</div
-    ><div v-for="item in items" :key="item.id" class="run-item"
-      ><div class="run-file-paths"
-        ><strong>{{ item.original_path || item.current_path || `文件 #${item.entry}` }}</strong
-        ><small v-if="item.current_path && item.current_path !== item.original_path"
-          >当前路径：{{ item.current_path }}</small
-        ></div
-      ><StatusBadge :status="item.status">{{ statusNames[item.status] || item.status }}</StatusBadge
-      ><p v-if="item.message">{{ item.message }}</p
-      ><details v-if="item.attempts?.length" class="attempt-history"
-        ><summary
-          >模型请求 {{ item.attempts.length }} 次 ·
-          {{
-            item.attempts.at(-1).status === 'success'
-              ? item.attempts.at(-1).fallback
-                ? '兜底成功'
-                : item.attempts.length > 1
-                  ? '重试成功'
-                  : '主模型成功'
-              : item.status === 'running'
-                ? '重试中'
-                : item.status === 'cancelled'
-                  ? '已取消'
-                  : '最终失败'
-          }}</summary
-        ><div v-for="attempt in item.attempts" :key="attempt.number"
-          ><strong
-            >{{ attempt.number === 1 ? '首次请求' : `重试第 ${attempt.number - 1} 次` }} ·
-            {{ attempt.model_config_title }} · {{ attempt.model
-            }}{{ attempt.fallback ? '（兜底）' : '' }}</strong
-          ><p class="help"
-            >{{ time(attempt.started) }} · {{ attempt.duration_ms }} ms ·
-            {{
-              attempt.status === 'success'
-                ? '成功'
-                : attempt.status === 'cancelled'
-                  ? '已取消'
-                  : '失败'
-            }}</p
-          ><p v-if="attempt.message">{{ attempt.message }}</p></div
-        ></details
-      ></div
-    ><p v-if="!items.length" class="help">{{
-      detail.status === 'paused'
-        ? '批次已暂停，继续运行后会处理剩余任务。'
-        : active(detail)
-          ? '正在扫描，发现视频后会显示在这里。'
-          : '当前页没有视频任务。'
-    }}</p
-    ><div class="pagination"
-      ><span class="subtle">共 {{ itemTotal }} 项 · 每页 100 项</span
-      ><PageNavigation
-        :page="itemNumber"
-        :total-pages="Math.ceil(itemTotal / 100)"
-        :disabled="itemBusy || loading"
-        previous-label="上页文件"
-        next-label="下页文件"
-        @change="itemPage" /></div
-    ><div class="modal-actions"
-      ><button v-if="pausable(detail) || detail.status === 'paused'" @click="askPause(detail)"
-        ><Play v-if="detail.status === 'paused'" :size="16" /><Pause v-else :size="16" />{{
-          detail.status === 'paused' ? '继续运行' : '暂停调度'
-        }}</button
-      ><button v-if="active(detail)" class="cancel-run" @click="askCancel(detail)"
-        ><X :size="16" />取消运行</button
-      ><button class="primary" @click="detail = undefined">关闭</button></div
-    ></Modal
-  >
+  <RunDetail
+    v-if="detail"
+    :key="detail.id"
+    :run="detail"
+    :items="items"
+    :total="itemTotal"
+    :page="itemNumber"
+    :busy="itemBusy || loading"
+    :elapsed="elapsed(detail)"
+    @close="detail = undefined"
+    @page="itemPage"
+    @pause="askPause(detail)"
+    @cancel="askCancel(detail)"
+  />
 </template>
-
-<style scoped>
-  .attempt-history {
-    width: 100%;
-    font-size: 13px;
-    overflow-wrap: anywhere;
-  }
-  .attempt-history > summary {
-    cursor: pointer;
-    padding: 8px 0;
-  }
-  .attempt-history > div {
-    border-left: 2px solid var(--line);
-    padding: 8px 14px;
-    margin: 8px 0;
-  }
-  .attempt-history p {
-    margin: 6px 0;
-  }
-</style>
