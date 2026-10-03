@@ -3,6 +3,7 @@ package tokenusage
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -224,5 +225,61 @@ func TestTopUsageIndependentOfPageSortAndHugePage(t *testing.T) {
 	}
 	if report.Batches.Page != 1 || report.Batches.Items[0].ID != 2 {
 		t.Fatal("invalid detail pagination", report.Batches)
+	}
+}
+
+func TestAnalyticsOptionsKeepConfigIdentityAndModelHistory(t *testing.T) {
+	db := analyticsDB(t)
+	if _, err := db.Exec(`INSERT INTO prompts(id,title,body,created,updated) VALUES(1,'提示词','内容','c','u')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO model_configs(id,title,prompt_id,created,updated) VALUES(10,'共享配置',1,'c','u')`); err != nil {
+		t.Fatal(err)
+	}
+	a := `{"model":"a","provider":"p","protocol":"openai"}`
+	b := `{"model":"b","provider":"p","protocol":"openai"}`
+	seedUsage(t, db, 1, "manual", 0, a, 10, "旧名称", [][3]int64{{1000, 100, 0}})
+	seedUsage(t, db, 2, "manual", 0, a, 10, "共享配置", [][3]int64{{2000, 200, 0}})
+	if _, err := db.Exec(`DELETE FROM model_configs WHERE id=10`); err != nil {
+		t.Fatal(err)
+	}
+	result, err := db.Exec(`INSERT INTO model_configs(title,prompt_id,created,updated) VALUES('共享配置',1,'c','u')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newID, err := result.LastInsertId()
+	if err != nil || newID == 10 {
+		t.Fatal("recreated config must have a new identity", newID, err)
+	}
+	seedUsage(t, db, 3, "manual", 0, b, newID, "共享配置", [][3]int64{{3000, 300, 0}})
+	// The same configuration may have used multiple models and names over time.
+	seedUsage(t, db, 4, "manual", 0, a, newID, "改名前", [][3]int64{{1500, 400, 0}})
+	// Attempt-level identity may differ from the batch's primary config.
+	seedUsage(t, db, 5, "manual", 0, b, newID, "共享配置", [][3]int64{{3500, 500, 0}})
+	if _, err := db.Exec(`UPDATE token_usage_records SET model_config_id=10,model_config_title='共享配置',config_summary=? WHERE run=5`, b); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Analytics(db, AnalyticsQuery{From: 2999, To: 4000, Model: modelKey("p", "openai", "b"), Profile: newID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Totals.Tokens != 300 || len(report.Options.Profiles) != 2 {
+		t.Fatal("identities must not merge despite sharing a title", report.Totals, report.Options)
+	}
+	for _, option := range report.Options.Profiles {
+		if option.Title != "共享配置" || !slices.Equal(option.ModelKeys, []string{modelKey("p", "openai", "a"), modelKey("p", "openai", "b")}) {
+			t.Fatal("options must use current/latest names and all recorded models", option)
+		}
+		if option.Deleted != (option.ID == 10) {
+			t.Fatal("only the original config was deleted", option)
+		}
+	}
+	// An empty time range must not erase the history used to link filters.
+	report, err = Analytics(db, AnalyticsQuery{From: 9000, To: 10000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Totals.Records != 0 || len(report.Options.Profiles) != 2 || len(report.Options.Models) != 2 {
+		t.Fatal("empty range lost historical filter choices", report.Totals, report.Options)
 	}
 }

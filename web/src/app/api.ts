@@ -304,7 +304,7 @@ export interface UsageReport {
   batches: { items: UsageBatch[]; total: number; page: number; size: number }
   options: {
     models: { key: string; model: string; provider: string; protocol: string }[]
-    profiles: { id: number; title: string }[]
+    profiles: { id: number; title: string; model_keys: string[]; deleted: boolean }[]
   }
 }
 export interface AnalysisTotals {

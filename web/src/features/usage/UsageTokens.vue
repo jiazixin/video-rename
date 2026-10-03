@@ -136,6 +136,11 @@
     run.value = id;
     page.value = 1;
   }
+  function selectModel(value: string | number) {
+    model.value = String(value);
+    const selected = report.value?.options.profiles.find((p) => p.id === profile.value);
+    if (model.value && selected && !selected.model_keys.includes(model.value)) profile.value = 0;
+  }
   watch([preset, model, profile, source, run, sort], () => {
     page.value = 1;
     load();
@@ -160,13 +165,24 @@
       label: m.model || '未记录模型'
     })) || [])
   ]);
-  const profileOptions = computed(() => [
-    { value: 0, label: '全部配置' },
-    ...(report.value?.options.profiles.map((p) => ({
-      value: p.id,
-      label: p.title || `配置 #${p.id}`
-    })) || [])
-  ]);
+  const profileOptions = computed(() => {
+    const profiles = report.value?.options.profiles || [];
+    const names = new Map<string, number>();
+    for (const p of profiles) names.set(p.title, (names.get(p.title) || 0) + 1);
+    return [
+      { value: 0, label: '全部配置' },
+      ...profiles
+        .filter((p) => !model.value || p.model_keys.includes(model.value))
+        .map((p) => ({
+          value: p.id,
+          label: p.deleted
+            ? `${p.title || '配置'}（已删除 · #${p.id}）`
+            : (names.get(p.title) || 0) > 1
+              ? `${p.title}（#${p.id}）`
+              : p.title || `配置 #${p.id}`
+        }))
+    ];
+  });
   const visibleModels = computed(() => (report.value ? report.value.models.slice(0, 8) : []));
   const restModels = computed(() => (report.value ? report.value.models.slice(8) : []));
   const totalPages = computed(() =>
@@ -184,7 +200,12 @@
     <div class="usage-filters">
       <div class="filterbar log-filters">
         <SelectField v-model="preset" label="时间范围" :options="presets" />
-        <SelectField v-model="model" label="模型" :options="modelOptions" />
+        <SelectField
+          :model-value="model"
+          label="模型"
+          :options="modelOptions"
+          @update:model-value="selectModel"
+        />
         <SelectField v-model="profile" label="模型配置" :options="profileOptions" />
         <SelectField
           v-model="source"

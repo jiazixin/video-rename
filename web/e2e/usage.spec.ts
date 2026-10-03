@@ -27,7 +27,7 @@ function fixture(){
   ],
   top_batches:[batch(31,3500,4,'vision-a','manual'),batch(12,1200,1,'vision-b','scheduled')],
   batches:{items:[batch(31,3500,4,'vision-a','manual'),batch(12,1200,1,'vision-b','scheduled')],total:2,page:1,size:20},
-  options:{models:[{key:'custom|openai|vision-a',model:'vision-a',provider:'custom',protocol:'openai'},{key:'custom|openai|vision-b',model:'vision-b',provider:'custom',protocol:'openai'}],profiles:[{id:1,title:'默认视频命名'}]}
+  options:{models:[{key:'custom|openai|vision-a',model:'vision-a',provider:'custom',protocol:'openai'},{key:'custom|openai|vision-b',model:'vision-b',provider:'custom',protocol:'openai'}],profiles:[{id:1,title:'默认视频命名',model_keys:['custom|openai|vision-a','custom|openai|vision-b'],deleted:false}]}
  }
 }
 
@@ -252,4 +252,65 @@ test('非法 JSON 响应显示错误并可重试',async({page})=>{
  await page.getByRole('button',{name:'重试',exact:true}).click()
  await expect(page.getByRole('alert')).toHaveCount(0)
  await expect(page.locator('.usage-kpi').first()).toBeVisible()
+})
+
+
+test('模型筛选联动配置并区分删除后重建的同名配置',async({page})=>{
+ await login(page)
+ const data=fixture()
+ const options=[
+  {id:1,title:'同名配置',model_keys:['custom|openai|vision-a'],deleted:true},
+  {id:2,title:'同名配置',model_keys:['custom|openai|vision-b'],deleted:false},
+  {id:3,title:'多模型配置',model_keys:['custom|openai|vision-a','custom|openai|vision-b'],deleted:false}
+ ]
+ const queries:URLSearchParams[]=[]
+ await page.route('**/api/usage/analytics*',async route=>{
+  const query=new URL(route.request().url()).searchParams
+  queries.push(query)
+  const report=structuredClone(data)
+  report.options.profiles=options
+  const id=Number(query.get('profile'))
+  const key=query.get('model')
+  const selected=options.find(p=>p.id===id)
+  const compatible=!key||!selected||selected.model_keys.includes(key)
+  report.totals.tokens=compatible?4700:0
+  await route.fulfill({json:report})
+ })
+ await page.goto('/#usage')
+ const model=page.getByRole('combobox',{name:'模型',exact:true})
+ const config=page.getByRole('combobox',{name:'模型配置',exact:true})
+ await config.click()
+ await expect(page.getByRole('option',{name:'同名配置（已删除 · #1）',exact:true})).toBeVisible()
+ await page.getByRole('option',{name:'同名配置（#2）',exact:true}).click()
+ await expect.poll(()=>queries.at(-1)?.get('profile')).toBe('2')
+ // Changing to an incompatible model clears the old config before requesting.
+ await model.click()
+ await page.getByRole('option',{name:'vision-a',exact:true}).click()
+ await expect.poll(()=>queries.at(-1)?.get('model')).toBe('custom|openai|vision-a')
+ await expect(config).toHaveText('全部配置')
+ expect(queries.filter(q=>q.get('model')==='custom|openai|vision-a').every(q=>!q.get('profile'))).toBeTruthy()
+ await config.click()
+ await expect(page.getByRole('option',{name:'同名配置（#2）',exact:true})).toHaveCount(0)
+ await page.getByRole('option',{name:'同名配置（已删除 · #1）',exact:true}).click()
+ await expect.poll(()=>queries.at(-1)?.get('profile')).toBe('1')
+ await expect(page.locator('.usage-kpi').first()).toContainText('4.7K')
+ await model.click()
+ await page.getByRole('option',{name:'全部模型',exact:true}).click()
+ await expect(config).toHaveText('同名配置（已删除 · #1）')
+ await config.click()
+ await page.getByRole('option',{name:'多模型配置',exact:true}).click()
+ await model.click()
+ await page.getByRole('option',{name:'vision-b',exact:true}).click()
+ await expect(config).toHaveText('多模型配置')
+ await expect.poll(()=>queries.at(-1)?.get('profile')).toBe('3')
+ // Options remain based on history even when the selected time range is empty.
+ await model.click()
+ await page.getByRole('option',{name:'全部模型',exact:true}).click()
+ await page.getByRole('button',{name:'重置',exact:true}).click()
+ await expect(config).toHaveText('全部配置')
+ await expect(model).toHaveText('全部模型')
+ await page.setViewportSize({width:390,height:844})
+ await config.click()
+ await expect(page.getByRole('option',{name:'同名配置（已删除 · #1）',exact:true})).toBeVisible()
+ await page.screenshot({path:'test-results/usage-linked-config-options.png',animations:'disabled'})
 })

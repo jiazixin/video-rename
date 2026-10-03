@@ -119,8 +119,10 @@ type OptionModel struct {
 	Protocol string `json:"protocol"`
 }
 type OptionProfile struct {
-	ID    int64  `json:"id"`
-	Title string `json:"title"`
+	ID        int64    `json:"id"`
+	Title     string   `json:"title"`
+	ModelKeys []string `json:"model_keys"`
+	Deleted   bool     `json:"deleted"`
 }
 
 // runMeta is the immutable per-run identity derived from the run snapshot.
@@ -389,25 +391,36 @@ func lifetimeUsage(tx *sql.Tx, ids map[int64]bool) (map[int64][2]int64, error) {
 // reportOptions lists the models and profiles that ever recorded usage, so the
 // page can offer filters even when the current range shows no rows for them.
 func reportOptions(tx *sql.Tx) (ReportOptions, error) {
-	rows, err := tx.Query(`SELECT DISTINCT u.source,u.plan,COALESCE(r.config_summary,u.config_summary),COALESCE(r.model_config_id,u.model_config_id),COALESCE(r.model_config_title,u.model_config_title) FROM runs u JOIN token_usage_records r ON r.run=u.id`)
+	rows, err := tx.Query(`SELECT u.source,u.plan,COALESCE(r.config_summary,u.config_summary),COALESCE(r.model_config_id,u.model_config_id),COALESCE(c.title,r.model_config_title,u.model_config_title),c.id IS NULL
+FROM runs u JOIN token_usage_records r ON r.run=u.id
+LEFT JOIN model_configs c ON c.id=COALESCE(r.model_config_id,u.model_config_id)
+GROUP BY 1,2,3,4,5,6 ORDER BY MAX(r.recorded_at) DESC,MAX(r.id) DESC`)
 	if err != nil {
 		return ReportOptions{}, err
 	}
 	defer rows.Close()
 	models := map[string]OptionModel{}
-	profiles := map[int64]string{}
+	profiles := map[int64]*OptionProfile{}
 	for rows.Next() {
 		var source, summary, title string
 		var plan, profileID int64
-		if err = rows.Scan(&source, &plan, &summary, &profileID, &title); err != nil {
+		var deleted bool
+		if err = rows.Scan(&source, &plan, &summary, &profileID, &title, &deleted); err != nil {
 			return ReportOptions{}, err
 		}
 		meta := parseMeta(source, plan, summary, profileID, title)
 		if _, ok := models[meta.key]; !ok {
 			models[meta.key] = OptionModel{Key: meta.key, Model: meta.model, Provider: meta.provider, Protocol: meta.protocol}
 		}
-		if _, ok := profiles[profileID]; !ok {
-			profiles[profileID] = title
+		profile := profiles[profileID]
+		if profile == nil {
+			// Existing configs use their current name; deleted configs use the
+			// latest recorded name without losing their historical identity.
+			profile = &OptionProfile{ID: profileID, Title: title, ModelKeys: []string{}, Deleted: deleted && profileID > 0}
+			profiles[profileID] = profile
+		}
+		if !slices.Contains(profile.ModelKeys, meta.key) {
+			profile.ModelKeys = append(profile.ModelKeys, meta.key)
 		}
 	}
 	if err = rows.Err(); err != nil {
@@ -420,8 +433,9 @@ func reportOptions(tx *sql.Tx) (ReportOptions, error) {
 		}
 		return cmp.Compare(a.Key, b.Key)
 	})
-	for id, title := range profiles {
-		out.Profiles = append(out.Profiles, OptionProfile{ID: id, Title: title})
+	for profile := range maps.Values(profiles) {
+		slices.Sort(profile.ModelKeys)
+		out.Profiles = append(out.Profiles, *profile)
 	}
 	slices.SortFunc(out.Profiles, func(a, b OptionProfile) int { return cmp.Compare(a.ID, b.ID) })
 	return out, nil
