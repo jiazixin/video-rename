@@ -23,7 +23,8 @@ async function setup(page:Page,name:string){
   expect((await page.request.post(`/api/directories/${id}/refresh`,{headers,data:{}})).ok()).toBe(true)
   await expect.poll(async()=>{
    const after=await(await page.request.get(`/api/directories/${id}/entries?page=1`)).json()
-   return after.generation!==before.generation&&!after.refreshing
+   // An unchanged listing keeps its generation; the timestamp marks completion.
+   return after.refreshed!==before.refreshed&&!after.refreshing
   }).toBe(true)
  }
  return {id,path,headers,rescan}

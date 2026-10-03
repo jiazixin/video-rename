@@ -381,6 +381,10 @@ func TestRefreshUnchangedEntriesUpdateObservationWithoutVersion(t *testing.T) {
 		put(t, filepath.Join(root, name))
 	}
 	refresh(t, l, 1)
+	state, err := l.DirectoryState(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	before := make([]Entry, 0, len(names))
 	for _, name := range names {
 		before = append(before, entry(t, l, 1, name))
@@ -389,7 +393,18 @@ func TestRefreshUnchangedEntriesUpdateObservationWithoutVersion(t *testing.T) {
 	if _, err := l.DB.Exec("UPDATE entries SET observed=? WHERE parent=1", oldObservation); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := l.DB.Exec("UPDATE directory_state SET refreshed=?,error='previous scan failed' WHERE dir=1", oldObservation); err != nil {
+		t.Fatal(err)
+	}
 	refresh(t, l, 1)
+	after, err := l.DirectoryState(t.Context(), 1)
+	if err != nil || after.Generation != state.Generation || after.Refreshed == oldObservation || after.Error != "" {
+		t.Fatalf("unchanged refresh changed the generation or retained stale status: before=%+v after=%+v error=%v", state, after, err)
+	}
+	var unpublished int
+	if err := l.DB.QueryRow("SELECT count(*) FROM directory_items WHERE dir=1 AND generation<>?", state.Generation).Scan(&unpublished); err != nil || unpublished != 0 {
+		t.Fatalf("unchanged refresh left staging items: %d %v", unpublished, err)
+	}
 	for _, old := range before {
 		current := entry(t, l, 1, old.Name)
 		if current.ID != old.ID || current.Version != old.Version || current.Identity != old.Identity || current.Kind != old.Kind || current.Size != old.Size || current.Mtime != old.Mtime {

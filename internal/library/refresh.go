@@ -276,13 +276,40 @@ func (l *Library) publishRefresh(ctx context.Context, id, gen int64) error {
 		return err
 	}
 	defer tx.Rollback()
+	var previous int64
+	if err = tx.QueryRowContext(ctx, "SELECT generation FROM directory_state WHERE dir=?", id).Scan(&previous); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	published := gen
+	if previous != 0 {
+		// Compare complete generations, rather than the live entries: an earlier
+		// failed refresh may already have committed some entry pages. Entry IDs
+		// also detect a path replaced by another filesystem identity.
+		var changed bool
+		if err = tx.QueryRowContext(ctx, `SELECT
+		 EXISTS(SELECT entry,name,kind,size,mtime FROM directory_items WHERE dir=? AND generation=?
+		 EXCEPT SELECT entry,name,kind,size,mtime FROM directory_items WHERE dir=? AND generation=?)
+		 OR EXISTS(SELECT entry,name,kind,size,mtime FROM directory_items WHERE dir=? AND generation=?
+		 EXCEPT SELECT entry,name,kind,size,mtime FROM directory_items WHERE dir=? AND generation=?)`, id, gen, id, previous, id, previous, id, gen).Scan(&changed); err != nil {
+			return err
+		}
+		if !changed {
+			published = previous
+		}
+	}
 	if _, err = tx.ExecContext(ctx, "UPDATE entries SET present=0 WHERE parent=? AND id NOT IN(SELECT entry FROM directory_items WHERE dir=? AND generation=?)", id, id, gen); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO directory_state(dir,generation,refreshed,error) VALUES(?,?,?,'') ON CONFLICT(dir) DO UPDATE SET generation=excluded.generation,refreshed=excluded.refreshed,error=''", id, gen, storage.Now()); err != nil {
-		return err
+	if published == previous {
+		if _, err = tx.ExecContext(ctx, "UPDATE directory_state SET refreshed=?,error='' WHERE dir=?", storage.Now(), id); err != nil {
+			return err
+		}
+	} else {
+		if _, err = tx.ExecContext(ctx, "INSERT INTO directory_state(dir,generation,refreshed,error) VALUES(?,?,?,'') ON CONFLICT(dir) DO UPDATE SET generation=excluded.generation,refreshed=excluded.refreshed,error=''", id, published, storage.Now()); err != nil {
+			return err
+		}
 	}
-	if _, err = tx.ExecContext(ctx, "DELETE FROM directory_items WHERE dir=? AND generation<>?", id, gen); err != nil {
+	if _, err = tx.ExecContext(ctx, "DELETE FROM directory_items WHERE dir=? AND generation<>?", id, published); err != nil {
 		return err
 	}
 	if err = ctx.Err(); err != nil {

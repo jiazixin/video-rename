@@ -93,6 +93,112 @@ func TestRefreshMetadataFailureKeepsCompleteGeneration(t *testing.T) {
 
 func (e refreshTestEntry) Info() (os.FileInfo, error) { return e.info() }
 
+func TestRefreshEmptyDirectoryKeepsCompleteGeneration(t *testing.T) {
+	l, _, _ := fixture(t)
+	refresh(t, l, 1)
+	before, err := l.DirectoryState(t.Context(), 1)
+	if err != nil || before.Generation == 0 {
+		t.Fatalf("empty directory was not published: %+v %v", before, err)
+	}
+	refresh(t, l, 1)
+	after, err := l.DirectoryState(t.Context(), 1)
+	if err != nil || after.Generation != before.Generation || after.Error != "" {
+		t.Fatalf("unchanged empty directory received a new generation: before=%+v after=%+v error=%v", before, after, err)
+	}
+}
+
+func TestRefreshMetadataChangesPublishNewGeneration(t *testing.T) {
+	for _, change := range []string{"size", "mtime"} {
+		t.Run(change, func(t *testing.T) {
+			l, root, _ := fixture(t)
+			path := filepath.Join(root, "a.mp4")
+			put(t, path)
+			refresh(t, l, 1)
+			before, err := l.DirectoryState(t.Context(), 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			old := entry(t, l, 1, "a.mp4")
+			if change == "size" {
+				if err := os.WriteFile(path, []byte("changed video fixture"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				at, err := time.Parse(time.RFC3339Nano, old.Mtime)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chtimes(path, at.Add(time.Second), at.Add(time.Second)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			refresh(t, l, 1)
+			after, err := l.DirectoryState(t.Context(), 1)
+			if err != nil || after.Generation == before.Generation {
+				t.Fatalf("%s change retained old generation: before=%+v after=%+v error=%v", change, before, after, err)
+			}
+			current := entry(t, l, 1, old.Name)
+			if current.ID != old.ID || current.Identity != old.Identity || current.Version != old.Version+1 {
+				t.Fatalf("content change lost identity or version: before=%+v after=%+v", old, current)
+			}
+			if _, err := l.List(t.Context(), 1, 0, 50, before.Generation, "", "", false); err == nil {
+				t.Fatal("metadata change accepted an old-generation cursor")
+			}
+		})
+	}
+}
+
+func TestRefreshRetryComparesPublishedItemsAfterPartialEntryUpdate(t *testing.T) {
+	l, root, _ := fixture(t)
+	path := filepath.Join(root, "a.mp4")
+	put(t, path)
+	put(t, filepath.Join(root, "b.mp4"))
+	refresh(t, l, 1)
+	before, err := l.DirectoryState(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := entry(t, l, 1, "a.mp4")
+	if err := os.WriteFile(path, []byte("changed video fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantErr := errors.New("directory read unavailable")
+	calls := 0
+	l.mu.Lock()
+	err = l.refreshDirectory(t.Context(), 1, func(int) ([]os.DirEntry, error) {
+		calls++
+		if calls == 1 {
+			return entries[:1], nil
+		}
+		return nil, wantErr
+	})
+	l.mu.Unlock()
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("partial refresh returned %v, want %v", err, wantErr)
+	}
+	partial, err := l.DirectoryState(t.Context(), 1)
+	if err != nil || partial.Generation != before.Generation || partial.Error == "" {
+		t.Fatalf("partial refresh lost published state: %+v %v", partial, err)
+	}
+	updated := entry(t, l, 1, old.Name)
+	if updated.Size == old.Size || updated.Version != old.Version+1 {
+		t.Fatalf("partial refresh did not commit the earlier entry page: before=%+v after=%+v", old, updated)
+	}
+	refresh(t, l, 1)
+	after, err := l.DirectoryState(t.Context(), 1)
+	if err != nil || after.Generation == before.Generation || after.Error != "" {
+		t.Fatalf("retry mistook live entries for the published generation: before=%+v after=%+v error=%v", before, after, err)
+	}
+	current := entry(t, l, 1, old.Name)
+	if current.Version != updated.Version {
+		t.Fatalf("retry changed the already observed entry version: before=%+v after=%+v", updated, current)
+	}
+}
+
 func TestRefreshSlowMetadataLeavesDatabaseAvailable(t *testing.T) {
 	l, root, _ := fixture(t)
 	put(t, filepath.Join(root, "a.mp4"))

@@ -22,12 +22,11 @@ func TestListPageAfterRefreshAndRemoval(t *testing.T) {
 	}
 	refresh(t, l, 1)
 	after, err := l.ListPage(t.Context(), 1, 2, 50, "", "video", "name_asc")
-	if err != nil || after.Generation == first.Generation || after.Number != 2 || after.Items[0].ID != first.Items[0].ID {
+	if err != nil || after.Generation != first.Generation || after.Number != 2 || after.Items[0].ID != first.Items[0].ID {
 		t.Fatalf("refreshed page: %+v, %v", after, err)
 	}
-	// Existing cursor consumers must still reject mixing index generations.
-	if _, err := l.List(t.Context(), 1, first.Next, 50, first.Generation, "", "video", false); err == nil {
-		t.Fatal("stale cursor was accepted")
+	if _, err := l.List(t.Context(), 1, first.Next, 50, first.Generation, "", "video", false); err != nil {
+		t.Fatalf("unchanged refresh invalidated the cursor: %v", err)
 	}
 	for i := 60; i < 121; i++ {
 		if err := os.Remove(filepath.Join(root, fmt.Sprintf("clip%d.mp4", i))); err != nil {
@@ -35,6 +34,10 @@ func TestListPageAfterRefreshAndRemoval(t *testing.T) {
 		}
 	}
 	refresh(t, l, 1)
+	// Real listing changes must still invalidate cursors from the old generation.
+	if _, err := l.List(t.Context(), 1, first.Next, 50, first.Generation, "", "video", false); err == nil {
+		t.Fatal("stale cursor was accepted after removal")
+	}
 	for _, page := range []int{3, math.MaxInt} {
 		p, err := l.ListPage(t.Context(), 1, page, 50, "", "video", "name_asc")
 		if err != nil || p.Number != 2 || p.Total != 60 || len(p.Items) != 10 || p.Next != 0 {

@@ -10,6 +10,7 @@
     ChevronRight,
     ChevronLeft,
     RefreshCw,
+    Info,
     ScanLine,
     Search,
     ArrowUpRight,
@@ -105,7 +106,7 @@
       }
       const summary = `已删除 ${entries.length - failed.length} 项，失败 ${failed.length} 项`;
       toast.value?.show(summary);
-      deletingBatch.value = active ? failed : [];
+      deletingBatch.value = active.value ? failed : [];
       deleteBatchError.value = failed.length ? [summary, ...errors].join('\n') : '';
       selectionAnchor = undefined;
       if (directory === dir.value && !disposed) await load();
@@ -554,7 +555,7 @@
   );
   function scheduleSync() {
     clearTimeout(timer);
-    if (!disposed && active)
+    if (!disposed && active.value)
       timer = setTimeout(() => {
         if (saving.value) scheduleSync();
         else void syncEntries();
@@ -569,7 +570,7 @@
     const n = seq,
       request = ++statusSeq;
     clearTimeout(timer);
-    if (disposed || !active || busy.value || !page.value) return;
+    if (disposed || !active.value || busy.value || !page.value) return;
     try {
       const runs = await Promise.all([...trackedRuns].map((id) => api<Run>(`/runs/${id}`)));
       if (n !== seq || request !== statusSeq || disposed) return;
@@ -671,19 +672,21 @@
       // An automatic update may return after selection or editing has begun.
       // Leave the old rows intact until the user explicitly applies the update.
       if (canApply && !canApply()) {
+        directoryUpdateAvailable.value = true;
         if (trackedRuns.size) scheduleSync();
         return;
       }
       pageNumber.value = p.page ?? requestedPage;
       page.value = p;
-      if (currentDirectoryState.value?.generation === p.generation)
-        directoryUpdateAvailable.value = false;
+      // This response applies the latest list, which may already be newer than
+      // the last lightweight state poll. Do not keep an outdated update notice.
+      directoryUpdateAvailable.value = false;
       if (inlineEntry.value && !p.items.some((e) => e.id === inlineEntry.value?.id))
         cancelInlineRename();
       await restorePosition(n, p);
       if (n !== seq) return;
       for (const e of p.items) if (chosen.value.has(e.id)) chosen.value.set(e.id, e);
-      if (p.refreshing) timer = setTimeout(() => load(true, keepRows), 1500);
+      if (p.refreshing) timer = setTimeout(() => load(true, keepRows, canApply), 1500);
       else if (
         trackedRuns.size ||
         p.directory.task_status ||
@@ -694,6 +697,7 @@
     } catch (e) {
       if (n === seq) {
         error.value = (e as Error).message;
+        if (canApply) directoryUpdateAvailable.value = true;
         if (quiet && (q.value || kind.value || processingStatus.value)) scheduleSync();
       }
     } finally {
@@ -761,11 +765,10 @@
   });
   let pendingPosition: DirectoryPosition | undefined;
   const nativeScrollRestoration = window.history.scrollRestoration;
-  let active = false,
-    parkedScrollY = 0,
+  const active = ref(false);
+  let parkedScrollY = 0,
     positionSerial = 0;
-  const currentDirectoryState = ref<DirectoryState>(),
-    directoryUpdateAvailable = ref(false),
+  const directoryUpdateAvailable = ref(false),
     directoryPollError = ref('');
   const scan = useLibraryScan(pollDirectoryState);
   const {
@@ -782,6 +785,9 @@
       (!ignoreSelection && chosen.value.size > 0) ||
       saving.value ||
       inlineEntry.value ||
+      playing.value ||
+      audioPlaying.value ||
+      preview.value ||
       document.querySelector('[role="dialog"]') ||
       document.activeElement?.matches('input,textarea,[contenteditable="true"]')
     );
@@ -789,7 +795,7 @@
   async function pollDirectoryState(signal: AbortSignal) {
     const directory = dir.value,
       request = seq;
-    if (!page.value || busy.value || !active) return;
+    if (!page.value || busy.value || !active.value) return;
     try {
       const state = await api<DirectoryState>(
         `/directories/${directory}/state`,
@@ -797,13 +803,15 @@
         undefined,
         signal
       );
-      if (signal.aborted || !active || directory !== dir.value || request !== seq) return;
-      currentDirectoryState.value = state;
+      if (signal.aborted || !active.value || directory !== dir.value || request !== seq) return;
       directoryPollError.value = state.error ? `目录扫描未完成：${state.error}` : '';
-      directoryUpdateAvailable.value = state.generation !== page.value?.generation;
-      if (directoryUpdateAvailable.value && !listInUse()) await applyDirectoryUpdate();
+      if (state.generation === page.value?.generation) directoryUpdateAvailable.value = false;
+      else if (listInUse()) directoryUpdateAvailable.value = true;
+      // Idle updates stay silent. Only show a notice if applying the response
+      // is deferred by an interaction, or if loading the new list fails.
+      else await applyDirectoryUpdate();
     } catch (e) {
-      if (!signal.aborted && active && directory === dir.value && request === seq)
+      if (!signal.aborted && active.value && directory === dir.value && request === seq)
         directoryPollError.value = `目录更新检查失败：${(e as Error).message}`;
     }
   }
@@ -820,14 +828,13 @@
       position = positionSerial;
     // A quiet load keeps filters, page number and selected IDs. Request the
     // current sorted page so new files become visible without another disk scan.
-    await load(true, false, () => active && !document.hidden && !listInUse(manual));
-    if (active && directory === dir.value && position === positionSerial) {
+    await load(true, false, () => active.value && !document.hidden && !listInUse(manual));
+    if (active.value && directory === dir.value && position === positionSerial) {
       await nextTick();
       window.scrollTo({ top, behavior: 'instant' });
     }
   }
   watch(dir, () => {
-    currentDirectoryState.value = undefined;
     directoryUpdateAvailable.value = false;
     directoryPollError.value = '';
   });
@@ -1100,8 +1107,8 @@
       enter(id, false);
   }
   function activate() {
-    if (active) return;
-    active = true;
+    if (active.value) return;
+    active.value = true;
     scan.startPolling();
     window.history.scrollRestoration = 'manual';
     window.addEventListener('wheel', cancelPendingPosition, { passive: true });
@@ -1112,7 +1119,7 @@
     document.addEventListener('click', clearReturnOnBlank);
     window.addEventListener('hashchange', routeChanged);
     void nextTick(() => {
-      if (!active) return;
+      if (!active.value) return;
       observeLayout();
       window.scrollTo({ top: parkedScrollY, behavior: 'instant' });
       if (location.hash.startsWith('#library') && routeDirectory() !== dir.value)
@@ -1121,10 +1128,10 @@
     });
   }
   function deactivate() {
-    if (!active) return;
+    if (!active.value) return;
     parkedScrollY = window.scrollY;
     stopObservingLayout();
-    active = false;
+    active.value = false;
     scan.stopPolling();
     seq++;
     statusSeq++;
@@ -1215,14 +1222,26 @@
       :status="scanState.status"
       :submitting="scanSubmitting"
       @cancel="scan.cancel" />
-    <div v-if="directoryUpdateAvailable" class="directory-update-notice">
-      <span>目录有更新，保留当前选择和操作。</span
-      ><button
-        :disabled="busy || saving || !!inlineEntry || !!playing || !!audioPlaying || !!preview"
-        @click="applyDirectoryUpdate(true)"
-        >更新文件列表</button
+    <Teleport to="body">
+      <div
+        v-if="active && directoryUpdateAvailable"
+        class="directory-update-notice"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
       >
-    </div>
+        <Info class="directory-update-icon" :size="20" aria-hidden="true" />
+        <div class="directory-update-content">
+          <strong>目录有更新</strong>
+          <p>当前选择和操作已保留，更新后显示最新文件。</p>
+          <button
+            :disabled="busy || saving || !!inlineEntry || !!playing || !!audioPlaying || !!preview"
+            @click="applyDirectoryUpdate(true)"
+            >更新文件列表</button
+          >
+        </div>
+      </div>
+    </Teleport>
     <div class="panel file-panel library-directory-overview">
       <div class="panel-toolbar directory-toolbar"
         ><div class="breadcrumbs"
@@ -1851,17 +1870,52 @@
     margin-bottom: 12px;
   }
   .directory-update-notice {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 90;
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
     gap: 12px;
-    flex-wrap: wrap;
-    margin-bottom: 12px;
-    padding: 12px 16px;
-    border: 1px solid #d6e8dc;
-    border-radius: 9px;
-    background: #f1f8f3;
+    width: 380px;
+    max-width: calc(100vw - 32px);
+    max-height: calc(100dvh - 32px);
+    overflow-y: auto;
+    padding: 16px;
+    border: 1px solid #e8d7a6;
+    border-radius: 12px;
+    background: #fffbef;
+    color: #73551b;
+    box-shadow: 0 8px 30px #49340b1a;
     font-size: 13px;
+  }
+  .directory-update-icon {
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .directory-update-content {
+    flex: 1;
+    min-width: 0;
+  }
+  .directory-update-content strong {
+    font-size: 14px;
+  }
+  .directory-update-content p {
+    margin: 4px 0 12px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+  }
+  .directory-update-content button {
+    border-color: #dcc28a;
+    background: #fffdf6;
+    color: #73551b;
+  }
+  .directory-update-content button:hover:not(:disabled) {
+    border-color: #c6a45b;
+    background: #f7edcf;
+  }
+  .directory-update-content button:focus-visible {
+    outline-color: #c6a45b;
   }
   .library-fixed-controls {
     position: sticky;
@@ -1957,6 +2011,13 @@
     }
   }
   @media (max-width: 600px) {
+    .directory-update-notice {
+      right: 16px;
+      bottom: max(16px, env(safe-area-inset-bottom));
+    }
+    .directory-update-content button {
+      min-height: 44px;
+    }
     .directory-recursive-scan {
       min-height: 44px;
     }
