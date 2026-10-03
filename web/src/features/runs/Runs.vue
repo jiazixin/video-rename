@@ -9,6 +9,11 @@
     Clock3,
     Folder,
     PenLine,
+    Images,
+    CirclePlay,
+    CircleCheck,
+    CircleAlert,
+    CircleMinus,
     Trash2,
     Info,
     X,
@@ -212,6 +217,21 @@
   const active = (r: Run) =>
     ['queued', 'scanning', 'running', 'paused', 'cancelling'].includes(r.status);
   const pausable = (r: Run) => ['queued', 'scanning', 'running'].includes(r.status);
+  const runStatusIcons = {
+    queued: Clock3,
+    scanning: RefreshCw,
+    running: CirclePlay,
+    paused: Pause,
+    cancelling: CircleMinus,
+    completed: CircleCheck,
+    done: CircleCheck,
+    failed: CircleAlert,
+    partial_failure: CircleAlert,
+    cancelled: CircleMinus,
+    interrupted: CircleAlert
+  };
+  const runStatusIcon = (status: string) =>
+    runStatusIcons[status as keyof typeof runStatusIcons] || Info;
   const running = (r: Run) => active(r) && r.status !== 'paused' && !!r.started && !r.finished;
   const modelName = (r: Run) => r.model_config_title || r.request_config?.model || '—';
   const modelHint = (r: Run) =>
@@ -730,6 +750,7 @@
             v-for="(r, runIndex) in day.runs"
             :key="r.id"
             class="run-entry"
+            :data-task="r.task === 'extract' ? 'extract' : 'rename'"
             :class="{
               'is-active': active(r),
               'is-running': running(r),
@@ -745,10 +766,19 @@
             ><div class="run-body">
               <div class="run-head"
                 ><strong class="run-id">#{{ r.id }}</strong
-                ><span class="badge">{{ r.task === 'extract' ? '抽帧' : '重命名' }}</span
-                ><StatusBadge :status="r.status">{{
-                  statusNames[r.status] || r.status
-                }}</StatusBadge
+                ><span class="badge run-task-badge"
+                  ><Images v-if="r.task === 'extract'" :size="13" aria-hidden="true" /><PenLine
+                    v-else
+                    :size="13"
+                    aria-hidden="true"
+                  />{{ r.task === 'extract' ? '抽帧' : '重命名' }}</span
+                ><StatusBadge :status="r.status"
+                  ><template #icon
+                    ><component
+                      :is="runStatusIcon(r.status)"
+                      :size="13"
+                      aria-hidden="true" /></template
+                  >{{ statusNames[r.status] || r.status }}</StatusBadge
                 ><span
                   class="run-duration"
                   title="从实际开始到结束，不含排队等待，含暂停时间；进行中的批次显示已耗时与按近期处理速度估算的剩余时间"

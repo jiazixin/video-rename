@@ -180,6 +180,18 @@
   padding-top: 2px;
 }
 .run-entry {
+  /* Task categories use graphite/violet; blue is reserved for activity. */
+  --task-ink: #4b5563;
+  --task-background: #f3f4f6;
+  --task-border: #d1d5db;
+  --task-edge: #b6bbc3;
+  --run-background: #f9fafb;
+  --run-active-background: #f3f4f6;
+  --run-accent: #3478ba;
+  --run-accent-soft: #c9d5e2;
+  --run-ink: #2468af;
+  --run-dot-ring: #aeccec;
+  --run-pulse: #6ca7df;
   position: relative;
   display: grid;
   grid-template-columns: 38px 18px minmax(0, 1fr);
@@ -187,12 +199,31 @@
   margin: 0 6px 12px;
   padding: 8px 20px 8px 12px;
   border-radius: 6px;
+  background: var(--run-background);
+  box-shadow: inset 3px 0 0 var(--task-edge);
+}
+.run-entry[data-task='extract'] {
+  --task-ink: #6941a5;
+  --task-background: #f2edf9;
+  --task-border: #ddd0ef;
+  --task-edge: #c4b2df;
+  --run-background: #faf8ff;
+  --run-active-background: #f5f1fc;
 }
 .run-entry.is-active {
-  background: #f8fbf9;
+  background: var(--run-active-background);
 }
-.run-entry.is-running {
-  background: #f3faf5;
+.run-entry .run-task-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  font-size: 11px;
+  line-height: 1.5;
+  font-weight: 500;
+  color: var(--task-ink);
+  background: var(--task-background);
+  border-color: var(--task-border);
 }
 .run-time {
   font-size: 11px;
@@ -241,15 +272,15 @@
   box-shadow: 0 0 0 1px #d9dde0;
 }
 .run-entry.is-running .run-node-dot {
-  background: #2e9b69;
-  box-shadow: 0 0 0 1px #a9d8bf;
+  background: var(--run-accent);
+  box-shadow: 0 0 0 1px var(--run-dot-ring);
 }
 .run-entry.is-running .run-node-dot::before,
 .run-entry.is-running .run-node-dot::after {
   content: '';
   position: absolute;
   inset: -5px;
-  border: 1px solid #4fc486;
+  border: 1px solid var(--run-pulse);
   border-radius: 50%;
   animation: run-live-pulse 2.4s ease-out infinite both;
 }
@@ -288,6 +319,12 @@
 .run-head .status-badge {
   padding: 3px 8px;
   font-weight: 500;
+  border-radius: 999px;
+}
+.run-head .status-badge[data-status='scanning'] {
+  --status-ink: #2468af;
+  --status-bg: #edf5ff;
+  --status-line: #cfe1f6;
 }
 .run-id {
   font-size: 13px;
@@ -364,7 +401,7 @@
   display: block;
   height: 100%;
   border-radius: 2px;
-  background: #ccd6ce;
+  background: var(--run-accent-soft);
   transition: width 0.5s ease;
 }
 .run-entry.is-running .run-progress-bar {
@@ -375,7 +412,7 @@
   display: none;
 }
 .run-entry.is-running .run-progress-fill {
-  background: #2e9b69;
+  background: var(--run-accent);
   border-radius: 3px;
 }
 .run-entry.is-running .run-progress-fill::after {
@@ -413,7 +450,7 @@
   font-variant-numeric: tabular-nums;
 }
 .run-entry.is-running .run-progress-pct {
-  color: #287452;
+  color: var(--run-ink);
 }
 .run-foot {
   display: flex;
