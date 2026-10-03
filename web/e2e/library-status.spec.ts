@@ -87,7 +87,30 @@ async function fixture(page: Page, name: string, files: string[], directories: s
       Math.min(100, files.length + directories.length)
     )
   }
-  return { id, entries, headers, mark, rename, open }
+  async function populateDirectory(name: string, files: string[]) {
+    for (const file of files) writeFileSync(join(path, name, file), 'directory status fixture')
+    const child = entries.get(name)!
+    expect(
+      (
+        await page.request.post(`/api/directories/${child.id}/refresh`, {
+          headers,
+          data: {}
+        })
+      ).ok()
+    ).toBe(true)
+    let items: Entry[] = []
+    await expect
+      .poll(async () => {
+        const result = await (
+          await page.request.get(`/api/directories/${child.id}/entries?page=1&limit=200`)
+        ).json()
+        items = result.items
+        return !result.refreshing && result.total === files.length
+      })
+      .toBe(true)
+    return items
+  }
+  return { id, entries, headers, mark, rename, open, populateDirectory }
 }
 
 const rows = (page: Page) => page.locator('.file-table tbody tr')
@@ -113,11 +136,11 @@ test('处理状态与搜索、类型共同筛选，翻页只显示匹配文件�
   await setup.open()
   await select(page, '类型筛选', '视频')
   await select(page, '处理状态筛选', '已标记')
-  await expect(page.getByText('共 126 项 · 100 项 / 当前页', { exact: true })).toBeVisible()
-  await expect(names(page)).toHaveText(['clip-folder', ...clips.slice(0, 99)])
+  await expect(page.getByText('共 125 项 · 100 项 / 当前页', { exact: true })).toBeVisible()
+  await expect(names(page)).toHaveText(clips.slice(0, 100))
   await page.getByRole('button', { name: '下一页', exact: true }).click()
-  await expect(names(page)).toHaveText(clips.slice(99, 125))
-  await expect(rows(page).locator('td:nth-child(4)')).toHaveText(Array(26).fill('手动标记已处理'))
+  await expect(names(page)).toHaveText(clips.slice(100, 125))
+  await expect(rows(page).locator('td:nth-child(4)')).toHaveText(Array(25).fill('手动标记已处理'))
   await expect(page.locator('.pagination .page-current')).toHaveText('2')
 
   await select(page, '处理状态筛选', '未处理')
@@ -131,7 +154,7 @@ test('处理状态与搜索、类型共同筛选，翻页只显示匹配文件�
   await expect(rows(page)).toHaveCount(0)
   await page.getByLabel('搜索当前目录', { exact: true }).fill('')
   await select(page, '类型筛选', '图片')
-  await expect(names(page)).toHaveText(['clip-folder', 'marked.png'])
+  await expect(names(page)).toHaveText(['marked.png'])
   await select(page, '处理状态筛选', '未处理')
   await expect(names(page)).toHaveText(['clip-folder', 'pending.png'])
   await expect(page.getByRole('alert')).toHaveCount(0)
@@ -147,6 +170,17 @@ test('处理状态表头按状态分组及自然名称双向排序，进入目�
   await setup.mark(['a-m2.mp4', 'a-m10.mp4'])
   await setup.rename('raw2.mp4', 'a-a2.mp4')
   await setup.rename('raw10.mp4', 'a-a10.mp4')
+  for (const name of ['a-folder2', 'a-folder10']) {
+    const [nested] = await setup.populateDirectory(name, ['raw.mp4'])
+    expect(
+      (
+        await page.request.post(`/api/entries/${nested.id}/rename`, {
+          headers: setup.headers,
+          data: { name: 'manual.mp4', version: nested.version, key: `nested-status-${nested.id}` }
+        })
+      ).ok()
+    ).toBe(true)
+  }
   await setup.open()
   const sort = page.getByRole('button', { name: '切换处理状态排序', exact: true })
   const header = page.getByRole('columnheader').filter({ has: sort })
@@ -215,7 +249,7 @@ test('处理状态表头按状态分组及自然名称双向排序，进入目�
   await filter.press('ArrowDown')
   await filter.press('Enter')
   await expect(filter).toHaveText('未处理')
-  await expect(names(page)).toHaveText(['a-folder10', 'a-folder2', 'a-z10.mp4', 'a-z2.mp4'])
+  await expect(names(page)).toHaveText(['a-z10.mp4', 'a-z2.mp4'])
   const filterBounds = await filter.boundingBox()
   expect(filterBounds!.x).toBeGreaterThanOrEqual(0)
   expect(filterBounds!.x + filterBounds!.width).toBeLessThanOrEqual(390)
@@ -303,5 +337,84 @@ test('未处理筛选中的标记和手动改名立即移除行，并保留其�
   await select(page, '处理状态筛选', '全部状态')
   await expect(names(page)).toHaveText(['clip1.mp4', 'clip3.mp4', 'renamed2.mp4'])
   await expect(page.getByLabel('选择 renamed2.mp4', { exact: true })).toBeChecked()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+})
+
+test('未处理隐藏全部处理目录，递归标记后即时移除目录并保留其他选择', async ({ page }) => {
+  const setup = await fixture(
+    page,
+    '目录状态真实筛选',
+    [],
+    ['已完成', '部分完成', '待处理', '待统计', '空目录']
+  )
+  const completed = await setup.populateDirectory('已完成', ['done.mp4'])
+  const partial = await setup.populateDirectory('部分完成', ['done.mp4', 'pending.mp4'])
+  await setup.populateDirectory('待处理', ['pending.mp4'])
+  await setup.populateDirectory('空目录', [])
+  const ids = [completed[0]!.id, partial.find((e) => e.name === 'done.mp4')!.id]
+  expect(
+    (
+      await page.request.post('/api/entries/processed', {
+        headers: setup.headers,
+        data: { targets: ids, marked: true, key: `directory-status-seed-${setup.id}` }
+      })
+    ).ok()
+  ).toBe(true)
+  await expect
+    .poll(async () => {
+      const current = await (
+        await page.request.get(`/api/entries/status?ids=${ids.join(',')}`)
+      ).json()
+      return current.every((e: Entry) => e.processed === 'marked')
+    })
+    .toBe(true)
+  await setup.open()
+  await select(page, '处理状态筛选', '未处理')
+  await expect(names(page)).toHaveText(['待处理', '待统计', '部分完成'])
+  await expect(page.getByText('共 3 项 · 3 项 / 当前页', { exact: true })).toBeVisible()
+  await expect(page.locator('.library-status-scope')).toContainText('全部子目录内的视频状态')
+  await page.getByRole('button', { name: '多选', exact: true }).click()
+  await page.getByLabel('选择 待处理', { exact: true }).check()
+  await page.getByRole('button', { name: '标记已处理 部分完成', exact: true }).click()
+  await page.getByRole('button', { name: '确认标记', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(names(page)).toHaveText(['待处理', '待统计'])
+  await expect(page.getByText('共 2 项 · 2 项 / 当前页', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('选择 待处理', { exact: true })).toBeChecked()
+  await select(page, '处理状态筛选', '已处理')
+  await expect(names(page)).toHaveText(['已完成', '部分完成'])
+  await select(page, '处理状态筛选', '已标记')
+  await expect(names(page)).toHaveText(['已完成', '部分完成'])
+  await select(page, '处理状态筛选', '手动命名')
+  await expect(rows(page)).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: '没有匹配的条目', exact: true })).toBeVisible()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+})
+
+test('保序更新不会保留改名后不匹配搜索或媒体类型的文件', async ({ page }) => {
+  const setup = await fixture(page, '筛选保序-改名', ['clip.mp4', 'photo.png'])
+  await setup.open()
+  await page.getByLabel('搜索当前目录', { exact: true }).fill('clip')
+  await expect(names(page)).toHaveText(['clip.mp4'])
+  await page.getByRole('button', { name: '双击或按 Enter 重命名 clip.mp4', exact: true }).dblclick()
+  const editor = page.getByRole('textbox', { name: '编辑 clip.mp4', exact: true })
+  await editor.fill('renamed')
+  await editor.press('Enter')
+  await expect(rows(page)).toHaveCount(0)
+  await expect(page.getByText('共 0 项 · 0 项 / 当前页', { exact: true })).toBeVisible()
+  await page.getByLabel('搜索当前目录', { exact: true }).fill('')
+  await select(page, '类型筛选', '视频')
+  await expect(names(page)).toHaveText(['renamed.mp4'])
+  await page
+    .getByRole('button', { name: '双击或按 Enter 重命名 renamed.mp4', exact: true })
+    .dblclick()
+  await page.getByRole('button', { name: '修改后缀名', exact: true }).click()
+  const fullName = page.getByRole('textbox', { name: '编辑 renamed.mp4', exact: true })
+  await fullName.fill('renamed.jpg')
+  await fullName.press('Enter')
+  await expect(rows(page)).toHaveCount(0)
+  await expect(page.getByText('共 0 项 · 0 项 / 当前页', { exact: true })).toBeVisible()
+  await select(page, '类型筛选', '图片')
+  await expect(names(page)).toHaveText(['photo.png', 'renamed.jpg'])
   await expect(page.getByRole('alert')).toHaveCount(0)
 })

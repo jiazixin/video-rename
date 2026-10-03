@@ -2,6 +2,7 @@ package library
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"encoding/json/v2"
 	"fmt"
@@ -69,79 +70,11 @@ func (l *Library) WithProgressBatch(ctx context.Context, entries []Entry) ([]Ent
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE dirs(id,parent) AS (
- SELECT e.id,e.parent FROM entries e JOIN json_each(?) selected ON selected.value=e.id WHERE e.present=1 AND e.kind='directory'
- UNION SELECT e.id,e.parent FROM entries e JOIN dirs d ON e.parent=d.id WHERE e.present=1 AND e.kind='directory'
- ), counts AS (
- SELECT e.parent,COUNT(*) AS total,
- SUM(EXISTS(SELECT 1 FROM marks m WHERE m.identity=e.identity AND m.size=e.size AND m.mtime=e.mtime)) AS processed,
- SUM(EXISTS(SELECT 1 FROM run_items i JOIN runs r ON r.id=i.run WHERE i.entry=e.id AND i.status IN ('queued','running') AND r.status IN ('queued','scanning','running','paused','cancelling'))) AS active
- FROM dirs d JOIN entries e ON e.parent=d.id WHERE e.present=1 AND e.kind='file' AND video_rename_media_kind(e.name)=1 GROUP BY e.parent
- ) SELECT d.id,d.parent,COALESCE(c.total,0),COALESCE(c.processed,0),COALESCE(c.active,0),
- NOT EXISTS(SELECT 1 FROM directory_state s WHERE s.dir=d.id AND s.generation>0 AND s.error='')
- FROM dirs d LEFT JOIN counts c ON c.parent=d.id`, string(raw))
+	nodes, err := readDirectoryProcessing(ctx, tx, ids, "")
 	if err != nil {
 		return nil, err
 	}
-	type totals struct {
-		parent   int64
-		progress DirectoryProgress
-		children []int64
-		state    int
-	}
-	nodes := map[int64]*totals{}
-	for rows.Next() {
-		var id int64
-		n := &totals{}
-		if err = rows.Scan(&id, &n.parent, &n.progress.Total, &n.progress.Processed, &n.progress.Active, &n.progress.Unknown); err != nil {
-			break
-		}
-		nodes[id] = n
-	}
-	if err == nil {
-		err = rows.Err()
-	}
-	rows.Close()
-	if err != nil {
-		return nil, err
-	}
-	for id, n := range nodes {
-		if parent := nodes[n.parent]; parent != nil {
-			parent.children = append(parent.children, id)
-		}
-	}
-	var sum func(int64, int) error
-	sum = func(id int64, depth int) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		n := nodes[id]
-		if n == nil || n.state == 2 {
-			return nil
-		}
-		if n.state == 1 || depth > 1024 {
-			return fmt.Errorf("目录关系无效")
-		}
-		n.state = 1
-		for _, child := range n.children {
-			if err := sum(child, depth+1); err != nil {
-				return err
-			}
-			p := nodes[child].progress
-			n.progress.Total += p.Total
-			n.progress.Processed += p.Processed
-			n.progress.Active += p.Active
-			n.progress.Unknown += p.Unknown
-		}
-		n.state = 2
-		return nil
-	}
-	for _, id := range ids {
-		if err := sum(id, 0); err != nil {
-			return nil, err
-		}
-	}
-	rows, err = tx.QueryContext(ctx, `SELECT s.dir,
+	rows, err := tx.QueryContext(ctx, `SELECT s.dir,
  COALESCE(SUM(i.kind='directory'),0),
  COALESCE(SUM(i.kind='file' AND video_rename_media_kind(i.name)=1),0),
  COALESCE(SUM(i.kind='file' AND video_rename_media_kind(i.name)=2),0),
@@ -183,4 +116,103 @@ func (l *Library) WithProgressBatch(ctx context.Context, entries []Entry) ([]Ent
 		entries[i].Contents = contents[e.ID]
 	}
 	return entries, nil
+}
+
+// directoryProcessing stores subtree totals without one recursive query per row.
+// The same transaction can use these totals for filtering, counts, and paging.
+type directoryProcessing struct {
+	parent     int64
+	progress   DirectoryProgress
+	matches    int
+	taskStatus string
+	children   []int64
+	state      int
+}
+
+func readDirectoryProcessing(ctx context.Context, tx *sql.Tx, ids []int64, status string) (map[int64]*directoryProcessing, error) {
+	raw, err := json.Marshal(ids)
+	if err != nil {
+		return nil, err
+	}
+	match, task := "0", "''"
+	if status != "" {
+		task = "(SELECT " + entryTaskStatusSQL + " FROM entries e WHERE e.id=d.id)"
+		if status != "unprocessed" && status != "processed" {
+			comparison, err := processingStatusComparison(status)
+			if err != nil {
+				return nil, err
+			}
+			match = "COALESCE(NULLIF(" + entryTaskStatusSQL + ",''),m.source,'unprocessed')" + comparison
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE dirs(id,parent) AS (
+ SELECT e.id,e.parent FROM entries e JOIN json_each(?) selected ON selected.value=e.id WHERE e.present=1 AND e.kind='directory'
+ UNION SELECT e.id,e.parent FROM entries e JOIN dirs d ON e.parent=d.id WHERE e.present=1 AND e.kind='directory'
+ ), counts AS (
+ SELECT e.parent,COUNT(*) AS total,
+ SUM(COALESCE(m.source IN ('marked','manual','automatic'),0)) AS processed,
+ SUM(EXISTS(SELECT 1 FROM run_items i JOIN runs r ON r.id=i.run WHERE i.entry=e.id AND i.status IN ('queued','running') AND r.status IN ('queued','scanning','running','paused','cancelling'))) AS active,
+ SUM(`+match+`) AS matches
+ FROM dirs d JOIN entries e ON e.parent=d.id LEFT JOIN marks m ON m.identity=e.identity AND m.size=e.size AND m.mtime=e.mtime WHERE e.present=1 AND e.kind='file' AND video_rename_media_kind(e.name)=1 GROUP BY e.parent
+ ) SELECT d.id,d.parent,COALESCE(c.total,0),COALESCE(c.processed,0),COALESCE(c.active,0),
+ NOT EXISTS(SELECT 1 FROM directory_state s WHERE s.dir=d.id AND s.generation>0 AND s.error=''),
+ COALESCE(c.matches,0),`+task+`
+ FROM dirs d LEFT JOIN counts c ON c.parent=d.id`, string(raw))
+	if err != nil {
+		return nil, err
+	}
+	nodes := map[int64]*directoryProcessing{}
+	for rows.Next() {
+		var id int64
+		n := &directoryProcessing{}
+		if err = rows.Scan(&id, &n.parent, &n.progress.Total, &n.progress.Processed, &n.progress.Active, &n.progress.Unknown, &n.matches, &n.taskStatus); err != nil {
+			break
+		}
+		nodes[id] = n
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	for id, n := range nodes {
+		if parent := nodes[n.parent]; parent != nil {
+			parent.children = append(parent.children, id)
+		}
+	}
+	var sum func(int64, int) error
+	sum = func(id int64, depth int) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		n := nodes[id]
+		if n == nil || n.state == 2 {
+			return nil
+		}
+		if n.state == 1 || depth > 1024 {
+			return fmt.Errorf("目录关系无效")
+		}
+		n.state = 1
+		for _, child := range n.children {
+			if err := sum(child, depth+1); err != nil {
+				return err
+			}
+			p := nodes[child].progress
+			n.progress.Total += p.Total
+			n.progress.Processed += p.Processed
+			n.progress.Active += p.Active
+			n.progress.Unknown += p.Unknown
+			n.matches += nodes[child].matches
+		}
+		n.state = 2
+		return nil
+	}
+	for _, id := range ids {
+		if err := sum(id, 0); err != nil {
+			return nil, err
+		}
+	}
+	return nodes, nil
 }

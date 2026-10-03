@@ -1,56 +1,161 @@
-.picker-row .picker-entry-name {
-  flex: 1;
+.directory-picker {
+  min-width: 0;
+}
+.directory-picker .picker-breadcrumb {
+  min-width: 0;
+  gap: 6px;
+  padding: 10px 14px;
+  background: #f8faf9;
+}
+.directory-picker .picker-breadcrumb button {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.directory-picker .picker-current {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 51px;
+  padding: 12px 14px;
+  background: #fcfdfc;
+}
+.picker-current-name {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: 8px;
+}
+.picker-current-name > span {
+  flex: none;
+  color: var(--ash);
+  font-size: 11px;
+}
+.directory-picker .picker-current-name strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.directory-picker .picker-list {
+  min-height: 90px;
+  max-height: 290px;
+}
+.directory-picker .picker-row {
+  min-height: 47px;
+  gap: 10px;
+  padding: 0 14px;
+  border-bottom: 1px solid #f0f2f1;
+}
+.directory-picker .picker-row:last-child {
+  border-bottom: 0;
+}
+.directory-picker .picker-row > input {
+  flex: none;
+}
+.directory-picker .picker-row button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto 15px;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 0;
+}
+.directory-picker .picker-entry-name {
   min-width: 0;
   text-align: left;
 }
-.picker-row .directory-progress {
-  flex: none;
-  margin-left: auto;
-  gap: 3px;
+.directory-picker .directory-progress {
+  flex-direction: row;
+  justify-content: flex-end;
+  margin: 0;
+  gap: 4px 8px;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
 }
-.picker-row .directory-progress .status-badge {
+.directory-picker .directory-progress .status-badge {
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
   font-size: 10px;
-  padding: 2px 6px;
 }
-.picker-row .directory-progress .status-dot {
-  width: 5px;
-  height: 5px;
-}
-.picker-row .directory-progress small {
+.directory-picker .directory-progress small {
   font-size: 10px;
 }
-.picker-row button > svg {
-  flex: none;
+.directory-picker .picker-row button > svg:last-child {
+  margin: 0;
 }
-.picker-row button > svg:last-child {
-  margin-left: 4px;
-}
-.picker-current {
+.directory-picker .picker-bottom {
   flex-wrap: wrap;
+  gap: 10px 14px;
+  padding: 11px 14px;
+  background: #fcfdfc;
 }
-.picker-current > .directory-progress {
-  margin-left: auto;
+.directory-picker .picker-bottom span {
+  margin-right: 0;
 }
-.picker-list {
-  max-height: 260px;
-}
-.picker-row {
-  min-height: 54px;
-}
-
-.picker-bottom {
-  flex-wrap: wrap;
-}
-.picker-bottom > span {
-  flex-basis: 100%;
+.directory-picker .picker-bottom > span {
+  font-variant-numeric: tabular-nums;
 }
 .picker-selection {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin-right: auto;
-  flex-wrap: wrap;
 }
-.picker-selection button {
-  padding: 5px 7px;
+.directory-picker .picker-selection button {
+  padding: 4px 7px;
   font-size: 11px;
+}
+.directory-picker .picker-bottom > .page-navigation {
+  margin-left: auto;
+}
+@media (max-width: 760px) {
+  .directory-picker .picker-bottom > span {
+    flex-basis: 100%;
+  }
+}
+@media (max-width: 600px) {
+  .directory-picker .picker-current {
+    grid-template-columns: 16px minmax(0, 1fr);
+    gap: 5px 10px;
+  }
+  .directory-picker .picker-current > .directory-progress {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+  .picker-current-name {
+    flex-wrap: wrap;
+    gap: 2px 8px;
+  }
+  .directory-picker .picker-row button {
+    grid-template-columns: 18px minmax(0, 1fr) 15px;
+    gap: 4px 9px;
+    padding: 11px 0;
+  }
+  .directory-picker .picker-row .directory-progress {
+    grid-column: 2 / -1;
+    grid-row: 2;
+    justify-content: flex-start;
+  }
+  .directory-picker .picker-row button > svg:last-child {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .directory-picker .picker-bottom {
+    gap: 10px;
+  }
+  .picker-selection {
+    width: 100%;
+    margin: 0;
+  }
+  .directory-picker .picker-selection button {
+    min-height: 34px;
+  }
+  .directory-picker .picker-bottom > .page-navigation {
+    margin: 0;
+  }
 }

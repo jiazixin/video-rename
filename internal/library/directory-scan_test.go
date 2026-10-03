@@ -471,6 +471,111 @@ func TestScanCleanupCannotDeletePublishedGeneration(t *testing.T) {
 	assertScanIndexCounts(t, l, state.Generation, 1, 0)
 }
 
+func TestDirectoryScannerReusesStageAfterFailureAndCancellation(t *testing.T) {
+	l, root, _ := fixture(t)
+	for _, name := range []string{"a", "b"} {
+		if err := os.Mkdir(filepath.Join(root, name), 0700); err != nil {
+			t.Fatal(err)
+		}
+		put(t, filepath.Join(root, name, "same-name.mp4"))
+	}
+	refresh(t, l, 1)
+	a, b := entry(t, l, 1, "a").ID, entry(t, l, 1, "b").ID
+	scanner, err := l.NewDirectoryScanner(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { scanner.Close() })
+	if _, err := l.DB.Exec(fmt.Sprintf(`CREATE TRIGGER reject_one_scan BEFORE INSERT ON directory_state
+ WHEN NEW.dir=%d BEGIN SELECT RAISE(ABORT,'injected publication failure'); END`, a)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scanner.ScanDirectory(t.Context(), a); err == nil {
+		t.Fatal("publication failure was ignored")
+	}
+	result, err := scanner.ScanDirectory(t.Context(), b)
+	if err != nil || result.Files != 1 || result.Added != 1 || result.Changed+result.Removed != 0 {
+		t.Fatalf("failed-directory evidence survived reuse: %+v %v", result, err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := scanner.ScanDirectory(ctx, a); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled scan: %v", err)
+	}
+	if _, err := l.DB.Exec("DROP TRIGGER reject_one_scan"); err != nil {
+		t.Fatal(err)
+	}
+	result, err = scanner.ScanDirectory(t.Context(), a)
+	if err != nil || result.Files != 1 || result.Added != 1 {
+		t.Fatalf("cancelled-directory retry: %+v %v", result, err)
+	}
+	if entry(t, l, a, "same-name.mp4").ID == entry(t, l, b, "same-name.mp4").ID {
+		t.Fatal("stage reused an entry ID from another directory")
+	}
+	path := scanner.path
+	if err := scanner.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stage not removed after close: %v", err)
+	}
+	if _, err := scanner.ScanDirectory(t.Context(), a); err == nil {
+		t.Fatal("closed scanner accepted new work")
+	}
+}
+
+func TestScanDirectoryRejectsAncestorReplacementAfterPinnedVerification(t *testing.T) {
+	for _, replaceAncestor := range []bool{false, true} {
+		t.Run(fmt.Sprintf("ancestor=%v", replaceAncestor), func(t *testing.T) {
+			l, root, _ := fixture(t)
+			inside := filepath.Join(root, "inside")
+			if err := os.Mkdir(inside, 0700); err != nil {
+				t.Fatal(err)
+			}
+			scanned := inside
+			if replaceAncestor {
+				scanned = filepath.Join(inside, "nested")
+				if err := os.Mkdir(scanned, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			put(t, filepath.Join(scanned, "video.mp4"))
+			refresh(t, l, 1)
+			id := entry(t, l, 1, "inside").ID
+			if replaceAncestor {
+				refresh(t, l, id)
+				id = entry(t, l, id, "nested").ID
+			}
+			refresh(t, l, id)
+			before, _ := l.DirectoryState(t.Context(), id)
+			outside := t.TempDir()
+			put(t, filepath.Join(outside, "video.mp4"))
+			var replace sync.Once
+			_, err := l.scanDirectoryWithMetadata(t.Context(), id,
+				func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) },
+				func(dir *os.File, de os.DirEntry) (scannedDirectoryEntry, error) {
+					var replaceErr error
+					replace.Do(func() {
+						if replaceErr = os.Rename(inside, inside+"-parked"); replaceErr == nil {
+							replaceErr = os.Symlink(outside, inside)
+						}
+					})
+					if replaceErr != nil {
+						return scannedDirectoryEntry{}, replaceErr
+					}
+					return scanPinnedDirectoryEntry(dir, de)
+				})
+			if err == nil {
+				t.Fatal("final ancestor verification accepted a replaced path")
+			}
+			after, _ := l.DirectoryState(t.Context(), id)
+			if after.Generation != before.Generation || after.Error == "" {
+				t.Fatalf("ancestor replacement lost the old generation: %+v", after)
+			}
+		})
+	}
+}
+
 func waitScanResult(t *testing.T, done <-chan error) error {
 	t.Helper()
 	select {

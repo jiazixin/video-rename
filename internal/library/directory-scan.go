@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -76,11 +77,68 @@ func (l *Library) ScanDirectory(ctx context.Context, id int64) (ScanDirectoryRes
 	return l.scanDirectory(ctx, id, func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) })
 }
 
+// DirectoryScanner reuses one bounded, disposable SQLite stage for a recursive
+// round. Directory evidence and the index baseline are captured afresh on every
+// call; no filesystem or epoch evidence is cached between directories.
+type DirectoryScanner struct {
+	library *Library
+	stage   *sql.DB
+	path    string
+	mu      sync.Mutex
+}
+
+func (l *Library) NewDirectoryScanner(ctx context.Context) (*DirectoryScanner, error) {
+	stage, path, err := newScanStage(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &DirectoryScanner{library: l, stage: stage, path: path}, nil
+}
+
+// Close waits for an in-flight directory before removing the local stage.
+func (s *DirectoryScanner) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stage == nil {
+		return nil
+	}
+	err := s.stage.Close()
+	s.stage = nil
+	return errors.Join(err, os.Remove(s.path))
+}
+
+func (s *DirectoryScanner) ScanDirectory(ctx context.Context, id int64) (ScanDirectoryResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return ScanDirectoryResult{}, err
+	}
+	if s.stage == nil {
+		return ScanDirectoryResult{}, fmt.Errorf("目录扫描暂存已关闭")
+	}
+	// A failed or cancelled directory may have left local observations. Reset
+	// all three tables before capturing any evidence for the next directory.
+	if _, err := s.stage.ExecContext(ctx, "DELETE FROM baseline; DELETE FROM snapshot; DELETE FROM verification"); err != nil {
+		return ScanDirectoryResult{}, err
+	}
+	return s.library.scanDirectoryWithStage(ctx, id, s.stage, s.path,
+		func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) }, scanPinnedDirectoryEntry)
+}
+
 func (l *Library) scanDirectory(ctx context.Context, id int64, read func(*os.File, int) ([]os.DirEntry, error)) (ScanDirectoryResult, error) {
 	return l.scanDirectoryWithMetadata(ctx, id, read, scanPinnedDirectoryEntry)
 }
 
-func (l *Library) scanDirectoryWithMetadata(ctx context.Context, id int64, read func(*os.File, int) ([]os.DirEntry, error), inspect func(*os.File, os.DirEntry) (scannedDirectoryEntry, error)) (result ScanDirectoryResult, err error) {
+func (l *Library) scanDirectoryWithMetadata(ctx context.Context, id int64, read func(*os.File, int) ([]os.DirEntry, error), inspect func(*os.File, os.DirEntry) (scannedDirectoryEntry, error)) (ScanDirectoryResult, error) {
+	stage, path, err := newScanStage(ctx)
+	if err != nil {
+		return ScanDirectoryResult{}, err
+	}
+	defer func() { stage.Close(); _ = os.Remove(path) }()
+	return l.scanDirectoryWithStage(ctx, id, stage, path, read, inspect)
+}
+
+func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *sql.DB, path string, read func(*os.File, int) ([]os.DirEntry, error), inspect func(*os.File, os.DirEntry) (scannedDirectoryEntry, error)) (result ScanDirectoryResult, err error) {
 	release, err := l.lockDirectoryScan(ctx, id)
 	if err != nil {
 		return result, err
@@ -100,11 +158,6 @@ func (l *Library) scanDirectoryWithMetadata(ctx context.Context, id int64, read 
 			_, _ = l.DB.ExecContext(ctx, "INSERT INTO directory_state(dir,error) VALUES(?,?) ON CONFLICT(dir) DO UPDATE SET error=excluded.error", id, err.Error())
 		}
 	}()
-	stage, path, err := newScanStage(ctx)
-	if err != nil {
-		return result, err
-	}
-	defer func() { stage.Close(); _ = os.Remove(path) }()
 	baseline, err := l.captureScanBaseline(ctx, id, stage)
 	if err != nil {
 		return result, err
@@ -112,11 +165,24 @@ func (l *Library) scanDirectoryWithMetadata(ctx context.Context, id int64, read 
 	if l.indexEpoch.Load() != baseline.epoch {
 		return result, ErrDirectoryScanChanged
 	}
+	pinned, err := openScanDirectory(l.Root, baseline.chain)
+	if err != nil {
+		return result, err
+	}
+	defer pinned.Close()
 	var observed domain.Snapshot
 	for _, table := range []string{"snapshot", "verification"} {
-		dir, openErr := openScanDirectory(l.Root, baseline.chain)
-		if openErr != nil {
-			return result, openErr
+		dir := pinned
+		if table == "verification" {
+			// An independent enumeration offset on the same pinned directory
+			// avoids reopening/statting every ancestor for the second pass.
+			// The complete ancestor chain is independently reopened before
+			// publication below, so path replacement still invalidates evidence.
+			fd, openErr := unix.Openat(int(pinned.Fd()), ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+			if openErr != nil {
+				return result, openErr
+			}
+			dir = os.NewFile(uintptr(fd), pinned.Name())
 		}
 		before, scanErr := scanDirectorySnapshot(dir)
 		if scanErr == nil && table == "verification" && !before.Same(observed) {
@@ -126,7 +192,9 @@ func (l *Library) scanDirectoryWithMetadata(ctx context.Context, id int64, read 
 			scanErr = collectScanMetadata(ctx, stage, table, dir, read, inspect)
 		}
 		after, statErr := scanDirectorySnapshot(dir)
-		dir.Close()
+		if dir != pinned {
+			dir.Close()
+		}
 		if scanErr != nil {
 			return result, scanErr
 		}
@@ -480,13 +548,30 @@ func (l *Library) buildScanGeneration(ctx context.Context, id, gen int64, marker
 		if err = l.writeScanGenerationPage(ctx, id, gen, marker, items); err != nil {
 			return err
 		}
-		for _, item := range items {
-			if _, err = stage.ExecContext(ctx, "UPDATE snapshot SET entry=? WHERE name=?", item.entry, item.name); err != nil {
-				return err
-			}
+		if err = updateScanStageEntries(ctx, stage, items); err != nil {
+			return err
 		}
 		after = items[len(items)-1].name
 	}
+}
+
+func updateScanStageEntries(ctx context.Context, stage *sql.DB, items []stagedScanItem) error {
+	tx, err := stage.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.PrepareContext(ctx, "UPDATE snapshot SET entry=? WHERE name=?")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, item := range items {
+		if _, err = stmt.ExecContext(ctx, item.entry, item.name); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (l *Library) writeScanGenerationPage(ctx context.Context, id, gen int64, marker string, items []stagedScanItem) error {

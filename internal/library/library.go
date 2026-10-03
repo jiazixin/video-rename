@@ -339,10 +339,20 @@ func (l *Library) listOrdered(ctx context.Context, id int64, offset, limit int, 
 			filter = "(" + filter + " OR kind='directory')"
 		}
 	}
+	filterArgs := []any{kind, kind}
 	if status != "" {
-		filter = "(" + filter + ") AND (kind='directory' OR " + statusFilter + ")"
+		directoryIDs := "[]"
+		if kind == "" || kind == "directory" || kind == "video" || kind == "image" || kind == "audio" {
+			directoryIDs, err = directoryStatusIDs(ctx, tx, id, p.Generation, q, status)
+			if err != nil {
+				return p, err
+			}
+		}
+		filter = "(" + filter + ") AND ((kind='directory' AND entry IN (SELECT value FROM json_each(?))) OR (kind<>'directory' AND " + statusFilter + "))"
+		filterArgs = append(filterArgs, directoryIDs)
 	}
-	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter, id, p.Generation, q, kind, kind).Scan(&p.Total); err != nil {
+	countArgs := append([]any{id, p.Generation, q}, filterArgs...)
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter, countArgs...).Scan(&p.Total); err != nil {
 		return p, err
 	}
 	order, comparison := "ASC", ">"
@@ -355,7 +365,9 @@ func (l *Library) listOrdered(ctx context.Context, id int64, offset, limit int, 
 		p.Number = min(pageNumber, max(1, (p.Total+limit-1)/limit))
 		skip = (p.Number - 1) * limit
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT entry FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter+` AND (?=0 OR CASE WHEN kind='directory' THEN 0 ELSE 1 END>? OR (CASE WHEN kind='directory' THEN 0 ELSE 1 END=? AND (`+value+`,name COLLATE NATURAL_NAME,entry)`+comparison+`(?,?,?))) ORDER BY CASE WHEN kind='directory' THEN 0 ELSE 1 END,`+value+` `+order+`,name COLLATE NATURAL_NAME `+order+`,entry `+order+` LIMIT ? OFFSET ?`, id, p.Generation, q, kind, kind, offset, anchorKind, anchorKind, anchorValue, anchorName, anchorID, limit+1, skip)
+	pageArgs := append([]any{id, p.Generation, q}, filterArgs...)
+	pageArgs = append(pageArgs, offset, anchorKind, anchorKind, anchorValue, anchorName, anchorID, limit+1, skip)
+	rows, err := tx.QueryContext(ctx, `SELECT entry FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter+` AND (?=0 OR CASE WHEN kind='directory' THEN 0 ELSE 1 END>? OR (CASE WHEN kind='directory' THEN 0 ELSE 1 END=? AND (`+value+`,name COLLATE NATURAL_NAME,entry)`+comparison+`(?,?,?))) ORDER BY CASE WHEN kind='directory' THEN 0 ELSE 1 END,`+value+` `+order+`,name COLLATE NATURAL_NAME `+order+`,entry `+order+` LIMIT ? OFFSET ?`, pageArgs...)
 	if err != nil {
 		return p, err
 	}

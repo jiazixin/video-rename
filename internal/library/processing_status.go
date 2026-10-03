@@ -1,6 +1,11 @@
 package library
 
-import "fmt"
+import (
+	"context"
+	"database/sql"
+	"encoding/json/v2"
+	"fmt"
+)
 
 // These expressions share the live state used by Get, filtering, and sorting.
 // They expect the current entry to be aliased as e.
@@ -18,12 +23,20 @@ const entryTaskStatusSQL = `COALESCE((SELECT CASE WHEN r.status='paused' THEN 'p
 
 const directoryProcessingStatusSQL = `COALESCE((SELECT COALESCE(NULLIF(` + entryTaskStatusSQL + `,''),NULLIF(` + entryProcessedSQL + `,''),'unprocessed') FROM entries e WHERE e.id=directory_items.entry AND e.present=1),'unprocessed')`
 
-// processingStatusFilter matches file state. List queries separately retain
-// directories for navigation; numbering keeps hidden files as reserved names.
+// processingStatusFilter matches file state; directory lists separately match
+// recursive video progress. Numbering keeps hidden files as reserved names.
 func processingStatusFilter(status string) (string, error) {
 	if status == "" {
 		return "1", nil
 	}
+	match, err := processingStatusComparison(status)
+	if err != nil {
+		return "", err
+	}
+	return directoryProcessingStatusSQL + match, nil
+}
+
+func processingStatusComparison(status string) (string, error) {
 	var match string
 	switch status {
 	case "processed":
@@ -35,7 +48,59 @@ func processingStatusFilter(status string) (string, error) {
 	default:
 		return "", fmt.Errorf("无效的处理状态")
 	}
-	return directoryProcessingStatusSQL + match, nil
+	return match, nil
+}
+
+func (n *directoryProcessing) matchesStatus(status string) bool {
+	if n.taskStatus != "" {
+		return status == "active" || status == n.taskStatus
+	}
+	switch status {
+	case "unprocessed":
+		return n.progress.Unknown > 0 || n.progress.Processed < n.progress.Total
+	case "processed":
+		return n.progress.Unknown == 0 && n.progress.Total > 0 && n.progress.Processed == n.progress.Total
+	default:
+		return n.matches > 0
+	}
+}
+
+// directoryStatusIDs evaluates sibling subtrees together, before count or page
+// boundaries are calculated. Unknown subtrees remain discoverable as unprocessed.
+func directoryStatusIDs(ctx context.Context, tx *sql.Tx, id, generation int64, query, status string) (string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT entry FROM directory_items WHERE dir=? AND generation=? AND kind='directory' AND instr(lower(name),lower(?))>0`, id, generation, query)
+	if err != nil {
+		return "", err
+	}
+	ids := []int64{}
+	for rows.Next() {
+		var id int64
+		if err = rows.Scan(&id); err != nil {
+			break
+		}
+		ids = append(ids, id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	rows.Close()
+	if err != nil {
+		return "", err
+	}
+	matched := []int64{}
+	if len(ids) > 0 {
+		nodes, err := readDirectoryProcessing(ctx, tx, ids, status)
+		if err != nil {
+			return "", err
+		}
+		for _, id := range ids {
+			if n := nodes[id]; n != nil && n.matchesStatus(status) {
+				matched = append(matched, id)
+			}
+		}
+	}
+	raw, err := json.Marshal(matched)
+	return string(raw), err
 }
 
 const directoryStatusOrderSQL = `CASE WHEN kind='directory' THEN 0 ELSE CASE ` + directoryProcessingStatusSQL + `

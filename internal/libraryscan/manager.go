@@ -77,7 +77,6 @@ func New(l *library.Library, settings systemsettings.Store) *Manager {
 		status: Status{Status: "idle", Targets: []int64{}, Errors: []ScanError{}},
 		wake:   make(chan struct{}, 1), closedCh: make(chan struct{}), now: time.Now,
 		newTimer: func(d time.Duration) scanTimer { return realTimer{time.NewTimer(d)} },
-		scan:     l.ScanDirectory,
 	}
 }
 
@@ -349,19 +348,48 @@ func (m *Manager) Loop(ctx context.Context) {
 }
 
 type directoryCursor struct {
-	id    int64
-	after int64
+	id        int64
+	after     int64
+	children  []int64
+	next      int
+	exhausted bool
 }
 
 // nextChild traverses only a parent's successfully published index. Its keyset
-// cursor avoids retaining the entire pending subtree, even for a wide NAS tree.
-func (m *Manager) nextChild(ctx context.Context, cursor directoryCursor) (int64, error) {
-	var id int64
-	err := m.library.DB.Read().QueryRowContext(ctx, `SELECT i.entry FROM directory_items i
+// cursor retains at most one 128-child page per depth, even for a wide NAS tree.
+func (m *Manager) nextChild(ctx context.Context, cursor *directoryCursor) (int64, error) {
+	if cursor.next == len(cursor.children) {
+		if cursor.exhausted {
+			return 0, sql.ErrNoRows
+		}
+		rows, err := m.library.DB.Read().QueryContext(ctx, `SELECT i.entry FROM directory_items i
  JOIN directory_state s ON s.dir=i.dir AND s.generation=i.generation
  JOIN entries e ON e.id=i.entry AND e.present=1 AND e.kind='directory'
- WHERE i.dir=? AND i.kind='directory' AND i.entry>? ORDER BY i.entry LIMIT 1`, cursor.id, cursor.after).Scan(&id)
-	return id, err
+ WHERE i.dir=? AND i.kind='directory' AND i.entry>? ORDER BY i.entry LIMIT 128`, cursor.id, cursor.after)
+		if err != nil {
+			return 0, err
+		}
+		defer rows.Close()
+		cursor.children, cursor.next = cursor.children[:0], 0
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return 0, err
+			}
+			cursor.children = append(cursor.children, id)
+		}
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		cursor.exhausted = len(cursor.children) < 128
+		if len(cursor.children) == 0 {
+			return 0, sql.ErrNoRows
+		}
+	}
+	id := cursor.children[cursor.next]
+	cursor.next++
+	cursor.after = id
+	return id, nil
 }
 
 func (m *Manager) addError(id int64, err error) {
@@ -374,7 +402,7 @@ func (m *Manager) addError(id int64, err error) {
 // scanOne validates the root before each directory and again after a failed
 // read. A directory-specific error skips its descendants but not other ranges;
 // a missing or replaced root stops the whole round before any further work.
-func (m *Manager) scanOne(ctx context.Context, id int64) (success, fatal bool) {
+func (m *Manager) scanOne(ctx context.Context, id int64, scan func(context.Context, int64) (library.ScanDirectoryResult, error)) (success, fatal bool) {
 	if ctx.Err() != nil {
 		return false, false
 	}
@@ -386,7 +414,7 @@ func (m *Manager) scanOne(ctx context.Context, id int64) (success, fatal bool) {
 	m.mu.Lock()
 	m.status.CurrentPath = path
 	m.mu.Unlock()
-	result, err := m.scan(ctx, id)
+	result, err := scan(ctx, id)
 	if err != nil && ctx.Err() != nil {
 		return false, false
 	}
@@ -432,8 +460,18 @@ func (m *Manager) run(ctx context.Context, targets []int64) {
 		m.status.Finished = m.anchor.UTC().Format(time.RFC3339Nano)
 		m.notify()
 	}()
+	scan := m.scan
+	if scan == nil {
+		scanner, err := m.library.NewDirectoryScanner(ctx)
+		if err != nil {
+			m.addError(targets[0], err)
+			return
+		}
+		defer scanner.Close()
+		scan = scanner.ScanDirectory
+	}
 	for _, target := range targets {
-		ok, stop := m.scanOne(ctx, target)
+		ok, stop := m.scanOne(ctx, target, scan)
 		if stop {
 			fatal = true
 			return
@@ -450,7 +488,7 @@ func (m *Manager) run(ctx context.Context, targets []int64) {
 				return
 			}
 			cursor := &stack[len(stack)-1]
-			child, err := m.nextChild(ctx, *cursor)
+			child, err := m.nextChild(ctx, cursor)
 			if err != nil {
 				if ctx.Err() != nil {
 					return
@@ -461,12 +499,11 @@ func (m *Manager) run(ctx context.Context, targets []int64) {
 				stack = stack[:len(stack)-1]
 				continue
 			}
-			cursor.after = child
 			if len(stack) >= 1024 {
 				m.addError(child, fmt.Errorf("扫描目录层级超过 1024 层"))
 				continue
 			}
-			ok, stop = m.scanOne(ctx, child)
+			ok, stop = m.scanOne(ctx, child, scan)
 			if stop {
 				fatal = true
 				return

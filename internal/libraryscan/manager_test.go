@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -117,6 +118,34 @@ func TestRecursiveDiscoveryFindsNewDirectoriesAndFiles(t *testing.T) {
 	}
 }
 
+func TestRecursiveDiscoveryTraversesMultipleChildPages(t *testing.T) {
+	m, l, root, _ := fixture(t)
+	const directories = 260
+	for i := range directories {
+		put(t, filepath.Join(root, fmt.Sprintf("folder-%03d", i), "one.mp4"))
+	}
+	scratch := t.TempDir()
+	t.Setenv("TMPDIR", scratch)
+	if _, err := m.Start(t.Context(), []int64{1}, "manual"); err != nil {
+		t.Fatal(err)
+	}
+	// Joining the bounded synthetic round also works under the race detector,
+	// whose SQL instrumentation can exceed the short interactive-test timeout.
+	m.wg.Wait()
+	s := m.Snapshot()
+	if s.Status != "completed" || s.Directories != directories+1 || s.Files != directories || len(s.Errors) != 0 {
+		t.Fatalf("recursive child pages: %+v", s)
+	}
+	var files int
+	if err := l.DB.Read().QueryRow("SELECT count(*) FROM entries WHERE kind='file' AND present=1").Scan(&files); err != nil || files != directories {
+		t.Fatalf("recursive discovery skipped a child page: files=%d err=%v", files, err)
+	}
+	remaining, err := os.ReadDir(scratch)
+	if err != nil || len(remaining) != 0 {
+		t.Fatalf("round stage was not removed: %v %v", remaining, err)
+	}
+}
+
 func TestValidateTargetsNormalizesOverlapsAndRejectsInvalidScopes(t *testing.T) {
 	m, l, root, _ := fixture(t)
 	put(t, filepath.Join(root, "parent", "child", "one.mp4"))
@@ -224,7 +253,7 @@ func TestDirectoryFailurePreservesOldIndexAndContinuesIndependentRange(t *testin
 	bad, good := entryID(t, l, 1, "bad"), entryID(t, l, 1, "good")
 	put(t, filepath.Join(root, "bad", "new.mp4"))
 	put(t, filepath.Join(root, "good", "new.mp4"))
-	actual := m.scan
+	actual := m.library.ScanDirectory
 	m.scan = func(ctx context.Context, id int64) (library.ScanDirectoryResult, error) {
 		if id == bad {
 			return library.ScanDirectoryResult{}, errors.New("NAS 目录读取失败")
@@ -351,7 +380,7 @@ func TestLongManualRoundWaitsNewIntervalFromCompletion(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
 	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
-	actual := m.scan
+	actual := m.library.ScanDirectory
 	m.scan = func(ctx context.Context, id int64) (library.ScanDirectoryResult, error) {
 		close(entered)
 		<-release
@@ -389,7 +418,7 @@ func TestSettingsReadFailureIsVisibleAndDoesNotScan(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls atomic.Int64
-	actual := m.scan
+	actual := m.library.ScanDirectory
 	m.scan = func(ctx context.Context, id int64) (library.ScanDirectoryResult, error) {
 		calls.Add(1)
 		return actual(ctx, id)

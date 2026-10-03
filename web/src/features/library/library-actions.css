@@ -86,6 +86,13 @@ button.library-action:disabled {
 .directory-refresh-summary > button {
   flex-shrink: 0;
 }
+.library-status-scope {
+  margin: 0;
+  padding: 9px 20px;
+  border-top: 1px solid var(--line);
+  background: #f6f9f7;
+  line-height: 1.6;
+}
 .batch-divider {
   width: 1px;
   height: 20px;

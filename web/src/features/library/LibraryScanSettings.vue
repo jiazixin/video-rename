@@ -51,28 +51,35 @@
       <fieldset :disabled="submitting" class="scan-settings-fields">
         <div class="scan-settings-options">
           <label class="check-label"
-            ><input v-model="form.enabled" type="checkbox" />开启定时扫描</label
+            ><input
+              v-model="form.enabled"
+              type="checkbox"
+              aria-label="开启定时扫描"
+            />开启定时扫描</label
           >
-          <label
-            >扫描间隔（分钟）<input
-              v-model.number="form.interval_minutes"
-              aria-label="扫描间隔（分钟）"
-              type="number"
-              min="5"
-              max="1440"
-              step="1"
-              required
-            /><small class="help"
-              >默认 60 分钟（1 小时），可设 5–1440
-              分钟。上一轮完成后再等待此间隔，不会重叠扫描。</small
+          <label class="scan-interval"
+            >扫描间隔<span class="scan-interval-input"
+              ><input
+                v-model.number="form.interval_minutes"
+                aria-label="扫描间隔（分钟）"
+                type="number"
+                min="5"
+                max="1440"
+                step="1"
+                required
+              /><span>分钟</span></span
             ></label
+          >
+          <p class="help scan-interval-help"
+            >上一轮完成后再等待此间隔，不会重叠扫描。<span
+              >默认 60 分钟，可设 5–1440 分钟。</span
+            ></p
           >
         </div>
         <div class="scan-settings-scope"
           ><h3>扫描范围</h3
           ><p class="help"
-            >所选目录均包含全部子目录；选择媒体库可扫描全部文件夹。需选择 1–100
-            个目录，重叠范围自动合并。</p
+            >包含全部子目录；选择媒体库可扫描全部文件夹。可选 1–100 个目录，重叠范围自动合并。</p
           ><DirectoryPicker v-model="form.targets" /><p
             v-if="!form.targets.length || form.targets.length > 100"
             class="notice error"
@@ -114,26 +121,55 @@
     border: 0;
     margin: 20px 0;
     padding: 0;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 36px;
+    min-width: 0;
   }
   .scan-settings-options {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    align-items: center;
+    gap: 18px 28px;
+    padding: 14px 16px;
+    margin-bottom: 22px;
+    border: 1px solid #e5eae7;
+    border-radius: 8px;
+    background: #f8faf9;
+  }
+  .scan-settings-options label {
+    margin: 0;
+  }
+  .scan-settings-options .check-label {
+    margin: 0 !important;
+    white-space: nowrap;
+  }
+  .scan-interval,
+  .scan-interval-input {
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 20px;
+    align-items: center;
+    flex-direction: row;
+    gap: 8px;
+    white-space: nowrap;
   }
-  .scan-settings-options > label:not(.check-label) {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  .scan-settings-options input[type='number'] {
-    max-width: 240px;
-  }
-  .scan-settings-options small {
+  .scan-interval-input {
+    color: var(--ash);
+    font-size: 12px;
     font-weight: 400;
+  }
+  .scan-interval-input input {
+    width: 84px;
+    min-height: 34px;
+    padding: 6px 10px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .scan-interval-help {
+    margin: 0;
+    padding-left: 22px;
+    border-left: 1px solid var(--line);
+    font-size: 11px;
+    line-height: 1.7;
+  }
+  .scan-interval-help span {
+    display: block;
   }
   .scan-settings-scope {
     min-width: 0;
@@ -142,6 +178,9 @@
     margin: 0;
     font-size: 13px;
   }
+  .scan-settings-scope > .help {
+    margin: 6px 0 12px;
+  }
   .scan-settings-actions {
     display: flex;
     flex-wrap: wrap;
@@ -149,13 +188,43 @@
     align-items: center;
     margin-bottom: 20px;
   }
-  @media (max-width: 760px) {
-    .library-scan-settings {
-      padding: 20px;
+  @media (max-width: 960px) {
+    .scan-settings-options {
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 12px 24px;
     }
-    .scan-settings-fields {
+    .scan-interval {
+      justify-content: flex-end;
+    }
+    .scan-interval-help {
+      grid-column: 1 / -1;
+      padding: 10px 0 0;
+      border-left: 0;
+      border-top: 1px solid var(--line);
+    }
+    .scan-interval-help span {
+      display: inline;
+      margin-left: 6px;
+    }
+  }
+  @media (max-width: 600px) {
+    .library-scan-settings {
+      padding: 16px;
+    }
+    .scan-settings-options {
       grid-template-columns: minmax(0, 1fr);
-      gap: 20px;
+      gap: 14px;
+      padding: 14px;
+    }
+    .scan-interval {
+      justify-content: space-between;
+    }
+    .scan-interval-help span {
+      display: block;
+      margin-left: 0;
+    }
+    .scan-settings-actions {
+      gap: 8px;
     }
     .scan-settings-actions > button {
       flex: 1 1 auto;

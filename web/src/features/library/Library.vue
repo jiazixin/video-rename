@@ -198,8 +198,23 @@
     e.kind === 'directory' || (e.kind === 'file' && (video(e) || isImage(e) || isAudio(e)));
   const protectedMedia = (e: Entry) => (isImage(e) || isAudio(e)) && e.processed === 'marked';
   const marked = (e: Entry) => (isImage(e) || isAudio(e) ? protectedMedia(e) : !!e.processed);
-  function matchesProcessingStatus(e: Entry) {
-    if (!processingStatus.value || e.kind === 'directory') return true;
+  function matchesSearchAndType(e: Entry) {
+    // SQLite lower() folds ASCII; use the same rule for rows retained locally.
+    const lower = (value: string) => value.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+    if (!lower(e.name).includes(lower(q.value))) return false;
+    if (!kind.value) return true;
+    if (e.kind === 'directory') return kind.value !== 'other';
+    if (kind.value === 'directory') return false;
+    if (kind.value === 'video') return e.kind === 'file' && video(e);
+    if (kind.value === 'image') return isImage(e);
+    if (kind.value === 'audio') return isAudio(e);
+    return e.kind === 'file' && !video(e) && !isImage(e) && !isAudio(e);
+  }
+  function matchesProcessingStatus(e: Entry, matchingDirectories: Set<number>) {
+    if (!processingStatus.value) return true;
+    // Recursive directory status is evaluated by the server in the same
+    // snapshot as pagination. Never reinsert a directory excluded by that query.
+    if (e.kind === 'directory') return matchingDirectories.has(e.id);
     const value = e.task_status || e.processed || 'unprocessed';
     if (processingStatus.value === 'active')
       return ['queued', 'scanning', 'running', 'paused', 'cancelling'].includes(value);
@@ -591,9 +606,9 @@
         else chosen.value.delete(id);
       }
       error.value = '';
-      // A status change can move a file into or out of the filtered result.
+      // Status and name changes can move an entry into or out of a filter.
       // Recount the whole directory while retaining matching rows and selections.
-      if (processingStatus.value) {
+      if (q.value || kind.value || processingStatus.value) {
         await load(true);
         return;
       }
@@ -638,10 +653,14 @@
         if (n !== seq) return;
         const latest = new Map(entries.map((e) => [e.id, e]));
         const visible = new Set(page.value.items.map((e) => e.id));
+        const matchingDirectories = new Set(
+          p.items.filter((e) => e.kind === 'directory').map((e) => e.id)
+        );
         const rows = page.value.items
           .filter((e) => latest.has(e.id))
           .map((e) => latest.get(e.id)!)
-          .filter(matchesProcessingStatus);
+          .filter(matchesSearchAndType)
+          .filter((e) => matchesProcessingStatus(e, matchingDirectories));
         p.items = [
           ...rows,
           ...p.items
@@ -675,7 +694,7 @@
     } catch (e) {
       if (n === seq) {
         error.value = (e as Error).message;
-        if (quiet && processingStatus.value) scheduleSync();
+        if (quiet && (q.value || kind.value || processingStatus.value)) scheduleSync();
       }
     } finally {
       if (n === seq) busy.value = false;
@@ -1192,6 +1211,7 @@
     <ScanStatus
       v-if="scanState?.status.started"
       class="library-scan-status"
+      compact
       :status="scanState.status"
       :submitting="scanSubmitting"
       @cancel="scan.cancel" />
@@ -1297,6 +1317,9 @@
             >共 {{ page?.total ?? 0 }} 项 · {{ page?.items.length || 0 }} 项 / 当前页</span
           ></div
         >
+        <p v-if="processingStatus" class="library-status-scope help" role="status">
+          文件按自身状态筛选；目录按全部子目录内的视频状态筛选，未完成统计的目录保留在未处理中。
+        </p>
         <div v-if="multi" class="batch-toolbar"
           ><strong>已选 {{ chosen.size }} 项</strong
           ><button title="全选本页" @click="selectPage()">全选</button
@@ -1541,13 +1564,17 @@
         >
         <div v-if="!page?.items.length" class="empty"
           ><Folder :size="35" /><h3>{{
-            busy || page?.refreshing ? '正在读取目录' : '这里还没有内容'
+            busy || page?.refreshing
+              ? '正在读取目录'
+              : q || kind || processingStatus
+                ? '没有匹配的条目'
+                : '这里还没有内容'
           }}</h3
           ><p>{{
             busy || page?.refreshing
               ? '首次进入时会建立当前层的目录索引。'
-              : q
-                ? '没有符合搜索条件的条目。'
+              : q || kind || processingStatus
+                ? '可以调整搜索、类型或处理状态筛选。'
                 : '可以返回上级目录，或刷新查看最新文件。'
           }}</p></div
         ></div

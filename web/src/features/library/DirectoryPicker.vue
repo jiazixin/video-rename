@@ -1,7 +1,7 @@
 <script setup lang="ts">
   import PageNavigation from '../../components/PageNavigation.vue';
   import { ref, onMounted, onUnmounted, computed } from 'vue';
-  import { Folder, ChevronRight, Home, ChevronLeft, RefreshCw } from 'lucide-vue-next';
+  import { Folder, ChevronRight, Home } from 'lucide-vue-next';
   import DirectoryStatus from './DirectoryStatus.vue';
   import './directory-picker.css';
   import { api, type Page } from '../../app/api';
@@ -66,7 +66,7 @@
   });
 </script>
 <template>
-  <div class="directory-picker"
+  <div class="directory-picker" :aria-busy="busy || page?.refreshing || undefined"
     ><div class="picker-breadcrumb"
       ><button type="button" @click="enter(1)"><Home :size="15" />媒体库</button
       ><template v-for="crumb in page?.breadcrumbs.filter((x) => x.id !== 1)" :key="crumb.id"
@@ -77,10 +77,14 @@
     ><label class="picker-current"
       ><input
         type="checkbox"
+        aria-label="选择当前目录"
         :disabled="busy || !!error"
         :checked="modelValue.includes(dir)"
-        @change="toggle(dir)" />选择当前目录
-      <strong>{{ page?.directory.name || '整个媒体库' }}</strong
+        @change="toggle(dir)" /><span class="picker-current-name"
+        ><span>选择当前目录</span>
+        <strong :title="page?.directory.name || '整个媒体库'">{{
+          page?.directory.name || '整个媒体库'
+        }}</strong></span
       ><DirectoryStatus v-if="page" :entry="page.directory" /></label
     ><div v-if="error" class="notice error"
       >{{ error
@@ -106,7 +110,9 @@
           type="button"
           :aria-label="entry.name"
           @click="enter(entry.id)"
-          ><Folder :size="18" /><span class="picker-entry-name">{{ entry.name }}</span
+          ><Folder :size="18" /><span class="picker-entry-name" :title="entry.name">{{
+            entry.name
+          }}</span
           ><DirectoryStatus :entry="entry" /><ChevronRight :size="15" /></button></div></div
     ><div class="picker-bottom"
       ><span
