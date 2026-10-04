@@ -626,6 +626,21 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 func (a *App) items(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	after, run := number(q.Get("after")), number(r.PathValue("id"))
+	view := q.Get("view")
+	where, order := "run=?", "id"
+	switch view {
+	case "":
+	case "logs":
+		where += " AND status<>'queued'"
+		order = "MAX(started_ms,finished_ms) DESC,id DESC"
+	case "failures":
+		where += " AND status='failed'"
+		order = "MAX(started_ms,finished_ms) DESC,id DESC"
+	default:
+		send(w, 400, map[string]string{"message": "批次记录类型无效"})
+		return
+	}
+	paged := q.Has("page") || view != ""
 	tx, err := a.DB.Read().BeginTx(r.Context(), nil)
 	if err != nil {
 		failure(w, err)
@@ -633,29 +648,29 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 	var total int64
-	if err := tx.QueryRowContext(r.Context(), "SELECT count(*) FROM run_items WHERE run=?", run).Scan(&total); err != nil {
+	if err := tx.QueryRowContext(r.Context(), "SELECT count(*) FROM run_items WHERE "+where, run).Scan(&total); err != nil {
 		failure(w, err)
 		return
 	}
 	page, offset := int64(1), int64(0)
-	if q.Has("page") {
+	if paged {
 		page = min(max(1, number(q.Get("page"))), max(1, (total+99)/100))
 		offset = (page - 1) * 100
 		after = 0
 	}
-	rows, err := tx.QueryContext(r.Context(), "SELECT id,entry,status,message,original_path FROM run_items WHERE run=? AND id>? ORDER BY id LIMIT 100 OFFSET ?", run, after, offset)
+	rows, err := tx.QueryContext(r.Context(), "SELECT id,entry,status,message,original_path,MAX(started_ms,finished_ms) FROM run_items WHERE "+where+" AND id>? ORDER BY "+order+" LIMIT 100 OFFSET ?", run, after, offset)
 	if err != nil {
 		failure(w, err)
 		return
 	}
 	out := []map[string]any{}
 	for rows.Next() {
-		var id, entry int64
+		var id, entry, updated int64
 		var status, message, original string
-		if err = rows.Scan(&id, &entry, &status, &message, &original); err != nil {
+		if err = rows.Scan(&id, &entry, &status, &message, &original, &updated); err != nil {
 			break
 		}
-		out = append(out, map[string]any{"id": id, "entry": entry, "status": status, "message": message, "original_path": original})
+		out = append(out, map[string]any{"id": id, "entry": entry, "status": status, "message": message, "original_path": original, "updated_ms": updated})
 	}
 	if err == nil {
 		err = rows.Err()
@@ -678,7 +693,7 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
 		}
 		item["attempts"] = attempts
 	}
-	if q.Has("page") {
+	if paged {
 		send(w, 200, map[string]any{"items": out, "total": total, "page": page})
 		return
 	}

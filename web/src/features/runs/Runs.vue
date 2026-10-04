@@ -9,7 +9,6 @@
     Clock3,
     Folder,
     PenLine,
-    Images,
     CirclePlay,
     CircleCheck,
     CircleAlert,
@@ -767,12 +766,9 @@
             ><div class="run-body">
               <div class="run-head"
                 ><strong class="run-id">#{{ r.id }}</strong
-                ><span class="badge run-task-badge"
-                  ><Images v-if="r.task === 'extract'" :size="13" aria-hidden="true" /><PenLine
-                    v-else
-                    :size="13"
-                    aria-hidden="true"
-                  />{{ r.task === 'extract' ? '抽帧' : '重命名' }}</span
+                ><span class="badge run-task-badge">{{
+                  r.task === 'extract' ? '抽帧' : '重命名'
+                }}</span
                 ><StatusBadge :status="r.status"
                   ><template #icon
                     ><component

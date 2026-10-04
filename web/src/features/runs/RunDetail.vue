@@ -21,27 +21,9 @@
   import PageNavigation from '../../components/PageNavigation.vue';
   import { clockPart, statusNames, time, type Run } from '../../app/api';
   import { copyText } from '../../lib/clipboard/clipboard';
+  import { useRunRecords, type RunItem } from './use-run-records';
   import './run-detail.css';
 
-  interface Attempt {
-    number: number;
-    model_config_title: string;
-    model: string;
-    fallback: boolean;
-    started: string;
-    duration_ms: number;
-    status: string;
-    message: string;
-  }
-  interface RunItem {
-    id: number;
-    entry: number;
-    status: string;
-    original_path: string;
-    current_path: string;
-    message: string;
-    attempts?: Attempt[];
-  }
   const props = defineProps<{
     run: Run;
     items: RunItem[];
@@ -52,6 +34,16 @@
   }>();
   const emit = defineEmits<{ close: []; page: [page: number]; pause: []; cancel: [] }>();
   const sections = ref({ targets: true, logs: false, failures: false, config: false });
+  const { state: logs, refresh: refreshLogs } = useRunRecords(
+    () => props.run.id,
+    () => sections.value.logs,
+    'logs'
+  );
+  const { state: failures, refresh: refreshFailures } = useRunRecords(
+    () => props.run.id,
+    () => sections.value.failures,
+    'failures'
+  );
   const promptOpen = ref(false);
   const copyNotice = ref('');
   const active = computed(() =>
@@ -133,7 +125,6 @@
   });
   const currentItems = computed(() => props.items.filter((item) => item.status === 'running'));
   const currentItem = computed(() => currentItems.value[0]);
-  const failures = computed(() => props.items.filter((item) => item.status === 'failed'));
   const targetNames = computed(() =>
     props.run.targets.map((target, i) => props.run.target_names?.[i] || `条目 #${target}`)
   );
@@ -155,7 +146,9 @@
     if (item.status === 'cancelled') return '已取消';
     return '最终失败';
   };
-  const itemClock = (item: RunItem) => clock(lastAttempt(item)?.started);
+  const itemStamp = (item: RunItem) =>
+    item.updated_ms ? new Date(item.updated_ms).toISOString() : lastAttempt(item)?.started;
+  const itemClock = (item: RunItem) => clock(itemStamp(item));
   const promptBody = ref<HTMLElement>();
   async function inspectPrompt() {
     promptOpen.value = !promptOpen.value;
@@ -218,8 +211,9 @@
         >
           <component :is="stat.icon" :size="18" aria-hidden="true" />
           <strong>{{ stat.value.toLocaleString() }}</strong
-          ><span>{{ stat.label }}</span>
-          <small>{{ i < 3 ? percent(stat.value) : '已发现任务' }}</small>
+          ><span :title="i === 3 ? '已发现任务' : undefined"
+            >{{ stat.label }}<small v-if="i < 3">{{ percent(stat.value) }}</small></span
+          >
         </div>
       </div>
       <div v-if="run.task !== 'extract'" class="detail-metadata">
@@ -375,21 +369,26 @@
             aria-controls="run-detail-logs"
             @click="sections.logs = !sections.logs"
             ><FileText :size="17" /><strong>运行日志</strong
-            ><span class="section-summary">本页 {{ items.length }} 条</span
+            ><span class="section-summary">共 {{ logs.total }} 条</span
             ><ChevronRight :size="16" :class="{ 'is-open': sections.logs }"
           /></button>
           <div v-show="sections.logs" id="run-detail-logs" class="detail-section-content">
-            <p class="detail-caption"
-              >当前文件页的处理状态与模型请求记录；时间为最后一次请求的开始时间。</p
+            <p class="detail-caption">整个批次的处理记录，最新处理在前；展开时自动刷新。</p>
+            <div v-if="logs.error" class="detail-record-error" role="alert"
+              ><span>运行日志读取失败：{{ logs.error }}</span
+              ><button :disabled="logs.busy" @click="refreshLogs()">重试</button></div
             >
             <div class="detail-log-list">
               <div
-                v-for="item in items"
+                v-for="item in logs.items"
                 :key="item.id"
                 class="detail-log-row"
                 :data-tone="tone(item.status)"
               >
-                <time :datetime="lastAttempt(item)?.started">{{ itemClock(item) }}</time
+                <time
+                  :datetime="itemStamp(item)"
+                  :title="itemStamp(item) ? time(itemStamp(item)!) : '未记录处理时间'"
+                  >{{ itemClock(item) }}</time
                 ><span class="detail-log-dot" aria-hidden="true" />
                 <div class="detail-log-content"
                   ><div class="detail-log-title"
@@ -426,8 +425,27 @@
                   </details>
                 </div>
               </div>
-              <p v-if="!items.length" class="detail-empty">当前页暂无运行记录</p>
+              <p v-if="!logs.items.length" class="detail-empty">{{
+                logs.busy
+                  ? '正在读取运行日志…'
+                  : logs.error
+                    ? '暂时无法读取运行日志'
+                    : '暂无处理记录'
+              }}</p>
             </div>
+            <div class="pagination" aria-label="运行日志分页"
+              ><span class="subtle">共 {{ logs.total }} 条 · 每页 100 条</span
+              ><button v-if="logs.page > 1" :disabled="logs.busy" @click="refreshLogs(1)"
+                >查看最新日志</button
+              ><PageNavigation
+                :page="logs.page"
+                :total-pages="Math.ceil(logs.total / 100)"
+                :disabled="logs.busy"
+                label="运行日志翻页"
+                previous-label="上页日志"
+                next-label="下页日志"
+                @change="refreshLogs"
+            /></div>
           </div>
         </section>
         <section class="detail-section">
@@ -445,28 +463,51 @@
             ><ChevronRight :size="16" :class="{ 'is-open': sections.failures }"
           /></button>
           <div v-show="sections.failures" id="run-detail-failures" class="detail-section-content">
-            <p class="detail-caption"
-              >批次共 {{ run.failed || 0 }} 条失败，本页
-              {{ failures.length }} 条；可在文件清单翻页查看。</p
+            <p class="detail-caption">整个批次的失败记录，最新失败在前；展开时自动刷新。</p>
+            <div v-if="failures.error" class="detail-record-error" role="alert"
+              ><span>失败记录读取失败：{{ failures.error }}</span
+              ><button :disabled="failures.busy" @click="refreshFailures()">重试</button></div
             >
-            <div v-for="item in failures" :key="item.id" class="detail-failure"
-              ><div class="detail-failure-heading"
-                ><strong :title="path(item)">{{ filename(item) }}</strong
-                ><StatusBadge status="failed">失败</StatusBadge></div
-              ><p class="detail-failure-reason">{{
-                item.message || lastAttempt(item)?.message || '未记录失败原因'
-              }}</p
-              ><dl
-                ><dt>重试</dt
-                ><dd>{{ Math.max(0, (item.attempts?.length || 0) - 1) }} / {{ retryLimit }}</dd
-                ><dt>最终模型</dt><dd>{{ lastAttempt(item)?.model || '—' }}</dd
-                ><dt>最后请求</dt
-                ><dd>{{ lastAttempt(item) ? time(lastAttempt(item)!.started) : '—' }}</dd></dl
-              ></div
-            >
-            <p v-if="!failures.length" class="detail-empty">{{
-              run.failed > 0 ? '当前页没有失败记录，请在文件清单翻页查看。' : '暂无失败记录'
-            }}</p>
+            <div class="detail-failure-list">
+              <div v-for="item in failures.items" :key="item.id" class="detail-failure"
+                ><div class="detail-failure-heading"
+                  ><strong :title="path(item)">{{ filename(item) }}</strong
+                  ><StatusBadge status="failed">失败</StatusBadge></div
+                ><p class="detail-failure-reason">{{
+                  item.message || lastAttempt(item)?.message || '未记录失败原因'
+                }}</p
+                ><dl
+                  ><dt>重试</dt
+                  ><dd>{{ Math.max(0, (item.attempts?.length || 0) - 1) }} / {{ retryLimit }}</dd
+                  ><dt>最终模型</dt><dd>{{ lastAttempt(item)?.model || '—' }}</dd
+                  ><dt>最后请求</dt
+                  ><dd>{{ lastAttempt(item) ? time(lastAttempt(item)!.started) : '—' }}</dd></dl
+                ></div
+              >
+              <p v-if="!failures.items.length" class="detail-empty">{{
+                failures.busy
+                  ? '正在读取失败记录…'
+                  : failures.error
+                    ? '暂时无法读取失败记录'
+                    : '暂无失败记录'
+              }}</p>
+            </div>
+            <div class="pagination" aria-label="失败记录分页"
+              ><span class="subtle">共 {{ failures.total }} 条 · 每页 100 条</span
+              ><button
+                v-if="failures.page > 1"
+                :disabled="failures.busy"
+                @click="refreshFailures(1)"
+                >查看最新失败</button
+              ><PageNavigation
+                :page="failures.page"
+                :total-pages="Math.ceil(failures.total / 100)"
+                :disabled="failures.busy"
+                label="失败记录翻页"
+                previous-label="上页失败"
+                next-label="下页失败"
+                @change="refreshFailures"
+            /></div>
           </div>
         </section>
         <section class="detail-section">

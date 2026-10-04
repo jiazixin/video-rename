@@ -180,18 +180,18 @@
   padding-top: 2px;
 }
 .run-entry {
-  /* Task categories use graphite/violet; blue is reserved for activity. */
-  --task-ink: #4b5563;
-  --task-background: #f3f4f6;
-  --task-border: #d1d5db;
-  --task-edge: #b6bbc3;
-  --run-background: #f9fafb;
-  --run-active-background: #f3f4f6;
-  --run-accent: #3478ba;
-  --run-accent-soft: #c9d5e2;
-  --run-ink: #2468af;
-  --run-dot-ring: #aeccec;
-  --run-pulse: #6ca7df;
+  /* Task categories use green/violet; activity uses the original green. */
+  --task-ink: #287452;
+  --task-background: #e3f2e8;
+  --task-border: #badcc7;
+  --task-edge: #a9d8bf;
+  --run-background: #f8fbf9;
+  --run-active-background: #f3faf5;
+  --run-accent: #2e9b69;
+  --run-accent-soft: #ccd6ce;
+  --run-ink: #287452;
+  --run-dot-ring: #a9d8bf;
+  --run-pulse: #4fc486;
   position: relative;
   display: grid;
   grid-template-columns: 38px 18px minmax(0, 1fr);
@@ -216,7 +216,6 @@
 .run-entry .run-task-badge {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
   padding: 3px 7px;
   font-size: 11px;
   line-height: 1.5;

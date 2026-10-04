@@ -198,16 +198,18 @@
   line-height: 1.25;
   font-weight: 600;
 }
-.detail-statistic > span,
-.detail-statistic small {
+.detail-statistic > span {
   grid-column: 2;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
   color: var(--steel);
   font-size: 12px;
 }
 .detail-statistic small {
   color: var(--ash);
   font-size: 11px;
-  margin-top: 6px;
 }
 .detail-metadata {
   display: flex;
@@ -489,10 +491,25 @@
   gap: 12px;
   flex-wrap: wrap;
 }
-.detail-log-list {
+.detail-log-list,
+.detail-failure-list {
   max-height: 360px;
   overflow: auto;
   scrollbar-gutter: stable;
+}
+.detail-record-error {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: var(--detail-error);
+  font-size: 12px;
+}
+.detail-record-error > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .detail-log-row {
   display: grid;

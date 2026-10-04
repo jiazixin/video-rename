@@ -32,7 +32,11 @@ async function openSample(page:Page,run=sampleRun()) {
  await page.clock.setFixedTime(new Date('2026-10-03T13:02:10Z'))
  await mockRunPages(page,[run])
  await page.route('**/api/runs/146',route=>route.fulfill({json:run}))
- await page.route('**/api/runs/146/items?*',route=>route.fulfill({json:{page:1,total:3,items:sampleItems()}}))
+ await page.route('**/api/runs/146/items?*',route=>{
+  const view=new URL(route.request().url()).searchParams.get('view')
+  const items=view==='failures'?sampleItems().filter(item=>item.status==='failed'):sampleItems()
+  return route.fulfill({json:{page:1,total:items.length,items}})
+ })
  await login(page)
  await page.getByRole('button',{name:'批次记录',exact:true}).click()
  await page.getByRole('button',{name:'详情',exact:true}).click()
