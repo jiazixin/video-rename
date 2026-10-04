@@ -28,6 +28,7 @@
     run: Run;
     items: RunItem[];
     total: number;
+    logTotal?: number;
     page: number;
     busy: boolean;
     elapsed: string;
@@ -376,7 +377,9 @@
             aria-controls="run-detail-logs"
             @click="sections.logs = !sections.logs"
             ><FileText :size="17" /><strong>运行日志</strong
-            ><span class="section-summary">共 {{ logs.total }} 条</span
+            ><span class="section-summary">{{
+              logTotal === undefined ? '正在统计…' : `共 ${logTotal} 条`
+            }}</span
             ><ChevronRight :size="16" :class="{ 'is-open': sections.logs }"
           /></button>
           <div v-show="sections.logs" id="run-detail-logs" class="detail-section-content">

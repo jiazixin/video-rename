@@ -647,8 +647,13 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	var total int64
-	if err := tx.QueryRowContext(r.Context(), "SELECT count(*) FROM run_items WHERE "+where, run).Scan(&total); err != nil {
+	var total, logTotal int64
+	if view == "" {
+		err = tx.QueryRowContext(r.Context(), "SELECT count(*),count(*) FILTER (WHERE status<>'queued') FROM run_items WHERE run=?", run).Scan(&total, &logTotal)
+	} else {
+		err = tx.QueryRowContext(r.Context(), "SELECT count(*) FROM run_items WHERE "+where, run).Scan(&total)
+	}
+	if err != nil {
 		failure(w, err)
 		return
 	}
@@ -694,7 +699,11 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
 		item["attempts"] = attempts
 	}
 	if paged {
-		send(w, 200, map[string]any{"items": out, "total": total, "page": page})
+		result := map[string]any{"items": out, "total": total, "page": page}
+		if view == "" {
+			result["log_total"] = logTotal
+		}
+		send(w, 200, result)
 		return
 	}
 	send(w, 200, out)

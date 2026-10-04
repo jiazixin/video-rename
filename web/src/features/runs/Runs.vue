@@ -181,7 +181,8 @@
   const cancelTarget = ref<Run>(),
     cancelling = ref(false),
     cancelError = ref('');
-  type ItemPage = { items: any[]; total: number; page: number };
+  type ItemPage = { items: any[]; total: number; page: number; log_total: number };
+  const logTotal = ref<number>();
   const itemNumber = ref(1),
     itemTotal = ref(0),
     itemBusy = ref(false);
@@ -367,6 +368,7 @@
           detail.value = run;
           items.value = files.items;
           itemTotal.value = files.total;
+          logTotal.value = files.log_total;
           itemNumber.value = files.page;
         }
       }
@@ -542,6 +544,7 @@
       if (n === itemSequence && detail.value?.id === id) {
         items.value = files.items;
         itemTotal.value = files.total;
+        logTotal.value = files.log_total;
         itemNumber.value = files.page;
       }
     } catch (e) {
@@ -555,6 +558,7 @@
     items.value = [];
     itemNumber.value = 1;
     itemTotal.value = 0;
+    logTotal.value = undefined;
     itemSequence++;
     try {
       const run = await api<Run>(`/runs/${r.id}`);
@@ -1042,6 +1046,7 @@
     :run="detail"
     :items="items"
     :total="itemTotal"
+    :log-total="logTotal"
     :page="itemNumber"
     :busy="itemBusy || loading"
     :elapsed="elapsed(detail)"

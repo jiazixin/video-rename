@@ -180,16 +180,18 @@
       class="trend-tooltip"
       :style="tooltipStyle"
       role="status"
-      ><strong>{{ points[active]!.b.tokens.toLocaleString() }} token</strong
+      ><strong :title="`${points[active]!.b.tokens.toLocaleString()} token`"
+        >{{ compact(points[active]!.b.tokens) }} token</strong
       ><span>{{ bucketTitle(points[active]!.b) }}</span
       ><span
-        >{{ points[active]!.b.records.toLocaleString() }} 条请求<template
+        :title="`${points[active]!.b.records.toLocaleString()} 条请求 · 粗估 ${points[active]!.b.estimated_records.toLocaleString()} 条`"
+        >{{ compact(points[active]!.b.records) }} 条请求<template
           v-if="points[active]!.b.estimated_records"
         >
-          · 粗估 {{ points[active]!.b.estimated_records }}</template
+          · 粗估 {{ compact(points[active]!.b.estimated_records) }} 条</template
         ></span
       ></div
     ><p v-if="buckets.every((b) => !b.tokens)" class="trend-empty">所选区间没有记录到的用量</p
-    ><p class="trend-hint">方向键查看每个时间点，精确数值见数据表</p></div
+    ><p class="trend-hint">K = 千，M = 百万；方向键查看每个时间点，精确数值见数据表</p></div
   >
 </template>

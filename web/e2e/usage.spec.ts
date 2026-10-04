@@ -120,7 +120,9 @@ test('有数据明细窄屏标题完整且分页换行',async({page})=>{
 
 test('趋势悬停沿时间轴顺序移动且同一时间点附近保持稳定',async({page})=>{
  await login(page)
- await page.route('**/api/usage/analytics*',route=>route.fulfill({json:fixture()}))
+ const report=fixture()
+ Object.assign(report.trend[3]!,{tokens:60_676_614,records:11_903,estimated_records:6_446})
+ await page.route('**/api/usage/analytics*',route=>route.fulfill({json:report}))
  await page.goto('/#usage')
  const svg=page.locator('.usage-trend svg')
  await expect(svg).toBeVisible()
@@ -130,13 +132,17 @@ test('趋势悬停沿时间轴顺序移动且同一时间点附近保持稳定',
   for(const offset of [-0.1,0,0.1]){
    const x=Math.max(0,Math.min(plotWidth,plotWidth*(i+offset)/3))
    await page.mouse.move(bounds.x+62+x,bounds.y+100)
-   await expect(page.locator('.trend-tooltip strong')).toHaveText(`${[0,1200,0,3500][i]!.toLocaleString()} token`)
+   await expect(page.locator('.trend-tooltip strong')).toHaveText(`${['0','1.2K','0','60.68M'][i]} token`)
+   if(i===3){
+    await expect(page.locator('.trend-tooltip strong')).toHaveAttribute('title','60,676,614 token')
+    await expect(page.locator('.trend-tooltip')).toContainText('11.9K 条请求 · 粗估 6.4K 条')
+   }
    await expect(page.locator('.crosshair')).toHaveAttribute('x1',String(62+plotWidth*i/3))
   }
  }
  await svg.focus()
  await page.keyboard.press('ArrowRight')
- await expect(page.locator('.trend-tooltip strong')).toHaveText('1,200 token')
+ await expect(page.locator('.trend-tooltip strong')).toHaveText('1.2K token')
  await page.keyboard.press('Escape')
  await expect(page.locator('.trend-tooltip')).toHaveCount(0)
 })

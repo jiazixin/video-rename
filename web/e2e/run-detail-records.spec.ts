@@ -1,6 +1,53 @@
 import { test, expect } from '@playwright/test'
 import { mockRunPages } from './run-pages'
 
+test('折叠日志区分未读取计数和真实零条，并随批次刷新', async ({ page }) => {
+  const run = {
+    id: 962,
+    task: 'extract',
+    source: 'manual',
+    status: 'queued',
+    targets: [1],
+    created: new Date().toISOString(),
+    discovered: 1,
+    done: 0,
+    skipped: 0,
+    failed: 0
+  }
+  let release!: () => void
+  const pending = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  let logTotal = 0
+  let recordRequests = 0
+  await mockRunPages(page, [run])
+  await page.route('**/api/runs/962', (route) => route.fulfill({ json: run }))
+  await page.route('**/api/runs/962/items?*', async (route) => {
+    if (new URL(route.request().url()).searchParams.has('view')) recordRequests++
+    await pending
+    await route.fulfill({ json: { items: [], total: 1, page: 1, log_total: logTotal } })
+  })
+  await page.goto('/')
+  await page.getByLabel('用户名', { exact: true }).fill('admin')
+  await page.getByLabel('密码', { exact: true }).fill('test-password-123')
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await page.getByRole('button', { name: '批次记录', exact: true }).click()
+  await page.getByRole('button', { name: '详情', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '运行 #962' })
+  const toggle = dialog.getByRole('button', { name: /^运行日志/ })
+  await expect(toggle).toContainText('正在统计…')
+  await expect(toggle).not.toContainText('共 0 条')
+  release()
+  await expect(toggle).toContainText('共 0 条')
+  logTotal = 1
+  run.status = 'running'
+  await expect(toggle).toContainText('共 1 条', { timeout: 10000 })
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  expect(recordRequests).toBe(0)
+  await toggle.scrollIntoViewIfNeeded()
+  await page.screenshot({ path: 'test-results/run-detail-collapsed-log-count.png' })
+})
+
 test('详情日志和失败记录覆盖整批、独立分页和自动刷新', async ({ page }) => {
   const stamp = new Date().toISOString()
   const run = {
@@ -11,7 +58,7 @@ test('详情日志和失败记录覆盖整批、独立分页和自动刷新', as
     targets: [1],
     created: stamp,
     started: stamp,
-    discovered: 205,
+    discovered: 208,
     done: 100,
     skipped: 0,
     failed: 105
@@ -38,6 +85,12 @@ test('详情日志和失败记录覆盖整批、独立分页和自动刷新', as
     ]
   }))
   let failFailures = false
+  const queued = Array.from({ length: 3 }, (_, i) => ({
+    ...records[0],
+    id: 300 + i,
+    entry: 300 + i,
+    status: 'queued'
+  }))
   const requests: string[] = []
   await mockRunPages(page, [run])
   await page.route('**/api/runs/960', (route) => route.fulfill({ json: run }))
@@ -52,10 +105,15 @@ test('详情日志和失败记录覆盖整批、独立分页和自动刷新', as
         ? records.filter((item) => item.status === 'failed').toReversed()
         : view === 'logs'
           ? records.toReversed()
-          : records
+          : [...records, ...queued]
     const index = Math.min(Math.max(1, Number(query.get('page'))), Math.ceil(items.length / 100))
     return route.fulfill({
-      json: { page: index, total: items.length, items: items.slice((index - 1) * 100, index * 100) }
+      json: {
+        page: index,
+        total: items.length,
+        log_total: records.length,
+        items: items.slice((index - 1) * 100, index * 100)
+      }
     })
   })
   await page.goto('/')
@@ -68,6 +126,9 @@ test('详情日志和失败记录覆盖整批、独立分页和自动刷新', as
   const logs = dialog.locator('#run-detail-logs')
   const failures = dialog.locator('#run-detail-failures')
   await expect(dialog.locator('.run-item')).toHaveCount(100)
+  const logToggle = dialog.getByRole('button', { name: /^运行日志/ })
+  await expect(logToggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(logToggle).toContainText('共 205 条')
   expect(requests.filter((query) => !query.startsWith('files'))).toHaveLength(0)
   await dialog.getByRole('button', { name: /^运行日志/ }).click()
   await dialog.getByRole('button', { name: /^失败记录/ }).click()
@@ -135,9 +196,12 @@ test('详情日志和失败记录覆盖整批、独立分页和自动刷新', as
   await dialog.getByRole('button', { name: /^失败记录/ }).click()
   const count = requests.filter((query) => !query.startsWith('files')).length
   const filesCount = requests.filter((query) => query.startsWith('files')).length
+  records.push({ ...records[0], id: 207, entry: 207, status: 'running' })
+  run.discovered++
   await expect
     .poll(() => requests.filter((query) => query.startsWith('files')).length, { timeout: 10000 })
     .toBeGreaterThan(filesCount)
+  await expect(logToggle).toContainText('共 207 条')
   expect(requests.filter((query) => !query.startsWith('files')).length).toBe(count)
 })
 
@@ -167,7 +231,7 @@ test('批次状态刷新不打断日志读取，收起后忽略迟到响应', as
   await page.route('**/api/runs/961', (route) => route.fulfill({ json: run }))
   await page.route('**/api/runs/961/items?*', async (route) => {
     const view = new URL(route.request().url()).searchParams.get('view')
-    if (!view) return route.fulfill({ json: { items: [], page: 1, total: 0 } })
+    if (!view) return route.fulfill({ json: { items: [], page: 1, total: 0, log_total: 1 } })
     const request = ++logRequests
     if (request === 1) await first
     if (request === 2) await second

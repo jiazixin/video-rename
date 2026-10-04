@@ -47,9 +47,10 @@ func TestRunRecordViews(t *testing.T) {
 		UpdatedMS int64  `json:"updated_ms"`
 	}
 	type recordsPage struct {
-		Items []record `json:"items"`
-		Total int      `json:"total"`
-		Page  int      `json:"page"`
+		Items    []record `json:"items"`
+		Total    int      `json:"total"`
+		Page     int      `json:"page"`
+		LogTotal *int     `json:"log_total"`
 	}
 	read := func(query string) recordsPage {
 		t.Helper()
@@ -89,8 +90,12 @@ func TestRunRecordViews(t *testing.T) {
 		t.Fatalf("last failure page: %+v", last)
 	}
 	files := read("page=1")
-	if files.Total != 332 || files.Items[0].ID != 1 {
+	if files.Total != 332 || files.Items[0].ID != 1 || files.LogTotal == nil || *files.LogTotal != logs.Total {
 		t.Fatalf("file list changed: %+v", files)
+	}
+	lastFiles := read("page=4")
+	if lastFiles.LogTotal == nil || *lastFiles.LogTotal != logs.Total {
+		t.Fatalf("log count depends on file page: %+v", lastFiles)
 	}
 	if _, err := a.DB.Exec(`UPDATE run_items SET status='failed',finished_ms=70000 WHERE id=331`); err != nil {
 		t.Fatal(err)
@@ -101,12 +106,20 @@ func TestRunRecordViews(t *testing.T) {
 			t.Fatalf("new result missing from %s: %+v", view, page)
 		}
 	}
+	updatedFiles := read("page=1")
+	if updatedFiles.LogTotal == nil || *updatedFiles.LogTotal != 332 {
+		t.Fatalf("log count did not include newly processed item: %+v", updatedFiles)
+	}
 	if _, err := a.DB.Exec(`DELETE FROM run_items WHERE run=1`); err != nil {
 		t.Fatal(err)
 	}
 	empty := read("view=failures&page=2")
 	if empty.Total != 0 || empty.Page != 1 || len(empty.Items) != 0 {
 		t.Fatalf("empty view: %+v", empty)
+	}
+	emptyFiles := read("page=1")
+	if emptyFiles.LogTotal == nil || *emptyFiles.LogTotal != 0 {
+		t.Fatalf("empty log count missing: %+v", emptyFiles)
 	}
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/api/runs/1/items?view=invalid&page=1", nil)
