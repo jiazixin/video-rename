@@ -32,7 +32,13 @@
     busy: boolean;
     elapsed: string;
   }>();
-  const emit = defineEmits<{ close: []; page: [page: number]; pause: []; cancel: [] }>();
+  const emit = defineEmits<{
+    close: [];
+    page: [page: number];
+    pause: [];
+    cancel: [];
+    notice: [message: string];
+  }>();
   const sections = ref({ targets: true, logs: false, failures: false, config: false });
   const { state: logs, refresh: refreshLogs } = useRunRecords(
     () => props.run.id,
@@ -45,7 +51,7 @@
     'failures'
   );
   const promptOpen = ref(false);
-  const copyNotice = ref('');
+  const copyError = ref('');
   const active = computed(() =>
     ['queued', 'scanning', 'running', 'paused', 'cancelling'].includes(props.run.status)
   );
@@ -158,11 +164,12 @@
     }
   }
   async function copyPath(value: string) {
+    copyError.value = '';
     try {
       await copyText(value);
-      copyNotice.value = '路径已复制';
+      emit('notice', '路径已复制');
     } catch (e) {
-      copyNotice.value = (e as Error).message;
+      copyError.value = (e as Error).message;
     }
   }
 </script>
@@ -573,9 +580,9 @@
         </section>
       </div>
     </div>
-    <template v-if="active || copyNotice" #footer
+    <template v-if="active || copyError" #footer
       ><div class="detail-footer"
-        ><span role="status" class="detail-copy-notice">{{ copyNotice }}</span
+        ><span v-if="copyError" role="alert" class="detail-copy-error">{{ copyError }}</span
         ><div class="modal-actions"
           ><button
             v-if="['queued', 'scanning', 'running', 'paused'].includes(run.status)"

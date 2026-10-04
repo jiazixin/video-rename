@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import ToastNotice from '../../components/ToastNotice.vue';
   import { computed, onMounted, ref, watch } from 'vue';
   import { RefreshCw, Save } from 'lucide-vue-next';
   import type { LibraryScanSettings } from '../../app/api';
@@ -7,9 +8,9 @@
   import { useLibraryScan } from './library-scan';
   const scan = useLibraryScan();
   const { state, error, actionError, submitting, scanning } = scan;
+  const toast = ref<InstanceType<typeof ToastNotice>>();
   const form = ref<LibraryScanSettings>(),
-    saved = ref(''),
-    message = ref('');
+    saved = ref('');
   const dirty = computed(() => !!form.value && JSON.stringify(form.value) !== saved.value);
   watch(state, (value) => {
     if (!form.value && value) {
@@ -17,25 +18,19 @@
       saved.value = JSON.stringify(form.value);
     }
   });
-  watch(
-    form,
-    () => {
-      message.value = '';
-    },
-    { deep: true, flush: 'sync' }
-  );
   async function save() {
     if (!form.value) return;
     const result = await scan.save(form.value);
     if (!result) return;
     form.value = { ...result, targets: [...result.targets] };
     saved.value = JSON.stringify(form.value);
-    message.value = '扫描设置已保存。自动扫描在后台运行，关闭网页仍会继续。';
+    toast.value?.show('扫描设置已保存。自动扫描在后台运行，关闭网页仍会继续。');
   }
   onMounted(scan.startPolling);
 </script>
 <template>
   <section class="panel library-scan-settings">
+    <ToastNotice ref="toast" />
     <header
       ><span class="eyebrow">媒体索引</span><h2>后台目录扫描</h2
       ><p class="help"
@@ -99,7 +94,6 @@
           ><RefreshCw :size="16" />立即扫描全部范围</button
         ><span v-if="dirty" class="help">保存后可扫描所选范围。</span></footer
       >
-      <p v-if="message" class="notice success" role="status">{{ message }}</p>
     </form>
     <ScanStatus
       v-if="state"

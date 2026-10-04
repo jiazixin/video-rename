@@ -1,21 +1,19 @@
 <script setup lang="ts">
-  import { computed, onMounted, ref, watch } from 'vue';
+  import ToastNotice from '../../components/ToastNotice.vue';
+  import { computed, onMounted, ref } from 'vue';
   import { PenLine, Plus, RotateCcw, Save, Trash2 } from 'lucide-vue-next';
   import { api, time, type PromptProfile } from '../../app/api';
   import Modal from '../../components/Modal.vue';
   import './prompts.css';
+  const toast = ref<InstanceType<typeof ToastNotice>>();
   const fixed = ref(''),
     savedFixed = ref(''),
     defaultFixed = ref(''),
     rows = ref<PromptProfile[]>([]),
     loading = ref(true),
     savingFixed = ref(false),
-    error = ref(''),
-    fixedMessage = ref('');
+    error = ref('');
   const dirtyFixed = computed(() => fixed.value !== savedFixed.value);
-  watch(fixed, () => {
-    fixedMessage.value = '';
-  });
   const editing = ref(false),
     saving = ref(false),
     dialogError = ref(''),
@@ -50,14 +48,13 @@
     if (savingFixed.value || !dirtyFixed.value) return;
     savingFixed.value = true;
     error.value = '';
-    fixedMessage.value = '';
     try {
       const out = await api<{ fixed_prompt: string }>('/prompts/fixed', 'PUT', {
         fixed_prompt: fixed.value
       });
       fixed.value = out.fixed_prompt;
       savedFixed.value = out.fixed_prompt;
-      fixedMessage.value = '固定提示词已保存。之后创建的运行会把它附加在所选提示词末尾发送。';
+      toast.value?.show('固定提示词已保存。之后创建的运行会把它附加在所选提示词末尾发送。');
     } catch (e) {
       error.value = (e as Error).message;
     } finally {
@@ -109,6 +106,7 @@
 </script>
 <template>
   <section class="prompts-page">
+    <ToastNotice ref="toast" />
     <div v-if="error" class="notice error" role="alert"
       >{{ error }}<button @click="load()">重试</button></div
     >
@@ -124,8 +122,7 @@
             rows="9"
             maxlength="16000"
             required
-          /><div v-if="fixedMessage" class="notice success" role="status">{{ fixedMessage }}</div
-          ><footer class="processing-footer"
+          /><footer class="processing-footer"
             ><p class="help">保存后对新批次生效；恢复默认后也需保存。</p
             ><div class="prompts-fixed-actions"
               ><button

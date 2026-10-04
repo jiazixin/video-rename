@@ -21,7 +21,7 @@ test('顶部编号不依赖视图，递归索引并按文件夹编号，刷新�
  await expect(dialog.locator('tbody tr').nth(1)).toContainText('song.MP31.mp3')
  await page.screenshot({path:'test-results/directory-numbering-preview.png'})
  await dialog.getByRole('button',{name:'确认编号',exact:true}).click()
- await expect(dialog).toContainText('已编号 8 个文件，完成 4 个目录。')
+ await expect(page.locator('.toast-message').first()).toContainText('已编号 8 个文件，完成 4 个目录。')
  await dialog.getByRole('button',{name:'关闭',exact:true}).last().click()
  await page.reload()
  await actions.getByRole('button',{name:'编号',exact:true}).click()
@@ -32,7 +32,7 @@ test('顶部编号不依赖视图，递归索引并按文件夹编号，刷新�
  const nested=dialog.locator('.numbering-record').filter({hasText:'递归编号测试/子目录/孙目录'})
  await nested.getByRole('button',{name:'还原本次编号',exact:true}).click()
  await dialog.getByRole('button',{name:'确认整批还原',exact:true}).click()
- await expect(dialog).toContainText('已还原 2 个文件，完成 1 个目录。')
+ await expect(page.locator('.toast-message').first()).toContainText('已还原 2 个文件，完成 1 个目录。')
  await dialog.getByRole('button',{name:'关闭',exact:true}).last().click()
  await page.setViewportSize({width:390,height:844})
  const title=(await page.getByRole('heading',{name:'文件目录.'}).boundingBox())!

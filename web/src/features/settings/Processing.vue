@@ -1,9 +1,11 @@
 <script setup lang="ts">
-  import { computed, onMounted, ref, watch } from 'vue';
+  import ToastNotice from '../../components/ToastNotice.vue';
+  import { computed, onMounted, ref } from 'vue';
   import { RefreshCw, Save, Trash2, CircleHelp } from 'lucide-vue-next';
   import { api, type ModelProfile } from '../../app/api';
   import Modal from '../../components/Modal.vue';
   import SelectField from '../../components/SelectField.vue';
+  const toast = ref<InstanceType<typeof ToastNotice>>();
   type Settings = {
     extract_workers: number;
     cache_gb: number;
@@ -24,8 +26,7 @@
     saved = ref(''),
     loading = ref(true),
     saving = ref(false),
-    error = ref(''),
-    message = ref('');
+    error = ref('');
   const retryHelp = ref('');
   const models = ref<ModelProfile[]>([]),
     modelError = ref(''),
@@ -92,13 +93,6 @@
         : '不按闲置时间自动删除。')
     );
   });
-  watch(
-    form,
-    () => {
-      message.value = '';
-    },
-    { deep: true }
-  );
   function changeUnit(kind: 'success' | 'idle', unit: string | number) {
     if (!form.value) return;
     const next = Number(unit);
@@ -151,7 +145,7 @@
       form.value = await api<Settings>('/system/settings', 'PUT', form.value);
       saved.value = JSON.stringify(form.value);
       await refresh();
-      message.value = '设置已保存。重试规则用于新批次，缓存规则立即生效，使用中的截图始终保留。';
+      toast.value?.show('设置已保存。重试规则用于新批次，缓存规则立即生效，使用中的截图始终保留。');
     } catch (e) {
       error.value = (e as Error).message;
     } finally {
@@ -172,7 +166,9 @@
         'POST',
         { confirm: true }
       );
-      message.value = `已清理 ${result.deleted} 个视频的截图，释放约 ${gb(result.freed_bytes)} GB；保留 ${result.retained} 个正在使用或抽帧的视频。`;
+      toast.value?.show(
+        `已清理 ${result.deleted} 个视频的截图，释放约 ${gb(result.freed_bytes)} GB；保留 ${result.retained} 个正在使用或抽帧的视频。`
+      );
       clearDialog.value = false;
     } catch (e) {
       clearError.value = (e as Error).message;
@@ -188,6 +184,7 @@
 </script>
 <template>
   <section class="processing-settings">
+    <ToastNotice ref="toast" />
     <div v-if="error" class="notice error" role="alert"
       >{{ error }}<button v-if="!form" @click="load">重新加载</button></div
     >
@@ -434,7 +431,6 @@
           >目录位置由配置文件中的 tmp-storage 指定，修改后重启服务。自动清理每分钟检查一次。</p
         ></section
       >
-      <div v-if="message" class="notice success" role="status">{{ message }}</div>
       <footer class="processing-footer"
         ><p class="help">保存后缓存规则立即生效，已到期的闲置缓存会被清理。</p
         ><button class="primary" :disabled="saving || clearing || !dirty"

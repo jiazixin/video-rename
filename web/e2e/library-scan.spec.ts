@@ -28,7 +28,7 @@ test('后台扫描默认一小时，范围与间隔保存后重开保持，窄�
       panel.getByRole('button', { name: '立即扫描全部范围', exact: true })
     ).toBeDisabled()
     await panel.getByRole('button', { name: '保存扫描设置', exact: true }).click()
-    await expect(panel.getByRole('status')).toContainText('扫描设置已保存')
+    await expect(page.locator('.toast-message').first()).toContainText('扫描设置已保存')
     await page.reload()
     await expect(panel.getByLabel('扫描间隔（分钟）', { exact: true })).toHaveValue('120')
     await expect(panel.getByLabel('开启定时扫描', { exact: true })).toBeChecked()

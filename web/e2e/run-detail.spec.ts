@@ -61,7 +61,7 @@ test('时间线详情示例、模型展开、复制、移动布局和实时刷�
  await expect(dialog.locator('.detail-current-path .detail-path-line > span')).toHaveAttribute('title',sampleItems()[0].current_path)
  await context.grantPermissions(['clipboard-read','clipboard-write'])
  await dialog.getByRole('button',{name:'复制当前路径',exact:true}).click()
- await expect(dialog.getByRole('status')).toContainText('路径已复制')
+ await expect(page.locator('.toast-message').first()).toContainText('路径已复制')
  expect(await page.evaluate(()=>navigator.clipboard.readText())).toBe(sampleItems()[0].current_path)
  await page.setViewportSize({width:1440,height:1200})
  await expectEvenTimeline(page)

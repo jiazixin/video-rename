@@ -1,15 +1,16 @@
 <script setup lang="ts">
-  import { computed, nextTick, onMounted, ref, watch } from 'vue';
+  import ToastNotice from '../../components/ToastNotice.vue';
+  import { computed, onMounted, ref } from 'vue';
   import { Save, Images, Music2, Link2, Check, ArrowRight } from 'lucide-vue-next';
   import { api } from '../../app/api';
+  const toast = ref<InstanceType<typeof ToastNotice>>();
   type Rules = { padding: number; lowercase: boolean; prefix: string; compact: boolean };
   type Settings = { image: Rules; audio: Rules; shared: boolean };
   const form = ref<Settings>(),
     saved = ref(''),
     loading = ref(true),
     saving = ref(false),
-    error = ref(''),
-    message = ref('');
+    error = ref('');
   const dirty = computed(() => !!form.value && JSON.stringify(form.value) !== saved.value);
   const media = ref<'image' | 'audio'>('image');
   const mediaName = computed(() => (media.value === 'image' ? '图片' : '音频'));
@@ -23,13 +24,6 @@
         `${rules.value!.prefix}${String(n).padStart(width, '0')}.${rules.value!.lowercase ? extension.toLowerCase() : extension}`
     );
   });
-  watch(
-    form,
-    () => {
-      message.value = '';
-    },
-    { deep: true }
-  );
   async function load() {
     loading.value = true;
     error.value = '';
@@ -62,9 +56,9 @@
     try {
       form.value = await api<Settings>('/numbering/settings', 'PUT', form.value);
       saved.value = JSON.stringify(form.value);
-      await nextTick();
-      message.value =
-        '编号规则已保存。之后的预览与编号使用新规则；已生成的批次和整批还原不受影响。';
+      toast.value?.show(
+        '编号规则已保存。之后的预览与编号使用新规则；已生成的批次和整批还原不受影响。'
+      );
     } catch (e) {
       error.value = (e as Error).message;
     } finally {
@@ -75,6 +69,7 @@
 </script>
 <template>
   <section class="numbering-settings">
+    <ToastNotice ref="toast" />
     <div v-if="error" class="notice error" role="alert"
       >{{ error }}<button v-if="!form" @click="load">重新加载</button></div
     >
@@ -199,7 +194,6 @@
           ></section
         >
       </fieldset>
-      <div v-if="message" class="notice success" role="status">{{ message }}</div>
       <footer class="numbering-footer"
         ><div
           ><span class="save-state" :class="{ dirty }" role="status"

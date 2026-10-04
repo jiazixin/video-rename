@@ -164,6 +164,10 @@
         'POST',
         {}
       );
+      if (!restoreResult.value.failed) {
+        const { restored, skipped } = restoreResult.value;
+        toast.value?.show(`已还原 ${restored} 项 · 已还原跳过 ${skipped} 项 · 失败 0 项`);
+      }
       await load();
     } catch (e) {
       restoreError.value = (e as Error).message;
@@ -975,11 +979,7 @@
     ><p class="help"
       >已还原的文件会跳过；后续又改名、内容变化或原名被占用的文件不会强制覆盖。还原成功后可重新自动命名，已启用的定时计划也可能再次处理。</p
     ><div v-if="restoreError" class="notice error" role="alert">{{ restoreError }}</div
-    ><div
-      v-if="restoreResult"
-      role="status"
-      class="notice"
-      :class="restoreResult.failed ? 'error' : 'success'"
+    ><div v-if="restoreResult?.failed" role="alert" class="notice error"
       >已还原 {{ restoreResult.restored }} 项 · 已还原跳过 {{ restoreResult.skipped }} 项 · 失败
       {{ restoreResult.failed }} 项<ul v-if="restoreResult.errors.length"
         ><li v-for="message in restoreResult.errors" :key="message">{{ message }}</li></ul
@@ -1045,6 +1045,7 @@
     :page="itemNumber"
     :busy="itemBusy || loading"
     :elapsed="elapsed(detail)"
+    @notice="toast?.show($event)"
     @close="detail = undefined"
     @page="itemPage"
     @pause="askPause(detail)"

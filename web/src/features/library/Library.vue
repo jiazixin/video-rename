@@ -1180,6 +1180,7 @@
             @click="open(page!.directory, 'auto')"
             ><Sparkles :size="16" />重命名</button
           ><DirectoryNumbering
+            @notice="toast?.show($event)"
             :directory="dir"
             :disabled="busy || !page || !!page.directory.task_status"
             @changed="
@@ -1313,13 +1314,14 @@
             :options="[
               { value: '', label: '全部状态' },
               { value: 'unprocessed', label: '未处理' },
+              { value: 'active', label: '处理中' },
               { value: 'processed', label: '已处理' },
-              { value: 'manual', label: '手动命名' },
-              { value: 'automatic', label: '自动命名' },
               { value: 'marked', label: '已标记' },
-              { value: 'active', label: '处理中' }
+              { value: 'manual', label: '手动命名' },
+              { value: 'automatic', label: '自动命名' }
             ]"
           /><MediaNumbering
+            @notice="toast?.show($event)"
             v-if="kind === 'image' || kind === 'audio'"
             :media="kind"
             :directory="dir"

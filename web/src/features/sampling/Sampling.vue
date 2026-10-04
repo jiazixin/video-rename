@@ -1,9 +1,11 @@
 <script setup lang="ts">
-  import { computed, onMounted, ref, watch } from 'vue';
+  import ToastNotice from '../../components/ToastNotice.vue';
+  import { computed, onMounted, ref } from 'vue';
   import { Plus, Save, Trash2 } from 'lucide-vue-next';
   import { api } from '../../app/api';
   import SelectField from '../../components/SelectField.vue';
   import './sampling.css';
+  const toast = ref<InstanceType<typeof ToastNotice>>();
   type Settings = {
     sampling: {
       strategy: string;
@@ -19,7 +21,6 @@
     loading = ref(true),
     saving = ref(false),
     error = ref(''),
-    message = ref(''),
     saved = ref('');
   const startPercent = computed({
     get: () => Number(((form.value?.sampling.skip_start_ratio || 0) * 100).toFixed(8)),
@@ -34,13 +35,6 @@
     }
   });
   const dirty = computed(() => !!form.value && JSON.stringify(form.value) !== saved.value);
-  watch(
-    form,
-    () => {
-      message.value = '';
-    },
-    { deep: true }
-  );
   async function load() {
     loading.value = true;
     error.value = '';
@@ -64,7 +58,6 @@
   async function save() {
     if (!form.value || saving.value) return;
     error.value = '';
-    message.value = '';
     if (startPercent.value + endPercent.value >= 100) {
       error.value = '跳过开头与末尾的比例之和必须小于 100%。';
       return;
@@ -74,8 +67,7 @@
       const result = await api<Settings>('/sampling', 'PUT', form.value);
       form.value = result;
       saved.value = JSON.stringify(result);
-      await Promise.resolve();
-      message.value = '设置已保存，将用于新建任务。';
+      toast.value?.show('设置已保存，将用于新建任务。');
     } catch (e) {
       error.value = (e as Error).message;
     } finally {
@@ -86,6 +78,7 @@
 </script>
 <template>
   <section class="sampling-page">
+    <ToastNotice ref="toast" />
     <div v-if="error" class="notice error" role="alert"
       >{{ error }}<button v-if="!form" @click="load">重新加载</button></div
     >
@@ -246,7 +239,6 @@
           /></div>
         </section>
       </fieldset>
-      <div v-if="message" class="notice success" role="status">{{ message }}</div>
       <footer class="sampling-footer"
         ><div
           ><strong>{{ dirty ? '有未保存的修改' : '设置已同步' }}</strong

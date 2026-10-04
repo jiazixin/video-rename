@@ -658,9 +658,9 @@
   gap: 12px;
   flex-wrap: wrap;
 }
-.detail-copy-notice {
+.detail-copy-error {
   margin-right: auto;
-  color: var(--steel);
+  color: #b23b35;
   font-size: 12px;
 }
 .detail-footer .modal-actions {

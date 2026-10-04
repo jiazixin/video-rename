@@ -32,13 +32,12 @@
   const untouched = computed(() =>
     props.media === 'audio' ? '视频、图片和目录不变' : '视频和目录不变'
   );
-  const emit = defineEmits<{ changed: [] }>();
+  const emit = defineEmits<{ changed: []; notice: [message: string] }>();
   const busy = ref(false),
     show = ref(false),
     history = ref(false),
     diagnostics = ref(''),
     error = ref(''),
-    result = ref(''),
     preview = ref<Batch>(),
     records = ref<Batch[]>([]),
     page = ref(0);
@@ -63,7 +62,6 @@
     history.value = false;
     error.value = '';
     diagnostics.value = '';
-    result.value = '';
     preview.value = undefined;
     page.value = 0;
     busy.value = true;
@@ -93,7 +91,6 @@
     preview.value = undefined;
     error.value = '';
     diagnostics.value = '';
-    result.value = '';
     busy.value = true;
     try {
       await loadHistory();
@@ -111,7 +108,10 @@
     diagnostics.value = '';
     try {
       const batch = await api<Batch>(`/numberings/${preview.value.id}/apply`, 'POST', {});
-      result.value = `${batch.undo_of ? '已还原' : '已编号'} ${batch.changed} ${unit.value}${noun.value}`;
+      emit(
+        'notice',
+        `${batch.undo_of ? '已还原' : '已编号'} ${batch.changed} ${unit.value}${noun.value}`
+      );
       preview.value = undefined;
       history.value = true;
       await loadHistory();
@@ -127,11 +127,10 @@
     busy.value = true;
     error.value = '';
     diagnostics.value = '';
-    result.value = '';
     try {
       const updated = await api<Batch>(`/numberings/${batch.id}/recover`, 'POST', {});
       if (updated.status === 'review') error.value = updated.error;
-      else result.value = updated.error;
+      else emit('notice', updated.error || '已恢复原名');
       await loadHistory();
     } catch (e) {
       diagnostics.value = e instanceof ApiError ? e.processingLog : '';
@@ -154,7 +153,6 @@
     @close="!busy && (show = false)"
   >
     <p v-if="busy" role="status">正在处理，请稍候…</p>
-    <p v-if="result" class="notice success" role="status">{{ result }}</p>
     <div v-if="error" class="notice error" role="alert">{{ error }}</div>
     <NumberingDiagnostics v-if="diagnostics" :message="error" :diagnostics="diagnostics" />
     <template v-if="preview">

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import ToastNotice from '../../components/ToastNotice.vue';
   import DateTime from '../../components/DateTime.vue';
   import PageNavigation from '../../components/PageNavigation.vue';
   import SelectField from '../../components/SelectField.vue';
@@ -6,6 +7,7 @@
   import { Save, Send, RefreshCw, CircleHelp } from 'lucide-vue-next';
   import { api } from '../../app/api';
   import './notifications.css';
+  const toast = ref<InstanceType<typeof ToastNotice>>();
   type Channel = {
     kind: string;
     enabled: boolean;
@@ -83,7 +85,6 @@
   const channels = ref<Channel[]>([]),
     history = ref<Delivery[]>([]),
     error = ref(''),
-    messages = ref<Record<string, string>>({}),
     errors = ref<Record<string, string>>({}),
     busy = ref<Record<string, boolean>>({});
   let alive = true,
@@ -137,7 +138,6 @@
   }
   async function save(c: Channel) {
     busy.value[c.kind] = true;
-    messages.value[c.kind] = '';
     errors.value[c.kind] = '';
     try {
       await api(`/notifications/${c.kind}`, 'PUT', {
@@ -151,7 +151,7 @@
       });
       const saved = (await api<Channel[]>('/notifications')).find((x) => x.kind === c.kind)!;
       Object.assign(c, saved, { endpoint: '', token: '', secret: '', clear_secret: false });
-      messages.value[c.kind] = '设置已保存';
+      toast.value?.show(`${names[c.kind]}设置已保存`);
     } catch (e) {
       errors.value[c.kind] = (e as Error).message;
     } finally {
@@ -160,11 +160,10 @@
   }
   async function test(c: Channel) {
     busy.value[c.kind] = true;
-    messages.value[c.kind] = '';
     errors.value[c.kind] = '';
     try {
       await api(`/notifications/${c.kind}/test`, 'POST', {});
-      messages.value[c.kind] = '测试通知已发送（使用已保存的配置）';
+      toast.value?.show(`${names[c.kind]}测试通知已发送（使用已保存的配置）`);
     } catch (e) {
       errors.value[c.kind] = (e as Error).message;
     } finally {
@@ -191,7 +190,7 @@
 </script>
 <template>
   <section class="notification-settings"
-    ><header class="notification-intro"
+    ><ToastNotice ref="toast" /><header class="notification-intro"
       ><span class="eyebrow">消息推送</span><h2>批次结束后，及时收到结果</h2
       ><p class="help">按渠道保存配置，可发送测试通知检查连接。</p></header
     ><div v-if="error || historyError" class="notice error" role="alert"
@@ -286,9 +285,6 @@
           ><label class="check-label"
             ><input type="checkbox" v-model="c.failure_only" />仅失败时通知</label
           ><small class="help">包含部分失败、失败与服务中断；关闭此选项也通知完成和取消。</small
-          ><div v-if="messages[c.kind]" class="notice success" role="status">{{
-            messages[c.kind]
-          }}</div
           ><div v-if="errors[c.kind]" class="notice error" role="alert">{{ errors[c.kind] }}</div
           ><footer
             ><button class="primary" :disabled="busy[c.kind]"><Save :size="15" />保存设置</button

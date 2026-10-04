@@ -46,6 +46,8 @@ test('编号规则分类草稿、实时示例、保存与响应式布局',async(
  await expect(page.getByLabel('图片编号前缀',{exact:true})).toHaveValue('IMG_')
  fail=false
  await save.click()
+ await expect(page.locator('.toast-message').first()).toContainText('编号规则已保存')
+ await expect(page.locator('.numbering-settings .notice.success')).toHaveCount(0)
  await expect(save).toBeDisabled()
  expect(settings.audio).toEqual({padding:1,prefix:'AUD_',lowercase:false,compact:true})
  expect(settings.shared).toBeTruthy()

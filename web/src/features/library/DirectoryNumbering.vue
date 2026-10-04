@@ -29,13 +29,12 @@
   const previewKey = ref(''),
     remoteItems = ref<{ entry: number; old_name: string; new_name: string; path: string }[]>([]);
   const props = defineProps<{ directory: number; disabled: boolean }>();
-  const emit = defineEmits<{ changed: [] }>();
+  const emit = defineEmits<{ changed: []; notice: [message: string] }>();
   const show = ref(false),
     busy = ref(false),
     history = ref(false),
     diagnostics = ref(''),
     error = ref(''),
-    result = ref(''),
     batches = ref<Batch[]>([]),
     records = ref<Batch[]>([]),
     page = ref(0);
@@ -111,7 +110,6 @@
     history.value = false;
     error.value = '';
     diagnostics.value = '';
-    result.value = '';
     batches.value = [];
     previewKey.value = '';
     page.value = 0;
@@ -153,7 +151,6 @@
     busy.value = true;
     error.value = '';
     diagnostics.value = '';
-    result.value = '';
     page.value = 0;
     previewKey.value = '';
     try {
@@ -182,7 +179,10 @@
         previewKey.value || undefined
       );
       if (show.value)
-        result.value = `已${undo ? '还原' : '编号'} ${state.files} 个文件，完成 ${state.done} 个目录。`;
+        emit(
+          'notice',
+          `已${undo ? '还原' : '编号'} ${state.files} 个文件，完成 ${state.done} 个目录。`
+        );
     } catch (e) {
       report(e);
     } finally {
@@ -207,7 +207,7 @@
     try {
       const updated = await api<Batch>(`/numberings/${batch.id}/recover`, 'POST', {});
       if (updated.status === 'review') error.value = updated.error;
-      else result.value = updated.error;
+      else emit('notice', updated.error || '已恢复原名');
       await loadHistory();
     } catch (e) {
       diagnostics.value = e instanceof ApiError ? e.processingLog : '';
@@ -253,7 +253,6 @@
       >
       <p v-if="busy" class="help">关闭前会再次确认；正在改名的目录会安全恢复，已完成的目录保留。</p>
       <p v-if="busy" role="status">{{ progress || '正在处理，请稍候…' }}</p>
-      <p v-if="result" class="notice success" role="status">{{ result }}</p>
       <p v-if="error" class="notice error" role="alert">{{ error }}</p>
       <NumberingDiagnostics v-if="diagnostics" :message="error" :diagnostics="diagnostics" />
       <template v-if="!history && batches.length">
