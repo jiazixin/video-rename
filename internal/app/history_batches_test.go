@@ -4,10 +4,88 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"net/http/httptest"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+
 	"video-rename/internal/config"
+	"video-rename/internal/storage"
 )
+
+func TestHistoryModelSourceSeeksByEntry(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "history.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, category := range []string{"success", "failure"} {
+		for _, source := range []string{"primary", "fallback", "unknown"} {
+			t.Run(category+"/"+source, func(t *testing.T) {
+				query := "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM events e" + historyAttemptJoin + " WHERE e.category=? AND e.action='automatic'"
+				args := []any{category}
+				if source == "unknown" {
+					query += " AND a.item IS NULL"
+				} else {
+					query += " AND a.fallback=?"
+					args = append(args, source == "fallback")
+				}
+				rows, err := db.Read().QueryContext(t.Context(), query, args...)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer rows.Close()
+				var plan strings.Builder
+				for rows.Next() {
+					var id, parent, unused int
+					var detail string
+					if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+						t.Fatal(err)
+					}
+					plan.WriteString(detail + "\n")
+				}
+				if err := rows.Err(); err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(plan.String(), "item_entry (entry=?)") {
+					t.Fatalf("model source lookup must seek by entry rather than scan the batch:\n%s", plan.String())
+				}
+			})
+		}
+	}
+}
+
+func TestHistoryTokenTotalsSeekByItem(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "history.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, aggregate := range []string{"SUM(t.tokens)", "MAX(t.estimated_records)"} {
+		rows, err := db.Read().QueryContext(t.Context(), "EXPLAIN QUERY PLAN SELECT (SELECT "+aggregate+historyTokenFrom+") FROM events e WHERE e.category='success' ORDER BY e.id DESC LIMIT 100")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var plan strings.Builder
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+				rows.Close()
+				t.Fatal(err)
+			}
+			plan.WriteString(detail + "\n")
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(plan.String(), "item_entry (entry=?)") || !strings.Contains(plan.String(), "sqlite_autoindex_token_usage_records_1 (item=?)") {
+			t.Fatalf("token totals must seek by entry and item rather than scan the batch:\n%s", plan.String())
+		}
+	}
+}
 
 func TestHistoryBatchFiltering(t *testing.T) {
 	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Workers: 1, Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
@@ -143,14 +221,16 @@ func TestHistoryUsesActualModelAttempt(t *testing.T) {
 		(3,'primary.mp4','file','file-3',0,'now','now'),
 		(4,'failed.mp4','file','file-4',0,'now','now'),
 		(5,'unknown.mp4','file','file-5',0,'now','now'),
-		(6,'no-success.mp4','file','file-6',0,'now','now')`,
+		(6,'no-success.mp4','file','file-6',0,'now','now'),
+		(7,'multiple-items.mp4','file','file-7',0,'now','now')`,
 		`INSERT INTO runs(id,source,targets,recursive,status,created,request_key,model_config_title,config_summary) VALUES
 		(101,'manual','[]',0,'completed','now','actual-model-1','批次主配置','{"model":"batch-primary"}'),
 		(102,'manual','[]',0,'completed','now','actual-model-2','另一个批次','{"model":"other-batch"}')`,
 		`INSERT INTO run_items(id,run,entry,identity,size,mtime) VALUES
 		(201,101,2,'file-2',0,'now'),(202,101,3,'file-3',0,'now'),
 		(203,101,4,'file-4',0,'now'),(204,101,5,'file-5',0,'now'),
-		(205,101,6,'file-6',0,'now'),(206,102,2,'file-2',0,'now')`,
+		(205,101,6,'file-6',0,'now'),(206,102,2,'file-2',0,'now'),
+		(207,101,7,'file-7',0,'now'),(208,101,7,'file-7-new',0,'now')`,
 		`INSERT INTO model_attempts(item,attempt,model_config_id,model_config_title,model,fallback,started,duration_ms,status,message) VALUES
 		(201,1,1,'主配置快照','primary-model',0,'now',1,'failed',''),
 		(201,2,2,'兜底配置快照','fallback-model',1,'now',1,'success',''),
@@ -159,7 +239,14 @@ func TestHistoryUsesActualModelAttempt(t *testing.T) {
 		(203,1,1,'主配置快照','primary-model',0,'now',1,'failed',''),
 		(203,2,2,'兜底配置快照','fallback-model',1,'now',1,'failed',''),
 		(205,1,1,'主配置快照','primary-model',0,'now',1,'failed',''),
-		(206,9,3,'其他批次配置','other-model',0,'now',1,'success','')`,
+		(206,9,3,'其他批次配置','other-model',0,'now',1,'success',''),
+		(207,1,2,'兜底配置快照','fallback-model',1,'now',1,'success',''),
+		(207,2,1,'主配置快照','primary-model',0,'now',1,'success',''),
+		(207,3,2,'兜底配置快照','fallback-model',1,'now',1,'failed',''),
+		(208,1,2,'兜底配置快照','fallback-model',1,'now',1,'failed','')`,
+		`INSERT INTO token_usage_records(run,item,attempt,recorded_at,tokens,estimated_records) VALUES
+		(101,201,1,1,11,0),(101,201,2,2,17,1),(102,206,1,3,99,0),
+		(101,207,1,4,13,0),(101,207,2,5,19,1),(101,207,3,6,5,0),(101,208,1,7,7,0)`,
 		`INSERT INTO events(category,action,entry,run,old_path,created) VALUES
 		('success','automatic',2,101,'fallback.mp4','now'),
 		('success','automatic',3,101,'primary.mp4','now'),
@@ -169,31 +256,37 @@ func TestHistoryUsesActualModelAttempt(t *testing.T) {
 		('success','restore',2,101,'restore.mp4','now'),
 		('success','automatic',2,102,'other-run.mp4','now'),
 		('failure','automatic',4,101,'failed.mp4','now'),
-		('failure','automatic',3,101,'rename-failed.mp4','now')`,
+		('failure','automatic',3,101,'rename-failed.mp4','now'),
+		('success','automatic',7,101,'multiple-items.mp4','now'),
+		('failure','automatic',7,101,'retried-failed.mp4','now')`,
 	} {
 		if _, err := a.DB.Exec(query); err != nil {
 			t.Fatal(err)
 		}
 	}
 	type record struct {
-		Path   string `json:"old_path"`
-		Model  string `json:"model"`
-		Title  string `json:"model_config_title"`
-		Source string `json:"model_source"`
+		Path           string `json:"old_path"`
+		Model          string `json:"model"`
+		Title          string `json:"model_config_title"`
+		Source         string `json:"model_source"`
+		Tokens         int64  `json:"tokens"`
+		TokenEstimated bool   `json:"token_estimated"`
 	}
 	expected := map[string]map[string]record{
 		"success": {
-			"fallback.mp4":   {"fallback.mp4", "fallback-model", "兜底配置快照", "fallback"},
-			"primary.mp4":    {"primary.mp4", "primary-model", "主配置快照", "primary"},
-			"unknown.mp4":    {"unknown.mp4", "batch-primary", "批次主配置", "unknown"},
-			"no-success.mp4": {"no-success.mp4", "batch-primary", "批次主配置", "unknown"},
-			"manual.mp4":     {"manual.mp4", "batch-primary", "批次主配置", ""},
-			"restore.mp4":    {"restore.mp4", "batch-primary", "批次主配置", ""},
-			"other-run.mp4":  {"other-run.mp4", "other-model", "其他批次配置", "primary"},
+			"fallback.mp4":       {"fallback.mp4", "fallback-model", "兜底配置快照", "fallback", 28, true},
+			"primary.mp4":        {"primary.mp4", "primary-model", "主配置快照", "primary", 0, false},
+			"unknown.mp4":        {"unknown.mp4", "batch-primary", "批次主配置", "unknown", 0, false},
+			"no-success.mp4":     {"no-success.mp4", "batch-primary", "批次主配置", "unknown", 0, false},
+			"manual.mp4":         {"manual.mp4", "batch-primary", "批次主配置", "", 28, true},
+			"restore.mp4":        {"restore.mp4", "batch-primary", "批次主配置", "", 28, true},
+			"other-run.mp4":      {"other-run.mp4", "other-model", "其他批次配置", "primary", 99, false},
+			"multiple-items.mp4": {"multiple-items.mp4", "primary-model", "主配置快照", "primary", 44, true},
 		},
 		"failure": {
-			"failed.mp4":        {"failed.mp4", "fallback-model", "兜底配置快照", "fallback"},
-			"rename-failed.mp4": {"rename-failed.mp4", "primary-model", "主配置快照", "primary"},
+			"failed.mp4":         {"failed.mp4", "fallback-model", "兜底配置快照", "fallback", 0, false},
+			"rename-failed.mp4":  {"rename-failed.mp4", "primary-model", "主配置快照", "primary", 0, false},
+			"retried-failed.mp4": {"retried-failed.mp4", "fallback-model", "兜底配置快照", "fallback", 44, true},
 		},
 	}
 	for category, all := range expected {

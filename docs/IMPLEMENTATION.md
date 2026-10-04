@@ -22,6 +22,8 @@
 
 会话校验、模型配置及并发数、处理设置、编号规则和固定提示词的独立只读查询使用读池，扫描写事务占用连接时仍可读取已提交数据。会话查询传播请求取消；登录、会话续期、退出和配置保存继续使用写池，保存中的策略合并仍在同一写事务内完成。
 
+已校验有效的会话采用最多 100 毫秒的续期写入预算，并传播请求取消；写连接忙或续期失败时不重发 Cookie，继续使用已提交且尚未到期的会话，下次请求再尝试续期。成功提交后仍将期限滑动到 12 小时并保持原 Cookie 安全属性。续期不会异步执行，过期 / 撤销 / 指纹不符与 CSRF 校验仍在每次请求中进行。
+
 数据库路径先解析符号链接，再选择实例锁、主密钥和SQLite辅助文件。已有数据库硬链接数大于1时拒绝打开，避免同一inode使用不同lock/key/WAL路径；拒绝时保留数据库和密钥。
 
 library 构造受媒体根约束的父子路径，核验设备/inode；文件额外核验size/mtime。普通改名、还原与编号逐层openat禁止跟随符号链接，使用同一目录句柄核验源、无覆盖移动并同步：Linux为renameat2(RENAME_NOREPLACE)，macOS为renameatx_np(RENAME_EXCL)。提交后再次检查父路径；证据不一致保留待核对状态。
@@ -33,6 +35,8 @@ library 构造受媒体根约束的父子路径，核验设备/inode；文件额
 运行创建检查索引目标、范围去重、请求键及重叠；请求内轻量祖先缓存避免重复查库。真实路径和祖先身份在worker扫描前核验，扫描页最多128项短事务写候选。重试规则、主/兜底模型及提示词保存不可变快照；模型名额按配置ID共享，只有并发数动态更新。
 
 prepare受全局抽帧并发与缓存容量限制；等待/调用模型的截图持有租约。暂停停止新步骤、允许在途收尾并释放待推理租约；恢复优先复用缓存。取消向媒体、模型及退避传播。全局工具或鉴权故障停止批次，普通视频失败继续其他条目。重启将活动批次和未结束条目在同一事务内收尾为中断/取消。
+
+缓存使用量随条目加入、重新校验、删除及抽帧预留 / 归还维护，不在每个候选的清理判断中重复汇总全部条目。`Cache.Stats` 读取独立原子快照，设置接口无需等待截图校验、manifest 持久化或删除持有的缓存工作锁；工作进行时返回最近完成的账目变化。快照不参与租约或容量决策，实际操作继续在原锁下核验文件、保护在用截图并控制预留容量。
 
 目录标记使用应用生命周期的后台任务，相同键复用进度，断连继续执行，终态内存保留1小时。标记每批最多128个文件：在Library.mu下逐文件核验活动/待核对状态、当前索引快照及磁盘身份/内容，然后才打开短事务，复用预编译语句并保持WAL + FULL同步。遍历页读取基础字段；校验复用刚读取的文件快照，祖先仍逐次查库和核验磁盘，不跨批缓存路径证据。文件校验失败独立报告，其余文件可提交；SQL或提交失败回滚本批有效文件，取消时不统计未提交文件，进度只在成功提交后推进。已有提交不受后续失败影响。
 
@@ -66,6 +70,8 @@ API使用Go方法路由、严格单JSON对象、未知字段拒绝及64KiB请求
 
 token_usage_records以(item,attempt)幂等，单事务推进请求账本和run_token_usage；按实际尝试配置归属，缺usage时只粗估文字。model_attempts保存各次请求诊断。runstats按实际开始/完成计算耗时，排队取消不计耗时；P50/P95为nearest-rank。独立抽帧计入整体运行统计、趋势和批次明细，明细按记录的task标注抽帧且不使用模型；模型配置性能比较仅统计带模型配置的命名批次，不计入抽帧的结果和耗时。统计区间为[from,to)，按IANA时区分桶；历史与抽帧日期筛选比较时间值，SQLite日期函数按毫秒精度处理，亚毫秒边界可能舍入。
 
+运行记录的模型来源计数和分页关联通过 `INDEXED BY item_entry` 按文件条目查找请求，避免缺少统计信息时 SQLite 按 `UNIQUE(run,identity)` 为每条记录扫描整批任务。每行 Token 汇总同样按条目和现有 `UNIQUE(item,attempt)` 索引查找；该隐式索引名为 `sqlite_autoindex_token_usage_records_1`，修改唯一约束时需同步查询及计划回归。成功仍选生成标题的成功请求，失败仍选最后请求，Token 仍汇总同批次、同条目的全部尝试。只复用当前索引，已有 20260929 数据库无需迁移。
+
 ## 构建与验证
 
 所有命令从仓库根执行。编译任何依赖web/embed.go的Go目标前，必须先生成web/dist；它是唯一资源输出，不复制或提交产物。
@@ -93,6 +99,12 @@ go test -tags=integration -count=1 ./internal/media
 go test -tags=scale -run '^TestScale' -count=1 -v ./internal/library ./internal/jobs ./internal/app
 # 扫描查询对比：50万合成索引、100目录清理与候选发布，隔离数据库开销
 go test -tags=scale -run '^TestScaleDirectoryScanCleanupWithLargeIndex$' -count=1 -v ./internal/library
+# 运行记录来源筛选：同批11000条、600条兜底，精确计数、首末页和Token汇总
+go test -tags=scale -run '^TestScaleHistoryModelSource$' -count=1 -v ./internal/app
+# 同一隔离夹具的完整接口耗时，不含记录生成
+go test -tags=scale -run '^$' -bench '^BenchmarkHistoryModelSource$' -benchtime=1x -count=1 -benchmem ./internal/app
+# 截图缓存保留检查：11000条内存账目，隔离排序与容量判断开销，不涉及磁盘或媒体
+go test -run '^$' -bench '^BenchmarkCacheSweepRetained$' -benchtime=1x -count=1 -benchmem ./internal/framecache
 # 超大规模：50万真实临时文件递归标记、精确计数及SQLite完整性，独立于常规scale
 go test -tags=scale_large -run '^TestScaleLargeProcessedMarks$' -count=1 -timeout=15m -v ./internal/library
 # 超大规模扫描：多层目录内53万真实临时文件，首次索引/未变复扫/候选清理及SQLite完整性

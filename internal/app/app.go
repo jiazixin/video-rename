@@ -480,6 +480,23 @@ func (a *App) Handler() http.Handler {
 	})
 	return mux
 }
+
+// Success records use the attempt that produced the title; failures use the
+// last request. Match both batch and entry, and leave non-model actions alone.
+// Seek by entry explicitly: otherwise SQLite can scan the whole batch through
+// UNIQUE(run,identity) once for every event when statistics are absent.
+const historyAttemptJoin = ` LEFT JOIN model_attempts a ON (a.item,a.attempt)=(
+	SELECT ma.item,ma.attempt FROM run_items i INDEXED BY item_entry JOIN model_attempts ma ON ma.item=i.id
+	WHERE i.run=e.run AND i.entry=e.entry AND e.action='automatic'
+	AND (e.category='failure' OR ma.status='success')
+	ORDER BY i.id DESC,ma.attempt DESC LIMIT 1)`
+
+// Reuse the existing UNIQUE(item,attempt) index for each entry's token totals,
+// rather than scanning all token records in the batch for every displayed row.
+const historyTokenFrom = ` FROM run_items i INDEXED BY item_entry
+	JOIN token_usage_records t INDEXED BY sqlite_autoindex_token_usage_records_1 ON t.item=i.id
+	WHERE i.entry=e.entry AND t.run=e.run`
+
 func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	category := q.Get("category")
@@ -525,16 +542,9 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 	from := " FROM events e LEFT JOIN runs r ON r.id=e.run"
 	where := " WHERE e.category=? AND (?=0 OR e.run=?) AND (?='' OR instr(lower(e.old_path||e.new_path||e.message),lower(?))>0) AND (?='' OR e.action=?) AND (?='' OR julianday(e.created)>=julianday(?)) AND (?='' OR julianday(e.created)<=julianday(?))"
 	args := []any{category, run, run, q.Get("q"), q.Get("q"), q.Get("action"), q.Get("action"), q.Get("from"), q.Get("from"), q.Get("to"), q.Get("to")}
-	// Success records use the attempt that produced the title; failures use the
-	// last request. Match both batch and entry, and leave non-model actions alone.
-	attemptJoin := ` LEFT JOIN model_attempts a ON (a.item,a.attempt)=(
-		SELECT ma.item,ma.attempt FROM run_items i JOIN model_attempts ma ON ma.item=i.id
-		WHERE i.run=e.run AND i.entry=e.entry AND e.action='automatic'
-		AND (e.category='failure' OR ma.status='success')
-		ORDER BY i.id DESC,ma.attempt DESC LIMIT 1)`
 	countFrom := from
 	if modelSource != "" {
-		countFrom += attemptJoin
+		countFrom += historyAttemptJoin
 		where += " AND e.action='automatic'"
 		if modelSource == "unknown" {
 			where += " AND a.item IS NULL"
@@ -560,7 +570,7 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 		offset = (page - 1) * limit
 		before = 1 << 62
 	}
-	rows, err := tx.QueryContext(r.Context(), "SELECT e.id,e.category,e.action,e.entry,e.operation,e.run,e.old_path,e.new_path,e.message,e.created,COALESCE(r.config_summary,''),COALESCE(a.model_config_title,r.model_config_title,''),COALESCE(a.model,''),a.fallback,COALESCE((SELECT SUM(t.tokens) FROM token_usage_records t JOIN run_items i ON i.id=t.item WHERE t.run=e.run AND i.entry=e.entry),0),COALESCE((SELECT MAX(t.estimated_records) FROM token_usage_records t JOIN run_items i ON i.id=t.item WHERE t.run=e.run AND i.entry=e.entry),0)"+from+attemptJoin+where+" AND e.id<? ORDER BY e.id DESC LIMIT ? OFFSET ?", append(args, before, limit+1, offset)...)
+	rows, err := tx.QueryContext(r.Context(), "SELECT e.id,e.category,e.action,e.entry,e.operation,e.run,e.old_path,e.new_path,e.message,e.created,COALESCE(r.config_summary,''),COALESCE(a.model_config_title,r.model_config_title,''),COALESCE(a.model,''),a.fallback,COALESCE((SELECT SUM(t.tokens)"+historyTokenFrom+"),0),COALESCE((SELECT MAX(t.estimated_records)"+historyTokenFrom+"),0)"+from+historyAttemptJoin+where+" AND e.id<? ORDER BY e.id DESC LIMIT ? OFFSET ?", append(args, before, limit+1, offset)...)
 	if err != nil {
 		failure(w, err)
 		return

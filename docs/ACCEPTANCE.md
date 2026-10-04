@@ -1,5 +1,52 @@
 # 上线前最终检查
 
+## 2026-10-04 系统设置加载等待修复
+
+接续同日模型来源筛选修复，保留此前未提交改动。用户确认已更新并重启前一版，进入系统设置仍长期显示“正在加载设置…”。前端该状态只等待 `/api/system/settings`，模型列表独立加载。上一版已改为读池读取配置，但接口仍同步获取缓存工作锁；截图校验、manifest 写入和删除均持有此锁。另有老会话续期同步等待单写连接的路径，原设置争用测试只覆盖新会话。
+
+缓存统计改为读取独立原子快照，并增量维护使用量，避免每个清理候选重复累加全部条目。校验、容量决策、预留、租约保护、删除与错误处理继续使用原工作锁。会话续期使用请求上下文和 100 毫秒写入预算；失败时不重发 Cookie，继续使用已验证且尚未到期的会话，下次请求再尝试，成功续期仍保持 12 小时滑动期限及安全 Cookie。
+
+| 本轮实际验证 | 结果 |
+| --- | --- |
+| 缓存锁阻塞回归 | 使用 Go 源码 overlay 运行原实现，空 / 有条目两种情况下 Stats 均等待工作锁，测试预期失败；新实现持锁时仍返回完整统计快照 |
+| 缓存账目回归 | 预留及成功 / 失败归还、重启复用、manifest 增长、校验后 Bytes 变化及部分校验失败、清理部分失败后重试、最后租约释放均通过；部分删除权限失败测试实际执行 |
+| `TestSessionRenewalWhileWriterBusy` | 原实现的写连接占用及请求取消回归先失败；新实现保持 200、已提交 CSRF / 到期时间、无未提交续期 Cookie，释放写连接后正常续期 |
+| `TestSettingsReloadReadsWhileWriterBusy` | fresh / renewal_due 两组均通过；写事务持续开放时，5 个设置相关接口返回已提交数据，老会话组约 0.12 秒 |
+| `go test -count=1 ./...`、`go vet ./...` | 通过 |
+| `go test -race -count=1 ./internal/app ./internal/auth ./internal/framecache ./internal/jobs` | 受影响模块通过 |
+| `npm --prefix web run build`、`go build -o bin/video-rename ./cmd/video-rename` | 通过；新程序同时包含模型来源筛选和设置加载修复 |
+| `npm --prefix web run test:e2e -- settings.spec.ts`、`git diff --check` | 通过；3 项浏览器测试覆盖设置加载、持久化、缓存清理确认 / 失败反馈和编号设置 |
+
+同一 11000 条内存缓存夹具，关闭到期删除并保留全部条目，通过 `BenchmarkCacheSweepRetained -benchtime=1x -count=1` 测量排序与容量判断：原实现 812.875 毫秒，修复后 2.046 毫秒。原版本采用从任务起始 HEAD 保存的 `cache.go` 和 Go 源码 overlay，工作区不回退；这是并行验证期间的单次本机观测，不包含磁盘删除或真实媒体。
+
+没有访问真实服务、用户数据库、部署配置或媒体，不能确认上述哪条等待路径对应现场的每次卡顿。程序已重新构建，未部署或重启真实服务；数据库结构保持 20260929，无需重建。
+
+## 2026-10-04 运行记录模型来源筛选性能修复
+
+基于任务开始时干净的 `main` / `4804754` 工作区。用户报告从约 11000 条成功记录筛出约 600 条模型来源记录很慢。隔离夹具复现：缺少统计信息时，SQLite 为每条事件通过 `UNIQUE(run,identity)` 扫描整批任务；分页的两个 Token 聚合还按批次扫描全部用量记录。查询现在指定现有 `item_entry` 和 `UNIQUE(item,attempt)` 索引，按条目与请求查找。数据库结构标识保持 20260929，已有库无需重建。
+
+本机 macOS arm64 / M2 Max，应用的 modernc SQLite 连接与同步配置，同一临时库夹具生成 11000 条成功事件、11600 次请求与用量，600 条兜底均匀分布。完整 handler 基准包含精确计数、分页、模型归属、Token 汇总与 JSON 响应，不包含夹具生成。以下为相同 `-benchtime=1x -count=1` 命令的单次观测，期间有其他隔离验证并行运行，仅用于确认查询瓶颈及修复效果。
+
+| 查询 | 原查询 | 修复后 |
+| --- | --- | --- |
+| 兜底首页（100 项） | 32.537 秒 | 45.885 毫秒 |
+| 兜底末页（第 6 页） | 55.722 秒 | 76.990 毫秒 |
+| 主模型首页（100 项） | 28.337 秒 | 39.642 毫秒 |
+| 来源未记录（0 项） | 56.334 秒 | 69.194 毫秒 |
+| 全部来源首页（100 项） | 839.280 毫秒 | 6.160 毫秒 |
+
+| 本轮实际验证 | 结果 |
+| --- | --- |
+| `TestHistoryModelSourceSeeksByEntry`、`TestHistoryTokenTotalsSeekByItem` | 通过；来源测试在原查询下先失败，确认计划按批次扫描，修复后按 entry / item 查找 |
+| `TestHistoryUsesActualModelAttempt` | 成功 / 失败、主 / 兜底 / 未记录、跨批次、同条目多任务、最新失败请求后的成功归属、全部尝试 Token 与估算标记通过 |
+| `go test -tags=scale -run '^TestScaleHistoryModelSource$' -count=1 -v ./internal/app` | 通过；600 条兜底、10400 条主模型、0 条未记录与11000 条全部来源，首末页、超页收敛、逐项模型 / Token、降序和 next 准确 |
+| `go test -tags=scale -run '^$' -bench '^BenchmarkHistoryModelSource$' -benchtime=1x -count=1 -benchmem ./internal/app` | 原查询与修复后均完成，测量见上表 |
+| `go test -count=1 ./...`、`go vet ./...` | 通过 |
+| `go test -race -count=1 ./internal/app ./internal/storage`、`git diff --check` | 通过；本轮仅对受影响的 HTTP / SQLite 模块执行 race |
+| `npm --prefix web run build`、`go build -o bin/video-rename ./cmd/video-rename` | 通过；先生成 Web 嵌入资源，再构建本机程序 |
+
+未读取或修改用户数据库、真实媒体或部署配置，未部署或重启服务。本轮没有修改前端，未重复浏览器与媒体集成测试；测量不包含网络、认证与浏览器时间，真实服务需更新程序后验证。
+
 ## 2026-10-03 SQLite 读取与后台扫描争用优化
 
 基于 `main` / `b7e34d1`，保留任务开始前 `Workspace.vue` 移除导航 title 的已有改动。用户报告刷新设置时短暂显示“正在加载设置…”，几秒后恢复，并决定暂不迁移 MySQL。代码与隔离实验确认：会话、设置和模型读取原先共用单连接写池，后台写事务能使它们排队；扫描发布与候选清理还会按目录重复遍历 entries。未获取远程服务当时的请求与锁等待日志，不能将截图延迟全部归因于这两条路径。

@@ -2,6 +2,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -28,6 +29,7 @@ import (
 const (
 	sessionLifetime     = 12 * time.Hour
 	sessionRenewLeft    = sessionLifetime / 2
+	sessionRenewTimeout = 100 * time.Millisecond
 	secureSessionPrefix = "secure."
 )
 
@@ -141,7 +143,12 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 			return
 		}
 		if r.URL.Path != "/api/auth/logout" && expiry-time.Now().Unix() < int64(sessionRenewLeft/time.Second) {
-			if _, err = a.DB.Exec("UPDATE sessions SET expires=? WHERE token=? AND fingerprint=?", time.Now().Add(sessionLifetime).Unix(), hash(cookie.Value), a.fingerprint); err == nil {
+			// Renewal is best effort for an already-valid session. A busy writer
+			// must not hold up reads; a later request can retry the extension.
+			renewCtx, cancel := context.WithTimeout(r.Context(), sessionRenewTimeout)
+			_, err = a.DB.ExecContext(renewCtx, "UPDATE sessions SET expires=? WHERE token=? AND fingerprint=?", time.Now().Add(sessionLifetime).Unix(), hash(cookie.Value), a.fingerprint)
+			cancel()
+			if err == nil {
 				// The token's hash authenticates the original cookie policy, so a
 				// proxied GET without Origin cannot downgrade an HTTPS session.
 				secure := secureCookie(r) || strings.HasPrefix(cookie.Value, secureSessionPrefix)

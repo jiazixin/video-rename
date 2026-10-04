@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +17,14 @@ import (
 )
 
 func TestSettingsReloadReadsWhileWriterBusy(t *testing.T) {
+	for _, name := range []string{"fresh", "renewal_due"} {
+		t.Run(name, func(t *testing.T) {
+			testSettingsReloadReadsWhileWriterBusy(t, name == "renewal_due")
+		})
+	}
+}
+
+func testSettingsReloadReadsWhileWriterBusy(t *testing.T, renewalDue bool) {
 	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Workers: 1, Auth: config.AuthConfig{Username: "admin", Password: "test-password"}})
 	if err != nil {
 		t.Fatal(err)
@@ -62,6 +71,15 @@ func TestSettingsReloadReadsWhileWriterBusy(t *testing.T) {
 	if len(cookies) == 0 {
 		t.Fatal("login did not issue a session cookie")
 	}
+	if renewalDue {
+		if _, err := a.DB.ExecContext(t.Context(), "UPDATE sessions SET expires=?", time.Now().Add(time.Hour).Unix()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var committedExpiry int64
+	if err := a.DB.Read().QueryRowContext(t.Context(), "SELECT expires FROM sessions").Scan(&committedExpiry); err != nil {
+		t.Fatal(err)
+	}
 
 	tx, err := a.DB.BeginTx(t.Context(), nil)
 	if err != nil {
@@ -84,14 +102,15 @@ func TestSettingsReloadReadsWhileWriterBusy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A fresh login avoids session renewal writes. Every request must use its
-	// own committed WAL view while the sole writer still holds these updates.
+	// Every request must use its committed WAL view while the sole writer still
+	// holds these updates, including sessions that are due for renewal.
 	paths := []string{"/api/auth/session", "/api/system", "/api/system/settings", "/api/model-configs", "/api/numbering/settings"}
 	type response struct {
 		path string
 		w    *httptest.ResponseRecorder
 	}
 	responses := make(chan response, len(paths))
+	var requests sync.WaitGroup
 	ctx, cancel := context.WithCancel(t.Context())
 	remaining := len(paths)
 	defer func() {
@@ -110,9 +129,10 @@ func TestSettingsReloadReadsWhileWriterBusy(t *testing.T) {
 				return
 			}
 		}
+		requests.Wait()
 	}()
 	for _, path := range paths {
-		go func() {
+		requests.Go(func() {
 			r := httptest.NewRequest(http.MethodGet, path, nil).WithContext(ctx)
 			for _, cookie := range cookies {
 				r.AddCookie(cookie)
@@ -120,7 +140,7 @@ func TestSettingsReloadReadsWhileWriterBusy(t *testing.T) {
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, r)
 			responses <- response{path: path, w: w}
-		}()
+		})
 	}
 	deadline := time.NewTimer(2 * time.Second)
 	defer deadline.Stop()
@@ -137,6 +157,9 @@ func TestSettingsReloadReadsWhileWriterBusy(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Errorf("%s: status=%d body=%s", result.path, w.Code, w.Body.String())
 			continue
+		}
+		if cookies := w.Result().Cookies(); len(cookies) != 0 {
+			t.Errorf("%s reissued a cookie before session renewal was committed: %+v", result.path, cookies)
 		}
 		switch result.path {
 		case "/api/auth/session":
@@ -182,5 +205,10 @@ func TestSettingsReloadReadsWhileWriterBusy(t *testing.T) {
 	var heldWorkers int
 	if err := tx.QueryRowContext(t.Context(), "SELECT extract_workers FROM system_settings WHERE id=1").Scan(&heldWorkers); err != nil || heldWorkers != 21 {
 		t.Errorf("requests did not leave the writer transaction open: workers=%d err=%v", heldWorkers, err)
+	}
+	var committedCSRF string
+	var expiry int64
+	if err := a.DB.Read().QueryRowContext(t.Context(), "SELECT csrf,expires FROM sessions").Scan(&committedCSRF, &expiry); err != nil || committedCSRF != session.CSRF || expiry != committedExpiry {
+		t.Errorf("requests changed the committed session while the writer was held: csrf_matches=%t expiry=%d want=%d err=%v", committedCSRF == session.CSRF, expiry, committedExpiry, err)
 	}
 }

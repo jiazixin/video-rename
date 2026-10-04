@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"video-rename/internal/config"
@@ -35,15 +36,17 @@ type record struct {
 	Checksums   map[string]string
 }
 type Cache struct {
-	mu       sync.Mutex
-	lock     *os.File
-	root     string
-	entries  map[string]*record
-	building map[string]bool
-	reserved int64
-	limit    int64
-	policy   systemsettings.Policy
-	changed  chan struct{}
+	mu        sync.Mutex
+	lock      *os.File
+	root      string
+	entries   map[string]*record
+	building  map[string]bool
+	usedBytes int64
+	reserved  int64
+	limit     int64
+	policy    systemsettings.Policy
+	changed   chan struct{}
+	stats     atomic.Pointer[Stats]
 }
 type Lease struct {
 	cache *Cache
@@ -140,10 +143,12 @@ func New(base string, limit int64, policies ...systemsettings.Policy) (*Cache, e
 			continue
 		}
 		c.entries[r.Key] = &r
+		c.usedBytes += r.Bytes
 	}
 	if err = c.pruneLocked(time.Now(), 0); err != nil {
 		return nil, err
 	}
+	c.publishStatsLocked()
 	ok = true
 	return c, nil
 }
@@ -153,18 +158,22 @@ func validKey(key string) bool {
 	b, err := hex.DecodeString(key)
 	return err == nil && len(b) == 32 && strings.ToLower(key) == key
 }
-func (c *Cache) signal() { close(c.changed); c.changed = make(chan struct{}) }
-func (c *Cache) used() int64 {
-	var n int64
-	for r := range maps.Values(c.entries) {
-		n += r.Bytes
-	}
-	return n
+func (c *Cache) signal() {
+	c.publishStatsLocked()
+	close(c.changed)
+	c.changed = make(chan struct{})
 }
+
+// publishStatsLocked records completed accounting changes while mu is held,
+// or during construction before the cache is exposed to other goroutines.
+func (c *Cache) publishStatsLocked() {
+	c.stats.Store(&Stats{Path: c.root, Used: c.usedBytes, Reserved: c.reserved, Entries: len(c.entries)})
+}
+
+// Stats returns the latest accounting snapshot without waiting for checksum,
+// manifest, or cleanup I/O performed under the cache's work lock.
 func (c *Cache) Stats() Stats {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return Stats{c.root, c.used(), c.reserved, len(c.entries)}
+	return *c.stats.Load()
 }
 func (c *Cache) SetLimit(n int64) error {
 	c.mu.Lock()
@@ -197,6 +206,7 @@ func (c *Cache) remove(r *record) error {
 		return err
 	}
 	delete(c.entries, r.Key)
+	c.usedBytes -= r.Bytes
 	c.signal()
 	return nil
 }
@@ -209,7 +219,7 @@ func (c *Cache) pruneLocked(now time.Time, need int64) error {
 	}
 	slices.SortFunc(all, func(a, b *record) int { return a.LastUsed.Compare(b.LastUsed) })
 	for _, r := range all {
-		if c.expired(r, now) || c.used()+c.reserved+need > c.limit {
+		if c.expired(r, now) || c.usedBytes+c.reserved+need > c.limit {
 			if err := c.remove(r); err != nil {
 				return err
 			}
@@ -301,7 +311,11 @@ func (c *Cache) Acquire(ctx context.Context, key string, reserve int64, build fu
 		}
 		c.mu.Lock()
 		if r := c.entries[key]; r != nil {
-			if err := c.validate(r); err == nil {
+			previousBytes := r.Bytes
+			err := c.validate(r)
+			c.usedBytes += r.Bytes - previousBytes
+			c.publishStatsLocked()
+			if err == nil {
 				r.LastUsed = time.Now()
 				if err = c.persist(r); err != nil {
 					c.mu.Unlock()
@@ -328,9 +342,10 @@ func (c *Cache) Acquire(ctx context.Context, key string, reserve int64, build fu
 			c.mu.Unlock()
 			return nil, err
 		}
-		if !c.building[key] && c.used()+c.reserved+reserve <= c.limit {
+		if !c.building[key] && c.usedBytes+c.reserved+reserve <= c.limit {
 			c.building[key] = true
 			c.reserved += reserve
+			c.publishStatsLocked()
 			c.mu.Unlock()
 			break
 		}
@@ -403,6 +418,8 @@ func (c *Cache) Acquire(ctx context.Context, key string, reserve int64, build fu
 		return nil, err
 	}
 	c.entries[key] = r
+	c.usedBytes += r.Bytes
+	c.publishStatsLocked()
 	return c.lease(r), nil
 }
 

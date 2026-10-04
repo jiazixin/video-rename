@@ -159,6 +159,114 @@ func TestSessionValidationReadWaitHonorsCancellation(t *testing.T) {
 	}
 }
 
+func TestSessionRenewalWhileWriterBusy(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		cancel bool
+	}{
+		{"bounded wait", false},
+		{"request cancellation", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, err := storage.Open(filepath.Join(t.TempDir(), "sessions.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			a := New(db, config.AuthConfig{Username: "admin", Password: "test-password"})
+			token := secureSessionPrefix + "valid"
+			expiry := time.Now().Add(time.Hour).Unix()
+			if _, err := db.Exec("INSERT INTO sessions VALUES(?,?,?,?)", hash(token), "committed-csrf", expiry, a.fingerprint); err != nil {
+				t.Fatal(err)
+			}
+			tx, err := db.BeginTx(t.Context(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
+			if _, err := tx.Exec("UPDATE sessions SET expires=0 WHERE token=?", hash(token)); err != nil {
+				t.Fatal(err)
+			}
+			handler := a.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+			request := func(ctx context.Context) *http.Request {
+				r := httptest.NewRequest("GET", "http://example.test/api/auth/session", nil).WithContext(ctx)
+				r.AddCookie(&http.Cookie{Name: "vr_session", Value: token})
+				return r
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			done := make(chan *httptest.ResponseRecorder, 1)
+			pending := true
+			defer func() {
+				cancel()
+				_ = tx.Rollback()
+				if pending {
+					select {
+					case <-done:
+					case <-time.After(time.Second):
+						t.Error("renewal request did not exit after writer rollback")
+					}
+				}
+			}()
+			before := db.Stats().WaitCount
+			go func() {
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, request(ctx))
+				done <- w
+			}()
+			budget := time.Second
+			if tc.cancel {
+				// Cancel only after authentication has succeeded and renewal is
+				// waiting for the sole writer, rather than canceling the auth read.
+				deadline := time.NewTimer(time.Second)
+				defer deadline.Stop()
+				poll := time.Tick(time.Millisecond)
+				for db.Stats().WaitCount == before {
+					select {
+					case w := <-done:
+						pending = false
+						t.Fatalf("request returned before waiting to renew: %d", w.Code)
+					case <-poll:
+					case <-deadline.C:
+						t.Fatal("renewal did not wait on the busy writer")
+					}
+				}
+				cancel()
+				budget = 50 * time.Millisecond
+			}
+			var response *httptest.ResponseRecorder
+			select {
+			case response = <-done:
+				pending = false
+			case <-time.After(budget):
+				t.Fatal("valid session waited for the busy writer instead of finishing renewal")
+			}
+			if response.Code != http.StatusOK || len(response.Result().Cookies()) != 0 {
+				t.Fatalf("busy renewal changed authentication or issued a cookie: status=%d cookies=%v", response.Code, response.Result().Cookies())
+			}
+			var session map[string]string
+			if err := json.Unmarshal(response.Body.Bytes(), &session); err != nil || session["username"] != "admin" || session["csrf"] != "committed-csrf" {
+				t.Fatalf("busy renewal did not preserve committed session: %+v err=%v", session, err)
+			}
+			var storedExpiry int64
+			if err := db.Read().QueryRowContext(t.Context(), "SELECT expires FROM sessions WHERE token=?", hash(token)).Scan(&storedExpiry); err != nil || storedExpiry != expiry {
+				t.Fatalf("failed renewal changed expiry: got=%d want=%d err=%v", storedExpiry, expiry, err)
+			}
+			if err := tx.Rollback(); err != nil {
+				t.Fatal(err)
+			}
+			response = httptest.NewRecorder()
+			handler.ServeHTTP(response, request(t.Context()))
+			cookies := response.Result().Cookies()
+			if response.Code != http.StatusOK || len(cookies) != 1 || cookies[0].Value != token || !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode || cookies[0].MaxAge != int(sessionLifetime/time.Second) {
+				t.Fatalf("retry did not renew the secure session: status=%d cookies=%v", response.Code, cookies)
+			}
+			if err := db.Read().QueryRowContext(t.Context(), "SELECT expires FROM sessions WHERE token=?", hash(token)).Scan(&storedExpiry); err != nil || storedExpiry < time.Now().Add(11*time.Hour).Unix() {
+				t.Fatalf("retry did not extend expiry: got=%d err=%v", storedExpiry, err)
+			}
+		})
+	}
+}
+
 func TestSessionCSRFAndLogout(t *testing.T) {
 	db, e := storage.Open(filepath.Join(t.TempDir(), "db.sqlite"))
 	if e != nil {
