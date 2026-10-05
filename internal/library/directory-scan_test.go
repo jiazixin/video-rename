@@ -395,44 +395,6 @@ func TestScanDirectoryPublicationFailureRetainsGeneration(t *testing.T) {
 	}
 }
 
-func TestScanDirectoryRetriesLegacyPartialRefresh(t *testing.T) {
-	l, root, _ := fixture(t)
-	put(t, filepath.Join(root, "old.mp4"))
-	refresh(t, l, 1)
-	before, _ := l.DirectoryState(t.Context(), 1)
-	put(t, filepath.Join(root, "new.mp4"))
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	calls := 0
-	l.mu.Lock()
-	err = l.refreshDirectory(t.Context(), 1, func(int) ([]os.DirEntry, error) {
-		calls++
-		if calls == 1 {
-			return entries, nil
-		}
-		return nil, errors.New("interrupted legacy directory scan")
-	})
-	l.mu.Unlock()
-	if err == nil {
-		t.Fatal("injected legacy failure was ignored")
-	}
-	partial, _ := l.DirectoryState(t.Context(), 1)
-	if partial.Generation != before.Generation || partial.Error == "" {
-		t.Fatalf("legacy failure setup: %+v", partial)
-	}
-	result, err := l.ScanDirectory(t.Context(), 1)
-	if err != nil || result.Files != 2 {
-		t.Fatalf("retry scan: %+v %v", result, err)
-	}
-	after, _ := l.DirectoryState(t.Context(), 1)
-	if after.Generation == before.Generation || after.Error != "" {
-		t.Fatalf("partial entry baseline was mistaken for a complete generation: %+v", after)
-	}
-	assertScanIndexCounts(t, l, after.Generation, 2, 0)
-}
-
 func TestScanDirectoryRejectsContentChangeBetweenPasses(t *testing.T) {
 	l, root, _ := fixture(t)
 	put(t, filepath.Join(root, "writing.mp4"))
@@ -465,7 +427,7 @@ func TestScanDirectoryRejectsContentChangeBetweenPasses(t *testing.T) {
 	}
 }
 
-func TestScanDirectorySerializesLegacyRefresh(t *testing.T) {
+func TestScanDirectorySerializesRefresh(t *testing.T) {
 	l, root, _ := fixture(t)
 	put(t, filepath.Join(root, "video.mp4"))
 	entered, released := make(chan struct{}), make(chan struct{})
@@ -581,7 +543,7 @@ func TestScanDirectoryReclaimsInterruptedCandidatesAfterRestart(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = collectScanMetadata(t.Context(), stage, "snapshot", dir, func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) })
+			err = collectScanMetadata(t.Context(), stage, "snapshot", dir, func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) }, nil)
 			dir.Close()
 			if err != nil {
 				t.Fatal(err)
@@ -759,7 +721,7 @@ func TestScanCleanupFindsCommittedPageAfterStageUpdateFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = collectScanMetadata(t.Context(), stage, "snapshot", dir, func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) })
+	err = collectScanMetadata(t.Context(), stage, "snapshot", dir, func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) }, nil)
 	dir.Close()
 	if err != nil {
 		t.Fatal(err)

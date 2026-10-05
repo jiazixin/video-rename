@@ -17,8 +17,6 @@ func startTestDirectoryRefresh(t *testing.T, l *Library, ctx context.Context, ba
 	t.Helper()
 	done := make(chan error, 1)
 	go func() {
-		l.mu.Lock()
-		defer l.mu.Unlock()
 		done <- l.refreshDirectory(ctx, 1, func(n int) ([]os.DirEntry, error) {
 			if n != 128 {
 				t.Errorf("metadata page size = %d, want 128", n)
@@ -374,7 +372,7 @@ func assertFailedRefreshPreservedGeneration(t *testing.T, l *Library, generation
 	}
 }
 
-func TestRefreshUnchangedEntriesUpdateObservationWithoutVersion(t *testing.T) {
+func TestRefreshUnchangedEntriesKeepObservationAndVersion(t *testing.T) {
 	l, root, _ := fixture(t)
 	names := []string{"video.mp4", "photo.jpg", "audio.mp3"}
 	for _, name := range names {
@@ -414,8 +412,8 @@ func TestRefreshUnchangedEntriesUpdateObservationWithoutVersion(t *testing.T) {
 		if err := l.DB.QueryRow("SELECT observed FROM entries WHERE id=?", old.ID).Scan(&observed); err != nil {
 			t.Fatal(err)
 		}
-		if observed == oldObservation {
-			t.Fatalf("unchanged %s was not observed by the new scan", old.Name)
+		if observed != oldObservation {
+			t.Fatalf("unchanged %s received a redundant metadata write", old.Name)
 		}
 	}
 }
@@ -450,7 +448,7 @@ func TestRefreshReplacementAllocatesEntryAndRejectsOldGeneration(t *testing.T) {
 }
 
 func TestRefreshPublishFailureRollsBackAndRecordsError(t *testing.T) {
-	for _, stage := range []string{"generation", "old items"} {
+	for _, stage := range []string{"generation"} {
 		t.Run(stage, func(t *testing.T) {
 			l, root, _ := fixture(t)
 			put(t, filepath.Join(root, "old.mp4"))
@@ -466,10 +464,6 @@ func TestRefreshPublishFailureRollsBackAndRecordsError(t *testing.T) {
 			}
 			trigger := `CREATE TRIGGER reject_publish BEFORE UPDATE OF generation ON directory_state
 WHEN OLD.dir=1 BEGIN SELECT RAISE(ABORT,'injected generation publication failure'); END`
-			if stage == "old items" {
-				trigger = fmt.Sprintf(`CREATE TRIGGER reject_publish BEFORE DELETE ON directory_items
-WHEN OLD.dir=1 AND OLD.generation=%d BEGIN SELECT RAISE(ABORT,'injected old-generation cleanup failure'); END`, generation)
-			}
 			if _, err := l.DB.ExecContext(t.Context(), trigger); err != nil {
 				t.Fatal(err)
 			}

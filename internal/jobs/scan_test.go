@@ -44,7 +44,7 @@ func TestQueueFilesAtomicCountersAndDeduplication(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			batch, err := m.Get(id)
+			batch, err := m.Get(t.Context(), id)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -54,7 +54,7 @@ func TestQueueFilesAtomicCountersAndDeduplication(t *testing.T) {
 				if err := m.DB.QueryRow("SELECT COUNT(*) FROM run_items WHERE run=?", id).Scan(&count); err != nil {
 					t.Fatal(err)
 				}
-				r, err := m.Get(id)
+				r, err := m.Get(t.Context(), id)
 				if err != nil {
 					t.Fatal(err)
 				}

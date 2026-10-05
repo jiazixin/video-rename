@@ -27,7 +27,7 @@ func TestStabilityZeroDisablesWait(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	m.Execute(ctx, id)
-	run, err := m.Get(id)
+	run, err := m.Get(t.Context(), id)
 	if err != nil || run.Done != 1 || run.Status != "completed" {
 		t.Fatal(run, err)
 	}
@@ -95,7 +95,7 @@ func TestStabilityWaitProtectsChangedFileAndCanBeCancelled(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal("run did not finish")
 			}
-			run, err := m.Get(id)
+			run, err := m.Get(t.Context(), id)
 			if err != nil {
 				t.Fatal(err)
 			}

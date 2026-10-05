@@ -200,7 +200,7 @@ func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 	}
 	seen := map[int64]bool{}
 	for _, id := range result.Runs {
-		run, err := a.Jobs.Get(id)
+		run, err := a.Jobs.Get(t.Context(), id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -247,7 +247,7 @@ func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 	if len(repeatedResult.Accepted) != 206 || len(repeatedResult.Runs) != 1 || len(repeatedResult.Errors) != 0 {
 		t.Fatal(selection.Body.String())
 	}
-	run, err := a.Jobs.Get(repeatedResult.Runs[0])
+	run, err := a.Jobs.Get(t.Context(), repeatedResult.Runs[0])
 	if err != nil || len(run.Targets) != 205 || run.ModelConfigID != alternative.ID {
 		t.Fatal(run, err)
 	}
@@ -263,7 +263,7 @@ func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 	if len(repeatedResult.Accepted) != 1 || len(repeatedResult.Runs) != 1 || len(repeatedResult.Errors) != 0 {
 		t.Fatal(single.Body.String())
 	}
-	run, err = a.Jobs.Get(repeatedResult.Runs[0])
+	run, err = a.Jobs.Get(t.Context(), repeatedResult.Runs[0])
 	if err != nil || len(run.Targets) != 1 || run.ModelConfigID != 1 {
 		t.Fatal(run, err)
 	}
@@ -378,7 +378,7 @@ func TestRetryHistoryMissingFilesDoNotBlockValidTargets(t *testing.T) {
 			if !strings.Contains(w.Body.String(), "文件或上级目录已不在索引中") || !strings.Contains(w.Body.String(), "文件或上级目录不存在") {
 				t.Fatal(w.Body.String())
 			}
-			run, err := a.Jobs.Get(result.Runs[0])
+			run, err := a.Jobs.Get(t.Context(), result.Runs[0])
 			if err != nil || len(run.Targets) != 1 {
 				t.Fatal(run, err)
 			}
@@ -505,7 +505,7 @@ func TestRetrySuccessHistoryPreservesProtection(t *testing.T) {
 				return "second-title", nil
 			}
 			a.Jobs.Execute(ctx, result.Runs[0])
-			run, err := a.Jobs.Get(result.Runs[0])
+			run, err := a.Jobs.Get(t.Context(), result.Runs[0])
 			if err != nil || calls != 1 || (run.Done == 1) != (outcome == "success") {
 				t.Fatal(run, calls, err)
 			}
@@ -532,7 +532,7 @@ func TestRetrySuccessHistoryPreservesProtection(t *testing.T) {
 				t.Fatal(err)
 			}
 			a.Jobs.Execute(t.Context(), ordinary)
-			run, err = a.Jobs.Get(ordinary)
+			run, err = a.Jobs.Get(t.Context(), ordinary)
 			if err != nil || run.Skipped != 1 || calls != 1 {
 				t.Fatal("ordinary batch bypassed protection", run, calls, err)
 			}

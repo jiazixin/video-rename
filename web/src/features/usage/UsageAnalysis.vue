@@ -105,15 +105,17 @@
     from.setHours(0, 0, 0, 0);
     return { from: from.toISOString(), to: now.toISOString() };
   }
+  let frozenRange: { from?: string; to: string } | undefined;
   async function load() {
     const mine = ++seq;
     controller?.abort();
     loading.value = false;
-    const range = rangeTimes();
+    const range = frozenRange ?? rangeTimes();
     if (typeof range === 'string') {
       error.value = range;
       return;
     }
+    frozenRange = range;
     const params = new URLSearchParams({ to: range.to, timezone });
     if (range.from) params.set('from', range.from);
     if (profile.value >= 0) params.set('profile', String(profile.value));
@@ -140,9 +142,11 @@
       if (mine === seq) loading.value = false;
     }
   }
+  const reload = ref(0);
   function refresh() {
+    frozenRange = undefined;
     page.value = 1;
-    load();
+    reload.value++;
   }
   function reset() {
     preset.value = '24h';
@@ -150,14 +154,20 @@
     profile.value = -1;
     source.value = '';
     sort.value = 'recent';
+    frozenRange = undefined;
     page.value = 1;
-    load();
+    reload.value++;
   }
-  watch([preset, profile, source, sort], () => {
-    page.value = 1;
-    load();
+  watch([preset, profile, source, sort, page, reload], (values, previous) => {
+    if (values.some((value, i) => i !== 4 && value !== previous[i])) {
+      frozenRange = undefined;
+      if (page.value !== 1) {
+        page.value = 1;
+        return;
+      }
+    }
+    void load();
   });
-  watch(page, () => load());
   onUnmounted(() => {
     seq++;
     controller?.abort();

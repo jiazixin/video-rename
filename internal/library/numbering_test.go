@@ -224,7 +224,7 @@ func TestNumberingApplyRestoreAndIdempotence(t *testing.T) {
 		if err != nil || e.Name != i.New {
 			t.Fatal(e, err)
 		}
-		h, err := l.History(i.Entry, 0)
+		h, err := l.History(t.Context(), i.Entry, 0)
 		if err != nil || len(h) != 1 || h[0].Old != i.Old || h[0].New != i.New {
 			t.Fatal(h, err)
 		}

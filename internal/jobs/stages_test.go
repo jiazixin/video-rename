@@ -72,7 +72,7 @@ func TestStagedFailureAndCancellationReuseUntilCommit(t *testing.T) {
 				t.Fatal(err)
 			}
 			m.Execute(t.Context(), id)
-			r, _ := m.Get(id)
+			r, _ := m.Get(t.Context(), id)
 			if r.Done != 1 || extracts.Load() != 1 || m.Cache.Stats().Entries != 0 {
 				t.Fatal(r, extracts.Load(), m.Cache.Stats())
 			}
@@ -182,7 +182,7 @@ func TestCrossBatchExtractionWhileModelBlockedAndSharedLimit(t *testing.T) {
 	for {
 		complete := 0
 		for _, id := range runs {
-			r, _ := m.Get(id)
+			r, _ := m.Get(t.Context(), id)
 			if r.Status == "completed" {
 				complete++
 			}
@@ -277,8 +277,8 @@ func TestCancelStopsExtractionAndLeavesOtherBatchRunning(t *testing.T) {
 	}
 	close(release)
 	wait(secondDone)
-	r, _ := m.Get(first)
-	other, _ := m.Get(second)
+	r, _ := m.Get(t.Context(), first)
+	other, _ := m.Get(t.Context(), second)
 	if r.Status != "cancelled" || other.Status != "completed" {
 		t.Fatal(r, other)
 	}
@@ -387,7 +387,7 @@ func TestBatchPrefetchUsesCapacityInsteadOfVideoCount(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				r, err := m.Get(id)
+				r, err := m.Get(t.Context(), id)
 				if err != nil || r.Done != 0 {
 					t.Fatalf("expected prefetch while model blocked: %+v %v", r, err)
 				}
@@ -400,7 +400,7 @@ func TestBatchPrefetchUsesCapacityInsteadOfVideoCount(t *testing.T) {
 			case <-time.After(15 * time.Second):
 				t.Fatal("run did not finish")
 			}
-			r, err := m.Get(id)
+			r, err := m.Get(t.Context(), id)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -97,6 +97,7 @@ CREATE TABLE runs (
  retry_snapshot TEXT NOT NULL DEFAULT '',
  model_snapshot TEXT NOT NULL DEFAULT '',
  started TEXT NOT NULL DEFAULT '',
+ analysis_start_ms INTEGER GENERATED ALWAYS AS (video_rename_start_ms(started,created)) STORED,
  sampling_snapshot TEXT NOT NULL DEFAULT '',
  task TEXT NOT NULL DEFAULT 'rename'
 );
@@ -308,6 +309,8 @@ CREATE INDEX entry_parent_id ON entries(parent,id) WHERE present=1;
 
 CREATE INDEX directory_entry ON directory_items(dir,entry);
 
+CREATE INDEX directory_entry_fk ON directory_items(entry);
+
 CREATE INDEX directory_natural ON directory_items(dir,generation,CASE WHEN kind='directory' THEN 0 ELSE 1 END,name COLLATE NATURAL_NAME,entry);
 
 CREATE INDEX directory_natural_desc ON directory_items(dir,generation,CASE WHEN kind='directory' THEN 0 ELSE 1 END,name COLLATE NATURAL_NAME DESC,entry DESC);
@@ -318,12 +321,30 @@ CREATE INDEX directory_sort_desc ON directory_items(dir,generation,CASE WHEN kin
 
 CREATE INDEX operation_entry ON operations(entry,id DESC);
 
+CREATE INDEX operation_parent ON operations(parent);
+
+CREATE INDEX operation_run ON operations(run,id DESC);
+
 CREATE INDEX event_page ON events(category,id DESC);
+
+CREATE INDEX event_run ON events(category,run,id DESC);
 
 CREATE INDEX event_automatic_failure_entry ON events(entry)
  WHERE category='failure' AND action='automatic';
 
+CREATE INDEX run_status ON runs(status,id);
+
+CREATE INDEX run_active ON runs(id) WHERE status IN ('queued','scanning','running','paused','cancelling');
+
+CREATE INDEX run_profile ON runs(model_config_id,id DESC);
+
 CREATE INDEX item_queue ON run_items(run,status,id);
+
+CREATE INDEX item_page ON run_items(run,id);
+
+CREATE INDEX item_logs ON run_items(run,MAX(started_ms,finished_ms) DESC,id DESC) WHERE status<>'queued';
+
+CREATE INDEX item_failures ON run_items(run,MAX(started_ms,finished_ms) DESC,id DESC) WHERE status='failed';
 
 CREATE INDEX item_entry ON run_items(entry,status,id DESC);
 
@@ -332,6 +353,8 @@ CREATE UNIQUE INDEX model_single_default ON model_configs(is_default) WHERE is_d
 CREATE INDEX notification_pending ON notification_deliveries(status,next_attempt,id);
 
 CREATE INDEX image_numbering_parent ON image_numberings(parent,created);
+
+CREATE INDEX image_numbering_entry ON image_numbering_items(entry);
 
 CREATE INDEX token_usage_time ON token_usage_records(recorded_at);
 
@@ -343,4 +366,138 @@ CREATE INDEX extraction_run ON extraction_records(run,id DESC);
 
 INSERT INTO notification_preferences VALUES(1,'UTC');
 
-PRAGMA user_version=20260929;
+PRAGMA user_version=20261005;
+
+CREATE INDEX run_analysis_start ON runs(analysis_start_ms,id);
+
+-- Transactional revisions invalidate immutable, bounded report caches.
+CREATE TABLE report_revision (name TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0);
+INSERT INTO report_revision(name) VALUES('runs'),('usage'),('run_options'),('usage_options');
+CREATE TRIGGER revision_runs_insert AFTER INSERT ON runs BEGIN
+ UPDATE report_revision SET revision=revision+1 WHERE name IN ('runs','usage','run_options','usage_options');
+END;
+
+CREATE TRIGGER revision_runs_update AFTER UPDATE ON runs BEGIN
+ UPDATE report_revision SET revision=revision+1 WHERE name IN ('runs','usage','run_options','usage_options');
+END;
+
+CREATE TRIGGER revision_runs_delete AFTER DELETE ON runs BEGIN
+ UPDATE report_revision SET revision=revision+1 WHERE name IN ('runs','usage','run_options','usage_options');
+END;
+
+CREATE TRIGGER revision_run_items_insert AFTER INSERT ON run_items BEGIN
+ UPDATE report_revision SET revision=revision+1 WHERE name IN ('runs');
+END;
+
+CREATE TRIGGER revision_run_items_update AFTER UPDATE ON run_items BEGIN
+ UPDATE report_revision SET revision=revision+1 WHERE name IN ('runs');
+END;
+
+CREATE TRIGGER revision_run_items_delete AFTER DELETE ON run_items BEGIN
+ UPDATE report_revision SET revision=revision+1 WHERE name IN ('runs');
+END;
+
+CREATE TRIGGER revision_token_usage_records_insert AFTER INSERT ON token_usage_records BEGIN
+ UPDATE report_revision SET revision=revision+1 WHERE name IN ('usage','usage_options');
+END;
+
+CREATE TRIGGER revision_token_usage_records_update AFTER UPDATE ON token_usage_records BEGIN
+ UPDATE report_revision SET revision=revision+1 WHERE name IN ('usage','usage_options');
+END;
+
+CREATE TRIGGER revision_token_usage_records_delete AFTER DELETE ON token_usage_records BEGIN
+ UPDATE report_revision SET revision=revision+1 WHERE name IN ('usage','usage_options');
+END;
+
+CREATE TRIGGER revision_run_token_usage_insert AFTER INSERT ON run_token_usage BEGIN
+ UPDATE report_revision SET revision=revision+1 WHERE name IN ('usage');
+END;
+
+CREATE TRIGGER revision_run_token_usage_update AFTER UPDATE ON run_token_usage BEGIN
+ UPDATE report_revision SET revision=revision+1 WHERE name IN ('usage');
+END;
+
+CREATE TRIGGER revision_run_token_usage_delete AFTER DELETE ON run_token_usage BEGIN
+ UPDATE report_revision SET revision=revision+1 WHERE name IN ('usage');
+END;
+
+CREATE TRIGGER revision_model_configs_insert AFTER INSERT ON model_configs BEGIN
+ UPDATE report_revision SET revision=revision+1 WHERE name IN ('usage','usage_options');
+END;
+
+CREATE TRIGGER revision_model_configs_update AFTER UPDATE ON model_configs BEGIN
+ UPDATE report_revision SET revision=revision+1 WHERE name IN ('usage','usage_options');
+END;
+
+CREATE TRIGGER revision_model_configs_delete AFTER DELETE ON model_configs BEGIN
+ UPDATE report_revision SET revision=revision+1 WHERE name IN ('usage','usage_options');
+END;
+
+CREATE INDEX entry_directories ON entries(parent,id) WHERE present=1 AND kind='directory';
+CREATE TABLE directory_revision (dir INTEGER PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0);
+CREATE TRIGGER directory_entries_insert AFTER INSERT ON entries WHEN NEW.present=1 BEGIN
+ INSERT INTO directory_revision(dir,revision) SELECT NEW.parent,1 WHERE NEW.parent>0 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER directory_entries_delete AFTER DELETE ON entries WHEN OLD.present=1 BEGIN
+ INSERT INTO directory_revision(dir,revision) SELECT OLD.parent,1 WHERE OLD.parent>0 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER directory_entries_update AFTER UPDATE OF parent,name,kind,identity,size,mtime,present ON entries WHEN (OLD.present=1 OR NEW.present=1) AND (OLD.parent IS NOT NEW.parent OR OLD.name IS NOT NEW.name OR OLD.kind IS NOT NEW.kind OR OLD.identity IS NOT NEW.identity OR OLD.size IS NOT NEW.size OR OLD.mtime IS NOT NEW.mtime OR OLD.present IS NOT NEW.present) BEGIN
+ INSERT INTO directory_revision(dir,revision) SELECT OLD.parent,1 WHERE OLD.parent>0 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+ INSERT INTO directory_revision(dir,revision) SELECT NEW.parent,1 WHERE NEW.parent>0 AND NEW.parent<>OLD.parent ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER directory_marks_insert AFTER INSERT ON marks BEGIN
+ INSERT INTO directory_revision(dir,revision) SELECT DISTINCT parent,1 FROM entries WHERE identity=NEW.identity AND size=NEW.size AND mtime=NEW.mtime AND present=1 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER directory_run_items_insert AFTER INSERT ON run_items WHEN NEW.status IN ('queued','running') BEGIN
+ INSERT INTO directory_revision(dir,revision) SELECT parent,1 FROM entries WHERE id=NEW.entry AND present=1 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER directory_directory_items_insert AFTER INSERT ON directory_items BEGIN
+ INSERT INTO directory_revision(dir,revision) SELECT NEW.dir,1 FROM directory_state WHERE dir=NEW.dir AND generation=NEW.generation ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER directory_marks_delete AFTER DELETE ON marks BEGIN
+ INSERT INTO directory_revision(dir,revision) SELECT DISTINCT parent,1 FROM entries WHERE identity=OLD.identity AND size=OLD.size AND mtime=OLD.mtime AND present=1 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER directory_run_items_delete AFTER DELETE ON run_items WHEN OLD.status IN ('queued','running') BEGIN
+ INSERT INTO directory_revision(dir,revision) SELECT parent,1 FROM entries WHERE id=OLD.entry AND present=1 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER directory_directory_items_delete AFTER DELETE ON directory_items BEGIN
+ INSERT INTO directory_revision(dir,revision) SELECT OLD.dir,1 FROM directory_state WHERE dir=OLD.dir AND generation=OLD.generation ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER directory_marks_update AFTER UPDATE ON marks BEGIN
+ INSERT INTO directory_revision(dir,revision) SELECT DISTINCT parent,1 FROM entries WHERE identity=OLD.identity AND size=OLD.size AND mtime=OLD.mtime AND present=1 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+ INSERT INTO directory_revision(dir,revision) SELECT DISTINCT parent,1 FROM entries WHERE identity=NEW.identity AND size=NEW.size AND mtime=NEW.mtime AND present=1 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER directory_run_items_update AFTER UPDATE ON run_items WHEN (OLD.status IN ('queued','running') OR NEW.status IN ('queued','running')) AND (OLD.entry IS NOT NEW.entry OR OLD.run IS NOT NEW.run OR OLD.status IS NOT NEW.status) BEGIN
+ INSERT INTO directory_revision(dir,revision) SELECT parent,1 FROM entries WHERE id=OLD.entry AND present=1 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+ INSERT INTO directory_revision(dir,revision) SELECT parent,1 FROM entries WHERE id=NEW.entry AND present=1 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER directory_directory_items_update AFTER UPDATE ON directory_items BEGIN
+ INSERT INTO directory_revision(dir,revision) SELECT OLD.dir,1 FROM directory_state WHERE dir=OLD.dir AND generation=OLD.generation ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+ INSERT INTO directory_revision(dir,revision) SELECT NEW.dir,1 FROM directory_state WHERE dir=NEW.dir AND generation=NEW.generation ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER directory_runs_update AFTER UPDATE OF status ON runs WHEN OLD.status IS NOT NEW.status BEGIN
+ INSERT INTO directory_revision(dir,revision) SELECT DISTINCT e.parent,1 FROM run_items i JOIN entries e ON e.id=i.entry WHERE i.run=NEW.id AND i.status IN ('queued','running') AND e.present=1 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE INDEX operation_pending ON operations(entry) WHERE status IN ('prepared','review');
+CREATE INDEX numbering_pending ON image_numberings(parent) WHERE status IN ('running','rollback','review');
+CREATE INDEX entry_scan_orphan ON entries(parent,id) WHERE present=0 AND observed GLOB 'directory-scan:*';
+CREATE TRIGGER directory_runs_insert AFTER INSERT ON runs BEGIN
+ INSERT INTO directory_revision(dir,revision) SELECT DISTINCT e.parent,1 FROM run_items i JOIN entries e ON e.id=i.entry WHERE i.run=NEW.id AND i.status IN ('queued','running') AND e.present=1 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER directory_runs_delete BEFORE DELETE ON runs BEGIN
+ INSERT INTO directory_revision(dir,revision) SELECT DISTINCT e.parent,1 FROM run_items i JOIN entries e ON e.id=i.entry WHERE i.run=OLD.id AND i.status IN ('queued','running') AND e.present=1 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+END;

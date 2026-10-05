@@ -303,7 +303,7 @@ func TestProcessedMarksRecursiveAndPersistent(t *testing.T) {
 	if a.Processed != "marked" || a.RestoreID != 0 {
 		t.Fatalf("%+v", a)
 	}
-	history, err := l.History(a.ID, 0)
+	history, err := l.History(t.Context(), a.ID, 0)
 	if err != nil || len(history) != 0 {
 		t.Fatal(history, err)
 	}

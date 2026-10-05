@@ -47,7 +47,7 @@ func TestExtractionWithoutModelPreservesFilesAndReusesFrames(t *testing.T) {
 		t.Fatal("extraction request is not idempotent", same, err)
 	}
 	m.Execute(t.Context(), id)
-	r, err := m.Get(id)
+	r, err := m.Get(t.Context(), id)
 	if err != nil || r.Task != "extract" || r.Status != "completed" || r.Done != 1 || r.ModelConfigID != 0 || r.PromptBody != "" || m.Cache.Stats().Entries != 1 {
 		t.Fatal(r, err, m.Cache.Stats())
 	}
@@ -80,7 +80,7 @@ func TestExtractionWithoutModelPreservesFilesAndReusesFrames(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Execute(t.Context(), id)
-	r, _ = m.Get(id)
+	r, _ = m.Get(t.Context(), id)
 	if r.Done != 1 || calls.Load() != 1 || m.Cache.Stats().Entries != 0 {
 		t.Fatal("prepared frames were not reused", r, calls.Load(), m.Cache.Stats())
 	}
@@ -221,7 +221,7 @@ func TestExtractionScansBeyondLibraryPagesAndFreezesSampling(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Execute(t.Context(), id)
-	r, err := m.Get(id)
+	r, err := m.Get(t.Context(), id)
 	if err != nil || r.Done != 105 || r.Discovered != 105 || calls.Load() != 105 {
 		t.Fatal("non-recursive extraction lost files across pages", r, calls.Load(), err)
 	}
@@ -233,7 +233,7 @@ func TestExtractionScansBeyondLibraryPagesAndFreezesSampling(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Execute(t.Context(), id)
-	r, err = m.Get(id)
+	r, err = m.Get(t.Context(), id)
 	if err != nil || r.Done != 106 || calls.Load() != 106 {
 		t.Fatal("recursive extraction did not reuse the first batch", r, calls.Load(), err)
 	}

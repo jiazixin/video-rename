@@ -93,7 +93,7 @@ func (a *App) runsAnalytics(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	report, err := runstats.Analytics(a.DB, v)
+	report, err := runstats.Analytics(r.Context(), a.DB, v)
 	if err != nil {
 		failure(w, err)
 		return

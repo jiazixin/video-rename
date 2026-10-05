@@ -282,3 +282,32 @@ test('批次状态刷新不打断日志读取，收起后忽略迟到响应', as
   await dialog.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(dialog).toHaveCount(0)
 })
+
+test('终态日志读取最后状态后停止轮询，重新展开仍能刷新', async ({ page }) => {
+  const run = {id: 963, task: 'extract', source: 'manual', status: 'running', targets: [1], created: new Date().toISOString(), discovered: 1, done: 0, skipped: 0, failed: 0}
+  let requests = 0
+  await mockRunPages(page, [run])
+  await page.route('**/api/runs/963', route => route.fulfill({json: run}))
+  await page.route('**/api/runs/963/items?*', route => {
+    if (new URL(route.request().url()).searchParams.has('view')) requests++
+    return route.fulfill({json: {items: [{id: 1, entry: 1, status: run.status === 'completed' ? 'done' : 'running', original_path: 'clip.mp4', current_path: 'clip.mp4', message: run.status === 'completed' ? '最终完成记录' : '处理中', attempts: []}], total: 1, page: 1, log_total: 1}})
+  })
+  await page.goto('/')
+  await page.getByLabel('用户名', {exact: true}).fill('admin')
+  await page.getByLabel('密码', {exact: true}).fill('test-password-123')
+  await page.getByRole('button', {name: '登录', exact: true}).click()
+  await page.getByRole('button', {name: '批次记录', exact: true}).click()
+  await page.getByRole('button', {name: '详情', exact: true}).click()
+  const dialog = page.getByRole('dialog', {name: '运行 #963'})
+  const toggle = dialog.getByRole('button', {name: /^运行日志/})
+  await toggle.click()
+  await expect(dialog.locator('#run-detail-logs')).toContainText('处理中')
+  run.status = 'completed'; run.done = 1
+  await expect(dialog.locator('#run-detail-logs')).toContainText('最终完成记录', {timeout: 10000})
+  await page.clock.install()
+  const terminalRequests = requests
+  await page.clock.runFor(10000)
+  expect(requests).toBe(terminalRequests)
+  await toggle.click(); await toggle.click()
+  await expect.poll(() => requests).toBe(terminalRequests + 1)
+})

@@ -101,7 +101,7 @@ func (a *App) usageAnalytics(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	report, err := tokenusage.Analytics(a.DB, v)
+	report, err := tokenusage.Analytics(r.Context(), a.DB, v)
 	if err != nil {
 		failure(w, err)
 		return

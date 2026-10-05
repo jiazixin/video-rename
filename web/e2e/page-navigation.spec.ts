@@ -53,7 +53,7 @@ test('批次与详情直接跳页，目录选择器跳页不提交外层表单',
  await pager.getByRole('button',{name:'首页',exact:true}).click()
  await page.locator('.run-entry').first().getByRole('button',{name:'详情',exact:true}).click()
  const detail=page.getByRole('dialog')
- await detail.getByLabel('跳转页码').fill('3');await detail.getByLabel('跳转页码').press('Enter')
+ await detail.locator('#run-detail-targets').getByLabel('跳转页码').fill('3');await detail.locator('#run-detail-targets').getByLabel('跳转页码').press('Enter')
  await expect(detail).toContainText('第3页视频.mp4')
  await detail.getByRole('button',{name:'关闭',exact:true}).last().click()
  await page.getByRole('button',{name:'计划管理',exact:true}).click()

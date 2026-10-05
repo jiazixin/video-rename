@@ -82,7 +82,7 @@ test('状态颜色、每页居中和日志日历',async({page})=>{
  await page.setViewportSize({width:1440,height:1000})
  await mockRunPages(page,['queued','scanning','running','completed','partial_failure','failed','cancelled','skipped'].map((status,i)=>({id:i+100,source:'manual',targets:[1],recursive:true,status,created:new Date().toISOString(),finished:'',discovered:1,done:0,skipped:0,failed:0,error:'',plan:0,model_config_id:1,model_config_title:'',prompt_body:''})))
  await page.getByRole('button',{name:'批次记录',exact:true}).click();await expect(page.locator('.status-badge')).toHaveCount(8)
- const colors=await page.locator('.status-badge').evaluateAll(elements=>elements.slice(0,6).map(e=>getComputedStyle(e).color));expect(new Set(colors).size).toBe(6)
+ const colors=await page.locator('.status-badge').evaluateAll(elements=>Object.fromEntries(elements.map(e=>[e.getAttribute('data-status'),getComputedStyle(e).color])));expect(colors.scanning).toBe(colors.running);expect(new Set(['queued','running','completed','partial_failure','failed'].map(status=>colors[status])).size).toBe(5)
  await page.screenshot({path:'test-results/status-colors.png',fullPage:true,animations:'disabled'})
 })
 

@@ -4,6 +4,7 @@ package runstats
 
 import (
 	"cmp"
+	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"maps"
@@ -249,7 +250,7 @@ func average(values []int64) int64 {
 // dimension of the report sees the same snapshot. Batches belong to the range
 // by their actual start (created as fallback); items are attributed to their
 // own recorded finish timestamp.
-func Analytics(db *storage.Store, q AnalysisQuery) (*Report, error) {
+func Analytics(ctx context.Context, db *storage.Store, q AnalysisQuery) (*Report, error) {
 	if q.Location == nil {
 		q.Location = time.UTC
 	}
@@ -266,12 +267,43 @@ func Analytics(db *storage.Store, q AnalysisQuery) (*Report, error) {
 			q.Size = 100
 		}
 	}
-	tx, err := db.Read().Begin()
+	tx, err := db.Read().BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT id,task,source,plan,config_summary,model_config_id,model_config_title,status,created,started,finished,discovered,done,skipped,failed,error FROM runs ORDER BY id`)
+	revision, err := storage.ReportRevision(ctx, tx, "runs")
+	if err != nil {
+		return nil, err
+	}
+	cacheQuery := q
+	cacheQuery.Page, cacheQuery.Size, cacheQuery.Location = 0, 0, nil
+	keyRaw, err := json.Marshal(struct {
+		Query    AnalysisQuery
+		Timezone string
+	}{cacheQuery, q.Location.String()})
+	if err != nil {
+		return nil, err
+	}
+	cacheKey := "runs:" + string(keyRaw)
+	var cached Report
+	if db.CachedReport(cacheKey, revision, &cached) {
+		if err = tx.Commit(); err != nil {
+			return nil, err
+		}
+		return pageReport(ctx, &cached, q.Page, q.Size)
+	}
+	where := "analysis_start_ms>=? AND analysis_start_ms<?"
+	args := []any{q.From, q.To}
+	if q.ProfileSet || q.Profile > 0 {
+		where += " AND model_config_id=?"
+		args = append(args, q.Profile)
+	}
+	if q.Source != "" {
+		where += " AND (CASE WHEN source='schedule' OR plan>0 THEN 'scheduled' ELSE 'manual' END)=?"
+		args = append(args, q.Source)
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id,task,source,plan,config_summary,model_config_id,model_config_title,status,created,started,finished,discovered,done,skipped,failed,error FROM runs WHERE `+where+` ORDER BY id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -293,12 +325,6 @@ func Analytics(db *storage.Store, q AnalysisQuery) (*Report, error) {
 		r.finishedMs = parseMs(r.finished)
 		if started := parseMs(r.started); started > 0 && r.finishedMs > started {
 			r.durationMs = r.finishedMs - started
-		}
-		if ((q.ProfileSet || q.Profile > 0) && r.profileID != q.Profile) || (q.Source != "" && r.source != q.Source) {
-			continue
-		}
-		if r.startMs < q.From || r.startMs >= q.To {
-			continue
 		}
 		selected = append(selected, &r)
 	}
@@ -325,37 +351,6 @@ func Analytics(db *storage.Store, q AnalysisQuery) (*Report, error) {
 		run                       int64
 		status, message           string
 		startedMs, finishedMsItem int64
-	}
-	var items []itemRow
-	ids := make([]int64, 0, len(selected))
-	for _, r := range selected {
-		ids = append(ids, r.id)
-	}
-	for start := 0; start < len(ids); start += 500 {
-		end := min(start+500, len(ids))
-		chunk := ids[start:end]
-		placeholders := strings.TrimRight(strings.Repeat("?,", len(chunk)), ",")
-		args := make([]any, len(chunk))
-		for i, id := range chunk {
-			args[i] = id
-		}
-		itemRows, err := tx.Query(`SELECT run,status,message,started_ms,finished_ms FROM run_items WHERE run IN (`+placeholders+`)`, args...)
-		if err != nil {
-			return nil, err
-		}
-		for itemRows.Next() {
-			var it itemRow
-			if err = itemRows.Scan(&it.run, &it.status, &it.message, &it.startedMs, &it.finishedMsItem); err != nil {
-				itemRows.Close()
-				return nil, err
-			}
-			items = append(items, it)
-		}
-		if err = itemRows.Err(); err != nil {
-			itemRows.Close()
-			return nil, err
-		}
-		itemRows.Close()
 	}
 	byRun := map[int64]*runRow{}
 	for _, r := range selected {
@@ -433,10 +428,10 @@ func Analytics(db *storage.Store, q AnalysisQuery) (*Report, error) {
 		profile.Failed += r.failed
 	}
 
-	for _, it := range items {
+	accumulate := func(it itemRow) {
 		r := byRun[it.run]
 		if r == nil {
-			continue
+			return
 		}
 		if it.status == "done" || it.status == "failed" {
 			if it.startedMs > 0 && it.finishedMsItem > it.startedMs {
@@ -480,6 +475,37 @@ func Analytics(db *storage.Store, q AnalysisQuery) (*Report, error) {
 				group.lastMs = it.finishedMsItem
 			}
 		}
+	}
+
+	ids := make([]int64, 0, len(selected))
+	for _, r := range selected {
+		ids = append(ids, r.id)
+	}
+	for start := 0; start < len(ids); start += 500 {
+		end := min(start+500, len(ids))
+		chunk := ids[start:end]
+		placeholders := strings.TrimRight(strings.Repeat("?,", len(chunk)), ",")
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+		itemRows, err := tx.QueryContext(ctx, `SELECT run,status,message,started_ms,finished_ms FROM run_items WHERE run IN (`+placeholders+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for itemRows.Next() {
+			var it itemRow
+			if err = itemRows.Scan(&it.run, &it.status, &it.message, &it.startedMs, &it.finishedMsItem); err != nil {
+				itemRows.Close()
+				return nil, err
+			}
+			accumulate(it)
+		}
+		if err = itemRows.Err(); err != nil {
+			itemRows.Close()
+			return nil, err
+		}
+		itemRows.Close()
 	}
 
 	totals.AvgBatchMs = average(batchDurations)
@@ -560,9 +586,7 @@ func Analytics(db *storage.Store, q AnalysisQuery) (*Report, error) {
 	}
 	ordered := sortedRuns(selected, q.Sort)
 	report.Batches.Total = len(ordered)
-	report.Batches.Page = min(q.Page, max(1, (len(ordered)+q.Size-1)/q.Size))
-	startIndex := (report.Batches.Page - 1) * q.Size
-	for i := startIndex; i < len(ordered) && i < startIndex+q.Size; i++ {
+	for i := range ordered {
 		r := ordered[i]
 		var avg int64
 		if count, sum := avgPerRun[r.id][0], avgPerRun[r.id][1]; count > 0 {
@@ -570,12 +594,19 @@ func Analytics(db *storage.Store, q AnalysisQuery) (*Report, error) {
 		}
 		report.Batches.Items = append(report.Batches.Items, BatchRow{ID: r.id, Task: r.task, Status: r.status, Source: r.source, ProfileID: r.profileID, ProfileTitle: r.profileTitle, Model: r.model, Provider: r.provider, Protocol: r.protocol, Created: r.created, Started: r.started, Finished: r.finished, Discovered: r.discovered, Done: r.done, Skipped: r.skipped, Failed: r.failed, DurationMs: r.durationMs, AvgItemMs: avg})
 	}
-	options, err := reportOptions(tx)
+	options, err := reportOptions(ctx, db, tx)
 	if err != nil {
 		return nil, err
 	}
 	report.Options = options
-	return report, tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
+	db.CacheReport(cacheKey, revision, report)
+	return pageReport(ctx, report, q.Page, q.Size)
 }
 
 // failureAcc tallies one normalized failure message while scanning.
@@ -640,8 +671,17 @@ func sortedRuns(runs []*runRow, sortKey string) []*runRow {
 
 // reportOptions lists model profiles that ever created a run so the page can
 // offer filters even when the current range shows no batches for them.
-func reportOptions(tx *sql.Tx) (ReportOptions, error) {
-	rows, err := tx.Query(`SELECT model_config_id,model_config_title FROM runs WHERE id IN (SELECT MAX(id) FROM runs GROUP BY model_config_id) ORDER BY model_config_id`)
+func reportOptions(ctx context.Context, db *storage.Store, tx *sql.Tx) (ReportOptions, error) {
+	revision, err := storage.ReportRevision(ctx, tx, "run_options")
+	if err != nil {
+		return ReportOptions{}, err
+	}
+	var cached ReportOptions
+	if db.CachedReport("runs:options", revision, &cached) {
+		return cached, nil
+	}
+
+	rows, err := tx.QueryContext(ctx, `SELECT model_config_id,model_config_title FROM runs WHERE id IN (SELECT MAX(id) FROM runs GROUP BY model_config_id) ORDER BY model_config_id`)
 	if err != nil {
 		return ReportOptions{}, err
 	}
@@ -655,7 +695,11 @@ func reportOptions(tx *sql.Tx) (ReportOptions, error) {
 		}
 		out.Profiles = append(out.Profiles, OptionProfile{ID: id, Title: title})
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return ReportOptions{}, err
+	}
+	db.CacheReport("runs:options", revision, out)
+	return out, nil
 }
 
 // bucketing picks a trend granularity for the requested span. Calendar
@@ -714,4 +758,17 @@ func (b bucketing) next(ms int64) int64 {
 	default:
 		return ms + b.step
 	}
+}
+
+// The cached report includes the ordered batch rows; paging never re-reads items.
+func pageReport(ctx context.Context, report *Report, page, size int) (*Report, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	rows := report.Batches.Items
+	report.Batches.Page = min(page, max(1, (len(rows)+size-1)/size))
+	report.Batches.Size = size
+	start := (report.Batches.Page - 1) * size
+	report.Batches.Items = rows[min(start, len(rows)):min(start+size, len(rows))]
+	return report, nil
 }

@@ -230,7 +230,7 @@ func TestCurrentSchemaReopensWithoutChangingData(t *testing.T) {
 }
 
 func TestUnsupportedDatabaseRemainsIntact(t *testing.T) {
-	for _, version := range []int{0, 1, 21, 20260927, 20260928} {
+	for _, version := range []int{0, 1, 21, 20260927, 20260928, 20260929} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "unsupported.sqlite")
 			db, err := sql.Open("sqlite", path)

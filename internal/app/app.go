@@ -75,6 +75,7 @@ func New(cfg *config.Config) (*App, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	l.RefreshContext = ctx
 	return &App{Notifications: notifications.New(db), DB: db, Library: l, Scanner: libraryscan.New(l, systemsettings.Store{DB: db}), Jobs: j, Scheduler: s, Auth: auth.New(db, cfg.Auth), ctx: ctx, cancel: cancel}, nil
 }
 func (a *App) Start() {
@@ -196,9 +197,9 @@ func (a *App) Handler() http.Handler {
 		var p library.Page
 		var err error
 		if q.Has("page") {
-			p, err = a.Library.ListPageFiltered(a.ctx, number(r.PathValue("id")), int(number(q.Get("page"))), int(number(q.Get("limit"))), q.Get("q"), q.Get("kind"), q.Get("status"), q.Get("sort"))
+			p, err = a.Library.ListPageFiltered(r.Context(), number(r.PathValue("id")), int(number(q.Get("page"))), int(number(q.Get("limit"))), q.Get("q"), q.Get("kind"), q.Get("status"), q.Get("sort"))
 		} else {
-			p, err = a.Library.ListOrderedFiltered(a.ctx, number(r.PathValue("id")), int(number(q.Get("offset"))), int(number(q.Get("limit"))), number(q.Get("generation")), q.Get("q"), q.Get("kind"), q.Get("status"), false, q.Get("sort"))
+			p, err = a.Library.ListOrderedFiltered(r.Context(), number(r.PathValue("id")), int(number(q.Get("offset"))), int(number(q.Get("limit"))), number(q.Get("generation")), q.Get("q"), q.Get("kind"), q.Get("status"), false, q.Get("sort"))
 		}
 		if err != nil {
 			failure(w, err)
@@ -254,7 +255,7 @@ func (a *App) Handler() http.Handler {
 		send(w, 200, o)
 	})
 	api.HandleFunc("GET /api/entries/{id}/history", func(w http.ResponseWriter, r *http.Request) {
-		v, err := a.Library.History(number(r.PathValue("id")), number(r.URL.Query().Get("before")))
+		v, err := a.Library.History(r.Context(), number(r.PathValue("id")), number(r.URL.Query().Get("before")))
 		if err != nil {
 			failure(w, err)
 			return
@@ -311,7 +312,7 @@ func (a *App) Handler() http.Handler {
 			send(w, 200, v)
 			return
 		}
-		v, err := a.Jobs.List(number(r.URL.Query().Get("before")))
+		v, err := a.Jobs.List(r.Context(), number(r.URL.Query().Get("before")))
 		if err != nil {
 			failure(w, err)
 			return
@@ -319,7 +320,7 @@ func (a *App) Handler() http.Handler {
 		send(w, 200, v)
 	})
 	api.HandleFunc("GET /api/runs/{id}", func(w http.ResponseWriter, r *http.Request) {
-		v, err := a.Jobs.Get(number(r.PathValue("id")))
+		v, err := a.Jobs.Get(r.Context(), number(r.PathValue("id")))
 		if err != nil {
 			failure(w, err)
 			return
@@ -540,8 +541,26 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 		limit = 100
 	}
 	from := " FROM events e LEFT JOIN runs r ON r.id=e.run"
-	where := " WHERE e.category=? AND (?=0 OR e.run=?) AND (?='' OR instr(lower(e.old_path||e.new_path||e.message),lower(?))>0) AND (?='' OR e.action=?) AND (?='' OR julianday(e.created)>=julianday(?)) AND (?='' OR julianday(e.created)<=julianday(?))"
-	args := []any{category, run, run, q.Get("q"), q.Get("q"), q.Get("action"), q.Get("action"), q.Get("from"), q.Get("from"), q.Get("to"), q.Get("to")}
+	where := " WHERE e.category=?"
+	args := []any{category}
+	if run > 0 {
+		where += " AND e.run=?"
+		args = append(args, run)
+	}
+	if search := q.Get("q"); search != "" {
+		where += " AND instr(lower(e.old_path||e.new_path||e.message),lower(?))>0"
+		args = append(args, search)
+	}
+	if action := q.Get("action"); action != "" {
+		where += " AND e.action=?"
+		args = append(args, action)
+	}
+	for _, bound := range []struct{ key, op string }{{"from", ">="}, {"to", "<="}} {
+		if stamp := q.Get(bound.key); stamp != "" {
+			where += " AND julianday(e.created)" + bound.op + "julianday(?)"
+			args = append(args, stamp)
+		}
+	}
 	countFrom := from
 	if modelSource != "" {
 		countFrom += historyAttemptJoin
@@ -663,7 +682,14 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
 		offset = (page - 1) * 100
 		after = 0
 	}
-	rows, err := tx.QueryContext(r.Context(), "SELECT id,entry,status,message,original_path,MAX(started_ms,finished_ms) FROM run_items WHERE "+where+" AND id>? ORDER BY "+order+" LIMIT 100 OFFSET ?", run, after, offset)
+	pageWhere := where
+	args := []any{run}
+	if after > 0 {
+		pageWhere += " AND id>?"
+		args = append(args, after)
+	}
+	args = append(args, offset)
+	rows, err := tx.QueryContext(r.Context(), "SELECT id,entry,status,message,original_path,MAX(started_ms,finished_ms) FROM run_items WHERE "+pageWhere+" ORDER BY "+order+" LIMIT 100 OFFSET ?", args...)
 	if err != nil {
 		failure(w, err)
 		return
@@ -689,14 +715,24 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
 		failure(w, err)
 		return
 	}
+	itemIDs, entryIDs := make([]int64, 0, len(out)), make([]int64, 0, len(out))
 	for _, item := range out {
-		item["current_path"] = a.Library.DisplayPath(item["entry"].(int64))
-		attempts, err := jobs.Attempts(a.DB, item["id"].(int64))
-		if err != nil {
-			failure(w, err)
-			return
-		}
-		item["attempts"] = attempts
+		itemIDs = append(itemIDs, item["id"].(int64))
+		entryIDs = append(entryIDs, item["entry"].(int64))
+	}
+	paths, err := a.Library.DisplayPaths(r.Context(), entryIDs)
+	if err != nil {
+		failure(w, err)
+		return
+	}
+	attempts, err := jobs.Attempts(r.Context(), a.DB, itemIDs)
+	if err != nil {
+		failure(w, err)
+		return
+	}
+	for _, item := range out {
+		item["current_path"] = paths[item["entry"].(int64)]
+		item["attempts"] = attempts[item["id"].(int64)]
 	}
 	if paged {
 		result := map[string]any{"items": out, "total": total, "page": page}

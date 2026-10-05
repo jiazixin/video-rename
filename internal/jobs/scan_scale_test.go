@@ -19,7 +19,7 @@ func TestScaleCandidateQueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	batch, err := m.Get(id)
+	batch, err := m.Get(t.Context(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestScaleCandidateQueue(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	r, err := m.Get(id)
+	r, err := m.Get(t.Context(), id)
 	if err != nil {
 		t.Fatal(err)
 	}

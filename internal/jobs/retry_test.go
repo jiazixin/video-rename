@@ -85,7 +85,7 @@ func TestRetryFallbackSnapshotAndActualRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Execute(t.Context(), id)
-	run, err := m.Get(id)
+	run, err := m.Get(t.Context(), id)
 	if err != nil || run.Done != 1 || run.TokenCount != 50 || run.TokenRecords != 4 {
 		t.Fatal(run, err)
 	}
@@ -99,7 +99,8 @@ func TestRetryFallbackSnapshotAndActualRequests(t *testing.T) {
 	if err = m.DB.QueryRow("SELECT id FROM run_items WHERE run=?", id).Scan(&itemID); err != nil {
 		t.Fatal(err)
 	}
-	attempts, err := Attempts(m.DB, itemID)
+	byItem, err := Attempts(t.Context(), m.DB, []int64{itemID})
+	attempts := byItem[itemID]
 	if err != nil || len(attempts) != 4 || !attempts[3].Fallback || attempts[3].Status != "success" {
 		t.Fatal(attempts, err)
 	}
@@ -145,7 +146,7 @@ func TestPermanentErrorGoesDirectlyToFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Execute(t.Context(), id)
-	run, _ := m.Get(id)
+	run, _ := m.Get(t.Context(), id)
 	if run.Done != 1 || !slices.Equal(calls, []string{"test-model", "fallback"}) {
 		t.Fatal(run, calls)
 	}
@@ -212,7 +213,7 @@ func TestRetainedFramesSurviveRenameRestoreAndModelChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Execute(t.Context(), id)
-	run, _ := m.Get(id)
+	run, _ := m.Get(t.Context(), id)
 	if run.Done != 1 || extracted != 1 || m.Cache.Stats().Entries != 1 {
 		t.Fatal(run, extracted, m.Cache.Stats())
 	}
@@ -254,7 +255,7 @@ func TestRetryDisabledExhaustionAndCancel(t *testing.T) {
 			if calls != want {
 				t.Fatal(mode, calls)
 			}
-			run, _ := m.Get(id)
+			run, _ := m.Get(t.Context(), id)
 			if mode != "cancelled" && run.Failed != 1 {
 				t.Fatal(run)
 			}
@@ -286,7 +287,7 @@ func TestUnusableFilenameRetriesBeforeCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Execute(t.Context(), id)
-	run, _ := m.Get(id)
+	run, _ := m.Get(t.Context(), id)
 	if calls != 2 || run.Done != 1 {
 		t.Fatal(calls, run)
 	}

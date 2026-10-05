@@ -53,11 +53,9 @@ func TestScaleRefreshDelayedMetadata(t *testing.T) {
 		}
 		return batch, nil
 	}
-	l.mu.Lock()
 	start := time.Now()
 	err = l.refreshDirectory(t.Context(), 1, readDir)
 	elapsed := time.Since(start)
-	l.mu.Unlock()
 	t.Logf("%d files, Info delay=%s, elapsed=%s, Info calls=%d, peak active=%d", totalFiles, metadataDelay, elapsed, calls.Load(), peak.Load())
 	if err != nil {
 		t.Fatal(err)

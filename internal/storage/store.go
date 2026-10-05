@@ -17,9 +17,10 @@ import (
 
 type Store struct {
 	*sql.DB
-	read   *sql.DB
-	lock   *os.File
-	secret cipher.AEAD
+	read    *sql.DB
+	lock    *os.File
+	secret  cipher.AEAD
+	reports reportCache
 }
 
 func Open(path string) (*Store, error) {

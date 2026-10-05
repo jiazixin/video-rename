@@ -108,7 +108,7 @@ func TestRunningBatchConcurrencyChangesAndCancellation(t *testing.T) {
 	// the three released files to commit before testing cancellation of the rest.
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		run, err := m.Get(id)
+		run, err := m.Get(t.Context(), id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -133,7 +133,7 @@ func TestRunningBatchConcurrencyChangesAndCancellation(t *testing.T) {
 		t.Fatal("queued task dispatched after cancellation")
 	default:
 	}
-	run, err := m.Get(id)
+	run, err := m.Get(t.Context(), id)
 	if err != nil || run.Status != "cancelled" || run.Done != 3 {
 		t.Fatalf("run=%+v err=%v", run, err)
 	}
@@ -168,7 +168,7 @@ func TestDeletedModelUsesBatchConcurrencySnapshot(t *testing.T) {
 		return "renamed", nil
 	}
 	m.Execute(t.Context(), id)
-	run, err := m.Get(id)
+	run, err := m.Get(t.Context(), id)
 	if err != nil || run.Status != "completed" || run.Done != 1 {
 		t.Fatalf("run=%+v err=%v", run, err)
 	}

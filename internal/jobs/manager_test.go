@@ -79,7 +79,7 @@ func TestAutomaticRenameSkipRestoreAndOverlap(t *testing.T) {
 		t.Fatal("request not idempotent")
 	}
 	m.Execute(t.Context(), id)
-	r, _ := m.Get(id)
+	r, _ := m.Get(t.Context(), id)
 	if r.Done != 1 || r.Discovered != 1 || calls.Load() != 1 {
 		t.Fatalf("bad first run %+v calls=%d", r, calls.Load())
 	}
@@ -91,7 +91,7 @@ func TestAutomaticRenameSkipRestoreAndOverlap(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Execute(t.Context(), id)
-	r, _ = m.Get(id)
+	r, _ = m.Get(t.Context(), id)
 	if r.Skipped != 1 || calls.Load() != 1 {
 		t.Fatalf("duplicate %+v calls=%d", r, calls.Load())
 	}
@@ -107,7 +107,7 @@ func TestAutomaticRenameSkipRestoreAndOverlap(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Execute(t.Context(), id)
-	r, _ = m.Get(id)
+	r, _ = m.Get(t.Context(), id)
 	if r.Done != 1 || r.Skipped != 0 || calls.Load() != 2 {
 		t.Fatalf("restored file was not reprocessed %+v", r)
 	}
@@ -132,14 +132,14 @@ func TestRunTokenCountAccumulatesAndSurvivesHistoryDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Execute(t.Context(), id)
-	run, err := m.Get(id)
+	run, err := m.Get(t.Context(), id)
 	if err != nil || run.TokenCount != 195 || run.TokenRecords != 2 || run.TokenEstimated != 1 {
 		t.Fatalf("run token totals: %+v, %v", run, err)
 	}
 	if _, err = m.DB.Exec("DELETE FROM events WHERE run=?", id); err != nil {
 		t.Fatal(err)
 	}
-	listed, err := m.List(0)
+	listed, err := m.List(t.Context(), 0)
 	if err != nil || len(listed) != 1 || listed[0].TokenCount != 195 {
 		t.Fatalf("persisted token totals after history deletion: %+v, %v", listed, err)
 	}
@@ -167,7 +167,7 @@ func TestManualProtectsFileAndCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Execute(t.Context(), id)
-	r, _ := m.Get(id)
+	r, _ := m.Get(t.Context(), id)
 	if r.Skipped != 1 {
 		t.Fatalf("%+v", r)
 	}
@@ -179,7 +179,7 @@ func TestManualProtectsFileAndCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Execute(t.Context(), id)
-	r, _ = m.Get(id)
+	r, _ = m.Get(t.Context(), id)
 	if r.Status != "cancelled" {
 		t.Fatal(r.Status)
 	}
@@ -209,7 +209,7 @@ func TestToolsDisappearingStopsBatch(t *testing.T) {
 				t.Fatal(err)
 			}
 			m.Execute(t.Context(), id)
-			r, err := m.Get(id)
+			r, err := m.Get(t.Context(), id)
 			if err != nil || r.Status != "failed" || r.Failed != 1 || r.Discovered != 3 || !strings.Contains(r.Error, string(domain.CodeToolNotFound)) {
 				t.Fatalf("global tool failure did not stop dispatch: %+v, %v", r, err)
 			}
@@ -232,7 +232,7 @@ func TestChangedDuringAnalysisDoesNotRename(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Execute(t.Context(), id)
-	r, _ := m.Get(id)
+	r, _ := m.Get(t.Context(), id)
 	if r.Failed != 1 {
 		t.Fatalf("%+v", r)
 	}
@@ -268,7 +268,7 @@ func TestCancelInFlight(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("cancel timed out")
 	}
-	r, _ := m.Get(id)
+	r, _ := m.Get(t.Context(), id)
 	if r.Done != 0 || r.Status != "cancelled" {
 		t.Fatalf("%+v", r)
 	}
@@ -337,7 +337,7 @@ func TestPromptSnapshotAndIsolation(t *testing.T) {
 		return "新标题" + filepath.Base(j.Path), nil
 	}
 	m.Execute(t.Context(), id)
-	r, err := m.Get(id)
+	r, err := m.Get(t.Context(), id)
 	if err != nil || r.Done != 2 || calls.Load() != 2 || !strings.HasPrefix(r.PromptBody, "批次创建时的要求") || !strings.HasSuffix(r.PromptBody, systemsettings.DefaultFixedPrompt) || r.ModelConfigTitle != "独立提示词" {
 		t.Fatal(r, err, calls.Load())
 	}
@@ -347,7 +347,7 @@ func TestPromptSnapshotAndIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err = m.Get(next)
+	r, err = m.Get(t.Context(), next)
 	if err != nil || !strings.HasPrefix(r.PromptBody, "后续修改的要求") || !strings.HasSuffix(r.PromptBody, systemsettings.DefaultFixedPrompt) {
 		t.Fatal(r, err)
 	}
@@ -371,14 +371,14 @@ func TestGlobalDefaultUsedByNewRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := m.Get(id)
+	r, err := m.Get(t.Context(), id)
 	if err != nil || r.ModelConfigID != p.ID || r.PromptBody != libraryPrompt.Body+"\n\n"+systemsettings.DefaultFixedPrompt {
 		t.Fatal(r, err)
 	}
 	if err = store.SetDefault(1); err != nil {
 		t.Fatal(err)
 	}
-	r, err = m.Get(id)
+	r, err = m.Get(t.Context(), id)
 	if err != nil || r.ModelConfigID != p.ID {
 		t.Fatal("queued prompt changed", r, err)
 	}
@@ -407,7 +407,7 @@ func TestManuallyMarkedFilesSkipAndCanBeReenabled(t *testing.T) {
 			t.Fatal(err)
 		}
 		m.Execute(t.Context(), id)
-		r, _ := m.Get(id)
+		r, _ := m.Get(t.Context(), id)
 		if i == 0 && (r.Skipped != 1 || calls != 0) {
 			t.Fatalf("marked file processed %+v", r)
 		}
@@ -430,7 +430,7 @@ func TestNamingFailureKeepsFileAndRecordsFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Execute(t.Context(), id)
-	r, _ := m.Get(id)
+	r, _ := m.Get(t.Context(), id)
 	if r.Failed != 1 || r.Done != 0 || r.Status != "failed" {
 		t.Fatalf("%+v", r)
 	}
@@ -496,7 +496,7 @@ func TestRestartFinalizesPendingItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := m.Get(id)
+	run, err := m.Get(t.Context(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -514,7 +514,7 @@ func TestRestartFinalizesPendingItems(t *testing.T) {
 	if err = m.DB.QueryRow("SELECT status,finished_ms FROM run_items WHERE run=?", id).Scan(&status, &finished); err != nil || status != "cancelled" || finished <= 123 {
 		t.Fatal(status, finished, err)
 	}
-	run, err = m.Get(id)
+	run, err = m.Get(t.Context(), id)
 	if err != nil || run.Status != "interrupted" {
 		t.Fatal(run, err)
 	}

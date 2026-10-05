@@ -60,7 +60,7 @@ func TestBatchCompletionStatus(t *testing.T) {
 				t.Fatal(err)
 			}
 			m.Execute(t.Context(), id)
-			r, err := m.Get(id)
+			r, err := m.Get(t.Context(), id)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -104,7 +104,7 @@ func TestRecoveryCorrectsOnlyMisclassifiedCompletedBatches(t *testing.T) {
 			t.Fatal(err)
 		}
 		for i, tc := range cases {
-			r, err := m.Get(ids[i])
+			r, err := m.Get(t.Context(), ids[i])
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -40,7 +40,7 @@ test('批次暂停确认、错误重试、恢复、详情与窄屏',async({page}
  await expect(row.getByRole('button',{name:'还原批次'})).toBeDisabled()
  await expect(row.getByRole('button',{name:'取消',exact:true})).toBeEnabled()
  await row.getByRole('button',{name:'详情'}).click()
- await dialog.getByRole('button',{name:'继续运行',exact:true}).click()
+ await dialog.getByRole('button',{name:'继续',exact:true}).click()
  await expect(dialog).toContainText('从未完成的任务继续处理')
  await dialog.getByRole('button',{name:'确认继续'}).click()
  await expect(row.getByRole('button',{name:'暂停调度'})).toBeVisible()

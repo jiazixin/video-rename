@@ -113,8 +113,8 @@ func TestPauseReleasesQueuedFramesAndLetsOtherBatchFinish(t *testing.T) {
 	}
 	wg.Go(func() { m.Execute(ctx, second) })
 	close(allow)
-	waitPauseTest(t, func() bool { r, _ := m.Get(second); return r.Status == "completed" })
-	r, _ := m.Get(first)
+	waitPauseTest(t, func() bool { r, _ := m.Get(t.Context(), second); return r.Status == "completed" })
+	r, _ := m.Get(t.Context(), first)
 	if r.Status != "paused" || r.Done != 1 || r.Failed != 0 || inferred.Load() != 2 {
 		t.Fatalf("paused batch dispatched more work: %+v calls=%d", r, inferred.Load())
 	}
@@ -131,8 +131,8 @@ func TestPauseReleasesQueuedFramesAndLetsOtherBatchFinish(t *testing.T) {
 	if err = m.Resume(first); err != nil {
 		t.Fatal(err)
 	}
-	waitPauseTest(t, func() bool { r, _ := m.Get(first); return r.Status == "completed" })
-	r, _ = m.Get(first)
+	waitPauseTest(t, func() bool { r, _ := m.Get(t.Context(), first); return r.Status == "completed" })
+	r, _ = m.Get(t.Context(), first)
 	if r.Done != 4 || r.Failed != 0 || r.Started != started || inferred.Load() != 5 {
 		t.Fatalf("resume repeated completed work: %+v calls=%d", r, inferred.Load())
 	}
@@ -149,14 +149,14 @@ func TestQueuedPauseResumeCancelAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Execute(t.Context(), id)
-	r, _ := m.Get(id)
+	r, _ := m.Get(t.Context(), id)
 	if r.Status != "paused" || r.Started != "" {
 		t.Fatal(r)
 	}
 	if err = m.Resume(id); err != nil {
 		t.Fatal(err)
 	}
-	r, _ = m.Get(id)
+	r, _ = m.Get(t.Context(), id)
 	if r.Status != "queued" {
 		t.Fatal(r)
 	}
@@ -164,7 +164,7 @@ func TestQueuedPauseResumeCancelAndRecovery(t *testing.T) {
 	if err = m.Cancel(id); err != nil {
 		t.Fatal(err)
 	}
-	r, _ = m.Get(id)
+	r, _ = m.Get(t.Context(), id)
 	if r.Status != "cancelled" || r.Finished == "" {
 		t.Fatal(r)
 	}
@@ -182,7 +182,7 @@ func TestQueuedPauseResumeCancelAndRecovery(t *testing.T) {
 	if err = interruptRuns(m.DB); err != nil {
 		t.Fatal(err)
 	}
-	r, _ = m.Get(id)
+	r, _ = m.Get(t.Context(), id)
 	if r.Status != "interrupted" || r.Finished == "" {
 		t.Fatal(r)
 	}
@@ -229,7 +229,7 @@ func TestPauseExtractionAndCancelWhilePaused(t *testing.T) {
 		t.Fatal(err)
 	}
 	close(allow)
-	waitPauseTest(t, func() bool { r, _ := m.Get(id); return r.Done == 1 })
+	waitPauseTest(t, func() bool { r, _ := m.Get(t.Context(), id); return r.Done == 1 })
 	time.Sleep(50 * time.Millisecond)
 	if calls.Load() != 1 {
 		t.Fatal("paused extraction kept dispatching")
@@ -237,7 +237,7 @@ func TestPauseExtractionAndCancelWhilePaused(t *testing.T) {
 	if err = m.Cancel(id); err != nil {
 		t.Fatal(err)
 	}
-	waitPauseTest(t, func() bool { r, _ := m.Get(id); return r.Status == "cancelled" })
+	waitPauseTest(t, func() bool { r, _ := m.Get(t.Context(), id); return r.Status == "cancelled" })
 }
 
 func TestPausePreservesRetrySequence(t *testing.T) {
@@ -279,7 +279,7 @@ func TestPausePreservesRetrySequence(t *testing.T) {
 	if err = m.Resume(id); err != nil {
 		t.Fatal(err)
 	}
-	waitPauseTest(t, func() bool { r, _ := m.Get(id); return r.Status == "completed" })
+	waitPauseTest(t, func() bool { r, _ := m.Get(t.Context(), id); return r.Status == "completed" })
 	var n, maxAttempt int
 	m.DB.QueryRow("SELECT COUNT(*),MAX(attempt) FROM model_attempts").Scan(&n, &maxAttempt)
 	if n != 2 || maxAttempt != 2 || calls.Load() != 2 {
@@ -311,12 +311,12 @@ func TestPauseDuringStabilityKeepsFrozenCandidates(t *testing.T) {
 	done := make(chan struct{})
 	go func() { defer close(done); m.Execute(ctx, id) }()
 	defer func() { cancel(); <-done }()
-	waitPauseTest(t, func() bool { r, _ := m.Get(id); return r.Discovered == 1 })
+	waitPauseTest(t, func() bool { r, _ := m.Get(t.Context(), id); return r.Discovered == 1 })
 	if err = m.Pause(id); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(1100 * time.Millisecond)
-	r, _ := m.Get(id)
+	r, _ := m.Get(t.Context(), id)
 	if r.Status != "paused" || calls.Load() != 0 {
 		t.Fatal("stability completion overwrote pause", r, calls.Load())
 	}
@@ -326,8 +326,8 @@ func TestPauseDuringStabilityKeepsFrozenCandidates(t *testing.T) {
 	if err = m.Resume(id); err != nil {
 		t.Fatal(err)
 	}
-	waitPauseTest(t, func() bool { r, _ := m.Get(id); return r.Status == "completed" })
-	r, _ = m.Get(id)
+	waitPauseTest(t, func() bool { r, _ := m.Get(t.Context(), id); return r.Status == "completed" })
+	r, _ = m.Get(t.Context(), id)
 	if r.Skipped != 1 || r.Done != 0 || calls.Load() != 0 {
 		t.Fatal("resume bypassed source snapshot checks", r, calls.Load())
 	}

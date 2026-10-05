@@ -62,7 +62,7 @@ func TestRunPauseResumeAPI(t *testing.T) {
 		if w = request(path, `{"confirm":true}`, true); w.Code != 200 {
 			t.Fatal(w.Code, w.Body.String())
 		}
-		run, err := a.Jobs.Get(1)
+		run, err := a.Jobs.Get(t.Context(), 1)
 		expected := "paused"
 		if action == "resume" {
 			expected = "queued"

@@ -113,7 +113,7 @@ func TestAttemptsCountOnceAndGroupByActualModel(t *testing.T) {
 	if tokens != 20 || records != 2 {
 		t.Fatal(tokens, records)
 	}
-	report, err := Analytics(db, AnalyticsQuery{From: at.Add(-time.Minute).UnixMilli(), To: at.Add(time.Minute).UnixMilli(), Location: time.UTC})
+	report, err := Analytics(t.Context(), db, AnalyticsQuery{From: at.Add(-time.Minute).UnixMilli(), To: at.Add(time.Minute).UnixMilli(), Location: time.UTC})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestAttemptsCountOnceAndGroupByActualModel(t *testing.T) {
 			t.Fatal(model)
 		}
 	}
-	report, err = Analytics(db, AnalyticsQuery{From: at.Add(-time.Minute).UnixMilli(), To: at.Add(time.Minute).UnixMilli(), Location: time.UTC, Profile: 2})
+	report, err = Analytics(t.Context(), db, AnalyticsQuery{From: at.Add(-time.Minute).UnixMilli(), To: at.Add(time.Minute).UnixMilli(), Location: time.UTC, Profile: 2})
 	if err != nil || report.Totals.Tokens != 10 {
 		t.Fatal(report, err)
 	}

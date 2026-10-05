@@ -183,8 +183,15 @@ func numberingFingerprintFailure(path string, b Numbering, actual string) error 
 }
 
 func (l *Library) checkNumberingAvailable(id int64) error {
+	var pending bool
+	if err := l.DB.Read().QueryRow("SELECT EXISTS(SELECT 1 FROM image_numberings WHERE status IN ('running','rollback','review'))").Scan(&pending); err != nil {
+		return err
+	}
+	if !pending {
+		return nil
+	}
 	var n int
-	err := l.DB.QueryRow(`WITH RECURSIVE descendants(id) AS (SELECT ? UNION ALL SELECT e.id FROM entries e JOIN descendants d ON e.parent=d.id WHERE e.present=1), ancestors(id,parent) AS (SELECT id,parent FROM entries WHERE id=? UNION ALL SELECT e.id,e.parent FROM entries e JOIN ancestors a ON e.id=a.parent)
+	err := l.DB.Read().QueryRow(`WITH RECURSIVE descendants(id) AS (SELECT ? UNION ALL SELECT e.id FROM entries e JOIN descendants d ON e.parent=d.id WHERE e.present=1), ancestors(id,parent) AS (SELECT id,parent FROM entries WHERE id=? UNION ALL SELECT e.id,e.parent FROM entries e JOIN ancestors a ON e.id=a.parent)
  SELECT count(*) FROM image_numberings WHERE status IN ('running','rollback','review') AND (parent IN (SELECT id FROM descendants) OR parent IN (SELECT id FROM ancestors))`, id, id).Scan(&n)
 	if err != nil {
 		return err
@@ -227,7 +234,7 @@ func (l *Library) PreviewNumberingFilteredContext(ctx context.Context, parent in
 		return Numbering{}, err
 	}
 	defer l.mu.Unlock()
-	// Refresh holds the same mutex. A queued scan or its pending flag cleanup
+	// Scan publication holds the same mutex. A queued scan or its pending flag cleanup
 	// does not invalidate the complete index and disk checks below.
 	m, err := mediaOf(media)
 	if err != nil {

@@ -215,19 +215,27 @@ type Attempt struct {
 	Message          string `json:"message"`
 }
 
-func Attempts(db *storage.Store, item int64) ([]Attempt, error) {
-	rows, err := db.Query("SELECT attempt,model_config_id,model_config_title,model,fallback,started,duration_ms,status,message FROM model_attempts WHERE item=? ORDER BY attempt", item)
+func Attempts(ctx context.Context, db *storage.Store, items []int64) (map[int64][]Attempt, error) {
+	raw, err := json.Marshal(items)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Read().QueryContext(ctx, "SELECT item,attempt,model_config_id,model_config_title,model,fallback,started,duration_ms,status,message FROM model_attempts WHERE item IN (SELECT value FROM json_each(?)) ORDER BY item,attempt", string(raw))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []Attempt{}
+	out := make(map[int64][]Attempt, len(items))
+	for _, item := range items {
+		out[item] = []Attempt{}
+	}
 	for rows.Next() {
 		var a Attempt
-		if err = rows.Scan(&a.Number, &a.ModelConfigID, &a.ModelConfigTitle, &a.Model, &a.Fallback, &a.Started, &a.DurationMS, &a.Status, &a.Message); err != nil {
+		var item int64
+		if err = rows.Scan(&item, &a.Number, &a.ModelConfigID, &a.ModelConfigTitle, &a.Model, &a.Fallback, &a.Started, &a.DurationMS, &a.Status, &a.Message); err != nil {
 			return nil, err
 		}
-		out = append(out, a)
+		out[item] = append(out[item], a)
 	}
 	return out, rows.Err()
 }

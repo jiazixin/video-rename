@@ -32,6 +32,7 @@ interface RecordPage {
 export function useRunRecords(
   runID: () => number,
   enabled: () => boolean,
+  active: () => boolean,
   view: 'logs' | 'failures'
 ) {
   const state = reactive({ items: [] as RunItem[], total: 0, page: 1, busy: false, error: '' })
@@ -48,7 +49,7 @@ export function useRunRecords(
   }
 
   function schedule() {
-    if (!alive || !enabled()) return
+    if (!alive || !enabled() || !active()) return
     timer = setTimeout(() => {
       if (document.visibilityState === 'visible') void refresh()
       else schedule()
@@ -87,7 +88,7 @@ export function useRunRecords(
   }
 
   watch(
-    [runID, enabled],
+    [runID, enabled, active],
     ([id, open], previous) => {
       cancel()
       if (previous && id !== previous[0]) {

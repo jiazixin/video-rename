@@ -15,7 +15,7 @@ const entryTaskStatusSQL = `COALESCE((SELECT CASE WHEN r.status='paused' THEN 'p
  (WITH RECURSIVE ancestors(id,parent,depth) AS (
  SELECT e.id,e.parent,0 UNION ALL SELECT p.id,p.parent,a.depth+1 FROM entries p JOIN ancestors a ON p.id=a.parent WHERE a.depth<1024
  ) SELECT CASE WHEN e.kind='directory' OR r.status='paused' THEN r.status ELSE 'queued' END
- FROM runs r JOIN json_each(r.targets) target JOIN entries t ON t.id=target.value
+ FROM runs r INDEXED BY run_active JOIN json_each(r.targets) target JOIN entries t ON t.id=target.value
  WHERE r.status IN ('queued','scanning','running','paused','cancelling')
  AND (t.id=e.id OR (t.kind='file' AND e.kind='file' AND t.identity=e.identity) OR (t.kind='directory' AND EXISTS(SELECT 1 FROM ancestors a WHERE a.id=t.id AND (r.recursive=1 OR (a.depth=1 AND e.kind='file')))))
  AND (e.kind='directory' OR NOT EXISTS(SELECT 1 FROM run_items i WHERE i.run=r.id AND i.identity=e.identity))

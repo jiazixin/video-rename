@@ -1,12 +1,9 @@
 package app
 
 import (
-	"database/sql"
-	"errors"
 	"net/http"
 	"strconv"
 	"strings"
-	"video-rename/internal/library"
 )
 
 func (a *App) entryStatus(w http.ResponseWriter, r *http.Request) {
@@ -24,19 +21,12 @@ func (a *App) entryStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		ids = append(ids, id)
 	}
-	items := []library.Entry{}
-	for _, id := range ids {
-		e, err := a.Library.Get(id)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			failure(w, err)
-			return
-		}
-		items = append(items, e)
+	items, err := a.Library.GetBatch(r.Context(), ids)
+	if err != nil {
+		failure(w, err)
+		return
 	}
-	items, err := a.Library.WithProgressBatch(r.Context(), items)
+	items, err = a.Library.WithProgressBatch(r.Context(), items)
 	if err != nil {
 		failure(w, err)
 		return

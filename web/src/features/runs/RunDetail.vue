@@ -40,22 +40,24 @@
     cancel: [];
     notice: [message: string];
   }>();
+  const active = computed(() =>
+    ['queued', 'scanning', 'running', 'paused', 'cancelling'].includes(props.run.status)
+  );
   const sections = ref({ targets: true, logs: false, failures: false, config: false });
   const { state: logs, refresh: refreshLogs } = useRunRecords(
     () => props.run.id,
     () => sections.value.logs,
+    () => active.value,
     'logs'
   );
   const { state: failures, refresh: refreshFailures } = useRunRecords(
     () => props.run.id,
     () => sections.value.failures,
+    () => active.value,
     'failures'
   );
   const promptOpen = ref(false);
   const copyError = ref('');
-  const active = computed(() =>
-    ['queued', 'scanning', 'running', 'paused', 'cancelling'].includes(props.run.status)
-  );
   const processed = computed(
     () => (props.run.done || 0) + (props.run.skipped || 0) + (props.run.failed || 0)
   );
@@ -383,7 +385,9 @@
             ><ChevronRight :size="16" :class="{ 'is-open': sections.logs }"
           /></button>
           <div v-show="sections.logs" id="run-detail-logs" class="detail-section-content">
-            <p class="detail-caption">整个批次的处理记录，最新处理在前；展开时自动刷新。</p>
+            <p class="detail-caption"
+              >整个批次的处理记录，最新处理在前；运行期间展开时自动刷新，结束后停止。</p
+            >
             <div v-if="logs.error" class="detail-record-error" role="alert"
               ><span>运行日志读取失败：{{ logs.error }}</span
               ><button :disabled="logs.busy" @click="refreshLogs()">重试</button></div
@@ -473,7 +477,9 @@
             ><ChevronRight :size="16" :class="{ 'is-open': sections.failures }"
           /></button>
           <div v-show="sections.failures" id="run-detail-failures" class="detail-section-content">
-            <p class="detail-caption">整个批次的失败记录，最新失败在前；展开时自动刷新。</p>
+            <p class="detail-caption"
+              >整个批次的失败记录，最新失败在前；运行期间展开时自动刷新，结束后停止。</p
+            >
             <div v-if="failures.error" class="detail-record-error" role="alert"
               ><span>失败记录读取失败：{{ failures.error }}</span
               ><button :disabled="failures.busy" @click="refreshFailures()">重试</button></div

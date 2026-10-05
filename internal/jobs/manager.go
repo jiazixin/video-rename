@@ -334,20 +334,22 @@ func scanRun(row interface{ Scan(...any) error }) (r Run, err error) {
 	}
 	return
 }
-func (m *Manager) Get(id int64) (Run, error) {
-	r, err := scanRun(m.DB.QueryRow("SELECT "+runColumns+" FROM runs r LEFT JOIN run_token_usage u ON u.run=r.id WHERE r.id=?", id))
+func (m *Manager) Get(ctx context.Context, id int64) (Run, error) {
+	r, err := scanRun(m.DB.Read().QueryRowContext(ctx, "SELECT "+runColumns+" FROM runs r LEFT JOIN run_token_usage u ON u.run=r.id WHERE r.id=?", id))
 	if err == nil {
+		var paths map[int64]string
+		paths, err = m.Library.DisplayPaths(ctx, r.Targets)
 		for _, target := range r.Targets {
-			r.TargetNames = append(r.TargetNames, m.Library.DisplayPath(target))
+			r.TargetNames = append(r.TargetNames, paths[target])
 		}
 	}
 	return r, err
 }
-func (m *Manager) List(before int64) ([]Run, error) {
+func (m *Manager) List(ctx context.Context, before int64) ([]Run, error) {
 	if before <= 0 {
 		before = 1 << 62
 	}
-	rows, err := m.DB.Query("SELECT "+runColumns+" FROM runs r LEFT JOIN run_token_usage u ON u.run=r.id WHERE r.id<? ORDER BY r.id DESC LIMIT 50", before)
+	rows, err := m.DB.Read().QueryContext(ctx, "SELECT "+runColumns+" FROM runs r LEFT JOIN run_token_usage u ON u.run=r.id WHERE r.id<? ORDER BY r.id DESC LIMIT 50", before)
 	if err != nil {
 		return nil, err
 	}
@@ -393,7 +395,7 @@ func (m *Manager) Loop(ctx context.Context) {
 		case id := <-finished:
 			delete(launched, id)
 		case <-ticker.C:
-			rows, err := m.DB.QueryContext(ctx, "SELECT id FROM runs WHERE status='queued' ORDER BY id LIMIT 20")
+			rows, err := m.DB.Read().QueryContext(ctx, "SELECT id FROM runs WHERE status='queued' ORDER BY id LIMIT 20")
 			if err != nil {
 				continue
 			}
@@ -416,7 +418,7 @@ func (m *Manager) Loop(ctx context.Context) {
 	}
 }
 func (m *Manager) Execute(parent context.Context, id int64) {
-	r, err := m.Get(id)
+	r, err := m.Get(parent, id)
 	if err != nil || r.Status != "queued" {
 		return
 	}
@@ -546,13 +548,13 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 	status := "completed"
 	if ctx.Err() != nil {
 		status = "cancelled"
-		current, _ := m.Get(id)
+		current, _ := m.Get(parent, id)
 		if current.Error != "" {
 			status = "failed"
 		}
 		_, _ = m.DB.Exec("UPDATE run_items SET status='cancelled',finished_ms=? WHERE run=? AND status IN ('queued','running')", time.Now().UnixMilli(), id)
 	} else {
-		r, _ = m.Get(id)
+		r, _ = m.Get(parent, id)
 		if r.Failed > 0 {
 			status = "failed"
 			if r.Done > 0 || r.Skipped > 0 {

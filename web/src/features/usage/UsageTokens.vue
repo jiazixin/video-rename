@@ -80,15 +80,17 @@
     from.setHours(0, 0, 0, 0);
     return { from: from.toISOString(), to: now.toISOString() };
   }
+  let frozenRange: { from?: string; to: string } | undefined;
   async function load() {
     const mine = ++seq;
     controller?.abort();
     loading.value = false;
-    const range = rangeTimes();
+    const range = frozenRange ?? rangeTimes();
     if (typeof range === 'string') {
       error.value = range;
       return;
     }
+    frozenRange = range;
     const params = new URLSearchParams({ to: range.to, timezone });
     if (range.from) params.set('from', range.from);
     if (model.value) params.set('model', model.value);
@@ -117,9 +119,11 @@
       if (mine === seq) loading.value = false;
     }
   }
+  const reload = ref(0);
   function refresh() {
+    frozenRange = undefined;
     page.value = 1;
-    load();
+    reload.value++;
   }
   function reset() {
     preset.value = '24h';
@@ -129,8 +133,9 @@
     source.value = '';
     run.value = 0;
     sort.value = 'tokens';
+    frozenRange = undefined;
     page.value = 1;
-    load();
+    reload.value++;
   }
   function focusBatch(id: number) {
     run.value = id;
@@ -141,11 +146,16 @@
     const selected = report.value?.options.profiles.find((p) => p.id === profile.value);
     if (model.value && selected && !selected.model_keys.includes(model.value)) profile.value = 0;
   }
-  watch([preset, model, profile, source, run, sort], () => {
-    page.value = 1;
-    load();
+  watch([preset, model, profile, source, run, sort, page, reload], (values, previous) => {
+    if (values.some((value, i) => i !== 6 && value !== previous[i])) {
+      frozenRange = undefined;
+      if (page.value !== 1) {
+        page.value = 1;
+        return;
+      }
+    }
+    void load();
   });
-  watch(page, () => load());
   onUnmounted(() => {
     seq++;
     controller?.abort();

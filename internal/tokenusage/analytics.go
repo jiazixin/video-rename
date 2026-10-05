@@ -2,11 +2,11 @@ package tokenusage
 
 import (
 	"cmp"
+	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"maps"
 	"slices"
-	"strings"
 	"time"
 
 	"video-rename/internal/storage"
@@ -165,7 +165,7 @@ func parseMeta(source string, plan int64, summary string, profileID int64, profi
 // dimension of the report sees the same snapshot. The ledger holds one row per
 // counted model exchange, so grouped aggregation happens in Go instead of six
 // SQL passes that could drift apart.
-func Analytics(db *storage.Store, q AnalyticsQuery) (*Report, error) {
+func Analytics(ctx context.Context, db *storage.Store, q AnalyticsQuery) (*Report, error) {
 	if q.Location == nil {
 		q.Location = time.UTC
 	}
@@ -179,14 +179,53 @@ func Analytics(db *storage.Store, q AnalyticsQuery) (*Report, error) {
 			q.Size = 100
 		}
 	}
-	tx, err := db.Read().Begin()
+	tx, err := db.Read().BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT r.run,r.recorded_at,r.tokens,r.records,r.estimated_records,u.source,u.plan,COALESCE(r.config_summary,u.config_summary),COALESCE(r.model_config_id,u.model_config_id),COALESCE(r.model_config_title,u.model_config_title),u.status,u.created,u.started,u.finished,u.config_summary,u.model_config_id,u.model_config_title
+	revision, err := storage.ReportRevision(ctx, tx, "usage")
+	if err != nil {
+		return nil, err
+	}
+	cacheQuery := q
+	cacheQuery.Page, cacheQuery.Size, cacheQuery.Location = 0, 0, nil
+	keyRaw, err := json.Marshal(struct {
+		Query    AnalyticsQuery
+		Timezone string
+	}{cacheQuery, q.Location.String()})
+	if err != nil {
+		return nil, err
+	}
+	cacheKey := "usage:" + string(keyRaw)
+	var cached Report
+	if db.CachedReport(cacheKey, revision, &cached) {
+		if err = tx.Commit(); err != nil {
+			return nil, err
+		}
+		return pageReport(ctx, &cached, q.Page, q.Size)
+	}
+	where := "r.recorded_at>=? AND r.recorded_at<?"
+	args := []any{q.From, q.To}
+	if q.Run > 0 {
+		where += " AND r.run=?"
+		args = append(args, q.Run)
+	}
+	if q.Profile > 0 {
+		where += " AND COALESCE(r.model_config_id,u.model_config_id)=?"
+		args = append(args, q.Profile)
+	}
+	if q.Source != "" {
+		where += " AND (CASE WHEN u.source='schedule' OR u.plan>0 THEN 'scheduled' ELSE 'manual' END)=?"
+		args = append(args, q.Source)
+	}
+	if q.Model != "" {
+		where += " AND video_rename_model_key(COALESCE(r.config_summary,u.config_summary))=?"
+		args = append(args, q.Model)
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT r.run,r.recorded_at,r.tokens,r.records,r.estimated_records,u.source,u.plan,COALESCE(r.config_summary,u.config_summary),COALESCE(r.model_config_id,u.model_config_id),COALESCE(r.model_config_title,u.model_config_title),u.status,u.created,u.started,u.finished,u.config_summary,u.model_config_id,u.model_config_title
 FROM token_usage_records r JOIN runs u ON u.id=r.run
-WHERE r.recorded_at>=? AND r.recorded_at<? ORDER BY r.recorded_at,r.id`, q.From, q.To)
+WHERE `+where+` ORDER BY r.recorded_at,r.id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -196,10 +235,8 @@ WHERE r.recorded_at>=? AND r.recorded_at<? ORDER BY r.recorded_at,r.id`, q.From,
 	profiles := map[int64]*ProfileGroup{}
 	sources := map[string]*SourceGroup{}
 	batches := map[int64]*batchAcc{}
-	type sample struct {
-		at, tokens, records, estimated int64
-	}
-	var samples []sample
+	from := q.From
+	first := true
 	var totals ReportTotals
 	modelBatches := map[string]map[int64]bool{}
 	profileBatches := map[int64]map[int64]bool{}
@@ -212,14 +249,24 @@ WHERE r.recorded_at>=? AND r.recorded_at<? ORDER BY r.recorded_at,r.id`, q.From,
 			return nil, err
 		}
 		meta := parseMeta(source, plan, summary, profileID, profileTitle)
-		if (q.Model != "" && meta.key != q.Model) || (q.Profile > 0 && meta.profileID != q.Profile) || (q.Source != "" && meta.source != q.Source) || (q.Run > 0 && run != q.Run) {
-			continue
-		}
 		counted := records
 		totals.Tokens += tokens
 		totals.Records += counted
 		totals.EstimatedRecords += estimated
-		samples = append(samples, sample{at: recordedAt, tokens: tokens, records: counted, estimated: estimated})
+		if first && q.From == 0 {
+			buckets = bucketingFor(q.To-recordedAt, q.Location)
+			from = buckets.start(recordedAt)
+		}
+		first = false
+		key := buckets.start(recordedAt)
+		bucket := trend[key]
+		if bucket == nil {
+			bucket = &TrendBucket{}
+			trend[key] = bucket
+		}
+		bucket.Tokens += tokens
+		bucket.Records += counted
+		bucket.EstimatedRecords += estimated
 		model := models[meta.key]
 		if model == nil {
 			model = &ModelGroup{Key: meta.key, Model: meta.model, Provider: meta.provider, Protocol: meta.protocol}
@@ -277,32 +324,7 @@ WHERE r.recorded_at>=? AND r.recorded_at<? ORDER BY r.recorded_at,r.id`, q.From,
 		return nil, err
 	}
 	rows.Close()
-	// "All history" starts at the first recorded usage, not the epoch, so the
-	// trend granularity follows the data's real extent instead of decades of
-	// empty buckets.
-	from := q.From
-	if from == 0 && len(samples) > 0 {
-		first := samples[0].at
-		for _, s := range samples {
-			if s.at < first {
-				first = s.at
-			}
-		}
-		buckets = bucketingFor(q.To-first, q.Location)
-		from = buckets.start(first)
-	}
-	for _, s := range samples {
-		key := buckets.start(s.at)
-		bucket := trend[key]
-		if bucket == nil {
-			bucket = &TrendBucket{}
-			trend[key] = bucket
-		}
-		bucket.Tokens += s.tokens
-		bucket.Records += s.records
-		bucket.EstimatedRecords += s.estimated
-	}
-	options, err := reportOptions(tx)
+	options, err := reportOptions(ctx, db, tx)
 	if err != nil {
 		return nil, err
 	}
@@ -332,15 +354,13 @@ WHERE r.recorded_at>=? AND r.recorded_at<? ORDER BY r.recorded_at,r.id`, q.From,
 		report.TopBatches = append(report.TopBatches, newBatch(acc))
 		displayed[acc.id] = true
 	}
-	report.Batches.Page = min(q.Page, max(1, (len(ordered)+q.Size-1)/q.Size))
-	start := (report.Batches.Page - 1) * q.Size
-	for i := start; i < len(ordered) && i < start+q.Size; i++ {
+	for i := range ordered {
 		if !displayed[ordered[i].id] {
 			displayed[ordered[i].id] = true
 		}
 		report.Batches.Items = append(report.Batches.Items, newBatch(ordered[i]))
 	}
-	lifetimes, err := lifetimeUsage(tx, displayed)
+	lifetimes, err := lifetimeUsage(ctx, tx, displayed)
 	if err != nil {
 		return nil, err
 	}
@@ -352,7 +372,14 @@ WHERE r.recorded_at>=? AND r.recorded_at<? ORDER BY r.recorded_at,r.id`, q.From,
 		report.Batches.Items[i].LifetimeTokens = lifetimes[report.Batches.Items[i].ID][0]
 		report.Batches.Items[i].LifetimeRecords = lifetimes[report.Batches.Items[i].ID][1]
 	}
-	return report, tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
+	db.CacheReport(cacheKey, revision, report)
+	return pageReport(ctx, report, q.Page, q.Size)
 }
 
 func newBatch(acc *batchAcc) Batch {
@@ -362,18 +389,17 @@ func newBatch(acc *batchAcc) Batch {
 // lifetimeUsage reads the run aggregates for the displayed batches. They cover
 // all recorded history, so a batch filtered to part of a range still shows its
 // full lifetime next to the in-range numbers.
-func lifetimeUsage(tx *sql.Tx, ids map[int64]bool) (map[int64][2]int64, error) {
+func lifetimeUsage(ctx context.Context, tx *sql.Tx, ids map[int64]bool) (map[int64][2]int64, error) {
 	out := map[int64][2]int64{}
 	if len(ids) == 0 {
 		return out, nil
 	}
 	keys := slices.Sorted(maps.Keys(ids))
-	placeholders := strings.TrimRight(strings.Repeat("?,", len(keys)), ",")
-	args := make([]any, len(keys))
-	for i, id := range keys {
-		args[i] = id
+	raw, err := json.Marshal(keys)
+	if err != nil {
+		return nil, err
 	}
-	rows, err := tx.Query("SELECT run,token_count,token_records FROM run_token_usage WHERE run IN ("+placeholders+")", args...)
+	rows, err := tx.QueryContext(ctx, "SELECT run,token_count,token_records FROM run_token_usage WHERE run IN (SELECT value FROM json_each(?))", string(raw))
 	if err != nil {
 		return nil, err
 	}
@@ -390,8 +416,17 @@ func lifetimeUsage(tx *sql.Tx, ids map[int64]bool) (map[int64][2]int64, error) {
 
 // reportOptions lists the models and profiles that ever recorded usage, so the
 // page can offer filters even when the current range shows no rows for them.
-func reportOptions(tx *sql.Tx) (ReportOptions, error) {
-	rows, err := tx.Query(`SELECT u.source,u.plan,COALESCE(r.config_summary,u.config_summary),COALESCE(r.model_config_id,u.model_config_id),COALESCE(c.title,r.model_config_title,u.model_config_title),c.id IS NULL
+func reportOptions(ctx context.Context, db *storage.Store, tx *sql.Tx) (ReportOptions, error) {
+	revision, err := storage.ReportRevision(ctx, tx, "usage_options")
+	if err != nil {
+		return ReportOptions{}, err
+	}
+	var cached ReportOptions
+	if db.CachedReport("usage:options", revision, &cached) {
+		return cached, nil
+	}
+
+	rows, err := tx.QueryContext(ctx, `SELECT u.source,u.plan,COALESCE(r.config_summary,u.config_summary),COALESCE(r.model_config_id,u.model_config_id),COALESCE(c.title,r.model_config_title,u.model_config_title),c.id IS NULL
 FROM runs u JOIN token_usage_records r ON r.run=u.id
 LEFT JOIN model_configs c ON c.id=COALESCE(r.model_config_id,u.model_config_id)
 GROUP BY 1,2,3,4,5,6 ORDER BY MAX(r.recorded_at) DESC,MAX(r.id) DESC`)
@@ -438,6 +473,7 @@ GROUP BY 1,2,3,4,5,6 ORDER BY MAX(r.recorded_at) DESC,MAX(r.id) DESC`)
 		out.Profiles = append(out.Profiles, *profile)
 	}
 	slices.SortFunc(out.Profiles, func(a, b OptionProfile) int { return cmp.Compare(a.ID, b.ID) })
+	db.CacheReport("usage:options", revision, out)
 	return out, nil
 }
 
@@ -572,4 +608,17 @@ func (b bucketing) series(from, to int64, trend map[int64]*TrendBucket) []TrendB
 		out = append(out, bucket)
 	}
 	return out
+}
+
+// The cached report includes the ordered batch rows; paging never re-reads items.
+func pageReport(ctx context.Context, report *Report, page, size int) (*Report, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	rows := report.Batches.Items
+	report.Batches.Page = min(page, max(1, (len(rows)+size-1)/size))
+	report.Batches.Size = size
+	start := (report.Batches.Page - 1) * size
+	report.Batches.Items = rows[min(start, len(rows)):min(start+size, len(rows))]
+	return report, nil
 }

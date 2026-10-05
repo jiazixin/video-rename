@@ -6,8 +6,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
+	"video-rename/internal/domain"
 )
 
 type refreshTestEntry struct {
@@ -50,7 +52,6 @@ func TestRefreshMetadataFailureKeepsCompleteGeneration(t *testing.T) {
 				return nil, wantErr
 			}}
 			calls := 0
-			l.mu.Lock()
 			err = l.refreshDirectory(ctx, 1, func(n int) ([]os.DirEntry, error) {
 				if n != 128 {
 					t.Errorf("unbounded read: %d", n)
@@ -61,7 +62,6 @@ func TestRefreshMetadataFailureKeepsCompleteGeneration(t *testing.T) {
 				}
 				return []os.DirEntry{entries[1], broken}, io.EOF
 			})
-			l.mu.Unlock()
 			if !errors.Is(err, wantErr) {
 				t.Fatalf("refresh error = %v, want %v", err, wantErr)
 			}
@@ -73,7 +73,7 @@ func TestRefreshMetadataFailureKeepsCompleteGeneration(t *testing.T) {
 			if published != generation || scanError == "" {
 				t.Fatalf("failed scan published: generation %d -> %d, error %q", generation, published, scanError)
 			}
-			for name, want := range map[string]int{"old.mp4": 1, "a.mp4": 1, "b.mp4": 0, "c.mp4": 0} {
+			for name, want := range map[string]int{"old.mp4": 1, "a.mp4": 0, "b.mp4": 0, "c.mp4": 0} {
 				var count int
 				if err := l.DB.QueryRow("SELECT COUNT(*) FROM entries WHERE parent=1 AND name=? AND present=1", name).Scan(&count); err != nil {
 					t.Fatal(err)
@@ -148,7 +148,7 @@ func TestRefreshMetadataChangesPublishNewGeneration(t *testing.T) {
 	}
 }
 
-func TestRefreshRetryComparesPublishedItemsAfterPartialEntryUpdate(t *testing.T) {
+func TestRefreshRetryPreservesEntriesUntilCompleteObservation(t *testing.T) {
 	l, root, _ := fixture(t)
 	path := filepath.Join(root, "a.mp4")
 	put(t, path)
@@ -168,7 +168,6 @@ func TestRefreshRetryComparesPublishedItemsAfterPartialEntryUpdate(t *testing.T)
 	}
 	wantErr := errors.New("directory read unavailable")
 	calls := 0
-	l.mu.Lock()
 	err = l.refreshDirectory(t.Context(), 1, func(int) ([]os.DirEntry, error) {
 		calls++
 		if calls == 1 {
@@ -176,7 +175,6 @@ func TestRefreshRetryComparesPublishedItemsAfterPartialEntryUpdate(t *testing.T)
 		}
 		return nil, wantErr
 	})
-	l.mu.Unlock()
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("partial refresh returned %v, want %v", err, wantErr)
 	}
@@ -185,8 +183,8 @@ func TestRefreshRetryComparesPublishedItemsAfterPartialEntryUpdate(t *testing.T)
 		t.Fatalf("partial refresh lost published state: %+v %v", partial, err)
 	}
 	updated := entry(t, l, 1, old.Name)
-	if updated.Size == old.Size || updated.Version != old.Version+1 {
-		t.Fatalf("partial refresh did not commit the earlier entry page: before=%+v after=%+v", old, updated)
+	if updated.Size != old.Size || updated.Version != old.Version {
+		t.Fatalf("partial refresh changed published entry metadata: before=%+v after=%+v", old, updated)
 	}
 	refresh(t, l, 1)
 	after, err := l.DirectoryState(t.Context(), 1)
@@ -194,8 +192,8 @@ func TestRefreshRetryComparesPublishedItemsAfterPartialEntryUpdate(t *testing.T)
 		t.Fatalf("retry mistook live entries for the published generation: before=%+v after=%+v error=%v", before, after, err)
 	}
 	current := entry(t, l, 1, old.Name)
-	if current.Version != updated.Version {
-		t.Fatalf("retry changed the already observed entry version: before=%+v after=%+v", updated, current)
+	if current.Version != updated.Version+1 {
+		t.Fatalf("retry failed to publish the changed entry version: before=%+v after=%+v", updated, current)
 	}
 }
 
@@ -207,14 +205,13 @@ func TestRefreshSlowMetadataLeavesDatabaseAvailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	signalEntered := sync.OnceFunc(func() { close(entered) })
 	slow := refreshTestEntry{DirEntry: entries[0], info: func() (os.FileInfo, error) {
-		close(entered)
+		signalEntered()
 		<-release
 		return entries[0].Info()
 	}}
 	go func() {
-		l.mu.Lock()
-		defer l.mu.Unlock()
 		done <- l.refreshDirectory(t.Context(), 1, func(int) ([]os.DirEntry, error) {
 			return []os.DirEntry{slow}, io.EOF
 		})
@@ -230,6 +227,10 @@ func TestRefreshSlowMetadataLeavesDatabaseAvailable(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("scan did not reach metadata read")
 	}
+	if !l.mu.TryLock() {
+		t.Fatal("filesystem metadata holds the global mutation lock")
+	}
+	l.mu.Unlock()
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	var count int
@@ -239,4 +240,29 @@ func TestRefreshSlowMetadataLeavesDatabaseAvailable(t *testing.T) {
 	if _, err := l.DB.ExecContext(ctx, "UPDATE entries SET observed=observed WHERE id=1"); err != nil {
 		t.Fatalf("database write blocked by filesystem metadata: %v", err)
 	}
+}
+
+func (l *Library) refreshDirectory(ctx context.Context, id int64, read func(int) ([]os.DirEntry, error)) error {
+	first := true
+	_, err := l.scanDirectoryWithMetadata(ctx, id, func(dir *os.File, n int) ([]os.DirEntry, error) {
+		if !first {
+			return dir.ReadDir(n)
+		}
+		batch, err := read(n)
+		if errors.Is(err, io.EOF) {
+			first = false
+		}
+		return batch, err
+	}, func(_ *os.File, de os.DirEntry) (scannedDirectoryEntry, error) {
+		info, err := de.Info()
+		if err != nil {
+			return scannedDirectoryEntry{}, err
+		}
+		snap, err := domain.SnapshotFromInfo(info)
+		if err != nil {
+			return scannedDirectoryEntry{}, err
+		}
+		return scannedDirectoryEntry{de.Name(), kindOf(info), Identity(snap), stamp(snap), snap.Size}, nil
+	})
+	return err
 }

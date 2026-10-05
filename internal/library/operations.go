@@ -1,6 +1,7 @@
 package library
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -44,13 +45,13 @@ func scanOp(row interface{ Scan(...any) error }) (o Operation, err error) {
 	return
 }
 func (l *Library) Operation(id int64) (Operation, error) {
-	return scanOp(l.DB.QueryRow("SELECT "+operationColumns+" FROM operations WHERE id=?", id))
+	return scanOp(l.DB.Read().QueryRow("SELECT "+operationColumns+" FROM operations WHERE id=?", id))
 }
-func (l *Library) History(id int64, before int64) ([]Operation, error) {
+func (l *Library) History(ctx context.Context, id int64, before int64) ([]Operation, error) {
 	if before <= 0 {
 		before = 1 << 62
 	}
-	rows, err := l.DB.Query("SELECT "+operationColumns+" FROM operations WHERE entry=? AND id<? ORDER BY id DESC LIMIT 100", id, before)
+	rows, err := l.DB.Read().QueryContext(ctx, "SELECT "+operationColumns+" FROM operations WHERE entry=? AND id<? ORDER BY id DESC LIMIT 100", id, before)
 	if err != nil {
 		return nil, err
 	}
@@ -447,8 +448,15 @@ func (l *Library) CheckAvailable(id int64) error {
 	if err := l.checkNumberingAvailable(id); err != nil {
 		return err
 	}
+	var pending bool
+	if err := l.DB.Read().QueryRow("SELECT EXISTS(SELECT 1 FROM operations WHERE status IN ('prepared','review'))").Scan(&pending); err != nil {
+		return err
+	}
+	if !pending {
+		return nil
+	}
 	var n int
-	err := l.DB.QueryRow(`WITH RECURSIVE descendants(id) AS (SELECT ? UNION ALL SELECT e.id FROM entries e JOIN descendants d ON e.parent=d.id WHERE e.present=1), ancestors(id,parent) AS (SELECT id,parent FROM entries WHERE id=? UNION ALL SELECT e.id,e.parent FROM entries e JOIN ancestors a ON e.id=a.parent) SELECT count(*) FROM operations WHERE status IN ('prepared','review') AND (entry IN (SELECT id FROM descendants) OR entry IN (SELECT id FROM ancestors))`, id, id).Scan(&n)
+	err := l.DB.Read().QueryRow(`WITH RECURSIVE descendants(id) AS (SELECT ? UNION ALL SELECT e.id FROM entries e JOIN descendants d ON e.parent=d.id WHERE e.present=1), ancestors(id,parent) AS (SELECT id,parent FROM entries WHERE id=? UNION ALL SELECT e.id,e.parent FROM entries e JOIN ancestors a ON e.id=a.parent) SELECT count(*) FROM operations WHERE status IN ('prepared','review') AND (entry IN (SELECT id FROM descendants) OR entry IN (SELECT id FROM ancestors))`, id, id).Scan(&n)
 	if err != nil {
 		return err
 	}

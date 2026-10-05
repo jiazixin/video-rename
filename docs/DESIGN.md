@@ -39,15 +39,15 @@ YAML 只保存监听地址、媒体根目录、持久数据和缓存目录、管
 
 ## SQLite 结构
 
-唯一建表资源是 `internal/storage/schema.sql`；初始化器在空数据库内事务创建全部表和索引。当前结构标识为 20260929，已有不同结构会被拒绝，不执行迁移、历史回填或重建。需要使用新的 storage 目录，已有数据库和媒体保持原状。
+唯一建表资源是 `internal/storage/schema.sql`；初始化器在空数据库内事务创建全部表和索引。当前结构标识为 20261005，已有不同结构会被拒绝，不执行迁移、历史回填或重建。需要使用新的 storage 目录，已有数据库和媒体保持原状。
 
 | 数据组 | 表 |
 | --- | --- |
-| 根目录与索引 | library、entries、directory_state、directory_items |
+| 根目录与索引 | library、entries、directory_state、directory_items、directory_revision |
 | 改名与保护 | operations、events、marks、image_numberings、image_numbering_items |
 | 任务与计划 | runs、run_items、schedules、schedule_ticks、extraction_records |
 | 模型与设置 | model_configs、prompts、sampling_settings、system_settings |
-| 统计与请求诊断 | run_token_usage、token_usage_records、model_attempts |
+| 统计与请求诊断 | run_token_usage、token_usage_records、model_attempts、report_revision |
 | 认证与通知 | sessions、notification_channels、notification_deliveries、notification_preferences |
 
 数据库使用 WAL、FULL 同步、单写连接和最多4个只读连接，以及实例锁。连接重建时重新启用外键、同步及 busy_timeout。实体 ID 不复用，避免历史引用或已用游标指向新实体。模型配置必须引用存在的提示词；计划保存事务内检查模型引用，模型删除检查计划使用情况。
@@ -75,6 +75,8 @@ YAML 只保存监听地址、媒体根目录、持久数据和缓存目录、管
 模型用量账本按 (run item, attempt) 唯一键幂等写入，单事务累计请求记录与批次总量。优先使用模型 usage，缺失时使用文字估算；估算不含图片 token，模型测试不计入，自动命名重试和兜底按实际模型分别记账。排行始终按区间 token 排序，明细支持独立排序。
 
 运行分析按实际开始时间（未开始时按提交时间）筛选批次；批次和逐项耗时只使用真实开始、完成时刻，排队中取消不产生执行耗时。区间为 `[from,to)`，趋势按请求时区对齐，支持夏令时。配置选项按 ID 去重，0 表示无需模型的抽帧任务。
+
+统计筛选在数据库完成，明细流式聚合。分页在同一时间范围内复用受事务修订号保护的有界报告缓存；目录进度按变化目录重新计算并实时合并目录树，事务回滚不改变已提交结果。缓存不用于文件身份或变更安全判断。运行日志和失败明细只在批次活动且展开时轮询，结束时再读取一次后停止。
 
 ## 认证、通知与部署
 

@@ -4,6 +4,7 @@ package library
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -35,19 +36,22 @@ type Entry struct {
 	RestoreID  int64              `json:"restore_id"`
 }
 type Library struct {
-	DB         *storage.Store
-	Root       string
-	mu         sync.Mutex
-	refreshMu  sync.Mutex
-	refreshing map[int64]bool
-	scanning   map[int64]bool
-	dirScans   map[int64]*directoryScanLock
-	indexEpoch atomic.Uint64
-	scanSlots  chan struct{}
-	Busy       func(int64) bool
-	broken     error
-	refreshWG  sync.WaitGroup
-	closed     bool
+	progressCacheMu sync.Mutex
+	progressCache   map[int64]directDirectoryCache
+	DB              *storage.Store
+	Root            string
+	mu              sync.Mutex
+	refreshMu       sync.Mutex
+	refreshing      map[int64]bool
+	scanning        map[int64]bool
+	dirScans        map[int64]*directoryScanLock
+	indexEpoch      atomic.Uint64
+	scanSlots       chan struct{}
+	Busy            func(int64) bool
+	broken          error
+	refreshWG       sync.WaitGroup
+	closed          bool
+	RefreshContext  context.Context
 }
 
 func Identity(s domain.Snapshot) string { return fmt.Sprintf("%d:%d", s.Dev, s.Ino) }
@@ -81,14 +85,57 @@ func New(db *storage.Store, root string) (*Library, error) {
 	return l, nil
 }
 func (l *Library) Get(id int64) (Entry, error) {
-	var e Entry
-	err := l.DB.Read().QueryRow(`SELECT e.id,e.parent,e.name,e.kind,e.identity,e.size,e.mtime,e.version,
+	return l.GetContext(context.Background(), id)
+}
+
+func (l *Library) GetContext(ctx context.Context, id int64) (Entry, error) {
+	entries, err := l.GetBatch(ctx, []int64{id})
+	if err != nil {
+		return Entry{}, err
+	}
+	if len(entries) == 0 {
+		return Entry{}, sql.ErrNoRows
+	}
+	return entries[0], nil
+}
+
+// GetBatch reads live status in one snapshot and preserves the requested order.
+func (l *Library) GetBatch(ctx context.Context, ids []int64) ([]Entry, error) {
+	out := []Entry{}
+	if len(ids) == 0 {
+		return out, ctx.Err()
+	}
+	raw, err := json.Marshal(ids)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := l.DB.Read().QueryContext(ctx, `SELECT e.id,e.parent,e.name,e.kind,e.identity,e.size,e.mtime,e.version,
 	 `+entryProcessedSQL+`,
  COALESCE((SELECT id FROM operations o WHERE o.entry=e.id AND o.status='committed' AND o.undone=0 AND o.undo_of=0 ORDER BY id DESC LIMIT 1),0)
 	 ,`+entryTaskStatusSQL+`
 ,COALESCE((SELECT created FROM operations o WHERE o.entry=e.id AND o.status='committed' ORDER BY id DESC LIMIT 1),'')
- FROM entries e WHERE e.id=? AND e.present=1`, id).Scan(&e.ID, &e.Parent, &e.Name, &e.Kind, &e.Identity, &e.Size, &e.Mtime, &e.Version, &e.Processed, &e.RestoreID, &e.TaskStatus, &e.RenamedAt)
-	return e, err
+ FROM entries e WHERE e.id IN (SELECT value FROM json_each(?)) AND e.present=1`, string(raw))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	found := make(map[int64]Entry, len(ids))
+	for rows.Next() {
+		var e Entry
+		if err := rows.Scan(&e.ID, &e.Parent, &e.Name, &e.Kind, &e.Identity, &e.Size, &e.Mtime, &e.Version, &e.Processed, &e.RestoreID, &e.TaskStatus, &e.RenamedAt); err != nil {
+			return nil, err
+		}
+		found[e.ID] = e
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		if e, ok := found[id]; ok {
+			out = append(out, e)
+		}
+	}
+	return out, nil
 }
 
 // IndexedEntry loads only the indexed file snapshot and its processed mark.
@@ -274,7 +321,7 @@ func (l *Library) listOrdered(ctx context.Context, id int64, offset, limit int, 
 	if err != nil {
 		return p, err
 	}
-	p.Directory, err = l.Get(id)
+	p.Directory, err = l.GetContext(ctx, id)
 	if err != nil {
 		return p, err
 	}
@@ -294,7 +341,11 @@ func (l *Library) listOrdered(ctx context.Context, id int64, offset, limit int, 
 	p.Refreshed = refreshed.String
 	at, _ := time.Parse(time.RFC3339Nano, p.Refreshed)
 	if force || time.Since(at) > 30*time.Second {
-		l.StartRefresh(ctx, id)
+		refreshCtx := l.RefreshContext
+		if refreshCtx == nil {
+			refreshCtx = ctx
+		}
+		l.StartRefresh(refreshCtx, id)
 	}
 	l.refreshMu.Lock()
 	p.Refreshing = l.refreshing[id] || l.scanning[id]
@@ -393,15 +444,16 @@ func (l *Library) listOrdered(ctx context.Context, id int64, offset, limit int, 
 		p.Next = int(ids[limit-1])
 		ids = ids[:limit]
 	}
-	for _, eid := range ids {
-		e, er := l.Get(eid)
-		if er == nil {
-			p.Items = append(p.Items, e)
-		}
+	p.Items, err = l.GetBatch(ctx, ids)
+	if err != nil {
+		return p, err
 	}
-	for cur := id; cur > 0; {
-		e, er := l.Get(cur)
+	for cur := id; cur > 0 && len(p.Breadcrumbs) <= 1024; {
+		e, er := l.GetContext(ctx, cur)
 		if er != nil {
+			if ctx.Err() != nil {
+				return p, ctx.Err()
+			}
 			break
 		}
 		p.Breadcrumbs = append([]Entry{e}, p.Breadcrumbs...)

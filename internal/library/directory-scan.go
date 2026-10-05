@@ -24,6 +24,7 @@ var ErrDirectoryScanChanged = errors.New("目录扫描校验不一致，请稍�
 // Counts refer to indexed entries; Files counts regular files of every media type.
 // Replacing a name with another identity counts as one removal and one addition.
 type ScanDirectoryResult struct {
+	Metrics                        RefreshMetrics
 	Directories                    []int64
 	Files, Added, Changed, Removed int64
 }
@@ -33,7 +34,7 @@ type directoryScanLock struct {
 	users int
 }
 
-// Both scan implementations serialize the same directory, without a global lock
+// All scan callers serialize the same directory, without a global lock
 // while waiting. Refcounts avoid keeping a lock for every previously visited ID.
 func (l *Library) lockDirectoryScan(ctx context.Context, id int64) (func(), error) {
 	l.refreshMu.Lock()
@@ -68,7 +69,6 @@ type scanBaseline struct {
 	chain      []Entry
 	epoch      uint64
 	generation int64
-	failed     bool
 }
 
 type scanOrphan struct {
@@ -157,6 +157,10 @@ func (l *Library) scanDirectoryWithMetadata(ctx context.Context, id int64, read 
 }
 
 func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *sql.DB, path string, read func(*os.File, int) ([]os.DirEntry, error), inspect func(*os.File, os.DirEntry) (scannedDirectoryEntry, error)) (result ScanDirectoryResult, err error) {
+	start := time.Now()
+	defer func() {
+		result.Metrics.IndexDuration = time.Since(start) - result.Metrics.ReadDirectoryDuration - result.Metrics.MetadataDuration
+	}()
 	release, err := l.lockDirectoryScan(ctx, id)
 	if err != nil {
 		return result, err
@@ -172,8 +176,10 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *s
 		l.refreshMu.Lock()
 		delete(l.scanning, id)
 		l.refreshMu.Unlock()
-		if err != nil && ctx.Err() == nil {
-			_, _ = l.DB.ExecContext(ctx, "INSERT INTO directory_state(dir,error) VALUES(?,?) ON CONFLICT(dir) DO UPDATE SET error=excluded.error", id, err.Error())
+		if err != nil {
+			failureCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			_, _ = l.DB.ExecContext(failureCtx, "INSERT INTO directory_state(dir,error) VALUES(?,?) ON CONFLICT(dir) DO UPDATE SET error=excluded.error", id, err.Error())
 		}
 	}()
 	baseline, err := l.captureScanBaseline(ctx, id, stage)
@@ -204,7 +210,7 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *s
 			scanErr = scanSnapshotDifference("两遍读取之间的目录属性", observed, before)
 		}
 		if scanErr == nil {
-			scanErr = collectScanMetadata(ctx, stage, table, dir, read, inspect)
+			scanErr = collectScanMetadata(ctx, stage, table, dir, read, &result.Metrics, inspect)
 		}
 		after, statErr := scanDirectorySnapshot(dir)
 		if dir != pinned {
@@ -239,9 +245,7 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *s
 		return result, err
 	}
 	gen := baseline.generation
-	// A failed legacy Refresh may have committed entry pages without publishing
-	// them. Such a baseline must rebuild even when its live entry tuples match.
-	rebuild := gen == 0 || baseline.failed || result.Added+result.Changed+result.Removed > 0
+	rebuild := gen == 0 || result.Added+result.Changed+result.Removed > 0
 	marker := fmt.Sprintf("directory-scan:%d:%d", id, time.Now().UnixNano())
 	published := false
 	if rebuild {
@@ -328,13 +332,12 @@ func newScanStage(ctx context.Context) (*sql.DB, string, error) {
 	return db, path, nil
 }
 
-// Older cleanup deleted generation rows before their candidates. If the process
-// stopped between those writes, the candidates no longer have directory_items.
+// An interrupted candidate page can precede its directory_items rows.
 // Capture them once per recursive round through the read pool, then seek the
 // temporary parent index instead of rescanning all entries for every directory.
 func (l *Library) captureScanOrphans(ctx context.Context, stage *sql.DB) error {
 	rows, err := l.DB.Read().QueryContext(ctx, `SELECT e.id,e.parent,e.observed FROM entries e
-	 WHERE e.present=0 AND e.observed LIKE 'directory-scan:%'
+	 WHERE e.present=0 AND e.observed GLOB 'directory-scan:*'
 	 AND NOT EXISTS(SELECT 1 FROM directory_items i WHERE i.dir=e.parent AND i.entry=e.id)`)
 	if err != nil {
 		return err
@@ -419,11 +422,9 @@ func (l *Library) captureScanBaseline(ctx context.Context, id int64, stage *sql.
 		}
 		ancestor = e.Parent
 	}
-	var previousError string
-	if err = tx.QueryRowContext(ctx, "SELECT generation,error FROM directory_state WHERE dir=?", id).Scan(&baseline.generation, &previousError); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err = tx.QueryRowContext(ctx, "SELECT generation FROM directory_state WHERE dir=?", id).Scan(&baseline.generation); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return baseline, err
 	}
-	baseline.failed = previousError != ""
 	rows, err := tx.QueryContext(ctx, "SELECT id,name,kind,identity,size,mtime,version FROM entries WHERE parent=? AND present=1 ORDER BY id", id)
 	if err != nil {
 		return baseline, err
@@ -536,7 +537,7 @@ func scanPinnedDirectoryEntry(dir *os.File, de os.DirEntry) (scannedDirectoryEnt
 	return scannedDirectoryEntry{name, kind, Identity(snap), stamp(snap), snap.Size}, nil
 }
 
-func collectScanMetadata(ctx context.Context, stage *sql.DB, table string, dir *os.File, read func(*os.File, int) ([]os.DirEntry, error), inspectors ...func(*os.File, os.DirEntry) (scannedDirectoryEntry, error)) error {
+func collectScanMetadata(ctx context.Context, stage *sql.DB, table string, dir *os.File, read func(*os.File, int) ([]os.DirEntry, error), metrics *RefreshMetrics, inspectors ...func(*os.File, os.DirEntry) (scannedDirectoryEntry, error)) error {
 	inspect := scanPinnedDirectoryEntry
 	if len(inspectors) > 0 {
 		inspect = inspectors[0]
@@ -545,8 +546,16 @@ func collectScanMetadata(ctx context.Context, stage *sql.DB, table string, dir *
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		start := time.Now()
 		batch, readErr := read(dir, refreshPageSize)
+		if metrics != nil {
+			metrics.ReadDirectoryDuration += time.Since(start)
+		}
+		start = time.Now()
 		scanned, err := readDirectoryMetadata(ctx, batch, func(de os.DirEntry) (scannedDirectoryEntry, error) { return inspect(dir, de) })
+		if metrics != nil {
+			metrics.MetadataDuration += time.Since(start)
+		}
 		if err != nil {
 			return err
 		}

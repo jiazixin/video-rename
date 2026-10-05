@@ -55,7 +55,7 @@ func TestSubmissionDefersMediaPathValidation(t *testing.T) {
 				return "unexpected", nil
 			}
 			m.Execute(t.Context(), id)
-			run, err := m.Get(id)
+			run, err := m.Get(t.Context(), id)
 			if err != nil || run.Status != "failed" || run.Error == "" {
 				t.Fatalf("invalid path not rejected by worker: %+v, err=%v", run, err)
 			}
@@ -119,7 +119,7 @@ func TestSubmissionNormalizesSelectedAncestors(t *testing.T) {
 			if !slices.Equal(targets, original) {
 				t.Fatal("submission changed caller's selection")
 			}
-			run, err := m.Get(id)
+			run, err := m.Get(t.Context(), id)
 			want := []int64{ids["outer"]}
 			if !recursive {
 				want = []int64{ids["outer"], ids["nested"], ids["deep.mp4"]}

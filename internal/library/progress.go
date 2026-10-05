@@ -61,43 +61,12 @@ func (l *Library) WithProgressBatch(ctx context.Context, entries []Entry) ([]Ent
 	if len(ids) == 0 {
 		return entries, ctx.Err()
 	}
-	raw, err := json.Marshal(ids)
-	if err != nil {
-		return nil, err
-	}
 	tx, err := l.DB.Read().BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
-	nodes, err := readDirectoryProcessing(ctx, tx, ids, "")
-	if err != nil {
-		return nil, err
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT s.dir,
- COALESCE(SUM(i.kind='directory'),0),
- COALESCE(SUM(i.kind='file' AND video_rename_media_kind(i.name)=1),0),
- COALESCE(SUM(i.kind='file' AND video_rename_media_kind(i.name)=2),0),
- COALESCE(SUM(i.kind='file' AND video_rename_media_kind(i.name)=3),0)
- FROM directory_state s JOIN json_each(?) selected ON selected.value=s.dir
- LEFT JOIN directory_items i ON i.dir=s.dir AND i.generation=s.generation
- WHERE s.generation>0 AND s.error='' GROUP BY s.dir`, string(raw))
-	if err != nil {
-		return nil, err
-	}
-	contents := map[int64]*DirectoryContents{}
-	for rows.Next() {
-		var id int64
-		c := &DirectoryContents{}
-		if err = rows.Scan(&id, &c.Directories, &c.Videos, &c.Images, &c.Audio); err != nil {
-			break
-		}
-		contents[id] = c
-	}
-	if err == nil {
-		err = rows.Err()
-	}
-	rows.Close()
+	nodes, contents, err := l.cachedDirectoryProcessing(ctx, tx, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -177,6 +146,10 @@ func readDirectoryProcessing(ctx context.Context, tx *sql.Tx, ids []int64, statu
 	if err != nil {
 		return nil, err
 	}
+	return nodes, sumDirectoryProcessing(ctx, nodes, ids)
+}
+
+func sumDirectoryProcessing(ctx context.Context, nodes map[int64]*directoryProcessing, ids []int64) error {
 	for id, n := range nodes {
 		if parent := nodes[n.parent]; parent != nil {
 			parent.children = append(parent.children, id)
@@ -211,8 +184,8 @@ func readDirectoryProcessing(ctx context.Context, tx *sql.Tx, ids []int64, statu
 	}
 	for _, id := range ids {
 		if err := sum(id, 0); err != nil {
-			return nil, err
+			return err
 		}
 	}
-	return nodes, nil
+	return nil
 }

@@ -59,7 +59,7 @@ func TestAnalyticsHalfOpenRangeAndEstimates(t *testing.T) {
 	})
 	from := base.Add(2 * time.Hour).UnixMilli()
 	to := base.Add(3 * time.Hour).UnixMilli() // exactly on the record: excluded
-	report, err := Analytics(db, AnalyticsQuery{From: from, To: to, Location: time.UTC})
+	report, err := Analytics(t.Context(), db, AnalyticsQuery{From: from, To: to, Location: time.UTC})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestAnalyticsHalfOpenRangeAndEstimates(t *testing.T) {
 		t.Fatal("lifetime tokens", got)
 	}
 	// Widen the range: the scheduled estimate joins and stays marked estimated.
-	report, err = Analytics(db, AnalyticsQuery{From: from, To: base.Add(4 * time.Hour).UnixMilli(), Location: time.UTC})
+	report, err = Analytics(t.Context(), db, AnalyticsQuery{From: from, To: base.Add(4 * time.Hour).UnixMilli(), Location: time.UTC})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestAnalyticsFiltersAndInvariants(t *testing.T) {
 	seedUsage(t, db, 1, "manual", 0, `{"model":"a","provider":"p1","protocol":"openai"}`, 1, "一", [][3]int64{{base.UnixMilli(), 10, 0}})
 	seedUsage(t, db, 2, "manual", 0, `{"model":"b","provider":"p2","protocol":"openai"}`, 1, "一", [][3]int64{{base.UnixMilli(), 20, 0}})
 	seedUsage(t, db, 3, "schedule", 1, `{"model":"a","provider":"p1","protocol":"openai"}`, 2, "二", [][3]int64{{base.UnixMilli(), 30, 1}})
-	report, err := Analytics(db, AnalyticsQuery{From: 0, To: base.Add(24 * time.Hour).UnixMilli(), Location: time.UTC, Model: modelKey("p1", "openai", "a")})
+	report, err := Analytics(t.Context(), db, AnalyticsQuery{From: 0, To: base.Add(24 * time.Hour).UnixMilli(), Location: time.UTC, Model: modelKey("p1", "openai", "a")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,14 +119,14 @@ func TestAnalyticsFiltersAndInvariants(t *testing.T) {
 	if trendTokens != 40 || modelTokens != 40 || sourceTokens != 40 {
 		t.Fatal("dimensions disagree", trendTokens, modelTokens, sourceTokens)
 	}
-	report, err = Analytics(db, AnalyticsQuery{From: 0, To: base.Add(24 * time.Hour).UnixMilli(), Location: time.UTC, Profile: 2})
+	report, err = Analytics(t.Context(), db, AnalyticsQuery{From: 0, To: base.Add(24 * time.Hour).UnixMilli(), Location: time.UTC, Profile: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if report.Totals.Tokens != 30 || len(report.Batches.Items) != 1 || report.Batches.Items[0].Source != "scheduled" {
 		t.Fatal("profile filter", report.Totals, report.Batches.Items)
 	}
-	report, err = Analytics(db, AnalyticsQuery{From: 0, To: base.Add(24 * time.Hour).UnixMilli(), Location: time.UTC, Run: 2})
+	report, err = Analytics(t.Context(), db, AnalyticsQuery{From: 0, To: base.Add(24 * time.Hour).UnixMilli(), Location: time.UTC, Run: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestAnalyticsPaginationSortingAndDayBoundaries(t *testing.T) {
 		seedUsage(t, db, i, "manual", 0, `{"model":"m","provider":"p","protocol":"openai"}`, 1, "一", [][3]int64{{local.UnixMilli(), tokens, 0}})
 	}
 	// A seven-day window picks day buckets aligned to Shanghai midnights.
-	report, err := Analytics(db, AnalyticsQuery{From: time.Date(2026, 9, 20, 0, 0, 0, 0, shanghai).UnixMilli(), To: time.Date(2026, 9, 27, 0, 0, 0, 0, shanghai).UnixMilli(), Location: shanghai, Size: 20})
+	report, err := Analytics(t.Context(), db, AnalyticsQuery{From: time.Date(2026, 9, 20, 0, 0, 0, 0, shanghai).UnixMilli(), To: time.Date(2026, 9, 27, 0, 0, 0, 0, shanghai).UnixMilli(), Location: shanghai, Size: 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,14 +175,14 @@ func TestAnalyticsPaginationSortingAndDayBoundaries(t *testing.T) {
 		t.Fatal("top batches", len(report.TopBatches), report.TopBatches[0].ID)
 	}
 	// All history starts at the first recorded usage and follows its extent.
-	report, err = Analytics(db, AnalyticsQuery{From: 0, To: time.Date(2026, 9, 24, 6, 0, 0, 0, shanghai).UnixMilli(), Location: shanghai})
+	report, err = Analytics(t.Context(), db, AnalyticsQuery{From: 0, To: time.Date(2026, 9, 24, 6, 0, 0, 0, shanghai).UnixMilli(), Location: shanghai})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if report.Range.Interval != "hour" || len(report.Trend) != 24 {
 		t.Fatal("all-history interval", report.Range.Interval, len(report.Trend))
 	}
-	report, err = Analytics(db, AnalyticsQuery{From: 0, To: time.Date(2026, 9, 27, 0, 0, 0, 0, shanghai).UnixMilli(), Location: shanghai, Sort: "recent", Page: 3, Size: 20})
+	report, err = Analytics(t.Context(), db, AnalyticsQuery{From: 0, To: time.Date(2026, 9, 27, 0, 0, 0, 0, shanghai).UnixMilli(), Location: shanghai, Sort: "recent", Page: 3, Size: 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func TestAnalyticsPaginationSortingAndDayBoundaries(t *testing.T) {
 
 func TestAnalyticsEmptyRangeKeepsFrame(t *testing.T) {
 	db := analyticsDB(t)
-	report, err := Analytics(db, AnalyticsQuery{From: 0, To: 6 * hour, Location: time.UTC})
+	report, err := Analytics(t.Context(), db, AnalyticsQuery{From: 0, To: 6 * hour, Location: time.UTC})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestTopUsageIndependentOfPageSortAndHugePage(t *testing.T) {
 	db := analyticsDB(t)
 	seedUsage(t, db, 1, "manual", 0, `{}`, 1, "高消耗", [][3]int64{{1000, 900, 0}})
 	seedUsage(t, db, 2, "manual", 0, `{}`, 1, "较新", [][3]int64{{2000, 10, 0}})
-	report, err := Analytics(db, AnalyticsQuery{To: 3000, Sort: "recent", Page: int(^uint(0) >> 1), Size: 20})
+	report, err := Analytics(t.Context(), db, AnalyticsQuery{To: 3000, Sort: "recent", Page: int(^uint(0) >> 1), Size: 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestAnalyticsOptionsKeepConfigIdentityAndModelHistory(t *testing.T) {
 	if _, err := db.Exec(`UPDATE token_usage_records SET model_config_id=10,model_config_title='共享配置',config_summary=? WHERE run=5`, b); err != nil {
 		t.Fatal(err)
 	}
-	report, err := Analytics(db, AnalyticsQuery{From: 2999, To: 4000, Model: modelKey("p", "openai", "b"), Profile: newID})
+	report, err := Analytics(t.Context(), db, AnalyticsQuery{From: 2999, To: 4000, Model: modelKey("p", "openai", "b"), Profile: newID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,11 +275,28 @@ func TestAnalyticsOptionsKeepConfigIdentityAndModelHistory(t *testing.T) {
 		}
 	}
 	// An empty time range must not erase the history used to link filters.
-	report, err = Analytics(db, AnalyticsQuery{From: 9000, To: 10000})
+	report, err = Analytics(t.Context(), db, AnalyticsQuery{From: 9000, To: 10000})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if report.Totals.Records != 0 || len(report.Options.Profiles) != 2 || len(report.Options.Models) != 2 {
 		t.Fatal("empty range lost historical filter choices", report.Totals, report.Options)
+	}
+}
+
+func TestLifetimeUsageBeyondSQLiteParameterLimit(t *testing.T) {
+	db := analyticsDB(t)
+	tx, err := db.Read().BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	ids := make(map[int64]bool, 40000)
+	for id := int64(1); id <= 40000; id++ {
+		ids[id] = true
+	}
+	got, err := lifetimeUsage(t.Context(), tx, ids)
+	if err != nil || len(got) != 0 {
+		t.Fatal(len(got), err)
 	}
 }

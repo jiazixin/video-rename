@@ -107,7 +107,7 @@ func TestAnalyticsTotalsRatesAndPercentiles(t *testing.T) {
 	base := time.Date(2026, 9, 23, 9, 0, 0, 0, time.UTC)
 	seededDashboard(t, db, base)
 	from, to := base.UnixMilli(), base.Add(10*time.Hour).UnixMilli()
-	report, err := Analytics(db, AnalysisQuery{From: from, To: to, Location: time.UTC})
+	report, err := Analytics(t.Context(), db, AnalysisQuery{From: from, To: to, Location: time.UTC})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestAnalyticsTrendDistributionAndFailures(t *testing.T) {
 	db := analyticsDB(t)
 	base := time.Date(2026, 9, 23, 9, 0, 0, 0, time.UTC)
 	seededDashboard(t, db, base)
-	report, err := Analytics(db, AnalysisQuery{From: base.UnixMilli(), To: base.Add(10 * time.Hour).UnixMilli(), Location: time.UTC})
+	report, err := Analytics(t.Context(), db, AnalysisQuery{From: base.UnixMilli(), To: base.Add(10 * time.Hour).UnixMilli(), Location: time.UTC})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func TestAnalyticsProfilesFiltersAndPaging(t *testing.T) {
 	base := time.Date(2026, 9, 23, 9, 0, 0, 0, time.UTC)
 	seededDashboard(t, db, base)
 	from, to := base.UnixMilli(), base.Add(10*time.Hour).UnixMilli()
-	report, err := Analytics(db, AnalysisQuery{From: from, To: to, Location: time.UTC})
+	report, err := Analytics(t.Context(), db, AnalysisQuery{From: from, To: to, Location: time.UTC})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,35 +222,35 @@ func TestAnalyticsProfilesFiltersAndPaging(t *testing.T) {
 			t.Fatal("run average", row)
 		}
 	}
-	report, err = Analytics(db, AnalysisQuery{From: from, To: to, Location: time.UTC, Profile: 2})
+	report, err = Analytics(t.Context(), db, AnalysisQuery{From: from, To: to, Location: time.UTC, Profile: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if report.Totals.Batches != 1 || report.Batches.Items[0].Source != "scheduled" {
 		t.Fatal("profile filter", report.Totals, report.Batches.Items)
 	}
-	report, err = Analytics(db, AnalysisQuery{From: from, To: to, Location: time.UTC, Source: "manual"})
+	report, err = Analytics(t.Context(), db, AnalysisQuery{From: from, To: to, Location: time.UTC, Source: "manual"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if report.Totals.Batches != 4 {
 		t.Fatal("source filter", report.Totals)
 	}
-	report, err = Analytics(db, AnalysisQuery{From: from, To: to, Location: time.UTC, Sort: "duration"})
+	report, err = Analytics(t.Context(), db, AnalysisQuery{From: from, To: to, Location: time.UTC, Sort: "duration"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if report.Batches.Items[0].ID != 1 || report.Batches.Items[1].ID != 2 {
 		t.Fatal("duration sort", report.Batches.Items)
 	}
-	report, err = Analytics(db, AnalysisQuery{From: from, To: to, Location: time.UTC, Sort: "size"})
+	report, err = Analytics(t.Context(), db, AnalysisQuery{From: from, To: to, Location: time.UTC, Sort: "size"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if report.Batches.Items[0].ID != 1 {
 		t.Fatal("size sort", report.Batches.Items)
 	}
-	report, err = Analytics(db, AnalysisQuery{From: from, To: to, Location: time.UTC, Page: 2, Size: 3})
+	report, err = Analytics(t.Context(), db, AnalysisQuery{From: from, To: to, Location: time.UTC, Page: 2, Size: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestAnalyticsAllHistoryStartsAtFirstBatch(t *testing.T) {
 	base := time.Date(2026, 9, 23, 9, 0, 0, 0, time.UTC)
 	seededDashboard(t, db, base)
 	// Earliest selected batch starts an hour before base; span 11h → hour buckets.
-	report, err := Analytics(db, AnalysisQuery{From: 0, To: base.Add(10 * time.Hour).UnixMilli(), Location: time.UTC})
+	report, err := Analytics(t.Context(), db, AnalysisQuery{From: 0, To: base.Add(10 * time.Hour).UnixMilli(), Location: time.UTC})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestAnalyticsAllHistoryStartsAtFirstBatch(t *testing.T) {
 
 func TestAnalyticsEmptyRangeKeepsFrame(t *testing.T) {
 	db := analyticsDB(t)
-	report, err := Analytics(db, AnalysisQuery{From: 0, To: int64(6 * time.Hour / time.Millisecond), Location: time.UTC})
+	report, err := Analytics(t.Context(), db, AnalysisQuery{From: 0, To: int64(6 * time.Hour / time.Millisecond), Location: time.UTC})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +295,7 @@ func TestQueuedCancellationAndRenamedProfiles(t *testing.T) {
 	base := time.Date(2026, 9, 27, 0, 0, 0, 0, time.UTC)
 	seedBatch2(t, db, seedBatch{id: 1, source: "manual", profile: 1, title: "旧名", status: "cancelled", created: at(base), finished: at(base.Add(time.Hour))})
 	seedBatch2(t, db, seedBatch{id: 2, source: "manual", profile: 1, title: "新名", status: "completed", created: at(base), started: at(base), finished: at(base.Add(time.Minute))})
-	report, err := Analytics(db, AnalysisQuery{To: base.Add(2 * time.Hour).UnixMilli(), Page: int(^uint(0) >> 1), Size: 20})
+	report, err := Analytics(t.Context(), db, AnalysisQuery{To: base.Add(2 * time.Hour).UnixMilli(), Page: int(^uint(0) >> 1), Size: 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +324,7 @@ func TestFilterExtractionWithoutModel(t *testing.T) {
 	} {
 		seedBatch2(t, db, b)
 	}
-	report, err := Analytics(db, AnalysisQuery{To: base.Add(time.Hour).UnixMilli()})
+	report, err := Analytics(t.Context(), db, AnalysisQuery{To: base.Add(time.Hour).UnixMilli()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +347,7 @@ func TestFilterExtractionWithoutModel(t *testing.T) {
 	if trendDone != 2 || timedItems != 2 || len(report.Scatter) != 2 || report.Scatter[1].Task != "extract" {
 		t.Fatal("extraction missing from charts", report.Trend, report.Distribution, report.Scatter)
 	}
-	report, err = Analytics(db, AnalysisQuery{To: base.Add(time.Hour).UnixMilli(), ProfileSet: true, Profile: 0})
+	report, err = Analytics(t.Context(), db, AnalysisQuery{To: base.Add(time.Hour).UnixMilli(), ProfileSet: true, Profile: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,5 +358,31 @@ func TestFilterExtractionWithoutModel(t *testing.T) {
 		if b.Task != "extract" || b.ProfileID != 0 || b.ProfileTitle != "" || b.Model != "" {
 			t.Fatal("extraction batch metadata", b)
 		}
+	}
+}
+
+func TestAnalyticsCachePagesAndCommittedChanges(t *testing.T) {
+	db := analyticsDB(t)
+	base := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
+	for i := int64(1); i <= 3; i++ {
+		seedBatch2(t, db, seedBatch{id: i, source: "manual", profile: 1, title: "profile", status: "completed", created: at(base.Add(time.Duration(i) * time.Hour)), started: at(base.Add(time.Duration(i) * time.Hour)), finished: at(base.Add(time.Duration(i)*time.Hour + time.Minute)), done: i})
+	}
+	q := AnalysisQuery{To: base.Add(24 * time.Hour).UnixMilli(), Size: 1}
+	first, err := Analytics(t.Context(), db, q)
+	if err != nil || len(first.Batches.Items) != 1 || first.Batches.Items[0].ID != 3 {
+		t.Fatal(first, err)
+	}
+	first.Totals.Done = 999
+	q.Page = 2
+	second, err := Analytics(t.Context(), db, q)
+	if err != nil || second.Totals.Done != 6 || second.Batches.Items[0].ID != 2 {
+		t.Fatal(second, err)
+	}
+	if _, err = db.Exec("UPDATE runs SET done=9,model_config_title='renamed' WHERE id=3"); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := Analytics(t.Context(), db, q)
+	if err != nil || changed.Totals.Done != 12 || changed.Options.Profiles[0].Title != "renamed" {
+		t.Fatal(changed, err)
 	}
 }
