@@ -1,6 +1,7 @@
 <script setup lang="ts">
   import { computed, onMounted, ref } from 'vue';
-  import { api, type ModelProfile } from '../../app/api';
+  import { api } from '../../app/api';
+  import { type ModelProfile } from '../../app/contracts';
   import SelectField from '../../components/SelectField.vue';
   const props = defineProps<{ modelValue: number }>();
   const emit = defineEmits<{ 'update:modelValue': [number] }>();

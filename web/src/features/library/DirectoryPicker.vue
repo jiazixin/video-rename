@@ -1,10 +1,11 @@
 <script setup lang="ts">
   import PageNavigation from '../../components/PageNavigation.vue';
   import { ref, onMounted, onUnmounted, computed } from 'vue';
-  import { Folder, ChevronRight, Home } from 'lucide-vue-next';
+  import { Folder, ChevronRight, Home } from '@lucide/vue';
   import DirectoryStatus from './DirectoryStatus.vue';
   import './directory-picker.css';
-  import { api, type Page } from '../../app/api';
+  import { api } from '../../app/api';
+  import { type Page } from '../../app/contracts';
   const props = defineProps<{ modelValue: number[] }>();
   const emit = defineEmits<{ 'update:modelValue': [ids: number[]] }>();
   const selectedOnPage = computed(

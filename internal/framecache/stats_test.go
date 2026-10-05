@@ -327,7 +327,7 @@ func TestStatsPartialPruneFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(blockedDir, 0700) })
-	if err := c.SetLimit(1); err == nil {
+	if err := c.Configure(1, c.policy); err == nil {
 		t.Fatal("pruning a non-writable cache directory did not fail")
 	}
 	if got := assertStatsAccounted(t, c); got.Entries != 2 || got.Used <= 0 {

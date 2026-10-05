@@ -1,10 +1,10 @@
 import { computed, onUnmounted, ref } from 'vue'
+import { api } from '../../app/api'
 import {
-  api,
   type LibraryScanSettings,
   type LibraryScanState,
   type LibraryScanStatus
-} from '../../app/api'
+} from '../../app/contracts'
 
 // Poll only while the owning page and browser tab are visible. GET is an index
 // status request; it must never trigger a filesystem scan.

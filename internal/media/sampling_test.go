@@ -1,31 +1,20 @@
 package media
 
 import (
-	"os"
 	"testing"
 	"time"
 
 	"video-rename/internal/config"
 )
 
-// loadDefaultSampling 通过加载最小配置获得解析后的默认规则表。
+// loadDefaultSampling validates the same defaults used by persisted frame settings.
 func loadDefaultSampling(t *testing.T) config.SamplingConfig {
 	t.Helper()
-	cfg, err := config.Load(writeMinimalConfig(t))
-	if err != nil {
+	settings := config.DefaultFrameSettings()
+	if err := settings.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	return cfg.Sampling
-}
-
-func writeMinimalConfig(t *testing.T) string {
-	t.Helper()
-	p := t.TempDir() + "/config.yaml"
-	content := "# sampling\n"
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return p
+	return settings.Sampling
 }
 
 // processing.md 第 2 节的五组默认样例。

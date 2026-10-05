@@ -229,19 +229,6 @@ func (l *Library) Relative(id int64) string {
 	r, _ := filepath.Rel(l.Root, p)
 	return r
 }
-func (l *Library) IsWithin(id, ancestor int64) bool {
-	for n := 0; id > 0 && n < 1024; n++ {
-		if id == ancestor {
-			return true
-		}
-		e, err := l.IndexedEntry(id)
-		if err != nil {
-			return false
-		}
-		id = e.Parent
-	}
-	return false
-}
 func kindOf(st os.FileInfo) string {
 	if st.Mode()&os.ModeSymlink != 0 {
 		return "symlink"

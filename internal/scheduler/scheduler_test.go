@@ -65,7 +65,7 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := jobs.New(db, l, &config.Config{Workers: 1})
+	m, err := jobs.New(db, l, &config.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}

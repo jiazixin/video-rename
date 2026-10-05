@@ -20,8 +20,11 @@
     CalendarDays,
     Undo2,
     ChevronRight
-  } from 'lucide-vue-next';
-  import { api, key, time, clockPart, statusNames, type Plan, type Run } from '../../app/api';
+  } from '@lucide/vue';
+  import { api, key } from '../../app/api';
+  import { time, clockPart } from '../../lib/date/format';
+  import { statusNames } from '../../app/labels';
+  import { type Plan, type Run } from '../../app/contracts';
   import { DirectoryPicker } from '../library';
   import { ModelPicker } from '../models';
   import StatusBadge from '../../components/StatusBadge.vue';

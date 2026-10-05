@@ -54,7 +54,7 @@ func ValidateConnection(s *ServerConfig) error {
 	}
 	return nil
 }
-func (c *Config) ApplyModel(s ServerConfig, prompt string) error {
+func (c *TaskConfig) ApplyModel(s ServerConfig, prompt string) error {
 	if err := ValidateConnection(&s); err != nil {
 		return err
 	}

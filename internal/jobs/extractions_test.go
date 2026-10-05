@@ -30,11 +30,11 @@ func TestExtractionWithoutModelPreservesFilesAndReusesFrames(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
-	m.Prepare = func(_ context.Context, _ *config.Config, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
+	m.Prepare = func(_ context.Context, _ *config.TaskConfig, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
 		calls.Add(1)
 		return fakeFrames(work)
 	}
-	m.Infer = func(context.Context, *config.Config, []domain.Frame) (string, error) {
+	m.Infer = func(context.Context, *config.TaskConfig, []domain.Frame) (string, error) {
 		t.Error("extraction reached model")
 		return "unexpected", nil
 	}
@@ -73,7 +73,7 @@ func TestExtractionWithoutModelPreservesFilesAndReusesFrames(t *testing.T) {
 	if _, err = m.Create(request, "manual", 0); err == nil {
 		t.Fatal("request key accepted a different task")
 	}
-	m.Infer = func(context.Context, *config.Config, []domain.Frame) (string, error) { return "renamed", nil }
+	m.Infer = func(context.Context, *config.TaskConfig, []domain.Frame) (string, error) { return "renamed", nil }
 	request.Key = "rename-after-extract"
 	id, err = m.Create(request, "manual", 0)
 	if err != nil {
@@ -106,13 +106,13 @@ func TestExtractionFailuresAreIndependentOfInferenceAndMarkedState(t *testing.T)
 					t.Fatal(err)
 				}
 			}
-			m.Prepare = func(_ context.Context, _ *config.Config, job domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
+			m.Prepare = func(_ context.Context, _ *config.TaskConfig, job domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
 				if strings.HasSuffix(job.Path, "bad.mp4") {
 					return domain.FrameSet{}, &domain.JobError{Code: domain.CodeExtractInsufficientFrames, Message: "计划帧全部失败", ProcessingLog: "采样时间 1s · 首次抽帧\ndecoder unavailable", StderrTail: "invalid data"}
 				}
 				return fakeFrames(work)
 			}
-			m.Infer = func(context.Context, *config.Config, []domain.Frame) (string, error) {
+			m.Infer = func(context.Context, *config.TaskConfig, []domain.Frame) (string, error) {
 				return "", fmt.Errorf("model failed")
 			}
 			id, err := m.Create(Request{Task: task, Targets: []int64{1}, Key: "mixed-extraction"}, "manual", 0)
@@ -141,7 +141,7 @@ func TestExtractionCancellationAndInterruptedRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := make(chan struct{})
-	m.Prepare = func(ctx context.Context, _ *config.Config, _ domain.VideoJob, _, _, _ string) (domain.FrameSet, error) {
+	m.Prepare = func(ctx context.Context, _ *config.TaskConfig, _ domain.VideoJob, _, _, _ string) (domain.FrameSet, error) {
 		close(started)
 		<-ctx.Done()
 		return domain.FrameSet{}, ctx.Err()
@@ -200,7 +200,7 @@ func TestExtractionScansBeyondLibraryPagesAndFreezesSampling(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
-	m.Prepare = func(_ context.Context, cfg *config.Config, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
+	m.Prepare = func(_ context.Context, cfg *config.TaskConfig, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
 		if cfg.Sampling.MaxFrames != original.Sampling.MaxFrames {
 			t.Errorf("run lost sampling snapshot: %d", cfg.Sampling.MaxFrames)
 		}

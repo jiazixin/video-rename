@@ -122,7 +122,7 @@ func TestPartialFailureCleanedAndUnknownFilesUntouched(t *testing.T) {
 }
 func TestMappingDependsOnSourceAndFramesNotModel(t *testing.T) {
 	frame := config.DefaultFrameSettings()
-	cfg := config.Config{Sampling: frame.Sampling, Images: frame.Images}
+	cfg := config.TaskConfig{Sampling: frame.Sampling, Images: frame.Images}
 	job := domain.VideoJob{Snapshot: domain.Snapshot{Dev: 1, Ino: 2, Size: 3, ModTime: time.Unix(1000, 0)}}
 	key := Key(job, &cfg)
 	cfg.Prompt = "new prompt"

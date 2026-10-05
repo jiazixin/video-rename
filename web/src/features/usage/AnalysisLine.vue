@@ -39,8 +39,7 @@
     return String(Math.round(value * 10) / 10);
   }
   const ticks = computed(() => {
-    const { h } = inner(),
-      out: number[] = [];
+    const out: number[] = [];
     for (let i = 0; i <= 4; i++) out.push((maxY.value * i) / 4);
     return out.reverse();
   });
@@ -182,7 +181,7 @@
         />
       </template>
       <text
-        v-for="(p, i) in points.filter((_, i) => i % labelSteps === 0 || i === points.length - 1)"
+        v-for="p in points.filter((_, i) => i % labelSteps === 0 || i === points.length - 1)"
         :key="p.b.from"
         :x="p.x"
         :y="height - 10"
@@ -209,7 +208,7 @@
       role="status"
     >
       <strong>{{ bucketTitle(points[active]!.b) }}</strong>
-      <span v-for="(s, si) in series" :key="s.name" class="tooltip-row"
+      <span v-for="s in series" :key="s.name" class="tooltip-row"
         ><i class="tooltip-key" :style="{ background: s.color }" /><b>{{
           props.format(s.values[active] || 0)
         }}</b

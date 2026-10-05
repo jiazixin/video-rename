@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import { computed, nextTick, onMounted, onUnmounted, ref, useId } from 'vue';
-  import { Check, ChevronDown } from 'lucide-vue-next';
+  import { Check, ChevronDown } from '@lucide/vue';
   type Value = string | number;
   const props = defineProps<{
     modelValue: Value;

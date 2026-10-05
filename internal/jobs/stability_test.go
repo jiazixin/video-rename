@@ -17,7 +17,7 @@ func TestStabilityZeroDisablesWait(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	m.Analyze = func(context.Context, *config.Config, domain.VideoJob, string, string) (string, error) {
+	m.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 		return "renamed", nil
 	}
 	id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "zero-stability"}, "manual", 0)
@@ -48,7 +48,7 @@ func TestStabilityWaitProtectsChangedFileAndCanBeCancelled(t *testing.T) {
 				t.Fatal(err)
 			}
 			calls := make(chan struct{}, 1)
-			m.Analyze = func(context.Context, *config.Config, domain.VideoJob, string, string) (string, error) {
+			m.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 				calls <- struct{}{}
 				return "renamed", nil
 			}

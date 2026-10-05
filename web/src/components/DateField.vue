@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import { computed, nextTick, onMounted, onUnmounted, ref, useId } from 'vue';
-  import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-vue-next';
+  import { CalendarDays, ChevronLeft, ChevronRight } from '@lucide/vue';
   import SelectField from './SelectField.vue';
   const props = defineProps<{ modelValue: string; label: string; min?: string; max?: string }>();
   const emit = defineEmits<{ 'update:modelValue': [string]; change: [] }>();

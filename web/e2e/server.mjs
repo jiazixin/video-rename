@@ -6,7 +6,7 @@ import { spawn,execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'
 const base=mkdtempSync(join(tmpdir(),'video-rename-e2e-'))
 const media=join(base,'media');mkdirSync(media)
-for(const dir of ['2026 · 旅行记录','家庭影像','工作素材','纪录片收藏','待整理视频','自动命名测试','分页测试','取消测试'])mkdirSync(join(media,dir))
+for(const dir of ['2026 · 旅行记录','家庭影像','工作素材','纪录片收藏','待整理视频','自动命名测试','目录日志测试','分页测试','取消测试'])mkdirSync(join(media,dir))
 for(let i=0;i<160;i++)mkdirSync(join(media,'返回定位测试',`目录_${String(i).padStart(3,'0')}`),{recursive:true})
 mkdirSync(join(media,'后缀编辑测试'))
 writeFileSync(join(media,'后缀编辑测试','photo.JPEG'),'jpeg fixture')
@@ -17,6 +17,7 @@ writeFileSync(join(media,'删除目录测试','子目录','内容.txt'),'nested 
 for(const imageName of ['photo.png','photo2.png','photo3.png','photo4.png','photo5.png'])writeFileSync(join(media,imageName),Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=','base64'))
 writeFileSync(join(media,'已占用名称.mp4'),'conflict fixture')
 writeFileSync(join(media,'2026 · 旅行记录','IMG_20260901.mp4'),'nested fixture')
+for(const name of ['IMG_20260901.mp4','已占用名称.mp4'])writeFileSync(join(media,'目录日志测试',name),'log fixture')
 for(let i=0;i<230;i++)writeFileSync(join(media,'分页测试',`片段_${String(i).padStart(4,'0')}.mp4`),'fixture')
 execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','color=c=green:s=320x240:r=10','-t','3','-c:v','mpeg4',join(media,'自动命名测试','clip.mp4')])
 const extractionDir=join(media,'独立抽帧测试');mkdirSync(join(extractionDir,'子目录'),{recursive:true})

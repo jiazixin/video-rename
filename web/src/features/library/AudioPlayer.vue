@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
-  import { Play, Pause, Volume2, VolumeX, Disc3, SkipBack, SkipForward } from 'lucide-vue-next';
+  import { Play, Pause, Volume2, VolumeX, Disc3, SkipBack, SkipForward } from '@lucide/vue';
   defineProps<{ src: string; switching?: boolean }>();
   const emit = defineEmits<{ previous: []; next: [] }>();
   const audio = ref<HTMLAudioElement>(),

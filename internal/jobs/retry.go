@@ -88,7 +88,7 @@ func retryWait(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-func (m *Manager) inferWithRetry(ctx context.Context, run Run, entry int64, cfg *config.Config, job domain.VideoJob, probe, ffmpeg string, leaseRef **framecache.Lease) (string, error) {
+func (m *Manager) inferWithRetry(ctx context.Context, run Run, entry int64, cfg *config.TaskConfig, job domain.VideoJob, probe, ffmpeg string, leaseRef **framecache.Lease) (string, error) {
 	lease := *leaseRef
 	defer func() { *leaseRef = lease }()
 	var itemID int64

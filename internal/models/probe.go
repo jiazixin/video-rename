@@ -32,7 +32,7 @@ func Probe(ctx context.Context, s config.ServerConfig, timeout time.Duration) (o
 		return out, fmt.Errorf("图片识别测试超时只能选择 5s、10s 或 15s")
 	}
 	s.Timeout = timeout.String()
-	var cfg config.Config
+	var cfg config.TaskConfig
 	if err = cfg.ApplyModel(s, ""); err != nil {
 		return
 	}

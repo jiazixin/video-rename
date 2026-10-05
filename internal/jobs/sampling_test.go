@@ -33,7 +33,7 @@ func TestFrameSettingsFrozenForEachBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
-	m.Analyze = func(_ context.Context, c *config.Config, _ domain.VideoJob, _, _ string) (string, error) {
+	m.Analyze = func(_ context.Context, c *config.TaskConfig, _ domain.VideoJob, _, _ string) (string, error) {
 		calls++
 		wantFrames, wantSize := 7, 512
 		if calls == 2 {

@@ -50,7 +50,7 @@ func TestSubmissionDefersMediaPathValidation(t *testing.T) {
 			if err != nil {
 				t.Fatal("submission accessed media paths", err)
 			}
-			m.Analyze = func(context.Context, *config.Config, domain.VideoJob, string, string) (string, error) {
+			m.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 				t.Error("invalid path reached model processing")
 				return "unexpected", nil
 			}

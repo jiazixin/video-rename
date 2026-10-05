@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import { computed, onMounted, onUnmounted, ref } from 'vue';
-  import type { UsageBucket } from '../../app/api';
+  import { type UsageBucket } from '../../app/contracts';
   const props = defineProps<{ buckets: UsageBucket[]; interval: string }>();
   const box = ref<HTMLElement>(),
     width = ref(860),
@@ -28,8 +28,7 @@
     return String(value);
   }
   const ticks = computed(() => {
-    const { h } = inner(),
-      out: number[] = [];
+    const out: number[] = [];
     for (let i = 0; i <= 4; i++) out.push((maxY.value * i) / 4);
     return out.reverse();
   });
@@ -156,7 +155,7 @@
         <circle :cx="points[active]!.x" :cy="points[active]!.y" r="4.5" class="trend-dot" />
       </template>
       <text
-        v-for="(p, i) in points.filter((_, i) => i % labelSteps === 0 || i === points.length - 1)"
+        v-for="p in points.filter((_, i) => i % labelSteps === 0 || i === points.length - 1)"
         :key="p.b.from"
         :x="p.x"
         :y="height - 10"

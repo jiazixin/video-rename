@@ -13,7 +13,7 @@ func TestPlaybackRangeAndRestrictions(t *testing.T) {
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "clip.mp4"), []byte("0123456789"), 0600)
 	os.WriteFile(filepath.Join(root, "secret.txt"), []byte("secret"), 0600)
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Workers: 1, Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestAudioPlaybackRestrictions(t *testing.T) {
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "track.mp3"), []byte("audio fixture"), 0600)
 	os.WriteFile(filepath.Join(root, "notes.txt"), []byte("notes"), 0600)
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Workers: 1, Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestImagePreviewRestrictions(t *testing.T) {
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "photo.png"), []byte("image fixture"), 0600)
 	os.WriteFile(filepath.Join(root, "active.svg"), []byte("<svg/>"), 0600)
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Workers: 1, Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
 	if err != nil {
 		t.Fatal(err)
 	}

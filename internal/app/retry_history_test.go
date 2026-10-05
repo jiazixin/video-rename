@@ -53,7 +53,7 @@ func TestRetryHistoryRejectsUnsupportedAndKeepsFailures(t *testing.T) {
 
 func TestRetryHistoryBatchesAndRemovesOnlyAfterSuccess(t *testing.T) {
 	root := t.TempDir()
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Workers: 2, Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ exit 0
 	if err = (systemsettings.Store{DB: a.DB}).Save(settings); err != nil {
 		t.Fatal(err)
 	}
-	a.Jobs.Analyze = func(context.Context, *config.Config, domain.VideoJob, string, string) (string, error) {
+	a.Jobs.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 		return "new-title", nil
 	}
 	a.Jobs.Execute(t.Context(), result.Runs[0])
@@ -485,7 +485,7 @@ func TestRetrySuccessHistoryPreservesProtection(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			calls := 0
-			a.Jobs.Analyze = func(_ context.Context, cfg *config.Config, _ domain.VideoJob, _, _ string) (string, error) {
+			a.Jobs.Analyze = func(_ context.Context, cfg *config.TaskConfig, _ domain.VideoJob, _, _ string) (string, error) {
 				calls++
 				if cfg.Server.Model != "retry-model" {
 					t.Errorf("wrong retry model: %s", cfg.Server.Model)

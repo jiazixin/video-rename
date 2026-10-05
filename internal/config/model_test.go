@@ -11,17 +11,11 @@ func TestDeploymentRejectsModelConfiguration(t *testing.T) {
 			t.Fatalf("accepted retired model YAML %q", yaml)
 		}
 	}
-	cfg, err := loadTemp(t, minimalYAML, "config.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Server.BaseURL != "" || cfg.Server.Model != "" || cfg.Endpoint != "" {
-		t.Fatal("YAML populated model runtime")
-	}
 }
+
 func TestRuntimeModelValidation(t *testing.T) {
 	base := ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://localhost:8080/v1/", Model: "vision", Timeout: "180s", Temperature: 0, MaxTokens: 128}
-	var cfg Config
+	var cfg TaskConfig
 	if err := cfg.ApplyModel(base, "prompt"); err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +40,7 @@ func TestRuntimeModelValidation(t *testing.T) {
 
 func TestModelWorkers(t *testing.T) {
 	for _, n := range []int{-1, 0, 1, 4, 32, 33} {
-		c := Config{}
+		c := TaskConfig{}
 		err := c.ApplyModel(ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://localhost/v1", Model: "test", Timeout: "10s", MaxTokens: 1024, Workers: n}, "title")
 		if (err != nil) != (n < 0 || n > 32) {
 			t.Fatalf("workers %d: %v", n, err)

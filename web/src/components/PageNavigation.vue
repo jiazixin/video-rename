@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import { computed, ref, watch, useId } from 'vue';
-  import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-vue-next';
+  import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from '@lucide/vue';
   const props = withDefaults(
     defineProps<{
       page: number;

@@ -1,8 +1,8 @@
 <script setup lang="ts">
   import ToastNotice from '../../components/ToastNotice.vue';
   import { computed, onMounted, ref, watch } from 'vue';
-  import { RefreshCw, Save } from 'lucide-vue-next';
-  import type { LibraryScanSettings } from '../../app/api';
+  import { RefreshCw, Save } from '@lucide/vue';
+  import { type LibraryScanSettings } from '../../app/contracts';
   import DirectoryPicker from './DirectoryPicker.vue';
   import ScanStatus from './ScanStatus.vue';
   import { useLibraryScan } from './library-scan';

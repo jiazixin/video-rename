@@ -9,7 +9,7 @@ import (
 )
 
 // Prepare is independent of model concurrency. Successful output belongs to the cache.
-func Prepare(ctx context.Context, cfg *config.Config, job domain.VideoJob, probe, ffmpeg, work string) (domain.FrameSet, error) {
+func Prepare(ctx context.Context, cfg *config.TaskConfig, job domain.VideoJob, probe, ffmpeg, work string) (domain.FrameSet, error) {
 	meta, err := (&media.Prober{FFprobePath: probe}).Probe(ctx, job)
 	if err != nil {
 		return domain.FrameSet{}, err
@@ -24,7 +24,7 @@ func Prepare(ctx context.Context, cfg *config.Config, job domain.VideoJob, probe
 	}
 	return set, nil
 }
-func Infer(ctx context.Context, cfg *config.Config, frames []domain.Frame) (string, error) {
+func Infer(ctx context.Context, cfg *config.TaskConfig, frames []domain.Frame) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, domain.JobBudget(cfg.TimeoutDuration))
 	defer cancel()
 	client := vision.New(cfg)

@@ -26,12 +26,12 @@ func TestStagedFailureAndCancellationReuseUntilCommit(t *testing.T) {
 			m, root := setup(t)
 			os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600)
 			var extracts atomic.Int32
-			m.Prepare = func(_ context.Context, _ *config.Config, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
+			m.Prepare = func(_ context.Context, _ *config.TaskConfig, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
 				extracts.Add(1)
 				return fakeFrames(work)
 			}
 			entered := make(chan struct{})
-			m.Infer = func(ctx context.Context, _ *config.Config, frames []domain.Frame) (string, error) {
+			m.Infer = func(ctx context.Context, _ *config.TaskConfig, frames []domain.Frame) (string, error) {
 				if _, err := os.Stat(frames[0].Path); err != nil {
 					t.Error(err)
 				}
@@ -66,7 +66,7 @@ func TestStagedFailureAndCancellationReuseUntilCommit(t *testing.T) {
 			if m.Cache.Stats().Entries != 1 {
 				t.Fatal("frames were not retained")
 			}
-			m.Infer = func(context.Context, *config.Config, []domain.Frame) (string, error) { return "renamed", nil }
+			m.Infer = func(context.Context, *config.TaskConfig, []domain.Frame) (string, error) { return "renamed", nil }
 			id, err = m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "cache-second"}, "manual", 0)
 			if err != nil {
 				t.Fatal(err)
@@ -111,7 +111,7 @@ func TestCrossBatchExtractionWhileModelBlockedAndSharedLimit(t *testing.T) {
 	extracted := make(chan struct{}, 3)
 	modelsStarted := make(chan struct{}, 3)
 	releaseModel := make(chan struct{})
-	m.Prepare = func(ctx context.Context, _ *config.Config, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
+	m.Prepare = func(ctx context.Context, _ *config.TaskConfig, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
 		n := activeExtract.Add(1)
 		for old := maxExtract.Load(); n > old && !maxExtract.CompareAndSwap(old, n); old = maxExtract.Load() {
 		}
@@ -125,7 +125,7 @@ func TestCrossBatchExtractionWhileModelBlockedAndSharedLimit(t *testing.T) {
 		extracted <- struct{}{}
 		return set, err
 	}
-	m.Infer = func(ctx context.Context, _ *config.Config, _ []domain.Frame) (string, error) {
+	m.Infer = func(ctx context.Context, _ *config.TaskConfig, _ []domain.Frame) (string, error) {
 		n := activeModel.Add(1)
 		for old := maxModel.Load(); n > old && !maxModel.CompareAndSwap(old, n); old = maxModel.Load() {
 		}
@@ -229,7 +229,7 @@ func TestCancelStopsExtractionAndLeavesOtherBatchRunning(t *testing.T) {
 	stopped := make(chan struct{})
 	modelStarted := make(chan struct{})
 	release := make(chan struct{})
-	m.Prepare = func(ctx context.Context, _ *config.Config, job domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
+	m.Prepare = func(ctx context.Context, _ *config.TaskConfig, job domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
 		if filepath.Base(job.Path) == "cancel.mp4" {
 			if _, e := fakeFrames(work); e != nil {
 				return domain.FrameSet{}, e
@@ -241,7 +241,7 @@ func TestCancelStopsExtractionAndLeavesOtherBatchRunning(t *testing.T) {
 		}
 		return fakeFrames(work)
 	}
-	m.Infer = func(ctx context.Context, _ *config.Config, _ []domain.Frame) (string, error) {
+	m.Infer = func(ctx context.Context, _ *config.TaskConfig, _ []domain.Frame) (string, error) {
 		close(modelStarted)
 		select {
 		case <-release:
@@ -315,18 +315,18 @@ func TestBatchPrefetchUsesCapacityInsteadOfVideoCount(t *testing.T) {
 				reserve := int64(config.DefaultFrameSettings().Sampling.MaxFrames)*(1<<20) + (32 << 20) + 65536
 				// fakeFrames uses 5 bytes plus 64 KiB metadata: permit exactly three
 				// pinned entries before the next peak extraction reservation must wait.
-				if err = m.Cache.SetLimit(reserve + 2*(65536+5)); err != nil {
+				if err = m.Cache.Configure(reserve+2*(65536+5), settings.Policy); err != nil {
 					t.Fatal(err)
 				}
 			}
 			extracted := make(chan struct{}, count)
 			permits := make(chan struct{}, count)
-			m.Prepare = func(_ context.Context, _ *config.Config, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
+			m.Prepare = func(_ context.Context, _ *config.TaskConfig, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
 				frames, err := fakeFrames(work)
 				extracted <- struct{}{}
 				return frames, err
 			}
-			m.Infer = func(ctx context.Context, _ *config.Config, frames []domain.Frame) (string, error) {
+			m.Infer = func(ctx context.Context, _ *config.TaskConfig, frames []domain.Frame) (string, error) {
 				select {
 				case <-ctx.Done():
 					return "", ctx.Err()

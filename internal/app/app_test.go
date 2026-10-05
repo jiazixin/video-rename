@@ -68,7 +68,7 @@ func TestHistoryDateFiltersCompareInstants(t *testing.T) {
 func TestStaticSPAAndProtectedAPI(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "media")
 	os.Mkdir(root, 0700)
-	cfg := &config.Config{Path: root, Storage: t.TempDir(), Workers: 1, Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}
+	cfg := &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}
 	a, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestStaticSPAAndProtectedAPI(t *testing.T) {
 }
 
 func TestDataDirectoryPersistenceAndShortPasswordLogin(t *testing.T) {
-	cfg := &config.Config{Path: t.TempDir(), Storage: filepath.Join(t.TempDir(), "state", "nested"), Workers: 1, Auth: config.AuthConfig{Username: "admin", Password: "x"}}
+	cfg := &config.Config{Path: t.TempDir(), Storage: filepath.Join(t.TempDir(), "state", "nested"), Auth: config.AuthConfig{Username: "admin", Password: "x"}}
 	a, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)

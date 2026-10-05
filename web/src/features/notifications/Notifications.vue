@@ -4,7 +4,7 @@
   import PageNavigation from '../../components/PageNavigation.vue';
   import SelectField from '../../components/SelectField.vue';
   import { computed, ref, onMounted, onUnmounted } from 'vue';
-  import { Save, Send, RefreshCw, CircleHelp } from 'lucide-vue-next';
+  import { Save, Send, RefreshCw, CircleHelp } from '@lucide/vue';
   import { api } from '../../app/api';
   import './notifications.css';
   const toast = ref<InstanceType<typeof ToastNotice>>();

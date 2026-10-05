@@ -32,7 +32,7 @@ func TestNumberingSkipsMediaMarksAndReservesNumbers(t *testing.T) {
 					settings.Image.Prefix, settings.Audio.Prefix = "pic-", "aud-"
 					settings.Image.Padding, settings.Audio.Padding = 3, 3
 					settings.Image.Compact, settings.Audio.Compact = compact, compact
-					b, err := l.PreviewNumbering(1, media, "", "name_asc", settings)
+					b, err := l.PreviewNumberingContext(t.Context(), 1, media, "", "name_asc", settings)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -84,7 +84,7 @@ func TestNumberingRejectsMarkAddedAfterPreview(t *testing.T) {
 	}
 	refresh(t, l, 1)
 	settings := domain.DefaultNumberingSettings()
-	b, err := l.PreviewNumbering(1, "mixed", "", "name_asc", settings)
+	b, err := l.PreviewNumberingContext(t.Context(), 1, "mixed", "", "name_asc", settings)
 	if err != nil {
 		t.Fatal(err)
 	}

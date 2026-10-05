@@ -61,16 +61,16 @@ func TestPauseReleasesQueuedFramesAndLetsOtherBatchFinish(t *testing.T) {
 		t.Fatal(err)
 	}
 	reserve := int64(config.DefaultFrameSettings().Sampling.MaxFrames)*(1<<20) + (32 << 20) + 65536
-	if err := m.Cache.SetLimit(reserve + 65536 + 5); err != nil {
+	if err := m.Cache.Configure(reserve+65536+5, settings.Policy); err != nil {
 		t.Fatal(err)
 	}
 	var extracted, inferred atomic.Int32
 	entered, allow := make(chan struct{}), make(chan struct{})
-	m.Prepare = func(_ context.Context, _ *config.Config, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
+	m.Prepare = func(_ context.Context, _ *config.TaskConfig, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
 		extracted.Add(1)
 		return fakeFrames(work)
 	}
-	m.Infer = func(ctx context.Context, _ *config.Config, _ []domain.Frame) (string, error) {
+	m.Infer = func(ctx context.Context, _ *config.TaskConfig, _ []domain.Frame) (string, error) {
 		if inferred.Add(1) == 1 {
 			close(entered)
 			select {
@@ -201,7 +201,7 @@ func TestPauseExtractionAndCancelWhilePaused(t *testing.T) {
 	}
 	var calls atomic.Int32
 	entered, allow := make(chan struct{}), make(chan struct{})
-	m.Prepare = func(ctx context.Context, _ *config.Config, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
+	m.Prepare = func(ctx context.Context, _ *config.TaskConfig, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
 		if calls.Add(1) == 1 {
 			close(entered)
 			select {
@@ -245,7 +245,7 @@ func TestPausePreservesRetrySequence(t *testing.T) {
 	os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600)
 	var calls atomic.Int32
 	entered, allow := make(chan struct{}), make(chan struct{})
-	m.Analyze = func(ctx context.Context, _ *config.Config, _ domain.VideoJob, _, _ string) (string, error) {
+	m.Analyze = func(ctx context.Context, _ *config.TaskConfig, _ domain.VideoJob, _, _ string) (string, error) {
 		if calls.Add(1) == 1 {
 			close(entered)
 			select {
@@ -299,7 +299,7 @@ func TestPauseDuringStabilityKeepsFrozenCandidates(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
-	m.Analyze = func(context.Context, *config.Config, domain.VideoJob, string, string) (string, error) {
+	m.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 		calls.Add(1)
 		return "renamed", nil
 	}

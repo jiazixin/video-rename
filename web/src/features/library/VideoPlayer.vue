@@ -9,7 +9,7 @@
     Minimize,
     ChevronLeft,
     ChevronRight
-  } from 'lucide-vue-next';
+  } from '@lucide/vue';
   defineProps<{ src: string; switching?: boolean }>();
   const emit = defineEmits<{ previous: []; next: [] }>();
   const video = ref<HTMLVideoElement>(),

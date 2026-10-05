@@ -1,5 +1,6 @@
 <script setup lang="ts">
-  import { statusNames, type Entry } from '../../app/api';
+  import { statusNames } from '../../app/labels';
+  import { type Entry } from '../../app/contracts';
   import StatusBadge from '../../components/StatusBadge.vue';
   defineProps<{ entry: Entry }>();
   function directoryStatus(e: Entry) {

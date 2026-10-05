@@ -6,19 +6,13 @@ import (
 	"video-rename/internal/storage"
 )
 
-// Record counts one model exchange and appends it to the per-request ledger,
+// RecordAttempt counts one model exchange and appends it to the per-request ledger,
 // advancing the run aggregate in the same short transaction. The unique item/attempt
 // makes the write idempotent: a repeated record for the same run item and attempt is
 // ignored, and the aggregate only moves when a ledger row is actually inserted.
 // Exchanges without a countable usage stay unwritten, matching the aggregate's
 // historical semantics.
-func Record(db *storage.Store, run, item int64, request, response string, at time.Time) error {
-	return record(db, run, item, 1, nil, nil, nil, request, response, at)
-}
 func RecordAttempt(db *storage.Store, run, item int64, attempt int, profileID int64, title, summary, request, response string, at time.Time) error {
-	return record(db, run, item, attempt, profileID, title, summary, request, response, at)
-}
-func record(db *storage.Store, run, item int64, attempt int, profileID, title, summary any, request, response string, at time.Time) error {
 	tokens, estimated, ok := Count(request, response)
 	if !ok {
 		return nil

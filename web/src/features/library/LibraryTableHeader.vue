@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { ArrowDownUp } from 'lucide-vue-next';
+  import { ArrowDownUp } from '@lucide/vue';
   defineProps<{ multi: boolean; sort: string; sizing?: boolean }>();
   const emit = defineEmits<{ sort: [field: string] }>();
   const columns = [

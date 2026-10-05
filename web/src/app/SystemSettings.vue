@@ -7,7 +7,7 @@
     Hash,
     MessageSquareText,
     Settings2
-  } from 'lucide-vue-next';
+  } from '@lucide/vue';
   import { NumberingSettings, ProcessingSettings } from '../features/settings';
   import { LibraryScanSettings } from '../features/library';
   import Models from '../features/models/Models.vue';

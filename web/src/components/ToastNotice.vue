@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import { onActivated, onDeactivated, onUnmounted, ref } from 'vue';
-  import { CircleCheck, X } from 'lucide-vue-next';
+  import { CircleCheck, X } from '@lucide/vue';
 
   const duration = 5000;
   const notices = ref<{ id: number; message: string }[]>([]);

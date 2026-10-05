@@ -132,7 +132,7 @@ func (m *Manager) currentSchedule(ctx context.Context, id int64) context.Context
 
 // Release queued screenshots on pause so another batch can use cache capacity.
 // Resume reacquires the same cache key, rebuilding only if idle cleanup evicted it.
-func (m *Manager) inferenceSlot(ctx context.Context, run Run, entry, model int64, cfg *config.Config, job domain.VideoJob, probe, ffmpeg string, lease **framecache.Lease) (func(), int, error) {
+func (m *Manager) inferenceSlot(ctx context.Context, run Run, entry, model int64, cfg *config.TaskConfig, job domain.VideoJob, probe, ffmpeg string, lease **framecache.Lease) (func(), int, error) {
 	for {
 		schedule := m.currentSchedule(ctx, run.ID)
 		if schedule.Err() != nil {

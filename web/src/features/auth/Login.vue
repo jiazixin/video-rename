@@ -1,15 +1,7 @@
 <script setup lang="ts">
+  import './login.css';
   import { ref } from 'vue';
-  import {
-    ArrowUpRight,
-    ArrowRight,
-    Eye,
-    EyeOff,
-    Folder,
-    FileVideo,
-    Check,
-    ShieldCheck
-  } from 'lucide-vue-next';
+  import { ArrowRight, Eye, EyeOff, Folder, FileVideo, Check, ShieldCheck } from '@lucide/vue';
   import { api, session } from '../../app/api';
   const username = ref(''),
     password = ref(''),
@@ -38,7 +30,7 @@
         ><span class="brand-mark"><img src="/logo.png" alt="" width="32" height="32" /></span
         >video-rename<span class="edition">LOCAL WORKSPACE</span></a
       ><div class="story-copy"
-        ><h1>视频重命名</h1><p></p
+        ><h1>视频重命名</h1
         ><div class="story-demo" aria-hidden="true"
           ><div class="demo-heading"
             ><Folder :size="18" /><span>我的影像 / 旅行记录</span

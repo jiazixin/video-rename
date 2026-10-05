@@ -19,7 +19,7 @@ func TestDirectoryProcessingStatusAPI(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Workers: 1, Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestDirectoryStatusAPIFiltersCompletedSubtrees(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Workers: 1, Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
 	if err != nil {
 		t.Fatal(err)
 	}

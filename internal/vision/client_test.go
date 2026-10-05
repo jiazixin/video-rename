@@ -17,9 +17,9 @@ import (
 	"video-rename/internal/domain"
 )
 
-func testConfig(t *testing.T, baseURL string) *config.Config {
+func testConfig(t *testing.T, baseURL string) *config.TaskConfig {
 	t.Helper()
-	cfg := &config.Config{
+	cfg := &config.TaskConfig{
 		Server: config.ServerConfig{
 			BaseURL:     baseURL,
 			Model:       "test-model",
@@ -51,7 +51,7 @@ func okResponse(title string) string {
 	return fmt.Sprintf(`{"choices":[{"message":{"content":%s},"finish_reason":"stop"}]}`, content)
 }
 
-func newTestClient(cfg *config.Config) *Client {
+func newTestClient(cfg *config.TaskConfig) *Client {
 	c := New(cfg)
 	// 注入即时睡眠,测试不等待真实退避
 	c.sleeper = func(ctx context.Context, d time.Duration) error {

@@ -49,7 +49,7 @@ type Client struct {
 
 // New 按配置构造客户端。共享连接池;禁用自动重定向;
 // 连接超时取 10s 与 server.timeout 的较小值。
-func New(cfg *config.Config) *Client {
+func New(cfg *config.TaskConfig) *Client {
 	timeout := cfg.TimeoutDuration
 	dialTimeout := min(timeout, 10*time.Second)
 	transport := &http.Transport{

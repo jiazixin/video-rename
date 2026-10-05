@@ -1,8 +1,10 @@
 <script setup lang="ts">
   import ToastNotice from '../../components/ToastNotice.vue';
   import { computed, onMounted, ref } from 'vue';
-  import { PenLine, Plus, RotateCcw, Save, Trash2 } from 'lucide-vue-next';
-  import { api, time, type PromptProfile } from '../../app/api';
+  import { PenLine, Plus, RotateCcw, Save, Trash2 } from '@lucide/vue';
+  import { api } from '../../app/api';
+  import { time } from '../../lib/date/format';
+  import { type PromptProfile } from '../../app/contracts';
   import Modal from '../../components/Modal.vue';
   import './prompts.css';
   const toast = ref<InstanceType<typeof ToastNotice>>();

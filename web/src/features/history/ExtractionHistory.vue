@@ -2,16 +2,7 @@
   import PageNavigation from '../../components/PageNavigation.vue';
   import ToastNotice from '../../components/ToastNotice.vue';
   import { computed, onMounted, onUnmounted, ref } from 'vue';
-  import {
-    AlertCircle,
-    CheckCircle2,
-    ChevronLeft,
-    ChevronRight,
-    Copy,
-    Search,
-    RefreshCw,
-    Trash2
-  } from 'lucide-vue-next';
+  import { AlertCircle, CheckCircle2, Copy, Search, RefreshCw, Trash2 } from '@lucide/vue';
   import { api } from '../../app/api';
   import { copyText } from '../../lib/clipboard/clipboard';
   import DateTime from '../../components/DateTime.vue';

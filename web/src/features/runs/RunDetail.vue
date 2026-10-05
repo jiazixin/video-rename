@@ -15,11 +15,13 @@
     Pause,
     Play,
     Clock3
-  } from 'lucide-vue-next';
+  } from '@lucide/vue';
   import Modal from '../../components/Modal.vue';
   import StatusBadge from '../../components/StatusBadge.vue';
   import PageNavigation from '../../components/PageNavigation.vue';
-  import { clockPart, statusNames, time, type Run } from '../../app/api';
+  import { clockPart, time } from '../../lib/date/format';
+  import { statusNames } from '../../app/labels';
+  import { type Run } from '../../app/contracts';
   import { copyText } from '../../lib/clipboard/clipboard';
   import { useRunRecords, type RunItem } from './use-run-records';
   import './run-detail.css';

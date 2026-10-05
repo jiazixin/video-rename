@@ -1,7 +1,8 @@
 <script setup lang="ts">
   import { computed, onUnmounted, ref, watch } from 'vue';
-  import { RefreshCw, CircleStop, Folder } from 'lucide-vue-next';
-  import { time, type LibraryScanStatus } from '../../app/api';
+  import { RefreshCw, CircleStop, Folder } from '@lucide/vue';
+  import { time } from '../../lib/date/format';
+  import { type LibraryScanStatus } from '../../app/contracts';
   const props = defineProps<{
     status: LibraryScanStatus;
     submitting?: boolean;

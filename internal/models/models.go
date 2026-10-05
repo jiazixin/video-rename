@@ -103,7 +103,7 @@ func (p *Profile) Validate() error {
 	if p.PromptID <= 0 || strings.TrimSpace(p.Body) == "" {
 		return fmt.Errorf("请选择提示词")
 	}
-	var c config.Config
+	var c config.TaskConfig
 	if err := c.ApplyModel(p.ServerConfig, p.Body); err != nil {
 		return err
 	}
@@ -232,7 +232,7 @@ func (s Store) Snapshot(p Profile) (string, error) {
 	}
 	return s.DB.Seal(string(raw))
 }
-func (s Store) ApplySnapshot(value string, c *config.Config) error {
+func (s Store) ApplySnapshot(value string, c *config.TaskConfig) error {
 	if value == "" {
 		return fmt.Errorf("任务没有模型配置快照，请重新创建任务")
 	}

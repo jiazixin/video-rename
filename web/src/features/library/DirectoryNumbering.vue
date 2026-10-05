@@ -2,7 +2,7 @@
   import PageNavigation from '../../components/PageNavigation.vue';
   import { computed, ref, onDeactivated, watch, nextTick } from 'vue';
   import { useNumberingTask } from './numbering-task';
-  import { Hash, History, Undo2 } from 'lucide-vue-next';
+  import { Hash, History, Undo2 } from '@lucide/vue';
   import { api, ApiError } from '../../app/api';
   import DateTime from '../../components/DateTime.vue';
   import Modal from '../../components/Modal.vue';

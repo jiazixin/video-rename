@@ -20,7 +20,7 @@
 </script>
 <script setup lang="ts">
   import { onMounted, onUnmounted, ref } from 'vue';
-  import { X } from 'lucide-vue-next';
+  import { X } from '@lucide/vue';
   defineOptions({ inheritAttrs: false });
   defineProps<{ title: string; wide?: boolean; player?: boolean; contained?: boolean }>();
   const emit = defineEmits<{ close: [] }>();

@@ -1,7 +1,7 @@
 <script setup lang="ts">
   import ToastNotice from '../../components/ToastNotice.vue';
   import { computed, onMounted, ref } from 'vue';
-  import { Save, Images, Music2, Link2, Check, ArrowRight } from 'lucide-vue-next';
+  import { Save, Images, Music2, Link2, Check, ArrowRight } from '@lucide/vue';
   import { api } from '../../app/api';
   const toast = ref<InstanceType<typeof ToastNotice>>();
   type Rules = { padding: number; lowercase: boolean; prefix: string; compact: boolean };

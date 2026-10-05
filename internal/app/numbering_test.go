@@ -19,7 +19,7 @@ func TestImageNumberingAPI(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "photo.PNG"), []byte("picture"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Workers: 1, Auth: config.AuthConfig{Username: "admin", Password: "test-password"}})
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestImageNumberingAPI(t *testing.T) {
 
 func TestNumberingSettingsAPI(t *testing.T) {
 	root := t.TempDir()
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Workers: 1, Auth: config.AuthConfig{Username: "admin", Password: "test-password"}})
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestAudioNumberingAPI(t *testing.T) {
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "track.MP3"), []byte("audio"), 0600)
 	os.WriteFile(filepath.Join(root, "cover.png"), []byte("cover"), 0600)
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Workers: 1, Auth: config.AuthConfig{Username: "admin", Password: "test-password"}})
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -43,13 +43,13 @@ func TestBatchCompletionStatus(t *testing.T) {
 			if _, err := m.DB.Exec(`INSERT INTO marks(identity,size,mtime,source) SELECT identity,size,mtime,'marked' FROM entries WHERE name LIKE 'skip-%'`); err != nil {
 				t.Fatal(err)
 			}
-			m.Analyze = func(_ context.Context, _ *config.Config, job domain.VideoJob, _, _ string) (string, error) {
+			m.Analyze = func(_ context.Context, _ *config.TaskConfig, job domain.VideoJob, _, _ string) (string, error) {
 				if strings.HasPrefix(filepath.Base(job.Path), "bad-") {
 					return "", fmt.Errorf("fixture naming failure")
 				}
 				return "renamed", nil
 			}
-			m.Prepare = func(_ context.Context, _ *config.Config, job domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
+			m.Prepare = func(_ context.Context, _ *config.TaskConfig, job domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
 				if strings.HasPrefix(filepath.Base(job.Path), "bad-") {
 					return domain.FrameSet{}, fmt.Errorf("fixture extraction failure")
 				}
@@ -71,15 +71,15 @@ func TestBatchCompletionStatus(t *testing.T) {
 	}
 }
 
-func TestRecoveryCorrectsOnlyMisclassifiedCompletedBatches(t *testing.T) {
+func TestRecoveryPreservesTerminalBatches(t *testing.T) {
 	m, _ := setup(t)
 	cases := []struct {
 		status                string
 		done, skipped, failed int
 		want                  string
 	}{
-		{"partial_failure", 0, 0, 1, "failed"},
-		{"partial_failure", 0, 0, 5, "failed"},
+		{"partial_failure", 0, 0, 1, "partial_failure"},
+		{"partial_failure", 0, 0, 5, "partial_failure"},
 		{"partial_failure", 1, 0, 1, "partial_failure"},
 		{"partial_failure", 0, 1, 1, "partial_failure"},
 		{"partial_failure", 0, 0, 0, "partial_failure"},

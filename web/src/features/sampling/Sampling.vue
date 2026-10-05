@@ -1,7 +1,7 @@
 <script setup lang="ts">
   import ToastNotice from '../../components/ToastNotice.vue';
   import { computed, onMounted, ref } from 'vue';
-  import { Plus, Save, Trash2 } from 'lucide-vue-next';
+  import { Plus, Save, Trash2 } from '@lucide/vue';
   import { api } from '../../app/api';
   import SelectField from '../../components/SelectField.vue';
   import './sampling.css';

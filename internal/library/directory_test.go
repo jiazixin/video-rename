@@ -46,7 +46,7 @@ func TestRenameParentReplacementDoesNotRedirectCommit(t *testing.T) {
 			var err error
 			trigger := "BEFORE INSERT ON operations"
 			if numbering {
-				batch, err = l.PreviewNumbering(dir.ID, "image", "", "name_asc", domain.DefaultNumberingSettings())
+				batch, err = l.PreviewNumberingContext(t.Context(), dir.ID, "image", "", "name_asc", domain.DefaultNumberingSettings())
 				if err != nil {
 					t.Fatal(err)
 				}

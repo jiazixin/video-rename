@@ -88,11 +88,11 @@ func TestSourceChangeWhileWaitingPersistsDiagnostics(t *testing.T) {
 			release2()
 		}
 	}()
-	m.Prepare = func(_ context.Context, _ *config.Config, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
+	m.Prepare = func(_ context.Context, _ *config.TaskConfig, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
 		return fakeFrames(work)
 	}
 	var calls atomic.Int32
-	m.Infer = func(context.Context, *config.Config, []domain.Frame) (string, error) {
+	m.Infer = func(context.Context, *config.TaskConfig, []domain.Frame) (string, error) {
 		calls.Add(1)
 		return "unexpected", nil
 	}

@@ -224,7 +224,7 @@ func TestCredentialsHiddenEncryptedAndSnapshotIndependent(t *testing.T) {
 	if _, err = lib.Save(libraryPrompt); err != nil {
 		t.Fatal(err)
 	}
-	var cfg config.Config
+	var cfg config.TaskConfig
 	if err = s.ApplySnapshot(snapshot, &cfg); err != nil {
 		t.Fatal(err)
 	}

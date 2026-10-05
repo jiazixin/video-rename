@@ -66,7 +66,7 @@ func TestRetryFallbackSnapshotAndActualRequests(t *testing.T) {
 	if err = os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	m.Prepare = func(_ context.Context, _ *config.Config, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
+	m.Prepare = func(_ context.Context, _ *config.TaskConfig, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
 		return fakeFrames(work)
 	}
 	m.Infer = pipeline.Infer
@@ -134,7 +134,7 @@ func TestPermanentErrorGoesDirectlyToFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls []string
-	m.Analyze = func(_ context.Context, cfg *config.Config, _ domain.VideoJob, _, _ string) (string, error) {
+	m.Analyze = func(_ context.Context, cfg *config.TaskConfig, _ domain.VideoJob, _, _ string) (string, error) {
 		calls = append(calls, cfg.Server.Model)
 		if cfg.Server.Model == "fallback" {
 			return "成功", nil
@@ -185,11 +185,13 @@ func TestRetainedFramesSurviveRenameRestoreAndModelChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	extracted := 0
-	m.Prepare = func(_ context.Context, _ *config.Config, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
+	m.Prepare = func(_ context.Context, _ *config.TaskConfig, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
 		extracted++
 		return fakeFrames(work)
 	}
-	m.Infer = func(context.Context, *config.Config, []domain.Frame) (string, error) { return "第一次标题", nil }
+	m.Infer = func(context.Context, *config.TaskConfig, []domain.Frame) (string, error) {
+		return "第一次标题", nil
+	}
 	id, err := m.Create(Request{Targets: []int64{1}, Key: "retain-first"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
@@ -207,7 +209,9 @@ func TestRetainedFramesSurviveRenameRestoreAndModelChange(t *testing.T) {
 	if _, err = (models.Store{DB: m.DB}).Save(profile); err != nil {
 		t.Fatal(err)
 	}
-	m.Infer = func(context.Context, *config.Config, []domain.Frame) (string, error) { return "第二次标题", nil }
+	m.Infer = func(context.Context, *config.TaskConfig, []domain.Frame) (string, error) {
+		return "第二次标题", nil
+	}
 	id, err = m.Create(Request{Targets: []int64{1}, Key: "retain-second"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
@@ -236,7 +240,7 @@ func TestRetryDisabledExhaustionAndCancel(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			calls := 0
-			m.Analyze = func(context.Context, *config.Config, domain.VideoJob, string, string) (string, error) {
+			m.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 				calls++
 				if mode == "cancelled" {
 					cancel()
@@ -275,7 +279,7 @@ func TestUnusableFilenameRetriesBeforeCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
-	m.Analyze = func(context.Context, *config.Config, domain.VideoJob, string, string) (string, error) {
+	m.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 		calls++
 		if calls == 1 {
 			return "...", nil

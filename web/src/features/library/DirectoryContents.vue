@@ -1,6 +1,6 @@
 <script setup lang="ts">
-  import { Folder, FileVideo, Image, FileAudio } from 'lucide-vue-next';
-  import type { Entry } from '../../app/api';
+  import { Folder, FileVideo, Image, FileAudio } from '@lucide/vue';
+  import { type Entry } from '../../app/contracts';
   defineProps<{ contents?: Entry['contents']; inline?: boolean }>();
   const types = [
     { key: 'directories', label: '子目录', icon: Folder },

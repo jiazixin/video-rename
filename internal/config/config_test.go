@@ -1,13 +1,13 @@
 package config
 
 import (
-	"fmt"
-	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // minimalYAML 仅包含必填项,其余取默认值。
@@ -40,8 +40,15 @@ func TestLoadMinimalAppliesDefaults(t *testing.T) {
 		t.Fatalf("加载失败: %v", err)
 	}
 
-	if cfg.Workers != 2 {
-		t.Errorf("workers 默认值 = %d, 期望 2", cfg.Workers)
+	if cfg.Listen != "127.0.0.1" || cfg.Port != 8790 || cfg.Storage != "../data" || cfg.TempStorage != "../.cache" || cfg.ConfigDir == "" {
+		t.Fatalf("deployment defaults: %+v", cfg)
+	}
+}
+
+func TestDefaultFrameSettings(t *testing.T) {
+	cfg := DefaultFrameSettings()
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
 	}
 	if cfg.Sampling.MaxFrames != 32 || cfg.Sampling.SkipStart != 0.05 || cfg.Sampling.SkipEnd != 0.05 {
 		t.Errorf("sampling 默认值异常: %+v", cfg.Sampling)
@@ -70,11 +77,8 @@ func TestLoadFullExample(t *testing.T) {
 		t.Fatalf("加载完整示例失败: %v", err)
 	}
 
-	if len(cfg.Sampling.ParsedDuration) != 5 || len(cfg.Sampling.ParsedSize) != 4 {
-		t.Errorf("规则表长度异常")
-	}
-	if cfg.Prompt != "" {
-		t.Error("YAML 不应填充任务提示词")
+	if cfg.Path != "/srv/videos" || cfg.Auth.Username != "admin" || cfg.Auth.Password != "test-password" {
+		t.Fatalf("deployment fields: %+v", cfg)
 	}
 }
 
@@ -117,7 +121,7 @@ server:
 }
 
 func TestInvalidStrategyRejected(t *testing.T) {
-	_, err := loadFrameSettings(t, minimalYAML+"sampling:\n  strategy: \"random\"\n", "config.yaml")
+	_, err := loadFrameSettings(t, minimalYAML+"sampling:\n  strategy: \"random\"\n")
 	if err == nil || !strings.Contains(err.Error(), "strategy") {
 		t.Fatalf("非法枚举应报错, got %v", err)
 	}
@@ -151,13 +155,13 @@ func TestRuleTableValidation(t *testing.T) {
 		"大小表非递增":  base + "  size_rules:\n    - {max_mib: 200, frames: 3}\n    - {max_mib: 50, frames: 5}\n    - {max_mib: null, frames: 8}\n",
 	}
 	for name, y := range cases {
-		if _, err := loadFrameSettings(t, y, "config.yaml"); err == nil {
+		if _, err := loadFrameSettings(t, y); err == nil {
 			t.Errorf("%s 应报错", name)
 		}
 	}
 	// 未使用的表也必须合法:duration 策略下 size_rules 仍要校验
 	bad := base + "  strategy: \"duration\"\n  size_rules:\n    - {max_mib: 100, frames: 3}\n    - {max_mib: 50, frames: 5}\n    - {max_mib: null, frames: 8}\n"
-	if _, err := loadFrameSettings(t, bad, "config.yaml"); err == nil {
+	if _, err := loadFrameSettings(t, bad); err == nil {
 		t.Error("未使用表的违规配置应报错")
 	}
 }
@@ -168,7 +172,7 @@ func TestRuleTableReplacesDefaults(t *testing.T) {
     - {max_duration: "1m", frames: 4}
     - {max_duration: null, frames: 6}
 `
-	cfg, err := loadFrameSettings(t, y, "config.yaml")
+	cfg, err := loadFrameSettings(t, y)
 	if err != nil {
 		t.Fatalf("加载失败: %v", err)
 	}
@@ -189,11 +193,11 @@ func TestRuleTableReplacesDefaults(t *testing.T) {
 
 func TestSkipRatioValidation(t *testing.T) {
 	y := minimalYAML + "sampling:\n  skip_start_ratio: 0.6\n  skip_end_ratio: 0.5\n"
-	if _, err := loadFrameSettings(t, y, "config.yaml"); err == nil {
+	if _, err := loadFrameSettings(t, y); err == nil {
 		t.Error("跳过比例之和 ≥ 1 应报错")
 	}
 	y = minimalYAML + "sampling:\n  skip_start_ratio: -0.1\n"
-	if _, err := loadFrameSettings(t, y, "config.yaml"); err == nil {
+	if _, err := loadFrameSettings(t, y); err == nil {
 		t.Error("负跳过比例应报错")
 	}
 }
@@ -201,12 +205,12 @@ func TestSkipRatioValidation(t *testing.T) {
 func TestImagesValidation(t *testing.T) {
 	for _, v := range []string{"64", "4096"} {
 		y := minimalYAML + "images:\n  max_dimension: " + v + "\n"
-		if _, err := loadFrameSettings(t, y, "config.yaml"); err == nil {
+		if _, err := loadFrameSettings(t, y); err == nil {
 			t.Errorf("max_dimension=%s 应报错", v)
 		}
 	}
 	y := minimalYAML + "images:\n  jpeg_quality: 16\n"
-	if _, err := loadFrameSettings(t, y, "config.yaml"); err == nil {
+	if _, err := loadFrameSettings(t, y); err == nil {
 		t.Error("jpeg_quality=16 应报错")
 	}
 }
@@ -221,14 +225,14 @@ func TestMissingFileAndEmptyPath(t *testing.T) {
 }
 
 func TestPromptHashStable(t *testing.T) {
-	cfg, err := loadTemp(t, minimalYAML, "config.yaml")
-	if err != nil {
-		t.Fatal(err)
+	a := TaskConfig{Prompt: "任务要求"}
+	b := TaskConfig{Prompt: "任务要求"}
+	if a.PromptHash() != b.PromptHash() {
+		t.Fatal("identical prompts must have identical hashes")
 	}
-	h1 := cfg.PromptHash()
-	cfg2, _ := loadTemp(t, minimalYAML, "config.yaml")
-	if cfg2.PromptHash() != h1 {
-		t.Error("相同 prompt 哈希应稳定")
+	b.Prompt = "修改后的任务要求"
+	if a.PromptHash() == b.PromptHash() {
+		t.Fatal("different prompts must change the hash")
 	}
 }
 
@@ -239,9 +243,9 @@ func TestRejectPromptInYAML(t *testing.T) {
 }
 
 // Media validation fixtures decode directly into runtime fields; Load never accepts them.
-func loadFrameSettings(t *testing.T, content, _ string) (*Config, error) {
+func loadFrameSettings(t *testing.T, content string) (*FrameSettings, error) {
 	t.Helper()
-	c := defaults()
+	c := DefaultFrameSettings()
 	value := struct {
 		Sampling SamplingConfig `yaml:"sampling"`
 		Images   ImagesConfig   `yaml:"images"`
@@ -250,10 +254,10 @@ func loadFrameSettings(t *testing.T, content, _ string) (*Config, error) {
 		return nil, err
 	}
 	c.Sampling, c.Images = value.Sampling, value.Images
-	if errs := c.validateSampling(); len(errs) > 0 {
-		return nil, fmt.Errorf("%s", strings.Join(errs, "; "))
+	if err := c.Validate(); err != nil {
+		return nil, err
 	}
-	return c, nil
+	return &c, nil
 }
 
 func TestFrameSettingsNotInDeploymentYAML(t *testing.T) {

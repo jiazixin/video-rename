@@ -1,7 +1,7 @@
 <script setup lang="ts">
   import PageNavigation from '../../components/PageNavigation.vue';
   import { computed, onDeactivated, ref } from 'vue';
-  import { Hash, History, Undo2 } from 'lucide-vue-next';
+  import { Hash, History, Undo2 } from '@lucide/vue';
   import { api, ApiError } from '../../app/api';
   import DateTime from '../../components/DateTime.vue';
   import Modal from '../../components/Modal.vue';

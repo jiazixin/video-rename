@@ -175,6 +175,9 @@ func TestResponseBodyCancellationDoesNotRetry(t *testing.T) {
 		w.WriteHeader(200)
 		w.(http.Flusher).Flush()
 		cancel()
+		// Keep the body open until transport cancellation reaches the server.
+		// Returning now would race cancellation with a completed empty response.
+		<-r.Context().Done()
 	}))
 	defer srv.Close()
 	res, err := newTestClient(testConfig(t, srv.URL)).Title(ctx, "p", frameSet(1))

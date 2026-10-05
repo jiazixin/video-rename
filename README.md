@@ -21,6 +21,8 @@ cp configs/config.example.yaml configs/config.local.yaml
 
 默认访问 `http://127.0.0.1:8790`。局域网访问可将 listen 改为 `0.0.0.0`。支持 `--config/-f`、`--help` 和 `--version`。
 
+普通构建的版本为 `dev`，有 Git 构建信息时附带提交号；工作区存在未提交修改时额外显示 `modified`。正式版本在构建时注入，不再在源码和私有 Web 包中重复维护，详见 [构建版本](docs/IMPLEMENTATION.md#构建版本)。
+
 ## 配置约定
 
 ```yaml

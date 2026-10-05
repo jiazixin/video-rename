@@ -67,7 +67,7 @@ var durationOptions = []json.Options{
 	jsonv1.FormatDurationAsNano(true),
 }
 
-func Key(job domain.VideoJob, cfg *config.Config) string {
+func Key(job domain.VideoJob, cfg *config.TaskConfig) string {
 	raw, _ := json.Marshal(struct {
 		Version  int
 		Snapshot domain.Snapshot
@@ -174,13 +174,6 @@ func (c *Cache) publishStatsLocked() {
 // manifest, or cleanup I/O performed under the cache's work lock.
 func (c *Cache) Stats() Stats {
 	return *c.stats.Load()
-}
-func (c *Cache) SetLimit(n int64) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.limit = n
-	c.signal()
-	return c.pruneLocked(time.Now(), 0)
 }
 func (c *Cache) Sweep(now time.Time) error {
 	c.mu.Lock()

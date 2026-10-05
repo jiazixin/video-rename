@@ -16,6 +16,14 @@
 | notifications、tokenusage、runstats | 通知队列、逐次请求用量、批次及条目性能 |
 | web/src/app、layouts、components、features、lib、styles | Vue装配、布局、复用组件、业务域、共享技术能力及样式 |
 
+命令入口分为 `main.go`（启动/退出）、`cli.go`（参数与帮助）、`version.go`（构建身份）。HTTP 应用的 `app.go` 仅管理依赖和生命周期，`routes.go` 统一装配，`http.go` 负责共同的请求/响应处理，`assets.go` 提供嵌入资源；目录、运行、计划、历史分别位于 `library.go`、`runs.go`、`schedules.go`、`history.go`。这些文件仍在同一 app 包内，沿用原有业务包边界。
+
+部署 `config.Config` 与运行 `config.TaskConfig` 分离：任务链只接收从持久化模型/抽帧设置生成的快照，不复制监听、路径或登录字段。采样默认值和校验集中于 `config/sampling.go`。部署 YAML、模型/采样快照的字段协议不变。
+
+批次的创建冻结、执行调度、逐项处理与查询分别位于 `jobs/create.go`、`execute.go`、`processing.go`、`runs.go`；编号名称规划、预览、查询、文件提交和恢复位于 `library/numbering_*.go`。拆文件不改变锁、事务、身份校验及恢复顺序。启动仅中断活动批次，不修正已结束批次的历史分类。
+
+前端 `app/api.ts` 管理请求/会话，`app/contracts.ts` 声明 API 类型，`app/labels.ts` 管理跨页面标签；日期/大小展示来自 `lib/date` 和 `lib/bytes`。目录页的预览、多选和内联编辑在 library 域内各自拥有状态，页面协调目录加载与激活/停用。登录专属样式位于 auth 域。图标使用锁定的 `@lucide/vue`，不再导入废弃包。
+
 ## 持久化与文件安全
 
 `internal/storage/schema.sql` 是唯一建表来源，空数据库内事务创建全部表与索引，当前结构标识 **20261005**。已有不支持结构拒绝启动且不修改；项目不提供旧库升级。实体 ID 使用 AUTOINCREMENT。写池单连接，读池最多4连接且设置 mode=ro/query_only；每次连接建立启用外键、FULL同步和busy_timeout。相关分页计数与数据读取共用只读事务，结束后才读取实时条目状态，避免嵌套占用读池。
@@ -96,7 +104,24 @@ go vet ./...
 go build -o bin/video-rename ./cmd/video-rename
 ```
 
-前端格式由锁定版本的Prettier及 `web/.prettierrc.json` 统一管理，执行 `npm --prefix web run format` 整理Vue/CSS/TS。Vue保留多语句事件分号，模板保留空白语义；SVG固定文字的局部忽略用于保持原始文本。
+前端格式由锁定版本的Prettier及 `web/.prettierrc.json` 统一管理，执行 `npm --prefix web run format` 整理Vue/CSS/TS。Vue保留多语句事件分号，模板保留空白语义；SVG固定文字的局部忽略用于保持原始文本。`web/tsconfig.json` 开启 `noUnusedLocals` 与 `noUnusedParameters`，既有 `check` 和 `build` 会拒绝闲置导入、局部变量与参数；这不等于验证所有导出符号都有调用方。
+
+### 构建版本
+
+`--version` 和启动日志共用 `cmd/video-rename/version.go`。普通构建明确显示 `dev`，读取 Go 内嵌的 `vcs.revision`（前 12 位）与 `vcs.modified`；源码副本无 VCS 信息、或指定 `-buildvcs=false` 时只显示 `dev`，不会猜测发布版本。运行二进制不需要 Git，也不读取运行目录中的仓库。语义依据见 [Go BuildSetting](https://pkg.go.dev/runtime/debug#BuildSetting)。
+
+发布构建从已确定版本的干净标签检出执行，先完成 Web 构建，再用标签注入版本。以下命令拒绝未提交变更或没有指向当前提交的标签：
+
+```bash
+test -z "$(git status --porcelain)" &&
+release_version="$(git describe --tags --exact-match)" &&
+go build -buildvcs=true -ldflags "-X main.version=$release_version" -o bin/video-rename ./cmd/video-rename &&
+./bin/video-rename --version
+```
+
+私有 Web 包不独立发布，不维护另一份应用版本；依赖版本仍由 npm 清单与锁文件控制。数据库结构号、缓存命名空间与编号快照版本各有存储语义，不与应用版本联动。构建身份不替代 Web 预构建检查，必须遵守上述资源生成顺序。
+
+### 专项验证
 
 默认Go测试包含隔离SQLite、文件操作、任务调度、认证及本地模型/通知HTTP夹具，需要临时本地监听权限。临时文件和端口与真实服务分开。
 

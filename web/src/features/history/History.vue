@@ -12,8 +12,9 @@
     Copy,
     Undo2,
     Trash2
-  } from 'lucide-vue-next';
-  import { api, key, actionNames } from '../../app/api';
+  } from '@lucide/vue';
+  import { api, key } from '../../app/api';
+  import { actionNames } from '../../app/labels';
   import { copyText } from '../../lib/clipboard/clipboard';
   import DateTime from '../../components/DateTime.vue';
   import DateField from '../../components/DateField.vue';

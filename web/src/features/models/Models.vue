@@ -10,8 +10,10 @@
     Copy,
     Trash2,
     ScanEye
-  } from 'lucide-vue-next';
-  import { api, time, type ModelProfile, type PromptProfile } from '../../app/api';
+  } from '@lucide/vue';
+  import { api } from '../../app/api';
+  import { time } from '../../lib/date/format';
+  import { type ModelProfile, type PromptProfile } from '../../app/contracts';
   import Modal from '../../components/Modal.vue';
   import SelectField from '../../components/SelectField.vue';
   import './models.css';

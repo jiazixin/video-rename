@@ -1,8 +1,9 @@
 <script setup lang="ts">
   import ToastNotice from '../../components/ToastNotice.vue';
   import { computed, onMounted, ref } from 'vue';
-  import { RefreshCw, Save, Trash2, CircleHelp } from 'lucide-vue-next';
-  import { api, type ModelProfile } from '../../app/api';
+  import { RefreshCw, Save, Trash2, CircleHelp } from '@lucide/vue';
+  import { api } from '../../app/api';
+  import { type ModelProfile } from '../../app/contracts';
   import Modal from '../../components/Modal.vue';
   import SelectField from '../../components/SelectField.vue';
   const toast = ref<InstanceType<typeof ToastNotice>>();

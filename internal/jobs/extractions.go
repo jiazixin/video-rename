@@ -22,7 +22,7 @@ func recoverExtractions(db *storage.Store) error {
 
 // The record ends when usable frames are ready, independently of inference and rename.
 // Cache hits are explicit so their short duration is not mistaken for a fresh extraction.
-func (m *Manager) prepareFrames(ctx context.Context, run Run, entry int64, cfg *config.Config, job domain.VideoJob, probe, ffmpeg string, extracted func()) (*framecache.Lease, error) {
+func (m *Manager) prepareFrames(ctx context.Context, run Run, entry int64, cfg *config.TaskConfig, job domain.VideoJob, probe, ffmpeg string, extracted func()) (*framecache.Lease, error) {
 	// A pause interrupts capacity waits, but never an extraction already started.
 	release := extracted
 	defer func() { release() }()
@@ -41,7 +41,7 @@ func (m *Manager) prepareFrames(ctx context.Context, run Run, entry int64, cfg *
 	}
 }
 
-func (m *Manager) prepareFramesOnce(ctx, schedule context.Context, run Run, entry int64, cfg *config.Config, job domain.VideoJob, probe, ffmpeg string) (lease *framecache.Lease, err error) {
+func (m *Manager) prepareFramesOnce(ctx, schedule context.Context, run Run, entry int64, cfg *config.TaskConfig, job domain.VideoJob, probe, ffmpeg string) (lease *framecache.Lease, err error) {
 	started := time.Now()
 	var id int64
 	cached := true

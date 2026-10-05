@@ -8,6 +8,33 @@ import (
 )
 
 func (a *App) systemSettingsRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/system", func(w http.ResponseWriter, r *http.Request) {
+		_, _, err := a.Jobs.Tools()
+		message := ""
+		if err != nil {
+			message = err.Error()
+		}
+		model := ""
+		configured := false
+		store := models.Store{DB: a.DB}
+		profiles, modelErr := store.List()
+		if modelErr != nil {
+			failure(w, modelErr)
+			return
+		}
+		for _, p := range profiles {
+			if p.Ready {
+				configured = true
+			}
+			if p.Default {
+				model = p.Model
+			}
+		}
+		if !configured && message == "" {
+			message = "请先在模型配置页面完善一个模型"
+		}
+		send(w, 200, map[string]any{"root_id": 1, "model": model, "ready": err == nil && configured, "message": message})
+	})
 	store := systemsettings.Store{DB: a.DB}
 	mux.HandleFunc("GET /api/system/settings", func(w http.ResponseWriter, r *http.Request) {
 		s, err := store.Get()

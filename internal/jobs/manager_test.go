@@ -40,7 +40,7 @@ func setup(t *testing.T) (*Manager, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := New(db, l, &config.Config{Workers: 2})
+	m, err := New(db, l, &config.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestAutomaticRenameSkipRestoreAndOverlap(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
-	m.Analyze = func(context.Context, *config.Config, domain.VideoJob, string, string) (string, error) {
+	m.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 		calls.Add(1)
 		return "新的标题", nil
 	}
@@ -119,7 +119,7 @@ func TestRunTokenCountAccumulatesAndSurvivesHistoryDeletion(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	m.Analyze = func(ctx context.Context, _ *config.Config, job domain.VideoJob, _, _ string) (string, error) {
+	m.Analyze = func(ctx context.Context, _ *config.TaskConfig, job domain.VideoJob, _, _ string) (string, error) {
 		response := `{}`
 		if filepath.Base(job.Path) == "a.mp4" {
 			response = `{"usage":{"total_tokens":120}}`
@@ -158,7 +158,7 @@ func TestManualProtectsFileAndCancel(t *testing.T) {
 	if _, err := m.Library.Rename(e.ID, e.Version, "manual.mp4", "manual-test"); err != nil {
 		t.Fatal(err)
 	}
-	m.Analyze = func(context.Context, *config.Config, domain.VideoJob, string, string) (string, error) {
+	m.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 		t.Error("protected file analyzed")
 		return "", nil
 	}
@@ -224,7 +224,7 @@ func TestChangedDuringAnalysisDoesNotRename(t *testing.T) {
 	m, root := setup(t)
 	p := filepath.Join(root, "a.mp4")
 	os.WriteFile(p, []byte("video"), 0600)
-	m.Analyze = func(_ context.Context, _ *config.Config, j domain.VideoJob, _, _ string) (string, error) {
+	m.Analyze = func(_ context.Context, _ *config.TaskConfig, j domain.VideoJob, _, _ string) (string, error) {
 		return "changed", os.WriteFile(j.Path, []byte("different content"), 0600)
 	}
 	id, err := m.Create(Request{Targets: []int64{1}, Key: "source-changing"}, "manual", 0)
@@ -244,7 +244,7 @@ func TestCancelInFlight(t *testing.T) {
 	m, root := setup(t)
 	os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600)
 	started := make(chan struct{})
-	m.Analyze = func(ctx context.Context, _ *config.Config, _ domain.VideoJob, _, _ string) (string, error) {
+	m.Analyze = func(ctx context.Context, _ *config.TaskConfig, _ domain.VideoJob, _, _ string) (string, error) {
 		close(started)
 		<-ctx.Done()
 		return "", ctx.Err()
@@ -320,7 +320,7 @@ func TestPromptSnapshotAndIsolation(t *testing.T) {
 		t.Fatal("missing prompt accepted")
 	}
 	var calls atomic.Int32
-	m.Analyze = func(_ context.Context, cfg *config.Config, j domain.VideoJob, _, _ string) (string, error) {
+	m.Analyze = func(_ context.Context, cfg *config.TaskConfig, j domain.VideoJob, _, _ string) (string, error) {
 		calls.Add(1)
 		if cfg.Workers != 4 || cfg.Server.Workers != 4 {
 			t.Error("latest model concurrency not applied")
@@ -330,9 +330,6 @@ func TestPromptSnapshotAndIsolation(t *testing.T) {
 		}
 		if !strings.HasPrefix(cfg.Prompt, "批次创建时的要求") || !strings.HasSuffix(cfg.Prompt, systemsettings.DefaultFixedPrompt) {
 			t.Errorf("snapshot changed: %s", cfg.Prompt)
-		}
-		if cfg == m.Config {
-			t.Error("shared config was mutated")
 		}
 		return "新标题" + filepath.Base(j.Path), nil
 	}
@@ -394,7 +391,7 @@ func TestManuallyMarkedFilesSkipAndCanBeReenabled(t *testing.T) {
 		t.Fatalf("%+v", result)
 	}
 	var calls int
-	m.Analyze = func(context.Context, *config.Config, domain.VideoJob, string, string) (string, error) {
+	m.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 		calls++
 		return "renamed", nil
 	}
@@ -422,7 +419,7 @@ func TestNamingFailureKeepsFileAndRecordsFailure(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "original.mp4"), []byte("video"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	m.Analyze = func(context.Context, *config.Config, domain.VideoJob, string, string) (string, error) {
+	m.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 		return "", &domain.JobError{Code: domain.CodeNamingFailed, Message: "命名失败：模型表示无法生成符合要求的标题，已保留原文件名", RawResponse: "命名失败"}
 	}
 	id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "naming-failure-test"}, "manual", 0)
@@ -456,7 +453,7 @@ func TestRunItemsRecordProcessingTiming(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "timed.mp4"), []byte("video"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	m.Analyze = func(context.Context, *config.Config, domain.VideoJob, string, string) (string, error) {
+	m.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 		time.Sleep(20 * time.Millisecond)
 		return "计时标题", nil
 	}

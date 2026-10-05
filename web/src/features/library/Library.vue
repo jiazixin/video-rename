@@ -25,19 +25,13 @@
     CircleCheck,
     CircleMinus,
     Images
-  } from 'lucide-vue-next';
+  } from '@lucide/vue';
   import './library-actions.css';
-  import {
-    api,
-    key,
-    time,
-    size,
-    type Entry,
-    type Page,
-    type DirectoryState,
-    statusNames,
-    type Run
-  } from '../../app/api';
+  import { api, key } from '../../app/api';
+  import { time } from '../../lib/date/format';
+  import { size } from '../../lib/bytes/format';
+  import { type Entry, type Page, type DirectoryState, type Run } from '../../app/contracts';
+  import { statusNames } from '../../app/labels';
   import { ModelPicker } from '../models';
   import StatusBadge from '../../components/StatusBadge.vue';
   import DirectoryStatus from './DirectoryStatus.vue';
@@ -45,7 +39,7 @@
   import LibraryTableHeader from './LibraryTableHeader.vue';
   import DateTime from '../../components/DateTime.vue';
   import Modal from '../../components/Modal.vue';
-  import { Trash2 } from 'lucide-vue-next';
+  import { Trash2 } from '@lucide/vue';
   import SelectField from '../../components/SelectField.vue';
   import VideoPlayer from './VideoPlayer.vue';
   import AudioPlayer from './AudioPlayer.vue';
@@ -53,19 +47,37 @@
   import DirectoryNumbering from './DirectoryNumbering.vue';
   import ScanStatus from './ScanStatus.vue';
   import { useLibraryScan } from './library-scan';
+  import {
+    video,
+    isImage,
+    isAudio,
+    markable,
+    protectedMedia,
+    marked,
+    selectable,
+    normalizedExtension
+  } from './entry-types';
+  import { useMediaPreview } from './media-preview';
+  import { useLibrarySelection } from './selection';
+  import { useInlineRename } from './inline-rename';
   defineProps<{ ready: boolean }>();
   const emit = defineEmits<{ run: [] }>();
   const toast = ref<InstanceType<typeof ToastNotice>>();
-  const multi = ref(false),
-    chosen = ref(new Map<number, Entry>()),
-    batch = ref(''),
+  const {
+    multi,
+    chosen,
+    autoEntries,
+    extractEntries,
+    markEntries,
+    restoreEntries,
+    clearSelection,
+    selectEntry,
+    selectPage,
+    resetSelectionAnchor
+  } = useLibrarySelection(() => page.value?.items || []);
+  const batch = ref(''),
     batchError = ref(''),
-    batchProgress = ref(''),
-    playing = ref<Entry>();
-  const preview = ref<Entry>(),
-    imageError = ref(false),
-    imageBusy = ref(false),
-    galleryError = ref('');
+    batchProgress = ref('');
   const deleting = ref<Entry>(),
     deleteError = ref(''),
     deletePath = ref('');
@@ -108,7 +120,7 @@
       toast.value?.show(summary);
       deletingBatch.value = active.value ? failed : [];
       deleteBatchError.value = failed.length ? [summary, ...errors].join('\n') : '';
-      selectionAnchor = undefined;
+      resetSelectionAnchor();
       if (directory === dir.value && !disposed) await load();
     } finally {
       saving.value = false;
@@ -142,63 +154,6 @@
       saving.value = false;
     }
   }
-  const video = (e: Entry) =>
-    /\.(mp4|m4v|mkv|mov|avi|webm|flv|wmv|mpg|mpeg|ts|m2ts|mts|3gp|ogv|rmvb|asf|vob)$/i.test(e.name);
-  const isImage = (e: Entry) =>
-    e.kind === 'file' && /\.(jpe?g|png|gif|webp|avif|bmp)$/i.test(e.name);
-  const isAudio = (e: Entry) =>
-    e.kind === 'file' &&
-    /\.(mp3|m4a|m4b|aac|flac|wav|wave|ogg|oga|opus|wma|aiff|aif|caf)$/i.test(e.name);
-  let imageSequence = 0;
-  function closeImage() {
-    imageSequence++;
-    preview.value = undefined;
-    imageBusy.value = false;
-    galleryError.value = '';
-  }
-  function showImage(e: Entry) {
-    imageSequence++;
-    preview.value = e;
-    imageBusy.value = false;
-    imageError.value = false;
-    galleryError.value = '';
-  }
-  async function switchImage(previous: boolean) {
-    if (!preview.value || imageBusy.value) return;
-    const id = preview.value.id,
-      request = ++imageSequence;
-    imageBusy.value = true;
-    galleryError.value = '';
-    try {
-      const direction = (sort.value === 'name_desc' ? !previous : previous) ? 'previous' : 'next';
-      const next = await api<Entry>(`/entries/${id}/image-neighbor?direction=${direction}`);
-      if (request === imageSequence && preview.value?.id === id) showImage(next);
-    } catch (e) {
-      if (request === imageSequence) galleryError.value = (e as Error).message;
-    } finally {
-      if (request === imageSequence) imageBusy.value = false;
-    }
-  }
-  function imageKeys(e: KeyboardEvent) {
-    if (!preview.value || e.altKey || e.ctrlKey || e.metaKey) return;
-    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
-      e.preventDefault();
-      switchImage(e.key === 'ArrowLeft' || e.key === 'ArrowUp');
-    }
-  }
-  const selectable = (e: Entry) => e.kind === 'file' || e.kind === 'directory';
-  const autoEntries = computed(() =>
-    [...chosen.value.values()].filter(
-      (e) => (e.kind === 'directory' || video(e)) && !e.processed && !e.task_status
-    )
-  );
-  const extractEntries = computed(() =>
-    [...chosen.value.values()].filter((e) => (e.kind === 'directory' || video(e)) && !e.task_status)
-  );
-  const markable = (e: Entry) =>
-    e.kind === 'directory' || (e.kind === 'file' && (video(e) || isImage(e) || isAudio(e)));
-  const protectedMedia = (e: Entry) => (isImage(e) || isAudio(e)) && e.processed === 'marked';
-  const marked = (e: Entry) => (isImage(e) || isAudio(e) ? protectedMedia(e) : !!e.processed);
   function matchesSearchAndType(e: Entry) {
     // SQLite lower() folds ASCII; use the same rule for rows retained locally.
     const lower = (value: string) => value.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
@@ -222,41 +177,6 @@
     if (processingStatus.value === 'processed')
       return ['marked', 'manual', 'automatic'].includes(value);
     return value === processingStatus.value;
-  }
-  const markEntries = computed(() => [...chosen.value.values()].filter(markable));
-  const restoreEntries = computed(() =>
-    [...chosen.value.values()].filter((e) => e.restore_id && !e.task_status)
-  );
-  function toggle(e: Entry) {
-    chosen.value.has(e.id) ? chosen.value.delete(e.id) : chosen.value.set(e.id, e);
-  }
-  let selectionAnchor: number | undefined;
-  function clearSelection() {
-    chosen.value.clear();
-    selectionAnchor = undefined;
-  }
-  function selectEntry(e: Entry, event: MouseEvent) {
-    const rows = page.value?.items || [];
-    const start = rows.findIndex((row) => row.id === selectionAnchor),
-      end = rows.findIndex((row) => row.id === e.id);
-    if (event.shiftKey && start >= 0 && end >= 0) {
-      for (const row of rows.slice(Math.min(start, end), Math.max(start, end) + 1))
-        if (selectable(row)) chosen.value.set(row.id, row);
-    } else {
-      toggle(e);
-      selectionAnchor = e.id;
-    }
-    // Shift-click may target an already selected checkbox; keep the native
-    // checked state in sync even when the selected IDs did not change.
-    (event.currentTarget as HTMLInputElement).checked = chosen.value.has(e.id);
-  }
-  function selectPage(invert = false) {
-    selectionAnchor = undefined;
-    for (const e of page.value?.items || [])
-      if (selectable(e)) {
-        if (invert) toggle(e);
-        else chosen.value.set(e.id, e);
-      }
   }
   function startBatch(action: string) {
     if (saving.value) return;
@@ -312,119 +232,6 @@
       saving.value = false;
     }
   }
-  const videoBusy = ref(false),
-    videoNotice = ref('');
-  const audioPlaying = ref<Entry>(),
-    audioNotice = ref(''),
-    audioBusy = ref(false);
-  // Cross-page switching shared by the video and audio players: replay the
-  // directory's filter, search and sort to find the current entry's neighbour.
-  type MediaList = {
-    kind: 'video' | 'audio';
-    unit: string;
-    match: (e: Entry) => boolean;
-    current: { value: Entry | undefined };
-    notice: { value: string };
-    busy: { value: boolean };
-    token: { value: number };
-  };
-  const videoList: MediaList = {
-    kind: 'video',
-    unit: '集',
-    match: video,
-    current: playing,
-    notice: videoNotice,
-    busy: videoBusy,
-    token: { value: 0 }
-  };
-  const audioList: MediaList = {
-    kind: 'audio',
-    unit: '首',
-    match: isAudio,
-    current: audioPlaying,
-    notice: audioNotice,
-    busy: audioBusy,
-    token: { value: 0 }
-  };
-  function closeMediaList(list: MediaList) {
-    list.token.value++;
-    list.busy.value = false;
-    list.current.value = undefined;
-    list.notice.value = '';
-  }
-  function closePlayback() {
-    closeMediaList(videoList);
-    closeMediaList(audioList);
-  }
-  async function switchMedia(previous: boolean, list: MediaList) {
-    if (!list.current.value || list.busy.value) return;
-    const id = list.current.value.id,
-      request = ++list.token.value;
-    list.busy.value = true;
-    list.notice.value = '';
-    try {
-      let offset = 0,
-        generation = '0',
-        last: Entry | undefined,
-        found = false;
-      // Read the same ordered, filtered directory across page boundaries.
-      while (true) {
-        const params = new URLSearchParams({
-          offset: String(offset),
-          limit: '200',
-          q: q.value,
-          kind: list.kind,
-          status: processingStatus.value,
-          sort: sort.value,
-          generation
-        });
-        const result = await api<Page>(`/directories/${dir.value}/entries?${params}`);
-        if (request !== list.token.value || list.current.value?.id !== id) return;
-        for (const entry of result.items) {
-          if (entry.kind !== 'file' || !list.match(entry)) continue;
-          if (found && !previous) {
-            list.current.value = entry;
-            return;
-          }
-          if (entry.id === id) {
-            found = true;
-            if (previous) {
-              if (last) list.current.value = last;
-              else list.notice.value = `已经是第一${list.unit}`;
-              return;
-            }
-          }
-          last = entry;
-        }
-        if (!result.next) {
-          list.notice.value = found
-            ? `已经是最后一${list.unit}`
-            : '当前文件已不在列表中，请关闭后重新选择';
-          return;
-        }
-        offset = result.next;
-        generation = result.generation;
-      }
-    } catch (e) {
-      if (request === list.token.value) list.notice.value = (e as Error).message;
-    } finally {
-      if (request === list.token.value) list.busy.value = false;
-    }
-  }
-  function switchVideo(previous: boolean) {
-    return switchMedia(previous, videoList);
-  }
-  function switchAudio(previous: boolean) {
-    return switchMedia(previous, audioList);
-  }
-  function play(e: Entry) {
-    closeMediaList(videoList);
-    playing.value = e;
-  }
-  function playAudio(e: Entry) {
-    closeMediaList(audioList);
-    audioPlaying.value = e;
-  }
   const modelConfigID = ref(0);
   const sort = ref('name_asc');
   function toggleSort(field: string) {
@@ -445,10 +252,59 @@
     processingStatus = ref(''),
     pageNumber = ref(1),
     limit = ref(100);
+  const {
+    preview,
+    imageError,
+    imageBusy,
+    galleryError,
+    playing,
+    videoBusy,
+    videoNotice,
+    audioPlaying,
+    audioBusy,
+    audioNotice,
+    closeImage,
+    showImage,
+    switchImage,
+    imageKeys,
+    closePlayback,
+    closeAudio,
+    switchVideo,
+    switchAudio,
+    play,
+    playAudio
+  } = useMediaPreview(() => ({
+    directory: dir.value,
+    search: q.value,
+    status: processingStatus.value,
+    sort: sort.value
+  }));
+  const {
+    inlineFullName,
+    inlineEntry,
+    inlineName,
+    inlineExtension,
+    inlineSaving,
+    inlineError,
+    setInlineInput,
+    cancelInlineRename,
+    beginInlineRename,
+    editInlineExtension,
+    inlineFocusOut,
+    saveInlineRename
+  } = useInlineRename({
+    beforeSave: () => {
+      statusSeq++;
+    },
+    onSaved: async () => {
+      toast.value?.show('名称已更新，历史已保存');
+      await syncEntries();
+    }
+  });
   watch(
     [dir, pageNumber, q, kind, processingStatus, sort, limit, multi],
     () => {
-      selectionAnchor = undefined;
+      resetSelectionAnchor();
     },
     { flush: 'sync' }
   );
@@ -460,90 +316,6 @@
     recursive = ref(true),
     history = ref<any[]>([]);
   let historySequence = 0;
-  const inlineFullName = ref(false);
-  function normalizedExtension(name: string) {
-    const ext = name.match(/\.[^.]+$/)?.[0]?.toLowerCase() || '';
-    return ext === '.jpeg' ? '.jpg' : ext;
-  }
-  const inlineEntry = ref<Entry>(),
-    inlineInput = ref<HTMLInputElement>(),
-    inlineName = ref(''),
-    inlineExtension = ref(''),
-    inlineVersion = ref(0),
-    inlineSaving = ref(false),
-    inlineError = ref('');
-  function setInlineInput(el: unknown) {
-    inlineInput.value = el instanceof HTMLInputElement ? el : undefined;
-  }
-  function cancelInlineRename() {
-    if (inlineSaving.value) return;
-    inlineEntry.value = undefined;
-    inlineError.value = '';
-  }
-  async function beginInlineRename(e: Entry) {
-    if (e.kind !== 'file' || inlineSaving.value) return;
-    inlineFullName.value = false;
-    inlineEntry.value = e;
-    inlineVersion.value = e.version;
-    inlineError.value = '';
-    inlineExtension.value = normalizedExtension(e.name);
-    inlineName.value = e.name.slice(0, e.name.length - (e.name.match(/\.[^.]+$/)?.[0].length || 0));
-    await nextTick();
-    inlineInput.value?.focus();
-    inlineInput.value?.select();
-  }
-  async function editInlineExtension() {
-    if (inlineSaving.value) return;
-    // Move focus before removing the suffix button so keyboard activation does
-    // not look like leaving the editor.
-    inlineInput.value?.focus();
-    const start = inlineName.value.length + 1;
-    inlineName.value += inlineExtension.value;
-    inlineFullName.value = true;
-    await nextTick();
-    inlineInput.value?.focus();
-    inlineInput.value?.setSelectionRange(start, inlineName.value.length);
-  }
-  function inlineFocusOut(event: FocusEvent) {
-    if (
-      event.relatedTarget instanceof Node &&
-      (event.currentTarget as HTMLElement).contains(event.relatedTarget)
-    )
-      return;
-    cancelInlineRename();
-  }
-  async function saveInlineRename() {
-    const e = inlineEntry.value;
-    if (!e || inlineSaving.value) return;
-    if (!inlineName.value.trim()) {
-      inlineError.value = '请输入文件名';
-      return;
-    }
-    const name = inlineName.value + (inlineFullName.value ? '' : inlineExtension.value);
-    if (name === e.name) {
-      cancelInlineRename();
-      return;
-    }
-    inlineSaving.value = true;
-    inlineError.value = '';
-    statusSeq++;
-    try {
-      await api(`/entries/${e.id}/rename`, 'POST', {
-        name,
-        version: inlineVersion.value,
-        key: key()
-      });
-      toast.value?.show('名称已更新，历史已保存');
-      await syncEntries();
-      inlineEntry.value = undefined;
-    } catch (err) {
-      inlineError.value = (err as Error).message;
-      await nextTick();
-      inlineInput.value?.focus();
-    } finally {
-      inlineSaving.value = false;
-    }
-  }
   const trackedRuns = new Set<number>();
   let disposed = false,
     statusSeq = 0;
@@ -623,7 +395,7 @@
     }
   }
   async function load(quiet = false, keepRows = true, canApply?: () => boolean) {
-    if (!quiet) selectionAnchor = undefined;
+    if (!quiet) resetSelectionAnchor();
     const n = ++seq;
     clearTimeout(timer);
     busy.value = !quiet;
@@ -1823,7 +1595,7 @@
     /><p v-if="videoNotice" role="status">{{ videoNotice }}</p
     ><p class="help">← 快退 10 秒 · → 快进 10 秒 · 两侧按钮切换上一集 / 下一集</p></Modal
   >
-  <Modal v-if="audioPlaying" :title="audioPlaying.name" @close="closeMediaList(audioList)"
+  <Modal v-if="audioPlaying" :title="audioPlaying.name" @close="closeAudio()"
     ><AudioPlayer
       :key="audioPlaying.id"
       :src="`/api/entries/${audioPlaying.id}/audio`"

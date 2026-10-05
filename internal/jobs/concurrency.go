@@ -9,7 +9,7 @@ import (
 // Dispatch only when an extraction slot is available. Release that slot once
 // frames are cached; waiting for inference is bounded by pinned cache capacity,
 // not by a fixed number of videos in the run.
-func (m *Manager) processPending(ctx context.Context, run Run, cfg config.Config) error {
+func (m *Manager) processPending(ctx context.Context, run Run, cfg config.TaskConfig) error {
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	var after int64

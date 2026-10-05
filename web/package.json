@@ -1,7 +1,6 @@
 {
   "name": "video-rename-web",
   "private": true,
-  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
@@ -13,7 +12,7 @@
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.5",
-    "lucide-vue-next": "^0.468.0",
+    "@lucide/vue": "1.52.0",
     "vue": "^3.5.13"
   },
   "devDependencies": {

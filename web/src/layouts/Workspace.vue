@@ -9,7 +9,7 @@
     Images,
     ListVideo,
     Coins
-  } from 'lucide-vue-next';
+  } from '@lucide/vue';
   import { api, session } from '../app/api';
   import { computed, ref } from 'vue';
   const props = defineProps<{ page: string; model: string; ready: boolean }>();

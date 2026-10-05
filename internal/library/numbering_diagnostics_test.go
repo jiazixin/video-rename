@@ -18,7 +18,7 @@ func TestNumberingExecutionDiagnosticSurvivesRollbackAndHistory(t *testing.T) {
 		}
 	}
 	refresh(t, l, 1)
-	preview, err := l.PreviewNumbering(1, "image", "", "name_asc", domain.DefaultNumberingSettings())
+	preview, err := l.PreviewNumberingContext(t.Context(), 1, "image", "", "name_asc", domain.DefaultNumberingSettings())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestNumberingTemporaryMoveDiagnostic(t *testing.T) {
 		t.Fatal(err)
 	}
 	refresh(t, l, 1)
-	batch, err := l.PreviewNumbering(1, "image", "", "name_asc", domain.DefaultNumberingSettings())
+	batch, err := l.PreviewNumberingContext(t.Context(), 1, "image", "", "name_asc", domain.DefaultNumberingSettings())
 	if err != nil {
 		t.Fatal(err)
 	}

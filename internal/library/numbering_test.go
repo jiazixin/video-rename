@@ -58,7 +58,7 @@ func numberedFixture(t *testing.T) (*Library, string, Numbering) {
 	}
 	put(t, filepath.Join(root, "folder", "nested.JPG"))
 	refresh(t, l, 1)
-	b, err := l.PreviewNumbering(1, "image", "", "name_asc", domain.DefaultNumberingSettings())
+	b, err := l.PreviewNumberingContext(t.Context(), 1, "image", "", "name_asc", domain.DefaultNumberingSettings())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,10 +72,10 @@ func TestAudioNumberingScopesToAudioFiles(t *testing.T) {
 		}
 	}
 	refresh(t, l, 1)
-	if _, err := l.PreviewNumbering(1, "video", "", "name_asc", domain.DefaultNumberingSettings()); err == nil {
+	if _, err := l.PreviewNumberingContext(t.Context(), 1, "video", "", "name_asc", domain.DefaultNumberingSettings()); err == nil {
 		t.Fatal("invalid media accepted")
 	}
-	b, err := l.PreviewNumbering(1, "audio", "", "name_asc", domain.DefaultNumberingSettings())
+	b, err := l.PreviewNumberingContext(t.Context(), 1, "audio", "", "name_asc", domain.DefaultNumberingSettings())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestAudioNumberingScopesToAudioFiles(t *testing.T) {
 	if _, err = os.Stat(filepath.Join(root, "song.MP3")); err != nil {
 		t.Fatal(err)
 	}
-	images, err := l.PreviewNumbering(1, "image", "", "name_asc", domain.DefaultNumberingSettings())
+	images, err := l.PreviewNumberingContext(t.Context(), 1, "image", "", "name_asc", domain.DefaultNumberingSettings())
 	if err != nil || images.Total != 1 || images.Items[0].Old != "pic.jpg" {
 		t.Fatal(images, err)
 	}
@@ -167,14 +167,14 @@ func TestNumberingSharedSequenceAcrossClasses(t *testing.T) {
 	settings.Image.Compact = false
 	settings.Audio.Compact = false
 	settings.Shared = true
-	b, err := l.PreviewNumbering(1, "image", "", "name_asc", settings)
+	b, err := l.PreviewNumberingContext(t.Context(), 1, "image", "", "name_asc", settings)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if b.Total != 2 || b.Items[len(b.Items)-1].New != "8.jpg" {
 		t.Fatal(b.Items)
 	}
-	audio, err := l.PreviewNumbering(1, "audio", "", "name_asc", settings)
+	audio, err := l.PreviewNumberingContext(t.Context(), 1, "audio", "", "name_asc", settings)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestNumberingCrossPageOrderAndSearch(t *testing.T) {
 	}
 	put(t, filepath.Join(root, "8.jpg"))
 	refresh(t, l, 1)
-	b, err := l.PreviewNumbering(1, "image", "photo", "name_desc", settings)
+	b, err := l.PreviewNumberingContext(t.Context(), 1, "image", "photo", "name_desc", settings)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestNumberingCrossPageOrderAndSearch(t *testing.T) {
 		t.Fatal(b.Total, b.Items[0], b.Items[224])
 	}
 	for _, sort := range []string{"name_asc", "name_desc", "size_asc", "size_desc", "mtime_asc", "mtime_desc", "renamed_asc", "renamed_desc"} {
-		b, err = l.PreviewNumbering(1, "image", "photo", sort, settings)
+		b, err = l.PreviewNumberingContext(t.Context(), 1, "image", "photo", sort, settings)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -308,7 +308,7 @@ func TestNumberingPreflightProtection(t *testing.T) {
 			t.Fatal(err)
 		}
 		refresh(t, l, 1)
-		if _, err := l.PreviewNumbering(1, "image", "", "name_asc", domain.DefaultNumberingSettings()); err == nil {
+		if _, err := l.PreviewNumberingContext(t.Context(), 1, "image", "", "name_asc", domain.DefaultNumberingSettings()); err == nil {
 			t.Fatal("directory conflict accepted")
 		}
 	})
@@ -340,7 +340,7 @@ func TestNumberingPreflightProtection(t *testing.T) {
 			t.Fatal(err)
 		}
 		refresh(t, l, 1)
-		if _, err := l.PreviewNumbering(1, "image", "", "name_asc", domain.DefaultNumberingSettings()); err == nil {
+		if _, err := l.PreviewNumberingContext(t.Context(), 1, "image", "", "name_asc", domain.DefaultNumberingSettings()); err == nil {
 			t.Fatal("hard links accepted")
 		}
 	})
@@ -537,7 +537,7 @@ func TestNumberingCompactUppercaseFromTwoStagesAllFilesAndRestores(t *testing.T)
 				}
 			}
 			refresh(t, l, 1)
-			preview, err := l.PreviewNumbering(1, tc.media, "", tc.sort, domain.DefaultNumberingSettings())
+			preview, err := l.PreviewNumberingContext(t.Context(), 1, tc.media, "", tc.sort, domain.DefaultNumberingSettings())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -604,7 +604,7 @@ func TestNumberingCaseOnlyApplyRestoreWithSymlinkSibling(t *testing.T) {
 		t.Fatal(err)
 	}
 	refresh(t, l, 1)
-	batch, err := l.PreviewNumbering(1, "image", "", "name_asc", domain.DefaultNumberingSettings())
+	batch, err := l.PreviewNumberingContext(t.Context(), 1, "image", "", "name_asc", domain.DefaultNumberingSettings())
 	if err != nil || batch.Total != 1 || batch.Items[0].New != "1.jpg" {
 		t.Fatalf("%+v %v", batch, err)
 	}

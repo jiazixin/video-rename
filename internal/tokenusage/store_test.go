@@ -49,11 +49,11 @@ func TestRecordWritesLedgerAndAggregateOnce(t *testing.T) {
 	seedRun(t, db, 7, `{"model":"vision","provider":"custom","protocol":"openai"}`)
 	seedItem(t, db, 101, 7)
 	at := time.Date(2026, 9, 23, 8, 30, 0, 0, time.UTC)
-	if err := Record(db, 7, 101, `{"_local_context":{"text_tokens_estimate":75}}`, `{"usage":{"total_tokens":120}}`, at); err != nil {
+	if err := RecordAttempt(db, 7, 101, 1, 1, "测试模型", `{}`, `{"_local_context":{"text_tokens_estimate":75}}`, `{"usage":{"total_tokens":120}}`, at); err != nil {
 		t.Fatal(err)
 	}
 	// Replaying the same item must not advance either side.
-	if err := Record(db, 7, 101, `{"_local_context":{"text_tokens_estimate":75}}`, `{"usage":{"total_tokens":120}}`, at.Add(time.Hour)); err != nil {
+	if err := RecordAttempt(db, 7, 101, 1, 1, "测试模型", `{}`, `{"_local_context":{"text_tokens_estimate":75}}`, `{"usage":{"total_tokens":120}}`, at.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	tokens, records, estimated := aggregate(t, db, 7)
@@ -78,11 +78,11 @@ func TestRecordKeepsEstimatesAndSkipsUncountedExchanges(t *testing.T) {
 	seedRun(t, db, 8, `{}`)
 	seedItem(t, db, 102, 8)
 	seedItem(t, db, 103, 8)
-	if err := Record(db, 8, 102, `{"_local_context":{"text_tokens_estimate":75}}`, `{"error":"timeout"}`, time.Now()); err != nil {
+	if err := RecordAttempt(db, 8, 102, 1, 1, "测试模型", `{}`, `{"_local_context":{"text_tokens_estimate":75}}`, `{"error":"timeout"}`, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	// No usage and no saved estimate: nothing is written anywhere.
-	if err := Record(db, 8, 103, `{"messages":[]}`, `{}`, time.Now()); err != nil {
+	if err := RecordAttempt(db, 8, 103, 1, 1, "测试模型", `{}`, `{"messages":[]}`, `{}`, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	tokens, records, estimated := aggregate(t, db, 8)

@@ -17,7 +17,7 @@ func TestBatchRestoreAndRetry(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	m.Analyze = func(_ context.Context, _ *config.Config, j domain.VideoJob, _, _ string) (string, error) {
+	m.Analyze = func(_ context.Context, _ *config.TaskConfig, j domain.VideoJob, _, _ string) (string, error) {
 		return "new-" + filepath.Base(j.Path), nil
 	}
 	id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "restore-batch"}, "manual", 0)
@@ -62,7 +62,7 @@ func TestMediaDiagnosticsPersist(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "bad.mp4"), []byte("video"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	m.Analyze = func(context.Context, *config.Config, domain.VideoJob, string, string) (string, error) {
+	m.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 		return "", &domain.JobError{Code: domain.CodeExtractInsufficientFrames, Message: "计划 20 帧全部失败", ProcessingLog: "采样时间 1s · 首次抽帧\nffmpeg 退出码 1: Invalid data"}
 	}
 	id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "diagnostic-run"}, "manual", 0)
@@ -81,7 +81,7 @@ func TestBatchRestoreDoesNotUndoLaterRename(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	m.Analyze = func(context.Context, *config.Config, domain.VideoJob, string, string) (string, error) {
+	m.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 		return "automatic", nil
 	}
 	id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "later-change"}, "manual", 0)

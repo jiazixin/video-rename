@@ -41,7 +41,7 @@ func TestRunningBatchConcurrencyChangesAndCancellation(t *testing.T) {
 	}
 	started := make(chan int, 8)
 	release := make(chan struct{})
-	m.Analyze = func(ctx context.Context, cfg *config.Config, j domain.VideoJob, _, _ string) (string, error) {
+	m.Analyze = func(ctx context.Context, cfg *config.TaskConfig, j domain.VideoJob, _, _ string) (string, error) {
 		if cfg.Server.Model != "test-model" {
 			t.Error("request settings changed")
 		}
@@ -161,7 +161,7 @@ func TestDeletedModelUsesBatchConcurrencySnapshot(t *testing.T) {
 	if _, err = m.DB.Exec("DELETE FROM model_configs WHERE id=?", profile.ID); err != nil {
 		t.Fatal(err)
 	}
-	m.Analyze = func(_ context.Context, cfg *config.Config, _ domain.VideoJob, _, _ string) (string, error) {
+	m.Analyze = func(_ context.Context, cfg *config.TaskConfig, _ domain.VideoJob, _, _ string) (string, error) {
 		if cfg.Workers != 3 {
 			t.Errorf("workers=%d", cfg.Workers)
 		}
