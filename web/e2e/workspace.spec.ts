@@ -434,7 +434,7 @@ test('后台标记查询断连后使用同一请求重试',async({page})=>{
  await page.getByRole('button',{name:'确认标记',exact:true}).click()
  await expect(page.getByRole('dialog')).toHaveCount(0)
  await expect(page.getByRole('status').filter({hasText:'已标记 230 个文件'})).toBeVisible()
- expect(keys).toHaveLength(2);expect(keys[0]).toBeTruthy();expect(keys[1]).toBe(keys[0])
+ expect(keys).toHaveLength(1);expect(keys[0]).toBeTruthy();expect(polls).toBe(2)
 })
 
 test('手动处理标记、目录递归与跨页批量取消',async({page})=>{

@@ -2,12 +2,18 @@ package app
 
 import (
 	"log/slog"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
 	"time"
 
 	"video-rename/internal/library"
+)
+
+const (
+	markResultCacheCapacity = 128
+	markResultRetention     = time.Hour
 )
 
 type markStatus struct {
@@ -24,7 +30,9 @@ type markJob struct {
 }
 
 // startMark keeps the worker on the application's lifetime, independent of the
-// HTTP request. Retrying the same key retrieves the same work and counts.
+// HTTP request. While a result is cached, the same key returns its work and counts.
+// Clients retry existing requests through markStatus: a retired result must not
+// be mistaken for a new operation and replayed over a later opposite mark.
 func (a *App) startMark(w http.ResponseWriter, r *http.Request, key string, targets []int64, marked bool) {
 	if len(key) < 8 || len(key) > 128 || strings.ContainsAny(key, "/\\?#") {
 		send(w, 400, map[string]string{"message": "标记请求键无效"})
@@ -39,11 +47,9 @@ func (a *App) startMark(w http.ResponseWriter, r *http.Request, key string, targ
 		reply(503, map[string]string{"message": "服务正在关闭，请稍后重试标记"})
 		return
 	}
-	for id, job := range a.markJobs {
-		if !job.finished.IsZero() && time.Since(job.finished) > time.Hour {
-			delete(a.markJobs, id)
-		}
-	}
+	maps.DeleteFunc(a.markJobs, func(_ string, job *markJob) bool {
+		return !job.finished.IsZero() && time.Since(job.finished) > markResultRetention
+	})
 	if job, ok := a.markJobs[key]; ok {
 		if job.marked != marked || !slices.Equal(job.targets, targets) {
 			reply(409, map[string]string{"message": "标记请求键已用于其他目标或状态"})
@@ -59,15 +65,23 @@ func (a *App) startMark(w http.ResponseWriter, r *http.Request, key string, targ
 			return
 		}
 	}
-	if len(a.markJobs) >= 128 {
-		reply(429, map[string]string{"message": "近期标记任务过多，请稍后重试"})
-		return
+	// Completed results bound memory, not the number of user operations. Active
+	// work was checked above; only the oldest completed result is reclaimed.
+	for len(a.markJobs) >= markResultCacheCapacity {
+		var oldestKey string
+		var oldest time.Time
+		for id, job := range a.markJobs {
+			if !job.finished.IsZero() && (oldest.IsZero() || job.finished.Before(oldest)) {
+				oldestKey, oldest = id, job.finished
+			}
+		}
+		delete(a.markJobs, oldestKey)
 	}
 	if a.markJobs == nil {
 		a.markJobs = make(map[string]*markJob)
 	}
 	job := &markJob{targets: slices.Clone(targets), marked: marked, status: markStatus{
-		Key: key, Status: "running", MarkResult: library.MarkResult{Failures: []library.MarkFailure{}},
+		Key: key, Status: "running", Failures: []library.MarkFailure{},
 	}}
 	a.markJobs[key] = job
 	a.markWG.Go(func() {
@@ -107,10 +121,12 @@ func (a *App) startMark(w http.ResponseWriter, r *http.Request, key string, targ
 
 func (a *App) markStatus(w http.ResponseWriter, r *http.Request) {
 	a.markMu.Lock()
-	job, ok := a.markJobs[r.PathValue("key")]
-	if !ok || !job.finished.IsZero() && time.Since(job.finished) > time.Hour {
+	key := r.PathValue("key")
+	job, ok := a.markJobs[key]
+	if !ok || !job.finished.IsZero() && time.Since(job.finished) > markResultRetention {
+		delete(a.markJobs, key)
 		a.markMu.Unlock()
-		send(w, 404, map[string]string{"message": "标记任务状态已过期或服务已重启；已完成的标记仍保留，请重新选择目标后重试"})
+		send(w, 404, map[string]string{"message": "标记任务结果不可查询，可能已回收、过期或服务已重启；已完成的标记仍保留，请重新选择目标后重试"})
 		return
 	}
 	status := job.status

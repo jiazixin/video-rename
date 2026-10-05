@@ -11,7 +11,8 @@ export function key(): string {
 export class ApiError extends Error {
   constructor(
     message: string,
-    readonly processingLog = ''
+    readonly processingLog = '',
+    readonly status = 0
   ) {
     super(message)
     this.name = 'ApiError'
@@ -39,7 +40,7 @@ export async function api<T = any>(
   })
   if (!response.ok) {
     if (response.status === 401) session.value = null
-    throw new ApiError(data.message || '请求失败', data.processing_log || '')
+    throw new ApiError(data.message || '请求失败', data.processing_log || '', response.status)
   }
   return data
 }

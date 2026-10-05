@@ -27,7 +27,7 @@
     Images
   } from '@lucide/vue';
   import './library-actions.css';
-  import { api, key } from '../../app/api';
+  import { api, ApiError, key } from '../../app/api';
   import { time } from '../../lib/date/format';
   import { size } from '../../lib/bytes/format';
   import { type Entry, type Page, type DirectoryState, type Run } from '../../app/contracts';
@@ -786,7 +786,8 @@
   const marking = ref<Entry[]>([]),
     markValue = ref(true),
     markError = ref(''),
-    markProgress = ref('');
+    markProgress = ref(''),
+    markRetryUnavailable = ref(false);
   interface MarkResult {
     key: string;
     status: string;
@@ -803,10 +804,11 @@
     markValue.value = value;
     markError.value = '';
     markProgress.value = '';
+    markRetryUnavailable.value = false;
     markKeys = [];
   }
   async function submitMark() {
-    if (saving.value || !marking.value.length) return;
+    if (saving.value || markRetryUnavailable.value || !marking.value.length) return;
     const entries = [...marking.value],
       markedValue = markValue.value;
     statusSeq++;
@@ -816,21 +818,44 @@
       unchanged = 0,
       failed = 0,
       confirmed = 0;
+    let stage: 'submit' | 'query' | 'interrupted' = 'submit',
+      rejected = false;
     const failures: string[] = [];
     try {
       for (let i = 0; i < entries.length; i += 100) {
-        const requestKey = markKeys[i / 100] ?? (markKeys[i / 100] = key());
+        const batchIndex = i / 100,
+          existingKey = markKeys[batchIndex],
+          requestKey = existingKey ?? (markKeys[batchIndex] = key());
         markProgress.value = `正在处理第 ${i + 1}–${Math.min(i + 100, entries.length)} 个目标…`;
-        let result = await api<MarkResult>('/entries/processed', 'POST', {
-          targets: entries.slice(i, i + 100).map((e) => e.id),
-          marked: markedValue,
-          key: requestKey
-        });
+        stage = existingKey ? 'query' : 'submit';
+        let result: MarkResult;
+        if (existingKey) {
+          result = await api<MarkResult>(
+            `/entries/processed/status/${encodeURIComponent(requestKey)}`
+          );
+        } else {
+          try {
+            result = await api<MarkResult>('/entries/processed', 'POST', {
+              targets: entries.slice(i, i + 100).map((e) => e.id),
+              marked: markedValue,
+              key: requestKey
+            });
+          } catch (e) {
+            // A proxy or a lost response may fail after the task has started.
+            // Only an explicit application rejection permits a new submission.
+            if (e instanceof ApiError && [400, 401, 403, 409, 429].includes(e.status)) {
+              delete markKeys[batchIndex];
+              rejected = true;
+            }
+            throw e;
+          }
+        }
         while (result.status === 'running') {
           confirmed = changed + result.changed;
           markProgress.value = `后台处理中：已变更 ${changed + result.changed} 个文件，未变更 ${unchanged + result.unchanged} 个，失败 ${failed + result.failed} 项…`;
           await new Promise((resolve) => setTimeout(resolve, 1000));
           if (disposed) return;
+          stage = 'query';
           result = await api<MarkResult>(
             `/entries/processed/status/${encodeURIComponent(requestKey)}`
           );
@@ -841,7 +866,8 @@
         confirmed = changed;
         failures.push(...result.failures.map((e) => `${e.name}：${e.message}`));
         if (result.interrupted) {
-          markKeys = [];
+          stage = 'interrupted';
+          markRetryUnavailable.value = true;
           throw new Error('标记任务已中断，仍有目标未处理');
         }
       }
@@ -849,10 +875,24 @@
       toast.value?.show(
         `${markedValue ? '已标记' : '已取消标记'} ${changed} 个文件，未变更 ${unchanged} 个，失败 ${failed} 项`
       );
-      if (failed) markError.value = failures.join('\n');
-      else marking.value = [];
+      if (failed) {
+        markRetryUnavailable.value = true;
+        markError.value = [
+          `已变更 ${changed} 个文件，未变更 ${unchanged} 个，失败 ${failed} 项；已完成的标记会保留。请关闭弹窗，重新选择失败目标后再操作。`,
+          ...failures
+        ].join('\n');
+      } else marking.value = [];
     } catch (e) {
-      markError.value = `已确认变更 ${confirmed} 个文件；${(e as Error).message}。后台任务可能仍在执行，可点击确认重试查询；已完成的标记会保留。`;
+      if (stage === 'query' && e instanceof ApiError && e.status === 404) {
+        markRetryUnavailable.value = true;
+        markError.value = `已确认变更 ${confirmed} 个文件；标记任务结果已不可查询（可能已回收、过期或服务重启）；已完成的标记会保留。请关闭弹窗，重新选择目标后再操作。`;
+      } else if (stage === 'interrupted') {
+        markError.value = `已确认变更 ${confirmed} 个文件；${(e as Error).message}；已完成的标记会保留。请关闭弹窗，重新选择未处理目标后再操作。`;
+      } else if (rejected) {
+        markError.value = `已确认变更 ${confirmed} 个文件；${(e as Error).message}；本批次未启动，可再次确认提交；已完成的标记会保留。`;
+      } else {
+        markError.value = `已确认变更 ${confirmed} 个文件；${stage === 'query' ? '查询中断' : '提交结果未确认'}：${(e as Error).message}。后台任务可能仍在执行，可再次确认查询原任务；已完成的标记会保留。`;
+      }
     } finally {
       markProgress.value = '';
       saving.value = false;
@@ -1579,7 +1619,7 @@
       ><div v-if="markError" class="notice error batch-errors" role="alert">{{ markError }}</div
       ><div class="modal-actions"
         ><button type="button" :disabled="saving" @click="marking = []">关闭</button
-        ><button class="primary" :disabled="saving">{{
+        ><button class="primary" :disabled="saving || markRetryUnavailable">{{
           saving ? '正在处理…' : markValue ? '确认标记' : '确认取消标记'
         }}</button></div
       ></form

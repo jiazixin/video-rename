@@ -1,7 +1,8 @@
 import { test, expect } from '@playwright/test'
 
 test('保存系统设置不移动表单，切换分类清理通知，通知渠道保存和测试使用浮动反馈', async ({ page }) => {
-  let settings = { extract_workers: 8, cache_gb: 10, stability_seconds: 30,
+  let settings = { running_batch_limit: 32, waiting_batch_limit: 1000,
+    extract_workers: 8, cache_gb: 10, stability_seconds: 30,
     retry_enabled: false, retry_count: 0, fallback_model_id: 0,
     success_cache_mode: 'immediate', success_cache_hours: 72, idle_cache_hours: 72 }
   let fail = false

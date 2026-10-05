@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"video-rename/internal/config"
+	"video-rename/internal/library"
 )
 
 func markTestApp(t *testing.T, files int) (*App, []int64) {
@@ -185,5 +186,122 @@ func TestBackgroundMarkStatusMissingAndProtected(t *testing.T) {
 	a.Handler().ServeHTTP(w, r)
 	if w.Code != 401 {
 		t.Fatalf("unprotected mark status: %d", w.Code)
+	}
+}
+
+func TestBackgroundMarksContinueBeyondResultCacheCapacity(t *testing.T) {
+	a, ids := markTestApp(t, 1)
+	for i := range 256 {
+		key := fmt.Sprintf("continuous-mark-%03d", i)
+		markRequest(t, a, t.Context(), key, ids, i%2 == 0, 202)
+		result := awaitMark(t, a, key)
+		if result.Status != "completed" || result.Changed != 2 || result.Unchanged != 0 || result.Failed != 0 {
+			t.Fatalf("request %d: %+v", i, result)
+		}
+		a.markMu.Lock()
+		cached := len(a.markJobs)
+		a.markMu.Unlock()
+		if cached > 128 {
+			t.Fatalf("unbounded result cache: %d", cached)
+		}
+	}
+	// Replaying a retained result must not undo a later opposite operation.
+	result := markRequest(t, a, t.Context(), "continuous-mark-254", ids, true, 200)
+	if result.Changed != 2 || result.Unchanged != 0 {
+		t.Fatal(result)
+	}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/entries/processed/status/continuous-mark-000", nil)
+	r.SetPathValue("key", "continuous-mark-000")
+	a.markStatus(w, r)
+	if w.Code != 404 {
+		t.Fatalf("retired result status=%d: %s", w.Code, w.Body.String())
+	}
+	var count int
+	if err := a.DB.QueryRow("SELECT count(*) FROM marks").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("old result changed durable state: count=%d err=%v", count, err)
+	}
+}
+
+func TestBackgroundMarksEvictOldestCompletedResult(t *testing.T) {
+	a, ids := markTestApp(t, 1)
+	now := time.Now()
+	a.markJobs = make(map[string]*markJob)
+	for i := range 128 {
+		key := fmt.Sprintf("cached-mark-%03d", i)
+		a.markJobs[key] = &markJob{
+			targets: ids, marked: true, finished: now.Add(-time.Duration(128-i) * time.Minute / 4),
+			status: markStatus{Key: key, Status: "completed", Changed: 2, Failures: []library.MarkFailure{}},
+		}
+	}
+	// Lookup and validation precede eviction, including at full capacity.
+	if result := markRequest(t, a, t.Context(), "cached-mark-000", ids, true, 200); result.Changed != 2 {
+		t.Fatal(result)
+	}
+	markRequest(t, a, t.Context(), "cached-mark-000", ids, false, 409)
+	if len(a.markJobs) != 128 {
+		t.Fatal("lookup or conflict evicted a cached result")
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	wait := sync.OnceFunc(func() {
+		close(entered)
+		select {
+		case <-release:
+		case <-a.ctx.Done():
+		}
+	})
+	a.Library.Busy = func(int64) bool { wait(); return false }
+	markRequest(t, a, t.Context(), "new-capacity-request", ids, true, 202)
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not start")
+	}
+	// The active worker and all more recent results survive capacity pressure.
+	markRequest(t, a, t.Context(), "blocked-capacity-request", ids, false, 409)
+	markRequest(t, a, t.Context(), "new-capacity-request", ids, true, 200)
+	a.markMu.Lock()
+	_, oldest := a.markJobs["cached-mark-000"]
+	_, next := a.markJobs["cached-mark-001"]
+	active := a.markJobs["new-capacity-request"]
+	cached := len(a.markJobs)
+	a.markMu.Unlock()
+	if oldest || !next || active == nil || cached != 128 {
+		t.Fatalf("wrong eviction: oldest=%v next=%v active=%v cached=%d", oldest, next, active != nil, cached)
+	}
+	close(release)
+	if result := awaitMark(t, a, "new-capacity-request"); result.Changed != 2 || result.Status != "completed" {
+		t.Fatal(result)
+	}
+}
+
+func TestBackgroundMarkResultExpiresWithoutRemovingMarks(t *testing.T) {
+	a, ids := markTestApp(t, 1)
+	key := "expired-mark-result"
+	markRequest(t, a, t.Context(), key, ids, true, 202)
+	awaitMark(t, a, key)
+	a.markMu.Lock()
+	a.markJobs[key].finished = time.Now().Add(-2 * time.Hour)
+	a.markMu.Unlock()
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/entries/processed/status/"+key, nil)
+	r.SetPathValue("key", key)
+	a.markStatus(w, r)
+	if w.Code != 404 || !strings.Contains(w.Body.String(), "已完成的标记仍保留") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	a.markMu.Lock()
+	_, cached := a.markJobs[key]
+	a.markMu.Unlock()
+	if cached {
+		t.Fatal("expired result still retained")
+	}
+	var count int
+	if err := a.DB.QueryRow("SELECT count(*) FROM marks").Scan(&count); err != nil || count != 2 {
+		t.Fatalf("expired result removed marks: count=%d err=%v", count, err)
+	}
+	markRequest(t, a, t.Context(), "after-expired-result", ids, false, 202)
+	if result := awaitMark(t, a, "after-expired-result"); result.Changed != 2 {
+		t.Fatal(result)
 	}
 }
