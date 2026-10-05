@@ -243,3 +243,66 @@ func TestNumberingDefaultsAndSavedChoice(t *testing.T) {
 		t.Fatal(saved, err)
 	}
 }
+
+func TestBatchLimitsDefaultsValidationAndRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "limits.sqlite")
+	db, err := storage.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { db.Close() }()
+	store := Store{DB: db}
+	limits, err := store.BatchLimits()
+	if err != nil || limits.RunningBatchLimit != 32 || limits.WaitingBatchLimit != 1000 {
+		t.Fatal(limits, err)
+	}
+	value := Default()
+	if err := store.Save(value); err != nil {
+		t.Fatal(err)
+	}
+	// Existing policy documents without the optional fields use new defaults.
+	if _, err := db.Exec(`UPDATE system_settings SET policy='{"retry_enabled":true,"retry_count":5}'`); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get()
+	if err != nil || got.BatchLimits != limits || got.RetryCount != 5 {
+		t.Fatal(got, err)
+	}
+	for _, pair := range [][2]int{{0, 1000}, {257, 1000}, {32, 0}, {32, 100001}} {
+		value.RunningBatchLimit, value.WaitingBatchLimit = pair[0], pair[1]
+		if err := store.Save(value); err == nil {
+			t.Fatal("invalid capacity accepted", pair)
+		}
+	}
+	for _, pair := range [][2]int{{1, 1}, {256, 100000}, {64, 5000}} {
+		value.RunningBatchLimit, value.WaitingBatchLimit = pair[0], pair[1]
+		if err := store.Save(value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = storage.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store = Store{DB: db}
+	got, err = store.Get()
+	if err != nil || got != value {
+		t.Fatal(got, err)
+	}
+	limits, err = store.BatchLimits()
+	if err != nil || limits != value.BatchLimits {
+		t.Fatal(limits, err)
+	}
+	if _, err := db.Exec(`UPDATE system_settings SET policy='{"running_batch_limit":0,"waiting_batch_limit":5000}'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BatchLimits(); err == nil {
+		t.Fatal("invalid stored capacity used")
+	}
+	if _, err := store.Get(); err == nil {
+		t.Fatal("invalid stored capacity shown as valid")
+	}
+}

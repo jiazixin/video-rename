@@ -104,7 +104,10 @@ func TestCrossBatchExtractionWhileModelBlockedAndSharedLimit(t *testing.T) {
 	if _, err = store.Save(profile); err != nil {
 		t.Fatal(err)
 	}
-	if err = (systemsettings.Store{DB: m.DB}).Save(systemsettings.Settings{ExtractWorkers: 2, CacheGB: 1}); err != nil {
+	settings := systemsettings.Default()
+	settings.ExtractWorkers, settings.CacheGB = 2, 1
+	settings.StabilitySeconds = 0
+	if err = (systemsettings.Store{DB: m.DB}).Save(settings); err != nil {
 		t.Fatal(err)
 	}
 	var activeExtract, maxExtract, activeModel, maxModel atomic.Int32

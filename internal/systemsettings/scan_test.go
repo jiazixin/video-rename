@@ -27,6 +27,7 @@ func TestScanSettingsDefaultPersistenceAndIndependentUpdates(t *testing.T) {
 	processing := Default()
 	processing.ExtractWorkers = 3
 	processing.RetryCount = 5
+	processing.RunningBatchLimit, processing.WaitingBatchLimit = 64, 5000
 	if err := store.Save(processing); err != nil {
 		t.Fatal(err)
 	}
@@ -102,6 +103,7 @@ func TestConcurrentScanAndProcessingSettingsSaves(t *testing.T) {
 	processing := Default()
 	processing.CacheGB = 2
 	processing.RetryCount = 6
+	processing.RunningBatchLimit, processing.WaitingBatchLimit = 48, 3000
 	var wg sync.WaitGroup
 	for range 5 {
 		wg.Go(func() {

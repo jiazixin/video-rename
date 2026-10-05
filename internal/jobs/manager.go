@@ -127,7 +127,7 @@ func (m *Manager) Loop(ctx context.Context) {
 	defer wg.Wait()
 	wg.Go(func() { m.Cache.Loop(ctx) })
 	launched := map[int64]bool{}
-	finished := make(chan int64, 20)
+	finished := make(chan int64)
 	for {
 		select {
 		case <-ctx.Done():
@@ -135,7 +135,11 @@ func (m *Manager) Loop(ctx context.Context) {
 		case id := <-finished:
 			delete(launched, id)
 		case <-ticker.C:
-			rows, err := m.DB.Read().QueryContext(ctx, "SELECT id FROM runs WHERE status='queued' ORDER BY id LIMIT 20")
+			limits, err := (systemsettings.Store{DB: m.DB}).BatchLimits()
+			if err != nil || len(launched) >= limits.RunningBatchLimit {
+				continue
+			}
+			rows, err := m.DB.Read().QueryContext(ctx, "SELECT id FROM runs WHERE status='queued' ORDER BY id LIMIT ?", limits.RunningBatchLimit)
 			if err != nil {
 				continue
 			}
@@ -148,11 +152,17 @@ func (m *Manager) Loop(ctx context.Context) {
 			}
 			rows.Close()
 			for _, id := range ids {
-				if launched[id] || len(launched) >= 20 {
+				if launched[id] || len(launched) >= limits.RunningBatchLimit {
 					continue
 				}
 				launched[id] = true
-				wg.Go(func() { m.Execute(ctx, id); finished <- id })
+				wg.Go(func() {
+					m.Execute(ctx, id)
+					select {
+					case finished <- id:
+					case <-ctx.Done():
+					}
+				})
 			}
 		}
 	}

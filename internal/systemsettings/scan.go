@@ -40,11 +40,13 @@ func (v ScanSettings) Validate() error {
 // This keeps the deployed schema and all previously saved processing settings.
 type storedPolicy struct {
 	Policy
+	BatchLimits
 	LibraryScan *ScanSettings `json:"library_scan,omitzero"`
 }
 
 func loadPolicy(row interface{ Scan(...any) error }) (storedPolicy, error) {
-	v := storedPolicy{Policy: Default().Policy}
+	d := Default()
+	v := storedPolicy{Policy: d.Policy, BatchLimits: d.BatchLimits}
 	var raw string
 	err := row.Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {

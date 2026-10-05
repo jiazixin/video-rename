@@ -31,15 +31,48 @@ type Policy struct {
 
 type Settings struct {
 	Policy
+	BatchLimits
 	StabilitySeconds int   `json:"stability_seconds"`
 	ExtractWorkers   int   `json:"extract_workers"`
 	CacheGB          int64 `json:"cache_gb"`
 }
 
+type BatchLimits struct {
+	RunningBatchLimit int `json:"running_batch_limit"`
+	WaitingBatchLimit int `json:"waiting_batch_limit"`
+}
+
+func (v BatchLimits) Validate() error {
+	if v.RunningBatchLimit < 1 || v.RunningBatchLimit > 256 {
+		return fmt.Errorf("同时运行批次上限须在 1–256 之间")
+	}
+	if v.WaitingBatchLimit < 1 || v.WaitingBatchLimit > 100000 {
+		return fmt.Errorf("等待批次上限须在 1–100000 之间")
+	}
+	return nil
+}
+
+// ReadBatchLimits also accepts a transaction row so admission and settings saves
+// are serialized by the same database writer.
+func ReadBatchLimits(row interface{ Scan(...any) error }) (BatchLimits, error) {
+	v, err := loadPolicy(row)
+	if err != nil {
+		return BatchLimits{}, err
+	}
+	return v.BatchLimits, v.BatchLimits.Validate()
+}
+
+func (s Store) BatchLimits() (BatchLimits, error) {
+	return ReadBatchLimits(s.DB.Read().QueryRow("SELECT policy FROM system_settings WHERE id=1"))
+}
+
 func Default() Settings {
-	return Settings{ExtractWorkers: 8, CacheGB: 10, StabilitySeconds: 30, Policy: Policy{RetryEnabled: true, RetryCount: 3, SuccessCacheMode: "immediate", SuccessCacheHours: 72, IdleCacheHours: 72}}
+	return Settings{ExtractWorkers: 8, CacheGB: 10, StabilitySeconds: 30, RunningBatchLimit: 32, WaitingBatchLimit: 1000, RetryEnabled: true, RetryCount: 3, SuccessCacheMode: "immediate", SuccessCacheHours: 72, IdleCacheHours: 72}
 }
 func (s Settings) Validate() error {
+	if err := s.BatchLimits.Validate(); err != nil {
+		return err
+	}
 	if s.RetryCount < 0 || s.RetryCount > 10 || (s.RetryEnabled && s.RetryCount == 0) {
 		return fmt.Errorf("重试次数须在 1–10 次之间")
 	}
@@ -78,7 +111,12 @@ func (s Store) Get() (Settings, error) {
 		return v, nil
 	}
 	if err == nil && policy != "" {
-		err = json.Unmarshal([]byte(policy), &v.Policy)
+		stored := storedPolicy{Policy: v.Policy, BatchLimits: v.BatchLimits}
+		err = json.Unmarshal([]byte(policy), &stored)
+		v.Policy, v.BatchLimits = stored.Policy, stored.BatchLimits
+	}
+	if err == nil {
+		err = v.BatchLimits.Validate()
 	}
 	return v, err
 }
@@ -96,6 +134,7 @@ func (s Store) Save(v Settings) error {
 		return err
 	}
 	policy.Policy = v.Policy
+	policy.BatchLimits = v.BatchLimits
 	raw, err := json.Marshal(policy)
 	if err != nil {
 		return err

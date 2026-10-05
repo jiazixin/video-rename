@@ -66,7 +66,9 @@ func TestSystemSettingsAPI(t *testing.T) {
 	if w = request("POST", "/api/system/cache/clear", `{"confirm":true}`, true); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	value := systemsettings.Settings{ExtractWorkers: 3, CacheGB: 2}
+	value := systemsettings.Default()
+	value.ExtractWorkers, value.CacheGB = 3, 2
+	value.RunningBatchLimit, value.WaitingBatchLimit = 64, 5000
 	raw, _ := json.Marshal(value)
 	if w = request("PUT", "/api/system/settings", string(raw), false); w.Code != 403 {
 		t.Fatal("missing CSRF accepted", w.Code)
@@ -74,7 +76,7 @@ func TestSystemSettingsAPI(t *testing.T) {
 	if w = request("PUT", "/api/system/settings", string(raw), true); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	for _, body := range []string{`{}`, `{"unknown":true}`, `{"extract_workers":0,"cache_gb":10}`, `{"extract_workers":33,"cache_gb":10}`, `{"extract_workers":8,"cache_gb":0}`, `{"extract_workers":8,"cache_gb":10,"stability_seconds":-1}`, `{"extract_workers":8,"cache_gb":10,"stability_seconds":3601}`, `{"extract_workers":8,"cache_gb":10,"stability_seconds":1.5}`} {
+	for _, body := range []string{`{}`, `{"unknown":true}`, `{"extract_workers":8,"cache_gb":10,"running_batch_limit":0}`, `{"extract_workers":8,"cache_gb":10,"running_batch_limit":257}`, `{"extract_workers":8,"cache_gb":10,"waiting_batch_limit":0}`, `{"extract_workers":8,"cache_gb":10,"waiting_batch_limit":100001}`, `{"extract_workers":8,"cache_gb":10,"running_batch_limit":1.5}`, `{"extract_workers":0,"cache_gb":10}`, `{"extract_workers":33,"cache_gb":10}`, `{"extract_workers":8,"cache_gb":0}`, `{"extract_workers":8,"cache_gb":10,"stability_seconds":-1}`, `{"extract_workers":8,"cache_gb":10,"stability_seconds":3601}`, `{"extract_workers":8,"cache_gb":10,"stability_seconds":1.5}`} {
 		if w = request("PUT", "/api/system/settings", body, true); w.Code < 400 {
 			t.Fatal("invalid accepted", body)
 		}

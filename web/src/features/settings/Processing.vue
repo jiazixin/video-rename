@@ -8,6 +8,8 @@
   import SelectField from '../../components/SelectField.vue';
   const toast = ref<InstanceType<typeof ToastNotice>>();
   type Settings = {
+    running_batch_limit: number;
+    waiting_batch_limit: number;
     extract_workers: number;
     cache_gb: number;
     stability_seconds: number;
@@ -146,7 +148,9 @@
       form.value = await api<Settings>('/system/settings', 'PUT', form.value);
       saved.value = JSON.stringify(form.value);
       await refresh();
-      toast.value?.show('设置已保存。重试规则用于新批次，缓存规则立即生效，使用中的截图始终保留。');
+      toast.value?.show(
+        '设置已保存。批次上限用于后续调度与提交，重试规则用于新批次，缓存规则立即生效。'
+      );
     } catch (e) {
       error.value = (e as Error).message;
     } finally {
@@ -194,7 +198,44 @@
       <fieldset :disabled="saving || clearing" class="processing-fieldset">
         <section class="panel processing-card"
           ><div
-            ><span class="eyebrow">01 · 处理</span><h2>并发抽帧</h2
+            ><span class="eyebrow">01 · 批次</span><h2>批次调度</h2
+            ><p class="help">分别控制同时启动的批次与等待队列容量。</p
+            ><p class="help"
+              >保存后用于后续调度与提交。降低上限保留已有批次，等待批次按提交顺序启动。</p
+            ></div
+          ><div class="processing-fields"
+            ><label
+              >同时运行批次上限<input
+                v-model.number="form.running_batch_limit"
+                aria-label="同时运行批次上限"
+                type="number"
+                min="1"
+                max="256"
+                step="1"
+                required
+              /><small class="help"
+                >1–256 个，默认 32 个。扫描、运行、已开始后暂停及取消收尾占用运行名额。</small
+              ></label
+            ><label
+              >等待批次上限<input
+                v-model.number="form.waiting_batch_limit"
+                aria-label="等待批次上限"
+                type="number"
+                min="1"
+                max="100000"
+                step="1"
+                required
+              /><small class="help"
+                >1–100000 个，默认 1000 个。包含排队和未开始就暂停的批次，满额时拒绝新提交。</small
+              ></label
+            ><p class="help"
+              >运行批次越多，目录扫描与内存开销可能越大；抽帧和模型请求仍共享各自并发上限。</p
+            ></div
+          ></section
+        >
+        <section class="panel processing-card"
+          ><div
+            ><span class="eyebrow">02 · 处理</span><h2>并发抽帧</h2
             ><p class="help">模型生成标题时，继续为后续视频准备截图。</p></div
           ><label
             >同时抽帧的视频数<input
@@ -212,7 +253,7 @@
         >
         <section class="panel processing-card retry-card"
           ><div
-            ><span class="eyebrow">02 · 重试</span><h2>失败自动重试</h2
+            ><span class="eyebrow">03 · 重试</span><h2>失败自动重试</h2
             ><p class="help">复用已准备的截图重新请求模型，最后一次重试可交给兜底模型。</p
             ><p class="help"
               >重试规则和模型配置在新批次创建时固定。抽帧、文件操作失败与用户取消不会触发模型重试。</p
@@ -297,7 +338,7 @@
         >
         <section class="panel processing-card"
           ><div
-            ><span class="eyebrow">03 · 文件保护</span><h2>文件稳定性检查</h2
+            ><span class="eyebrow">04 · 文件保护</span><h2>文件稳定性检查</h2
             ><p class="help">扫描后等待一段时间，再核对文件是否仍在写入。</p></div
           ><label
             >稳定性等待时长（秒）<input
@@ -315,7 +356,7 @@
         >
         <section class="panel processing-card"
           ><div
-            ><span class="eyebrow">04 · 缓存</span><h2>缓存管理</h2
+            ><span class="eyebrow">05 · 缓存</span><h2>缓存管理</h2
             ><p class="help">保留截图可供还原后重新命名，切换模型或提示词仍可复用。</p
             ><p class="help"
               >成功后清理和闲置清理分别判断，先到期的规则生效。容量不足时仍会优先清理闲置旧截图。</p

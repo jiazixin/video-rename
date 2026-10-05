@@ -166,12 +166,16 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 		return 0, err
 	}
 	defer tx.Rollback()
-	var count int
-	if err = tx.QueryRow("SELECT count(*) FROM runs WHERE status IN ('queued','scanning','running','paused','cancelling')").Scan(&count); err != nil {
+	limits, err := systemsettings.ReadBatchLimits(tx.QueryRow("SELECT policy FROM system_settings WHERE id=1"))
+	if err != nil {
 		return 0, err
 	}
-	if count >= 20 {
-		return 0, fmt.Errorf("任务队列已满，请稍后重试")
+	var count int
+	if err = tx.QueryRow("SELECT count(*) FROM runs WHERE status='queued' OR (status='paused' AND started='')").Scan(&count); err != nil {
+		return 0, err
+	}
+	if count >= limits.WaitingBatchLimit {
+		return 0, fmt.Errorf("等待批次已达上限（%d 个），请稍后重试或在系统设置中调整", limits.WaitingBatchLimit)
 	}
 	res, err := tx.Exec("INSERT INTO runs(source,targets,recursive,status,created,request_key,plan,config_summary,model_config_id,model_config_title,prompt_body,model_snapshot,sampling_snapshot,task,retry_snapshot) VALUES(?,?,?,'queued',?,?,?,?,?,?,?,?,?,?,?)", source, string(raw), r.Recursive, storage.Now(), r.Key, plan, string(summary), prompt.ID, prompt.Title, prompt.Body, snapshot, string(frameSnapshot), r.Task, string(retryRaw))
 	if err != nil {
