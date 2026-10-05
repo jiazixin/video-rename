@@ -200,7 +200,6 @@
   padding: 8px 20px 8px 12px;
   border-radius: 6px;
   background: var(--run-background);
-  box-shadow: inset 3px 0 0 var(--task-edge);
 }
 .run-entry[data-task='extract'] {
   --task-ink: #6941a5;
@@ -212,6 +211,9 @@
 }
 .run-entry.is-active {
   background: var(--run-active-background);
+}
+.run-entry.is-running {
+  box-shadow: inset 3px 0 0 var(--task-edge);
 }
 .run-entry .run-task-badge {
   display: inline-flex;
