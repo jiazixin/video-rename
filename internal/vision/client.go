@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +36,7 @@ type Client struct {
 	apiKey          string
 	temperature     float64
 	maxTokens       int
+	failureKeywords []string
 	timeout         time.Duration
 
 	http        *http.Client
@@ -68,6 +70,7 @@ func New(cfg *config.TaskConfig) *Client {
 		apiKey:          cfg.Server.APIKey,
 		temperature:     cfg.Server.Temperature,
 		maxTokens:       cfg.Server.MaxTokens,
+		failureKeywords: slices.Clone(cfg.FailureKeywords),
 		timeout:         timeout,
 		http:            &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: rejectRedirect},
 		maxAttempts:     3,
@@ -129,7 +132,7 @@ func (c *Client) Title(ctx context.Context, prompt string, frames []domain.Frame
 		var exchange domain.ModelDiagnostics
 		content, _, rerr := c.doOnce(ctx, body, &exchange)
 		if rerr == nil {
-			title, verr := ValidateTitle(content)
+			title, verr := ValidateTitleWithKeywords(content, c.failureKeywords)
 			if verr != nil {
 				verr.HTTPStatus = 0
 				verr.RawRequest = diagnosticRequest(body, c.apiKey)
@@ -371,7 +374,7 @@ func (c *Client) doOnce(ctx context.Context, body []byte, capture ...*domain.Mod
 		if parseErr != nil {
 			return text, code, parseErr
 		}
-		if _, validationErr := ValidateTitle(text); validationErr != nil {
+		if _, validationErr := ValidateTitleWithKeywords(text, c.failureKeywords); validationErr != nil {
 			return "", code, &httpJobError{JobError: *validationErr}
 		}
 		return text, code, nil
@@ -397,7 +400,7 @@ func (c *Client) doOnce(ctx context.Context, body []byte, capture ...*domain.Mod
 	if strings.TrimSpace(choice.Message.Content) == "" {
 		return "", resp.StatusCode, &httpJobError{Code: domain.CodeAPIResponseInvalid, Message: "message.content 为空"}
 	}
-	if _, validationErr := ValidateTitle(choice.Message.Content); validationErr != nil {
+	if _, validationErr := ValidateTitleWithKeywords(choice.Message.Content, c.failureKeywords); validationErr != nil {
 		return "", resp.StatusCode, &httpJobError{JobError: *validationErr}
 	}
 	return choice.Message.Content, resp.StatusCode, nil

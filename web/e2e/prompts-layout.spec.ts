@@ -20,7 +20,13 @@ async function mockPrompts(page: Page) {
     const path = new URL(request.url()).pathname
     if (path === '/api/prompts' && request.method() === 'GET') {
       await route.fulfill({
-        json: { fixed_prompt: fixedPrompt, default_fixed_prompt: fixedPrompt, prompts: rows }
+        json: {
+          fixed_prompt: fixedPrompt,
+          default_fixed_prompt: fixedPrompt,
+          failure_keywords: ['命名失败', '拒绝', '无法完成', 'sorry'],
+          default_failure_keywords: ['命名失败', '拒绝', '无法完成', 'sorry'],
+          prompts: rows
+        }
       })
       return
     }

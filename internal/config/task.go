@@ -10,6 +10,7 @@ import (
 type TaskConfig struct {
 	Server          ServerConfig
 	Prompt          string
+	FailureKeywords []string
 	Workers         int
 	Sampling        SamplingConfig
 	Images          ImagesConfig

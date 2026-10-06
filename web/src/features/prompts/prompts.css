@@ -1,23 +1,112 @@
 .prompts-page {
   min-width: 0;
 }
-.prompts-fixed-card {
+.prompts-fixed-card,
+.prompts-failure-card {
   grid-template-columns: minmax(200px, 1fr) minmax(0, 2.2fr);
   align-items: start;
 }
-.prompts-fixed-controls {
+.prompts-fixed-controls,
+.prompts-failure-controls {
   display: flex;
   flex-direction: column;
   min-width: 0;
   gap: 16px;
 }
-.prompts-fixed-controls .processing-footer {
+.prompts-fixed-controls .processing-footer,
+.prompts-failure-controls .processing-footer {
   margin-top: 0;
 }
-.prompts-fixed-actions {
+.prompts-fixed-actions,
+.prompts-failure-actions {
   display: flex;
   gap: 10px;
   flex-shrink: 0;
+}
+.prompts-failure-card {
+  margin-top: 20px;
+}
+.prompts-failure-controls {
+  gap: 12px;
+}
+.failure-keyword-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+.failure-keywords-dirty {
+  color: #976126;
+  font-size: 12px;
+}
+.failure-keywords-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.failure-keyword {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  border: 1px solid #dfe6e1;
+  border-radius: 7px;
+  padding: 3px 4px 3px 10px;
+  color: #43554b;
+  background: #f5f8f6;
+  font-size: 13px;
+}
+.failure-keyword > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.failure-keyword-remove {
+  flex-shrink: 0;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 6px;
+  background: transparent;
+  border-color: transparent;
+  color: #63766b;
+}
+.failure-keyword-add {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+.failure-keyword-add label {
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+}
+.failure-keyword-add > button {
+  flex-shrink: 0;
+}
+.failure-keyword-add input {
+  max-width: none;
+}
+.failure-keyword-help,
+.failure-keywords-empty,
+.failure-keyword-input-error,
+.failure-keywords-error {
+  margin: 0;
+}
+.failure-keyword-input-error {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.prompts-failure-controls .processing-footer {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.prompts-failure-controls .processing-footer > .help {
+  flex: 1 1 240px;
+  margin: 0;
 }
 .prompts-library {
   padding: 26px;
@@ -73,16 +162,34 @@
   gap: 16px;
 }
 @media (max-width: 760px) {
-  .prompts-fixed-card {
+  .prompts-fixed-card,
+  .prompts-failure-card {
     grid-template-columns: minmax(0, 1fr);
     gap: 16px;
     padding: 20px;
   }
-  .prompts-fixed-actions {
+  .prompts-fixed-actions,
+  .prompts-failure-actions {
     flex-wrap: wrap;
   }
-  .prompts-fixed-actions button {
+  .prompts-fixed-actions button,
+  .prompts-failure-actions button {
     padding-inline: 10px;
+  }
+  .failure-keyword-add {
+    flex-wrap: wrap;
+  }
+  .failure-keyword-add label {
+    flex-basis: 100%;
+  }
+  .failure-keyword-add > button {
+    margin-left: auto;
+  }
+  .prompts-failure-controls .processing-footer > .help {
+    flex: initial;
+  }
+  .failure-keywords-error {
+    flex-wrap: wrap;
   }
   .prompts-library {
     padding: 20px;

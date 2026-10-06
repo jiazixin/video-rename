@@ -41,7 +41,8 @@ func (v ScanSettings) Validate() error {
 type storedPolicy struct {
 	Policy
 	BatchLimits
-	LibraryScan *ScanSettings `json:"library_scan,omitzero"`
+	LibraryScan     *ScanSettings `json:"library_scan,omitzero"`
+	FailureKeywords []string      `json:"failure_keywords,omitzero"`
 }
 
 func loadPolicy(row interface{ Scan(...any) error }) (storedPolicy, error) {

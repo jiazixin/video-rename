@@ -5,6 +5,7 @@ import (
 	"unicode"
 
 	"video-rename/internal/domain"
+	"video-rename/internal/naming"
 )
 
 // ValidateTitle 验证模型输出符合单行标题协议(docs/processing.md 第 4 节):
@@ -12,11 +13,16 @@ import (
 //   - 要求仅一个非空逻辑行;
 //   - 代码围栏、多标题列表、解释段落、空标题均为 TITLE_INVALID。
 func ValidateTitle(raw string) (string, *domain.JobError) {
+	return ValidateTitleWithKeywords(raw, nil)
+}
+
+// ValidateTitleWithKeywords applies the run's failure rules before checking the
+// single-line protocol. Empty rules disable matching, while nil uses defaults.
+func ValidateTitleWithKeywords(raw string, keywords []string) (string, *domain.JobError) {
 	s := strings.TrimSpace(raw)
 	s = stripPairedQuotes(s)
-	// The reserved failure marker must never reach filename cleaning or commit.
-	if strings.Contains(s, "命名失败") {
-		return "", &domain.JobError{Code: domain.CodeNamingFailed, Message: "命名失败：模型表示无法生成符合要求的标题，已保留原文件名"}
+	if err := naming.FailureTitleError(s, keywords); err != nil {
+		return "", err
 	}
 	if s == "" {
 		return "", &domain.JobError{Code: domain.CodeTitleInvalid, Message: "模型输出为空标题"}

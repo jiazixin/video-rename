@@ -3,6 +3,7 @@ package systemsettings
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -30,12 +31,16 @@ func TestSettingsReadsRemainAvailableDuringWrite(t *testing.T) {
 	if _, err := store.SaveFixedPrompt(prompt); err != nil {
 		t.Fatal(err)
 	}
+	keywords := []string{"只读取已提交规则"}
+	if _, err := store.SaveFailureKeywords(keywords); err != nil {
+		t.Fatal(err)
+	}
 	tx, err := db.BeginTx(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec("UPDATE system_settings SET extract_workers=17,numbering='{',fixed_prompt='未提交'"); err != nil {
+	if _, err := tx.Exec("UPDATE system_settings SET extract_workers=17,numbering='{',fixed_prompt='未提交',policy='{'"); err != nil {
 		t.Fatal(err)
 	}
 	for _, check := range []struct {
@@ -60,6 +65,13 @@ func TestSettingsReadsRemainAvailableDuringWrite(t *testing.T) {
 			value, err := store.FixedPrompt()
 			if err == nil && value != prompt {
 				err = fmt.Errorf("prompt: got %q, want %q", value, prompt)
+			}
+			return err
+		}},
+		{"failure keywords", func() error {
+			value, err := store.FailureKeywords()
+			if err == nil && !slices.Equal(value, keywords) {
+				err = fmt.Errorf("keywords: got %q, want %q", value, keywords)
 			}
 			return err
 		}},

@@ -24,8 +24,31 @@ func (a *App) promptRoutes(api *http.ServeMux) {
 			failure(w, err)
 			return
 		}
+		keywords, err := settings.FailureKeywords()
+		if err != nil {
+			failure(w, err)
+			return
+		}
 		w.Header().Set("Cache-Control", "private, no-store")
-		send(w, 200, map[string]any{"fixed_prompt": fixed, "default_fixed_prompt": systemsettings.DefaultFixedPrompt, "prompts": list})
+		send(w, 200, map[string]any{"fixed_prompt": fixed, "default_fixed_prompt": systemsettings.DefaultFixedPrompt, "failure_keywords": keywords, "default_failure_keywords": systemsettings.DefaultFailureKeywords(), "prompts": list})
+	})
+	api.HandleFunc("PUT /api/prompts/failure-keywords", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			FailureKeywords *[]string `json:"failure_keywords"`
+		}
+		if !decode(w, r, &input) {
+			return
+		}
+		if input.FailureKeywords == nil {
+			send(w, http.StatusBadRequest, map[string]string{"message": "请提供 failure_keywords 数组；空数组表示关闭匹配"})
+			return
+		}
+		keywords, err := settings.SaveFailureKeywords(*input.FailureKeywords)
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		send(w, http.StatusOK, map[string]any{"failure_keywords": keywords})
 	})
 	api.HandleFunc("PUT /api/prompts/fixed", func(w http.ResponseWriter, r *http.Request) {
 		var input struct {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"video-rename/internal/config"
@@ -62,9 +63,11 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 		t.Fatal("default fixed prompt missing", w.Code, w.Body.String())
 	}
 	var page struct {
-		FixedPrompt        string `json:"fixed_prompt"`
-		DefaultFixedPrompt string `json:"default_fixed_prompt"`
-		Prompts            []struct {
+		FixedPrompt            string   `json:"fixed_prompt"`
+		DefaultFixedPrompt     string   `json:"default_fixed_prompt"`
+		FailureKeywords        []string `json:"failure_keywords"`
+		DefaultFailureKeywords []string `json:"default_failure_keywords"`
+		Prompts                []struct {
 			ID      int64  `json:"id"`
 			Title   string `json:"title"`
 			Version int64  `json:"version"`
@@ -73,6 +76,52 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &page)
 	if page.DefaultFixedPrompt != systemsettings.DefaultFixedPrompt || page.FixedPrompt != page.DefaultFixedPrompt {
 		t.Fatal("default fixed prompt missing from payload", w.Body.String())
+	}
+	if !slices.Equal(page.FailureKeywords, systemsettings.DefaultFailureKeywords()) || !slices.Equal(page.DefaultFailureKeywords, page.FailureKeywords) {
+		t.Fatal("failure keyword defaults missing from payload", w.Body.String())
+	}
+	if w = call("PUT", "/api/prompts/failure-keywords", map[string]any{"failure_keywords": []string{}}, false); w.Code != http.StatusForbidden {
+		t.Fatal("failure keyword save missing CSRF accepted", w.Code)
+	}
+	for _, payload := range []any{
+		map[string]any{},
+		map[string]any{"failure_keywords": nil},
+		map[string]any{"failure_keywords": "sorry"},
+		map[string]any{"failure_keywords": []any{123}},
+		map[string]any{"failure_keywords": []string{"sorry"}, "unknown": true},
+		nil,
+		[]string{"sorry"},
+	} {
+		if w = call("PUT", "/api/prompts/failure-keywords", payload, true); w.Code != http.StatusBadRequest {
+			t.Fatal("malformed failure keywords accepted", payload, w.Code, w.Body.String())
+		}
+	}
+	if got, err := (systemsettings.Store{DB: a.DB}).FailureKeywords(); err != nil || !slices.Equal(got, page.FailureKeywords) {
+		t.Fatal("rejected request changed rules", got, err)
+	}
+	for _, keywords := range [][]string{{" "}, {strings.Repeat("字", 201)}, make([]string, 101)} {
+		if w = call("PUT", "/api/prompts/failure-keywords", map[string]any{"failure_keywords": keywords}, true); w.Code != http.StatusConflict {
+			t.Fatal("invalid failure keywords accepted", keywords, w.Code, w.Body.String())
+		}
+	}
+	for _, keywords := range [][]string{{"  自定义失败句子  ", "Sorry", "SORRY"}, {}, systemsettings.DefaultFailureKeywords()} {
+		if w = call("PUT", "/api/prompts/failure-keywords", map[string]any{"failure_keywords": keywords}, true); w.Code != http.StatusOK {
+			t.Fatal("failure keyword save failed", w.Code, w.Body.String())
+		}
+		var response struct {
+			FailureKeywords []string `json:"failure_keywords"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		want, err := systemsettings.NormalizeFailureKeywords(keywords)
+		if err != nil || response.FailureKeywords == nil || !slices.Equal(response.FailureKeywords, want) {
+			t.Fatal("unexpected failure keyword response", w.Body.String(), err)
+		}
+		w = call("GET", "/api/prompts", nil, true)
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil || !slices.Equal(response.FailureKeywords, want) {
+			t.Fatal("GET did not show saved rules", w.Body.String(), err)
+		}
 	}
 	if len(page.Prompts) != 1 || page.Prompts[0].Title != "默认提示词" {
 		t.Fatal("seed prompt missing", w.Body.String())

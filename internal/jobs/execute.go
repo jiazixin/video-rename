@@ -92,6 +92,7 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 			fail(err)
 			return
 		}
+		runConfig.FailureKeywords = r.retry.FailureKeywords
 	}
 	settings, err := (systemsettings.Store{DB: m.DB}).Get()
 	if err != nil {

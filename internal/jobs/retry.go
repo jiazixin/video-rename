@@ -27,6 +27,7 @@ type retryPolicy struct {
 	FallbackID       int64
 	FallbackTitle    string
 	FallbackSnapshot string
+	FailureKeywords  []string
 }
 
 func (m *Manager) freezeRetry(task string, primary int64) (retryPolicy, error) {
@@ -37,7 +38,11 @@ func (m *Manager) freezeRetry(task string, primary int64) (retryPolicy, error) {
 	if err != nil {
 		return retryPolicy{}, err
 	}
-	p := retryPolicy{Enabled: settings.RetryEnabled, Count: settings.RetryCount}
+	keywords, err := (systemsettings.Store{DB: m.DB}).FailureKeywords()
+	if err != nil {
+		return retryPolicy{}, err
+	}
+	p := retryPolicy{Enabled: settings.RetryEnabled, Count: settings.RetryCount, FailureKeywords: keywords}
 	if !p.Enabled || settings.FallbackModelID == 0 || settings.FallbackModelID == primary {
 		return p, nil
 	}
@@ -145,7 +150,11 @@ func (m *Manager) inferWithRetry(ctx context.Context, run Run, entry int64, cfg 
 		}
 		release()
 		if err == nil {
-			if _, invalid := naming.CleanTitle(result, filepath.Ext(job.Path)); invalid != nil {
+			invalid := naming.FailureTitleError(result, current.FailureKeywords)
+			if invalid == nil {
+				_, invalid = naming.CleanTitle(result, filepath.Ext(job.Path))
+			}
+			if invalid != nil {
 				invalid.RawRequest, invalid.RawResponse = exchange.Request, exchange.Response
 				err = invalid
 			}

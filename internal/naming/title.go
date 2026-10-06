@@ -1,4 +1,4 @@
-// Package naming 实现标题清洗与同目录候选名称分配。
+// Package naming 实现标题失败词句检查、清洗与同目录候选名称分配。
 // 清洗规则固定(docs/operations.md 第 2 节),不含策略开关;
 // 命名模块不执行 rename。
 package naming
