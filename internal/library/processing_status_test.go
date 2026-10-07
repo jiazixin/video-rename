@@ -270,36 +270,50 @@ func TestDirectoryProcessingFiltersUseSubtreesBeforePaging(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	for _, status := range []string{"", "unprocessed", "processed", "marked", "manual", "automatic", "restore", "active"} {
-		for _, direction := range []string{"asc", "desc"} {
-			t.Run(status+"/"+direction, func(t *testing.T) {
-				expected := slices.Clone(want[status])
-				if direction == "desc" {
-					slices.Reverse(expected)
-				}
-				var actual []string
-				cursor := 0
-				for page := 1; ; page++ {
-					p, err := l.ListPageFiltered(t.Context(), 1, page, 50, "", "video", status, "name_"+direction)
-					if err != nil || p.Total != len(expected) {
-						t.Fatalf("page %d: total %d, want %d, error %v", page, p.Total, len(expected), err)
+	for _, field := range []string{"name", "status"} {
+		for _, status := range []string{"", "unprocessed", "processed", "marked", "manual", "automatic", "restore", "active"} {
+			for _, direction := range []string{"asc", "desc"} {
+				t.Run(field+"/"+status+"/"+direction, func(t *testing.T) {
+					expected := slices.Clone(want[status])
+					if field == "status" {
+						// Independent fixture grouping: unknown, empty, unprocessed,
+						// partial, then all three fully processed source groups.
+						group := func(name string) int {
+							var index int
+							if _, err := fmt.Sscanf(name, "folder%d", &index); err != nil {
+								t.Fatal(err)
+							}
+							return []int{4, 4, 4, 3, 2, 0, 1}[index%7]
+						}
+						slices.SortStableFunc(expected, func(a, b string) int { return group(a) - group(b) })
 					}
-					c, err := l.ListOrderedFiltered(t.Context(), 1, cursor, 50, p.Generation, "", "video", status, false, "name_"+direction)
-					if err != nil || c.Total != p.Total || c.Next != p.Next || !slices.EqualFunc(c.Items, p.Items, func(a, b Entry) bool { return a.ID == b.ID }) {
-						t.Fatalf("cursor disagrees on page %d: %v", page, err)
+					if direction == "desc" {
+						slices.Reverse(expected)
 					}
-					for _, e := range p.Items {
-						actual = append(actual, e.Name)
+					var actual []string
+					cursor := 0
+					for page := 1; ; page++ {
+						p, err := l.ListPageFiltered(t.Context(), 1, page, 50, "", "video", status, field+"_"+direction)
+						if err != nil || p.Total != len(expected) {
+							t.Fatalf("page %d: total %d, want %d, error %v", page, p.Total, len(expected), err)
+						}
+						c, err := l.ListOrderedFiltered(t.Context(), 1, cursor, 50, p.Generation, "", "video", status, false, field+"_"+direction)
+						if err != nil || c.Total != p.Total || c.Next != p.Next || !slices.EqualFunc(c.Items, p.Items, func(a, b Entry) bool { return a.ID == b.ID }) {
+							t.Fatalf("cursor disagrees on page %d: %v", page, err)
+						}
+						for _, e := range p.Items {
+							actual = append(actual, e.Name)
+						}
+						if p.Next == 0 {
+							break
+						}
+						cursor = p.Next
 					}
-					if p.Next == 0 {
-						break
+					if !slices.Equal(actual, expected) {
+						t.Fatalf("filtered directories: got %v, want %v", actual, expected)
 					}
-					cursor = p.Next
-				}
-				if !slices.Equal(actual, expected) {
-					t.Fatalf("filtered directories: got %v, want %v", actual, expected)
-				}
-			})
+				})
+			}
 		}
 	}
 	// Filtering removes later pages before clamping, and combines with search.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -105,5 +106,55 @@ func TestMetadataSortingAndRenameTime(t *testing.T) {
 	}
 	if p.Items[0].ID != before.ID {
 		t.Fatal("latest rename not first")
+	}
+}
+
+func TestDirectoryStatusSorting(t *testing.T) {
+	l, root, _ := fixture(t)
+	// Names deliberately interleave completed, partial, and running directories.
+	groups := [][]string{{"dir2", "dir5"}, {"dir3", "dir6"}, {"dir1", "dir4"}}
+	for _, names := range groups {
+		for _, name := range names {
+			if err := os.MkdirAll(filepath.Join(root, name, "nested"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			put(t, filepath.Join(root, name, "nested", "a.mp4"))
+			put(t, filepath.Join(root, name, "nested", "b.mp4"))
+		}
+	}
+	refresh(t, l, 1)
+	for group, names := range groups {
+		for _, name := range names {
+			dir := entry(t, l, 1, name)
+			refresh(t, l, dir.ID)
+			nested := entry(t, l, dir.ID, "nested")
+			refresh(t, l, nested.ID)
+			setTestProcessingSource(t, l, nested.ID, "a.mp4", "manual")
+			if group != 1 {
+				setTestProcessingSource(t, l, nested.ID, "b.mp4", "automatic")
+			}
+			if group == 0 {
+				if _, err := l.DB.Exec(`INSERT INTO runs(source,targets,recursive,status,created,request_key) VALUES('manual',?,1,'running','now',?)`, fmt.Sprintf("[%d]", dir.ID), name); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	for _, direction := range []string{"asc", "desc"} {
+		p, err := l.ListPageFiltered(t.Context(), 1, 1, 50, "", "", "", "status_"+direction)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"dir2", "dir5", "dir3", "dir6", "dir1", "dir4"}
+		if direction == "desc" {
+			slices.Reverse(want)
+		}
+		var got []string
+		for _, e := range p.Items {
+			got = append(got, e.Name)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: got %v, want %v", direction, got, want)
+		}
 	}
 }

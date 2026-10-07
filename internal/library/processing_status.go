@@ -68,9 +68,26 @@ func (n *directoryProcessing) matchesStatus(status string) bool {
 // directoryStatusIDs evaluates sibling subtrees together, before count or page
 // boundaries are calculated. Unknown subtrees remain discoverable as unprocessed.
 func directoryStatusIDs(ctx context.Context, tx *sql.Tx, id, generation int64, query, status string) (string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT entry FROM directory_items WHERE dir=? AND generation=? AND kind='directory' AND instr(lower(name),lower(?))>0`, id, generation, query)
+	nodes, err := directoryStatusNodes(ctx, tx, id, generation, query, status)
 	if err != nil {
 		return "", err
+	}
+	matched := []int64{}
+	for id, n := range nodes {
+		if n.matchesStatus(status) {
+			matched = append(matched, id)
+		}
+	}
+	raw, err := json.Marshal(matched)
+	return string(raw), err
+}
+
+// Read all matching siblings before paging so subtree state determines both
+// numbered pages and cursor boundaries, rather than sorting only visible rows.
+func directoryStatusNodes(ctx context.Context, tx *sql.Tx, id, generation int64, query, status string) (map[int64]*directoryProcessing, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT entry FROM directory_items WHERE dir=? AND generation=? AND kind='directory' AND instr(lower(name),lower(?))>0`, id, generation, query)
+	if err != nil {
+		return nil, err
 	}
 	ids := []int64{}
 	for rows.Next() {
@@ -85,21 +102,65 @@ func directoryStatusIDs(ctx context.Context, tx *sql.Tx, id, generation int64, q
 	}
 	rows.Close()
 	if err != nil {
+		return nil, err
+	}
+	selected := map[int64]*directoryProcessing{}
+	if len(ids) == 0 {
+		return selected, nil
+	}
+	nodes, err := readDirectoryProcessing(ctx, tx, ids, status)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		if n := nodes[id]; n != nil {
+			selected[id] = n
+		}
+	}
+	return selected, nil
+}
+
+// Match DirectoryStatus.vue: active task state overrides video progress.
+// Ascending: unknown, empty, unprocessed, queued/scanning/running/paused/
+// cancelling, partially processed, fully processed.
+func (n *directoryProcessing) sortRank() int {
+	switch n.taskStatus {
+	case "queued":
+		return 3
+	case "scanning":
+		return 4
+	case "running":
+		return 5
+	case "paused":
+		return 6
+	case "cancelling":
+		return 7
+	}
+	switch {
+	case n.progress.Unknown > 0:
+		return 0
+	case n.progress.Total == 0:
+		return 1
+	case n.progress.Processed == 0:
+		return 2
+	case n.progress.Processed < n.progress.Total:
+		return 8
+	default:
+		return 9
+	}
+}
+
+func directoryStatusRanks(ctx context.Context, tx *sql.Tx, id, generation int64, query string) (string, error) {
+	// The processed filter requests live task state without source-match counts.
+	nodes, err := directoryStatusNodes(ctx, tx, id, generation, query, "processed")
+	if err != nil {
 		return "", err
 	}
-	matched := []int64{}
-	if len(ids) > 0 {
-		nodes, err := readDirectoryProcessing(ctx, tx, ids, status)
-		if err != nil {
-			return "", err
-		}
-		for _, id := range ids {
-			if n := nodes[id]; n != nil && n.matchesStatus(status) {
-				matched = append(matched, id)
-			}
-		}
+	ranks := map[int64]int{}
+	for id, n := range nodes {
+		ranks[id] = n.sortRank()
 	}
-	raw, err := json.Marshal(matched)
+	raw, err := json.Marshal(ranks)
 	return string(raw), err
 }
 

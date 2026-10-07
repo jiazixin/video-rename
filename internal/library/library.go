@@ -352,8 +352,19 @@ func (l *Library) listOrdered(ctx context.Context, id int64, offset, limit int, 
 	var anchorValue any
 	var anchorID int64
 	value, sortBy := directoryOrder(sortBy)
+	queryPrefix := ""
+	queryArgs := []any{}
+	if sortBy == "status_asc" || sortBy == "status_desc" {
+		ranks, err := directoryStatusRanks(ctx, tx, id, p.Generation, q)
+		if err != nil {
+			return p, err
+		}
+		queryPrefix = `WITH directory_status_ranks AS MATERIALIZED (SELECT CAST(key AS INTEGER) AS status_entry,value AS rank FROM json_each(?)) `
+		queryArgs = append(queryArgs, ranks)
+		value = `CASE WHEN kind='directory' THEN COALESCE((SELECT rank FROM directory_status_ranks WHERE status_entry=directory_items.entry),0) ELSE ` + value + ` END`
+	}
 	if offset > 0 {
-		if err = tx.QueryRowContext(ctx, "SELECT CASE WHEN kind='directory' THEN 0 ELSE 1 END,name,entry,"+value+" FROM directory_items WHERE dir=? AND generation=? AND entry=?", id, p.Generation, offset).Scan(&anchorKind, &anchorName, &anchorID, &anchorValue); err != nil {
+		if err = tx.QueryRowContext(ctx, queryPrefix+"SELECT CASE WHEN kind='directory' THEN 0 ELSE 1 END,name,entry,"+value+" FROM directory_items WHERE dir=? AND generation=? AND entry=?", append(append([]any{}, queryArgs...), id, p.Generation, offset)...).Scan(&anchorKind, &anchorName, &anchorID, &anchorValue); err != nil {
 			return p, fmt.Errorf("分页位置已失效，请返回第一页")
 		}
 	}
@@ -403,9 +414,10 @@ func (l *Library) listOrdered(ctx context.Context, id int64, offset, limit int, 
 		p.Number = min(pageNumber, max(1, (p.Total+limit-1)/limit))
 		skip = (p.Number - 1) * limit
 	}
-	pageArgs := append([]any{id, p.Generation, q}, filterArgs...)
+	pageArgs := append(append([]any{}, queryArgs...), id, p.Generation, q)
+	pageArgs = append(pageArgs, filterArgs...)
 	pageArgs = append(pageArgs, offset, anchorKind, anchorKind, anchorValue, anchorName, anchorID, limit+1, skip)
-	rows, err := tx.QueryContext(ctx, `SELECT entry FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter+` AND (?=0 OR CASE WHEN kind='directory' THEN 0 ELSE 1 END>? OR (CASE WHEN kind='directory' THEN 0 ELSE 1 END=? AND (`+value+`,name COLLATE NATURAL_NAME,entry)`+comparison+`(?,?,?))) ORDER BY CASE WHEN kind='directory' THEN 0 ELSE 1 END,`+value+` `+order+`,name COLLATE NATURAL_NAME `+order+`,entry `+order+` LIMIT ? OFFSET ?`, pageArgs...)
+	rows, err := tx.QueryContext(ctx, queryPrefix+`SELECT entry FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter+` AND (?=0 OR CASE WHEN kind='directory' THEN 0 ELSE 1 END>? OR (CASE WHEN kind='directory' THEN 0 ELSE 1 END=? AND (`+value+`,name COLLATE NATURAL_NAME,entry)`+comparison+`(?,?,?))) ORDER BY CASE WHEN kind='directory' THEN 0 ELSE 1 END,`+value+` `+order+`,name COLLATE NATURAL_NAME `+order+`,entry `+order+` LIMIT ? OFFSET ?`, pageArgs...)
 	if err != nil {
 		return p, err
 	}

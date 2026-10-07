@@ -417,3 +417,34 @@ test('保序更新不会保留改名后不匹配搜索或媒体类型的文件',
   await expect(names(page)).toHaveText(['photo.png', 'renamed.jpg'])
   await expect(page.getByRole('alert')).toHaveCount(0)
 })
+
+for (const width of [1440, 390]) {
+  test(`目录处理状态排序按显示状态分组（${width}px）`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 })
+    const setup = await fixture(page, `目录状态排序-${width}`, [], ['dir1', 'dir2', 'dir3', 'dir4'])
+    const targets: number[] = []
+    for (const name of ['dir1', 'dir2', 'dir3', 'dir4']) {
+      const files = await setup.populateDirectory(name, ['a.mp4', 'b.mp4'])
+      targets.push(...files.filter(e => name === 'dir1' || name === 'dir3' || e.name === 'a.mp4').map(e => e.id))
+    }
+    const result = await page.request.post('/api/entries/processed', {
+      headers: setup.headers,
+      data: { targets, marked: true, key: `sort-directories-${setup.id}` }
+    })
+    expect(result.ok()).toBe(true)
+    await expect.poll(async () => {
+      const current = await (await page.request.get(`/api/entries/status?ids=${targets.join(',')}`)).json()
+      return current.every((e: Entry) => e.processed === 'marked')
+    }).toBe(true)
+    await setup.open()
+    const sort = page.getByRole('button', { name: '切换处理状态排序', exact: true })
+    await sort.click()
+    await expect(names(page)).toHaveText(['dir2', 'dir4', 'dir1', 'dir3'])
+    await expect(rows(page).nth(0)).toContainText('部分已处理')
+    await expect(rows(page).nth(2)).toContainText('全部已处理')
+    await sort.click()
+    await expect(names(page)).toHaveText(['dir3', 'dir1', 'dir4', 'dir2'])
+    await expect(rows(page).nth(0)).toContainText('全部已处理')
+    await expect(rows(page).nth(2)).toContainText('部分已处理')
+  })
+}

@@ -81,3 +81,17 @@ TypeScript 7.0.2 曾实际安装验证，但当前 vue-tsc 3.3.12 无法加载�
 首次沙箱测试因禁止本地监听/缓存写入失败，获准环境重跑通过。干净副本首次冒烟脚本误用了不存在的 `/api/models`，修正为当前 `/api/model-configs` 后整套通过；没有为此修改产品路由或添加兼容入口。
 
 完整命令输出位于本地忽略目录 `test-results/prelaunch-2026-10-07/`，截图在 `web/test-results/`。覆盖率在 `coverage/go.out`，这些产物不提交。历史文档只增加归档标识或修正相对链接，历史测试结论不作为本次结果。
+
+## 目录处理状态排序修复（2026-10-07）
+
+本节对应起点 `29d0d0a` 的工作区修改。已用隔离目录复现：原实现给所有目录固定排序值 0，升降序实际均按名称排列，运行中、部分已处理与全部已处理相互穿插。修复后在分页前汇总子树状态，活动任务优先于处理进度，同组使用自然名称排序。
+
+- `TestDirectoryStatusSorting`：原实现升降序均失败；修复后通过，覆盖嵌套视频、运行中覆盖已有处理标记。
+- 210 个合成目录覆盖待统计、空目录、未处理、部分处理及三种全部处理来源，验证筛选、双向排序、页码与游标分页的一致性。
+- `GOCACHE=/tmp/video-rename-go-cache go test -count=1 ./internal/library ./internal/app`：通过。
+- `GOCACHE=/tmp/video-rename-go-cache go vet ./internal/library ./internal/app`：通过。
+- `GOCACHE=/tmp/video-rename-go-cache go test -race -count=1 ./internal/library`：通过。
+- `npm --prefix web run build`、`GOCACHE=/tmp/video-rename-go-cache go build -o bin/video-rename ./cmd/video-rename`：通过。
+- `npm --prefix web run test:e2e -- library-status.spec.ts`：8 项通过，包括新增 1440px / 390px 目录状态排序。首次因沙箱禁止本地监听未启动，获得测试权限后在隔离服务器重跑通过。
+
+本次未使用用户媒体、配置、数据库或真实模型；未执行 NAS 性能、Linux 目标环境实测或全套浏览器回归。默认 Go 缓存曾受沙箱写权限限制，因此后续 Go 验证将缓存放入临时目录。
