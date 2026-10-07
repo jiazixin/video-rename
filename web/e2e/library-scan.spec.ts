@@ -32,11 +32,14 @@ test('后台扫描默认一小时，范围与间隔保存后重开保持，窄�
     await page.reload()
     await expect(panel.getByLabel('扫描间隔（分钟）', { exact: true })).toHaveValue('120')
     await expect(panel.getByLabel('开启定时扫描', { exact: true })).toBeChecked()
-    await expect(panel.locator('.picker-current input')).toBeChecked()
-    await panel.locator('.picker-current input').uncheck()
+    await expect(panel.getByRole('region', { name: '扫描范围', exact: true })).toContainText('整个媒体库')
+    await panel.getByRole('button', { name: '从扫描范围移除 整个媒体库', exact: true }).click()
     await expect(panel.getByRole('button', { name: '保存扫描设置', exact: true })).toBeDisabled()
     await expect(panel.getByText('请选择 1–100 个扫描目录。', { exact: true })).toBeVisible()
-    await panel.locator('.picker-current input').check()
+    await panel.getByRole('button', { name: '添加扫描范围', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: '选择扫描范围' })
+    await dialog.getByLabel('选择当前目录', { exact: true }).check()
+    await dialog.getByRole('button', { name: '确认选择', exact: true }).click()
     await panel.scrollIntoViewIfNeeded()
     await page.screenshot({
       path: 'test-results/library-scan-settings-desktop.png',
@@ -155,7 +158,7 @@ for (const mode of ['auto', 'auto-delayed', 'selected', 'late-selection'])
       scanRequests++
       return route.fulfill({
         json: {
-          settings: { enabled: true, interval_minutes: 60, targets: [1] },
+          settings: { enabled: true, interval_minutes: 60, targets: [1], excluded_targets: [] },
           status: idleStatus
         }
       })
@@ -259,7 +262,7 @@ async function mockDirectoryUpdates(page: Page, initial = [entry(10, '保留.mp4
     updates.requests.scan++
     return route.fulfill({
       json: {
-        settings: { enabled: true, interval_minutes: 60, targets: [1] },
+        settings: { enabled: true, interval_minutes: 60, targets: [1], excluded_targets: [] },
         status: idleStatus
       }
     })
@@ -451,7 +454,7 @@ test('扫描失败和取消反馈清晰，不覆盖尚未保存的扫描间隔',
   }
   await page.route('**/api/library/scan', (route) =>
     route.fulfill({
-      json: { settings: { enabled: true, interval_minutes: 60, targets: [1] }, status }
+      json: { settings: { enabled: true, interval_minutes: 60, targets: [1], excluded_targets: [] }, status }
     })
   )
   await page.route('**/api/library/scan/cancel', (route) => {
@@ -495,7 +498,7 @@ test('扫描中长路径和大计数保持布局，范围整行且窄屏不溢�
   }
   await page.route('**/api/library/scan', (route) =>
     route.fulfill({
-      json: { settings: { enabled: true, interval_minutes: 60, targets: [1] }, status }
+      json: { settings: { enabled: true, interval_minutes: 60, targets: [1], excluded_targets: [] }, status }
     })
   )
   await login(page)
@@ -517,4 +520,81 @@ test('扫描中长路径和大计数保持布局，范围整行且窄屏不溢�
   const pathBox = await path.boundingBox()
   expect(pathBox!.x + pathBox!.width).toBeLessThanOrEqual(390)
   await panel.screenshot({ path: 'test-results/library-scan-active-mobile.png' })
+})
+
+test('排除目录可多选、取消、移除和保存，两个范围共用弹窗且焦点恢复', async ({ page }) => {
+  const headers = await login(page)
+  const original = (await (await page.request.get('/api/library/scan')).json()).settings
+  try {
+    await page.getByRole('button', { name: '系统设置', exact: true }).click()
+    await page.getByRole('button', { name: '后台目录扫描', exact: true }).click()
+    const panel = page.locator('.library-scan-settings')
+    const excluded = panel.getByRole('region', { name: '排除目录', exact: true })
+    const add = excluded.getByRole('button', { name: '添加排除目录' })
+    await expect(excluded).toContainText('未设置排除目录')
+    await add.click()
+    const dialog = page.getByRole('dialog', { name: '选择排除目录' })
+    await dialog.getByLabel('选择 家庭影像', { exact: true }).check()
+    await dialog.getByRole('button', { name: '取消', exact: true }).click()
+    await expect(excluded.locator('li')).toHaveCount(0)
+    await expect(add).toBeFocused()
+    await add.press('Enter')
+    await expect(dialog.getByLabel('选择 家庭影像', { exact: true })).not.toBeChecked()
+    await dialog.getByLabel('选择 家庭影像', { exact: true }).check()
+    await dialog.getByLabel('选择 工作素材', { exact: true }).check()
+    await dialog.getByRole('button', { name: '确认选择', exact: true }).click()
+    await expect(excluded.locator('li')).toHaveCount(2)
+    await expect(add).toBeFocused()
+    await panel.getByRole('button', { name: '保存扫描设置', exact: true }).click()
+    await expect(page.locator('.toast-message').first()).toContainText('扫描设置已保存')
+    await page.reload()
+    await expect(excluded.locator('li')).toHaveCount(2)
+    await expect(excluded).toContainText('家庭影像')
+    await expect(excluded).toContainText('工作素材')
+    await page.screenshot({ path: 'test-results/scan-exclusions-desktop.png', fullPage: true })
+    await page.setViewportSize({ width: 390, height: 844 })
+    await add.click()
+    await expect(dialog.getByLabel('选择 家庭影像', { exact: true })).toBeChecked()
+    await dialog.getByRole('button', { name: '关闭', exact: true }).focus()
+    await page.keyboard.press('Shift+Tab')
+    await expect(dialog.getByRole('button', { name: '确认选择', exact: true })).toBeFocused()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await page.screenshot({ path: 'test-results/scan-exclusions-modal-mobile.png', fullPage: true })
+    await page.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
+    await expect(add).toBeFocused()
+    await excluded.getByRole('button', { name: '从排除目录移除 家庭影像', exact: true }).click()
+    await excluded.getByRole('button', { name: '从排除目录移除 工作素材', exact: true }).click()
+    await panel.getByRole('button', { name: '保存扫描设置', exact: true }).click()
+    await expect(page.locator('.toast-message').first()).toContainText('扫描设置已保存')
+    await page.reload()
+    await expect(excluded).toContainText('未设置排除目录')
+  } finally {
+    expect((await page.request.put('/api/library/scan/settings', { headers, data: original })).ok()).toBe(true)
+  }
+})
+
+test('目录选择弹窗加载失败可重试，长路径列表在窄屏不溢出', async ({ page }) => {
+  await login(page)
+  const longPath = Array(20).fill('很长的目录名称').join(' / ')
+  await page.route('**/api/library/scan', route => route.fulfill({json: {
+    settings: { enabled: false, interval_minutes: 60, targets: [1], excluded_targets: [987] },
+    status: idleStatus, directory_paths: { 1: '整个媒体库', 987: longPath }
+  }}))
+  await page.getByRole('button', { name: '系统设置', exact: true }).click()
+  await page.getByRole('button', { name: '后台目录扫描', exact: true }).click()
+  await page.setViewportSize({ width: 320, height: 844 })
+  const excluded = page.getByRole('region', { name: '排除目录', exact: true })
+  await expect(excluded.locator('li')).toContainText(longPath)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: 'test-results/scan-exclusions-long-320.png', fullPage: true })
+  await page.route('**/api/directories/1/entries?kind=directory*', route => route.fulfill({status: 500, json: { message: '测试目录暂时不可用' }}), {times: 1})
+  await excluded.getByRole('button', { name: '添加排除目录' }).click()
+  const dialog = page.getByRole('dialog', { name: '选择排除目录' })
+  await expect(dialog).toContainText('测试目录暂时不可用')
+  await expect(dialog.getByLabel('选择当前目录', {exact: true})).toBeDisabled()
+  await dialog.getByRole('button', {name: '重试', exact: true}).click()
+  await expect(dialog.getByLabel('选择 家庭影像', {exact: true})).toBeEnabled()
+  await dialog.getByRole('button', {name: '取消', exact: true}).click()
+  await expect(excluded.locator('li')).toContainText(longPath)
 })

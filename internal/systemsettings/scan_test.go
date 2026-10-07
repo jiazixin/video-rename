@@ -20,7 +20,7 @@ func TestScanSettingsDefaultPersistenceAndIndependentUpdates(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, DefaultScanSettings()) || got.IntervalMinutes != 60 || !got.Enabled {
 		t.Fatalf("default scan: %+v %v", got, err)
 	}
-	scan := ScanSettings{Enabled: false, IntervalMinutes: 120, Targets: []int64{2, 3}}
+	scan := ScanSettings{Enabled: false, IntervalMinutes: 120, Targets: []int64{2, 3}, ExcludedTargets: []int64{4, 5}}
 	if err := store.SaveScan(scan); err != nil {
 		t.Fatal(err)
 	}
@@ -70,6 +70,9 @@ func TestScanSettingsValidationAndStorageErrors(t *testing.T) {
 		{IntervalMinutes: 60},
 		{IntervalMinutes: 60, Targets: []int64{0}},
 		{IntervalMinutes: 60, Targets: []int64{1, 1}},
+		{IntervalMinutes: 60, Targets: []int64{1}, ExcludedTargets: []int64{0}},
+		{IntervalMinutes: 60, Targets: []int64{1}, ExcludedTargets: []int64{2, 2}},
+		{IntervalMinutes: 60, Targets: []int64{1}, ExcludedTargets: make([]int64, 101)},
 	} {
 		if err := store.SaveScan(v); err == nil {
 			t.Fatalf("invalid settings accepted: %+v", v)
@@ -99,7 +102,7 @@ func TestConcurrentScanAndProcessingSettingsSaves(t *testing.T) {
 	}
 	defer db.Close()
 	store := Store{DB: db}
-	scan := ScanSettings{Enabled: true, IntervalMinutes: 90, Targets: []int64{1, 2}}
+	scan := ScanSettings{Enabled: true, IntervalMinutes: 90, Targets: []int64{1, 2}, ExcludedTargets: []int64{}}
 	processing := Default()
 	processing.CacheGB = 2
 	processing.RetryCount = 6

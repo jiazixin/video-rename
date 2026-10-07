@@ -3,7 +3,7 @@
   import { computed, onMounted, ref, watch } from 'vue';
   import { RefreshCw, Save } from '@lucide/vue';
   import { type LibraryScanSettings } from '../../app/contracts';
-  import DirectoryPicker from './DirectoryPicker.vue';
+  import ScanDirectorySelection from './ScanDirectorySelection.vue';
   import ScanStatus from './ScanStatus.vue';
   import { useLibraryScan } from './library-scan';
   const scan = useLibraryScan();
@@ -14,7 +14,11 @@
   const dirty = computed(() => !!form.value && JSON.stringify(form.value) !== saved.value);
   watch(state, (value) => {
     if (!form.value && value) {
-      form.value = { ...value.settings, targets: [...value.settings.targets] };
+      form.value = {
+        ...value.settings,
+        targets: [...value.settings.targets],
+        excluded_targets: [...value.settings.excluded_targets]
+      };
       saved.value = JSON.stringify(form.value);
     }
   });
@@ -22,7 +26,11 @@
     if (!form.value) return;
     const result = await scan.save(form.value);
     if (!result) return;
-    form.value = { ...result, targets: [...result.targets] };
+    form.value = {
+      ...result,
+      targets: [...result.targets],
+      excluded_targets: [...result.excluded_targets]
+    };
     saved.value = JSON.stringify(form.value);
     toast.value?.show('扫描设置已保存。自动扫描在后台运行，关闭网页仍会继续。');
   }
@@ -71,21 +79,39 @@
             ></p
           >
         </div>
-        <div class="scan-settings-scope"
-          ><h3>扫描范围</h3
-          ><p class="help"
-            >包含全部子目录；选择媒体库可扫描全部文件夹。可选 1–100 个目录，重叠范围自动合并。</p
-          ><DirectoryPicker v-model="form.targets" /><p
-            v-if="!form.targets.length || form.targets.length > 100"
-            class="notice error"
+        <div class="scan-settings-scope">
+          <ScanDirectorySelection
+            v-model="form.targets"
+            :paths="state?.directory_paths || {}"
+            title="扫描范围"
+            description="包含全部子目录；选择媒体库可扫描全部文件夹。可选 1–100 个目录，重叠范围自动合并。"
+            empty="尚未选择扫描目录，请点击加号添加。"
+          />
+          <p v-if="!form.targets.length || form.targets.length > 100" class="notice error"
             >请选择 1–100 个扫描目录。</p
-          ></div
-        >
+          >
+          <ScanDirectorySelection
+            v-model="form.excluded_targets"
+            :paths="state?.directory_paths || {}"
+            title="排除目录"
+            description="手动扫描和后台扫描均跳过这些目录及其子目录，排除优先于扫描范围。最多 100 个，可随时移除。"
+            empty="未设置排除目录，将扫描所选范围内的全部目录。"
+          />
+          <p class="help"
+            >排除不会删除已有索引，也不限制浏览、命名或抽帧。运行中的扫描沿用启动时的设置，新设置从下一轮生效。</p
+          >
+        </div>
       </fieldset>
       <footer class="scan-settings-actions"
         ><button
           class="primary"
-          :disabled="submitting || !dirty || !form.targets.length || form.targets.length > 100"
+          :disabled="
+            submitting ||
+            !dirty ||
+            !form.targets.length ||
+            form.targets.length > 100 ||
+            form.excluded_targets.length > 100
+          "
           ><Save :size="16" />{{ submitting ? '正在提交…' : '保存扫描设置' }}</button
         ><button
           type="button"
@@ -166,10 +192,6 @@
   }
   .scan-settings-scope {
     min-width: 0;
-  }
-  .scan-settings-scope h3 {
-    margin: 0;
-    font-size: 13px;
   }
   .scan-settings-scope > .help {
     margin: 6px 0 12px;

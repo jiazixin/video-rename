@@ -86,6 +86,9 @@ func TestLibraryScanAPISettingsAndDiscovery(t *testing.T) {
 		`{}`, `{"enabled":true,"interval_minutes":4,"targets":[1]}`,
 		`{"enabled":true,"interval_minutes":60,"targets":[]}`,
 		`{"enabled":true,"interval_minutes":60,"targets":[99999]}`,
+		`{"enabled":true,"interval_minutes":60,"targets":[1],"excluded_targets":[99999]}`,
+		`{"enabled":true,"interval_minutes":60,"targets":[1],"excluded_targets":[0]}`,
+		`{"enabled":true,"interval_minutes":60,"targets":[1],"excluded_targets":[1,1]}`,
 		`{"enabled":true,"interval_minutes":60,"targets":[1],"extra":true}`,
 	} {
 		if w := request("PUT", "/api/library/scan/settings", body, true); w.Code < 400 {
@@ -156,5 +159,60 @@ func TestDirectoryStatePollingDoesNotScanDisk(t *testing.T) {
 	var count int
 	if err := a.DB.QueryRow("SELECT count(*) FROM entries WHERE parent=1").Scan(&count); err != nil || count != 0 {
 		t.Fatalf("state polling scanned the filesystem: %d %v", count, err)
+	}
+}
+
+func TestScanExcludedTargetsAPI(t *testing.T) {
+	a, root, request := scanAPI(t)
+	if err := os.MkdirAll(filepath.Join(root, "excluded", "child"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "excluded", "file.mp4"), []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Library.ScanDirectory(t.Context(), 1); err != nil {
+		t.Fatal(err)
+	}
+	var parent, child, file int64
+	if err := a.DB.QueryRow("SELECT id FROM entries WHERE name='excluded'").Scan(&parent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Library.ScanDirectory(t.Context(), parent); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.DB.QueryRow("SELECT id FROM entries WHERE name='child'").Scan(&child); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.DB.QueryRow("SELECT id FROM entries WHERE name='file.mp4'").Scan(&file); err != nil {
+		t.Fatal(err)
+	}
+	w := request("PUT", "/api/library/scan/settings", fmt.Sprintf(`{"enabled":false,"interval_minutes":60,"targets":[1],"excluded_targets":[%d,%d]}`, child, parent), true)
+	var saved systemsettings.ScanSettings
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &saved) != nil || len(saved.ExcludedTargets) != 1 || saved.ExcludedTargets[0] != parent {
+		t.Fatalf("normalize exclusions: %d %s", w.Code, w.Body.String())
+	}
+	w = request("GET", "/api/library/scan", "", false)
+	var state struct {
+		Settings systemsettings.ScanSettings `json:"settings"`
+		Paths    map[int64]string            `json:"directory_paths"`
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &state) != nil || state.Paths[parent] != "excluded" || len(state.Settings.ExcludedTargets) != 1 {
+		t.Fatalf("saved labels: %d %s", w.Code, w.Body.String())
+	}
+	w = request("PUT", "/api/library/scan/settings", fmt.Sprintf(`{"enabled":false,"interval_minutes":60,"targets":[1],"excluded_targets":[%d]}`, file), true)
+	if w.Code < 400 {
+		t.Fatal("file accepted as exclusion")
+	}
+	w = request("POST", "/api/library/scan", fmt.Sprintf(`{"targets":[%d]}`, child), true)
+	if w.Code != http.StatusAccepted {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for a.Scanner.Snapshot().Finished == "" && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	status := a.Scanner.Snapshot()
+	if status.Status != "completed" || status.Directories != 0 {
+		t.Fatalf("manual child bypassed exclusion: %+v", status)
 	}
 }

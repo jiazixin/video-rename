@@ -107,7 +107,7 @@ func TestConcurrentFailureKeywordScanAndProcessingSaves(t *testing.T) {
 	defer db.Close()
 	store := Store{DB: db}
 	keywords := []string{"自定义失败句子", "I cannot help"}
-	scan := ScanSettings{Enabled: false, IntervalMinutes: 90, Targets: []int64{1, 2}}
+	scan := ScanSettings{Enabled: false, IntervalMinutes: 90, Targets: []int64{1, 2}, ExcludedTargets: []int64{}}
 	processing := Default()
 	processing.ExtractWorkers, processing.RetryCount = 4, 7
 	var wg sync.WaitGroup

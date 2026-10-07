@@ -1,7 +1,9 @@
 package app
 
 import (
+	"fmt"
 	"net/http"
+	"slices"
 
 	"video-rename/internal/systemsettings"
 )
@@ -14,7 +16,12 @@ func (a *App) libraryScanRoutes(mux *http.ServeMux) {
 			failure(w, err)
 			return
 		}
-		send(w, http.StatusOK, map[string]any{"settings": settings, "status": a.Scanner.Snapshot()})
+		paths, err := a.Library.DisplayPaths(r.Context(), append(slices.Clone(settings.Targets), settings.ExcludedTargets...))
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		send(w, http.StatusOK, map[string]any{"settings": settings, "status": a.Scanner.Snapshot(), "directory_paths": paths})
 	})
 	mux.HandleFunc("PUT /api/library/scan/settings", func(w http.ResponseWriter, r *http.Request) {
 		var settings systemsettings.ScanSettings
@@ -31,6 +38,14 @@ func (a *App) libraryScanRoutes(mux *http.ServeMux) {
 			return
 		}
 		settings.Targets = targets
+		if len(settings.ExcludedTargets) > 0 {
+			excluded, err := a.Scanner.ValidateTargets(r.Context(), settings.ExcludedTargets)
+			if err != nil {
+				failure(w, fmt.Errorf("排除目录无效：%w", err))
+				return
+			}
+			settings.ExcludedTargets = excluded
+		}
 		a.settingsMu.Lock()
 		err = store.SaveScan(settings)
 		a.settingsMu.Unlock()

@@ -541,3 +541,105 @@ func TestStatusSlicesAreIndependentAndNeverNull(t *testing.T) {
 		t.Fatalf("Snapshot shared slices: %+v", got)
 	}
 }
+
+func TestExcludedDirectoriesApplyToManualAndAutomaticScans(t *testing.T) {
+	for _, source := range []string{"manual", "automatic"} {
+		t.Run(source, func(t *testing.T) {
+			m, l, root, store := fixture(t)
+			put(t, filepath.Join(root, "skip", "nested", "old.mp4"))
+			put(t, filepath.Join(root, "keep", "old.mp4"))
+			if _, err := m.Start(t.Context(), nil, source); err != nil {
+				t.Fatal(err)
+			}
+			finished(t, m)
+			skip := entryID(t, l, 1, "skip")
+			nested := entryID(t, l, skip, "nested")
+			keep := entryID(t, l, 1, "keep")
+			settings := systemsettings.DefaultScanSettings()
+			settings.ExcludedTargets = []int64{skip}
+			if err := store.SaveScan(settings); err != nil {
+				t.Fatal(err)
+			}
+			put(t, filepath.Join(root, "skip", "new.mp4"))
+			put(t, filepath.Join(root, "skip", "nested", "new.mp4"))
+			put(t, filepath.Join(root, "keep", "new.mp4"))
+			if _, err := m.Start(t.Context(), []int64{1}, source); err != nil {
+				t.Fatal(err)
+			}
+			status := finished(t, m)
+			if status.Status != "completed" || status.Directories != 2 {
+				t.Fatalf("scan: %+v", status)
+			}
+			entryID(t, l, keep, "new.mp4")
+			entryID(t, l, nested, "old.mp4") // Existing index is preserved.
+			var count int
+			if err := l.DB.Read().QueryRow("SELECT count(*) FROM entries WHERE parent IN (?,?) AND name='new.mp4'", skip, nested).Scan(&count); err != nil || count != 0 {
+				t.Fatalf("excluded files indexed: %d %v", count, err)
+			}
+			for _, target := range []int64{skip, nested} {
+				if _, err := m.Start(t.Context(), []int64{target}, source); err != nil {
+					t.Fatal(err)
+				}
+				if status := finished(t, m); status.Status != "completed" || status.Directories != 0 {
+					t.Fatalf("explicit excluded target: %+v", status)
+				}
+			}
+			settings.ExcludedTargets = nil
+			if err := store.SaveScan(settings); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.Start(t.Context(), []int64{skip}, source); err != nil {
+				t.Fatal(err)
+			}
+			if status := finished(t, m); status.Status != "completed" || status.Directories != 2 {
+				t.Fatalf("removed exclusion: %+v", status)
+			}
+			entryID(t, l, nested, "new.mp4")
+		})
+	}
+}
+
+func TestScanExclusionsFrozenUntilNextRound(t *testing.T) {
+	m, l, root, store := fixture(t)
+	put(t, filepath.Join(root, "skip", "file.mp4"))
+	if _, err := m.Start(t.Context(), nil, "manual"); err != nil {
+		t.Fatal(err)
+	}
+	finished(t, m)
+	skip := entryID(t, l, 1, "skip")
+	entered, release := make(chan struct{}), make(chan struct{})
+	m.scan = func(ctx context.Context, id int64) (library.ScanDirectoryResult, error) {
+		if id == 1 {
+			close(entered)
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return library.ScanDirectoryResult{}, ctx.Err()
+			}
+		}
+		return library.ScanDirectoryResult{}, nil
+	}
+	if _, err := m.Start(t.Context(), nil, "manual"); err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	settings := systemsettings.DefaultScanSettings()
+	settings.ExcludedTargets = []int64{skip}
+	if err := store.SaveScan(settings); err != nil {
+		t.Fatal(err)
+	}
+	m.SettingsChanged()
+	close(release)
+	if status := finished(t, m); status.Directories != 2 {
+		t.Fatalf("active round changed: %+v", status)
+	}
+	m.scan = func(context.Context, int64) (library.ScanDirectoryResult, error) {
+		return library.ScanDirectoryResult{}, nil
+	}
+	if _, err := m.Start(t.Context(), nil, "manual"); err != nil {
+		t.Fatal(err)
+	}
+	if status := finished(t, m); status.Directories != 1 {
+		t.Fatalf("next round ignored exclusion: %+v", status)
+	}
+}

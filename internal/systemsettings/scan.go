@@ -13,10 +13,11 @@ type ScanSettings struct {
 	Enabled         bool    `json:"enabled"`
 	IntervalMinutes int     `json:"interval_minutes"`
 	Targets         []int64 `json:"targets"`
+	ExcludedTargets []int64 `json:"excluded_targets"`
 }
 
 func DefaultScanSettings() ScanSettings {
-	return ScanSettings{Enabled: true, IntervalMinutes: 60, Targets: []int64{1}}
+	return ScanSettings{Enabled: true, IntervalMinutes: 60, Targets: []int64{1}, ExcludedTargets: []int64{}}
 }
 
 func (v ScanSettings) Validate() error {
@@ -30,6 +31,16 @@ func (v ScanSettings) Validate() error {
 	for _, id := range v.Targets {
 		if id <= 0 || seen[id] {
 			return fmt.Errorf("扫描目录编号无效或重复")
+		}
+		seen[id] = true
+	}
+	if len(v.ExcludedTargets) > 100 {
+		return fmt.Errorf("最多选择 100 个排除目录")
+	}
+	clear(seen)
+	for _, id := range v.ExcludedTargets {
+		if id <= 0 || seen[id] {
+			return fmt.Errorf("排除目录编号无效或重复")
 		}
 		seen[id] = true
 	}
@@ -71,6 +82,7 @@ func (s Store) Scan() (ScanSettings, error) {
 	if policy.LibraryScan != nil {
 		v = *policy.LibraryScan
 		v.Targets = slices.Clone(v.Targets)
+		v.ExcludedTargets = append([]int64{}, v.ExcludedTargets...)
 	}
 	return v, v.Validate()
 }

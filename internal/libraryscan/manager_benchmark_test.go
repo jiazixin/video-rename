@@ -56,7 +56,7 @@ func BenchmarkRecursiveDirectoryScan(b *testing.B) {
 				run := func() {
 					m.status = Status{Status: "scanning", Targets: []int64{1}, Errors: []ScanError{}}
 					m.cancel = func() {}
-					m.run(b.Context(), []int64{1})
+					m.run(b.Context(), []int64{1}, nil)
 					if m.status.Status != "completed" || m.status.Directories != directories+1 || m.status.Files != directories*filesPerDirectory {
 						b.Fatalf("scan status: %+v", m.status)
 					}

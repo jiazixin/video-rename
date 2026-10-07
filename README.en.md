@@ -56,7 +56,7 @@ Open [http://127.0.0.1:8790](http://127.0.0.1:8790) and sign in with your config
 | Schedules | Naming or extraction with an explicit time zone; missed runs are not replayed after downtime |
 | Usage and analysis | Request usage, durations, and failures; when model usage is unavailable, estimates cover text only |
 
-Background indexing is enabled by default. It waits one hour after startup and after each completed scan. Change its scope, interval, or enabled state in settings. Indexing only updates listings; processing is triggered by your actions or enabled schedules.
+Background indexing is enabled by default. It waits one hour after startup and after each completed scan. Change its scope, interval, or enabled state in settings. Scan scopes and excluded directories share a multi-select dialog; add or remove directories and save. Both manual and background scans skip excluded directories and their descendants, starting with the next scan. Exclusions preserve existing indexes and do not restrict browsing or media processing. Indexing only updates listings; processing is triggered by your actions or enabled schedules.
 
 ## Data, security, and deployment
 

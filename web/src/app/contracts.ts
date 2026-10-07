@@ -32,6 +32,7 @@ export interface DirectoryState {
   error: string
 }
 export interface LibraryScanSettings {
+  excluded_targets: number[]
   enabled: boolean
   interval_minutes: number
   targets: number[]
@@ -54,6 +55,7 @@ export interface LibraryScanStatus {
   errors: { path: string; message: string }[]
 }
 export interface LibraryScanState {
+  directory_paths: Record<number, string>
   settings: LibraryScanSettings
   status: LibraryScanStatus
 }

@@ -185,19 +185,18 @@ func (m *Manager) Start(ctx context.Context, targets []int64, source string) (St
 	if err := ctx.Err(); err != nil {
 		return m.Snapshot(), err
 	}
+	settings, err := m.settings.Scan()
+	if err != nil {
+		m.mu.Lock()
+		m.settingsError = err.Error()
+		m.status.NextScan = ""
+		m.mu.Unlock()
+		m.notify()
+		return m.Snapshot(), fmt.Errorf("读取扫描设置失败：%w", err)
+	}
 	if len(targets) == 0 {
-		settings, err := m.settings.Scan()
-		if err != nil {
-			m.mu.Lock()
-			m.settingsError = err.Error()
-			m.status.NextScan = ""
-			m.mu.Unlock()
-			m.notify()
-			return m.Snapshot(), fmt.Errorf("读取扫描设置失败：%w", err)
-		}
 		targets = settings.Targets
 	}
-	var err error
 	targets, err = m.ValidateTargets(ctx, targets)
 	if err != nil {
 		return m.Snapshot(), err
@@ -220,7 +219,7 @@ func (m *Manager) Start(ctx context.Context, targets []int64, source string) (St
 	m.cancel, m.active = cancel, true
 	m.status = Status{ID: uuid.New().String(), Status: "scanning", Source: source,
 		Targets: slices.Clone(targets), Started: m.now().UTC().Format(time.RFC3339Nano), Errors: []ScanError{}}
-	m.wg.Go(func() { m.run(runCtx, targets) })
+	m.wg.Go(func() { m.run(runCtx, targets, settings.ExcludedTargets) })
 	m.notify()
 	return m.snapshotLocked(), nil
 }
@@ -449,7 +448,7 @@ func (m *Manager) scanOne(ctx context.Context, id int64, scan func(context.Conte
 	return true, false
 }
 
-func (m *Manager) run(ctx context.Context, targets []int64) {
+func (m *Manager) run(ctx context.Context, targets, excluded []int64) {
 	fatal := false
 	defer func() {
 		m.mu.Lock()
@@ -482,6 +481,14 @@ func (m *Manager) run(ctx context.Context, targets []int64) {
 		scan = scanner.ScanDirectory
 	}
 	for _, target := range targets {
+		skip, err := m.excluded(ctx, target, excluded)
+		if err != nil {
+			m.addError(target, err)
+			continue
+		}
+		if skip {
+			continue
+		}
 		ok, stop := m.scanOne(ctx, target, scan)
 		if stop {
 			fatal = true
@@ -514,6 +521,14 @@ func (m *Manager) run(ctx context.Context, targets []int64) {
 				m.addError(child, fmt.Errorf("扫描目录层级超过 1024 层"))
 				continue
 			}
+			skip, err := m.excluded(ctx, child, excluded)
+			if err != nil {
+				m.addError(child, err)
+				continue
+			}
+			if skip {
+				continue
+			}
 			ok, stop = m.scanOne(ctx, child, scan)
 			if stop {
 				fatal = true
@@ -524,4 +539,30 @@ func (m *Manager) run(ctx context.Context, targets []int64) {
 			}
 		}
 	}
+}
+
+// excluded checks indexed ancestors without opening the excluded directory.
+func (m *Manager) excluded(ctx context.Context, id int64, excluded []int64) (bool, error) {
+	if len(excluded) == 0 {
+		return false, nil
+	}
+	seen := map[int64]bool{}
+	for id > 0 {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		if slices.Contains(excluded, id) {
+			return true, nil
+		}
+		if seen[id] || len(seen) >= 1024 {
+			return false, fmt.Errorf("目录关系无效")
+		}
+		seen[id] = true
+		e, err := m.library.IndexedEntry(id)
+		if err != nil {
+			return false, err
+		}
+		id = e.Parent
+	}
+	return false, nil
 }

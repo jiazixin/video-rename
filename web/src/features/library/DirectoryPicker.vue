@@ -7,7 +7,10 @@
   import { api } from '../../app/api';
   import { type Page } from '../../app/contracts';
   const props = defineProps<{ modelValue: number[] }>();
-  const emit = defineEmits<{ 'update:modelValue': [ids: number[]] }>();
+  const emit = defineEmits<{
+    'update:modelValue': [ids: number[]];
+    paths: [paths: Record<number, string>];
+  }>();
   const selectedOnPage = computed(
     () => page.value?.items.filter((e) => props.modelValue.includes(e.id)).length || 0
   );
@@ -38,6 +41,14 @@
       );
       if (seq !== serial) return;
       page.value = result;
+      const prefix = result.breadcrumbs
+        .filter((crumb) => crumb.id !== 1)
+        .map((crumb) => crumb.name)
+        .join(' / ');
+      const paths: Record<number, string> = { [result.directory.id]: prefix || '整个媒体库' };
+      for (const entry of result.items)
+        paths[entry.id] = prefix ? `${prefix} / ${entry.name}` : entry.name;
+      emit('paths', paths);
       pageNumber.value = result.page ?? pageNumber.value;
       if (result.refreshing) timer = setTimeout(load, 1200);
     } catch (e) {
