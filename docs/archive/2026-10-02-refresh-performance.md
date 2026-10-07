@@ -1,3 +1,5 @@
+> 历史记录：不作为当前操作指南。当前文档见 [文档索引](../README.md)，最新验证见 [验收记录](../ACCEPTANCE.md)。
+
 > 已完成实施记录，仅用于追溯；当前行为与验证命令见docs/IMPLEMENTATION.md，实测结果见docs/ACCEPTANCE.md。
 
 # 大规模目录刷新性能优化

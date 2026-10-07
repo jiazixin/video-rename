@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -79,22 +80,21 @@ func (a *Auth) pruneLocked() {
 	}
 }
 
-// limited reports whether ip has too many recent failed logins.
-// Only failures count: successful sign-ins must not lock a legitimate
-// user out of repeated logins.
-func (a *Auth) limited(ip string) bool {
+// allowLogin checks the budget and records a failure under the same lock.
+// Successful sign-ins do not consume the failure budget.
+func (a *Auth) allowLogin(ip string, failed bool) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.pruneLocked()
-	return len(a.attempts[ip]) >= 10 || len(a.attempts["*"]) >= 100
-}
-
-// failed records one failed login attempt for rate limiting.
-func (a *Auth) failed(ip string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.attempts[ip] = append(a.attempts[ip], time.Now())
-	a.attempts["*"] = append(a.attempts["*"], time.Now())
+	if len(a.attempts[ip]) >= 10 || len(a.attempts["*"]) >= 100 {
+		return false
+	}
+	if failed {
+		now := time.Now()
+		a.attempts[ip] = append(a.attempts[ip], now)
+		a.attempts["*"] = append(a.attempts["*"], now)
+	}
+	return true
 }
 func sameOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
@@ -115,7 +115,9 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
-		if r.Method != "GET" && (!sameOrigin(r) || !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json")) {
+		readOnly := r.Method == http.MethodGet || r.Method == http.MethodHead
+		mediaType, _, mediaErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if !readOnly && (!sameOrigin(r) || mediaErr != nil || mediaType != "application/json") {
 			fail(w, 403, "请求来源或格式无效")
 			return
 		}
@@ -138,7 +140,7 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 			fail(w, 401, "请先登录")
 			return
 		}
-		if r.Method != "GET" && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(csrf)) != 1 {
+		if !readOnly && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(csrf)) != 1 {
 			fail(w, 403, "请求已失效，请刷新页面")
 			return
 		}
@@ -155,12 +157,12 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 				http.SetCookie(w, &http.Cookie{Name: "vr_session", Value: cookie.Value, Path: "/", MaxAge: int(sessionLifetime / time.Second), HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
 			}
 		}
-		if r.URL.Path == "/api/auth/session" && r.Method == "GET" {
+		if r.URL.Path == "/api/auth/session" && readOnly {
 			write(w, 200, map[string]string{"username": a.Config.Username, "csrf": csrf})
 			return
 		}
 		if r.URL.Path == "/api/auth/logout" && r.Method == "POST" {
-			if _, err = a.DB.Exec("DELETE FROM sessions WHERE token=?", hash(cookie.Value)); err != nil {
+			if _, err = a.DB.ExecContext(r.Context(), "DELETE FROM sessions WHERE token=?", hash(cookie.Value)); err != nil {
 				fail(w, 500, "退出失败")
 				return
 			}
@@ -173,23 +175,23 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 }
 func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if a.limited(ip) {
-		fail(w, 429, "登录尝试过于频繁，请稍后重试")
-		return
-	}
-	var input struct {
+	var input *struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
-	if err := json.UnmarshalRead(r.Body, &input); err != nil {
+	if err := json.UnmarshalRead(r.Body, &input, json.RejectUnknownMembers(true)); err != nil || input == nil {
 		fail(w, 400, "登录格式无效")
 		return
 	}
 	user, pass := hash(input.Username), hash(input.Password)
 	wantUser, wantPass := hash(a.Config.Username), hash(a.Config.Password)
-	if subtle.ConstantTimeCompare([]byte(user), []byte(wantUser))&subtle.ConstantTimeCompare([]byte(pass), []byte(wantPass)) != 1 {
-		a.failed(ip)
+	valid := subtle.ConstantTimeCompare([]byte(user), []byte(wantUser))&subtle.ConstantTimeCompare([]byte(pass), []byte(wantPass)) == 1
+	if !a.allowLogin(ip, !valid) {
+		fail(w, 429, "登录尝试过于频繁，请稍后重试")
+		return
+	}
+	if !valid {
 		fail(w, 401, "账号或密码错误")
 		return
 	}
@@ -198,15 +200,15 @@ func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
 	if secure {
 		token = secureSessionPrefix + token
 	}
-	tx, err := a.DB.Begin()
+	tx, err := a.DB.BeginTx(r.Context(), nil)
 	if err != nil {
 		fail(w, 503, "登录暂不可用")
 		return
 	}
 	defer tx.Rollback()
-	_, err = tx.Exec("DELETE FROM sessions WHERE expires<? OR fingerprint<>?", time.Now().Unix(), a.fingerprint)
+	_, err = tx.ExecContext(r.Context(), "DELETE FROM sessions WHERE expires<? OR fingerprint<>?", time.Now().Unix(), a.fingerprint)
 	if err == nil {
-		_, err = tx.Exec("INSERT INTO sessions VALUES(?,?,?,?)", hash(token), csrf, time.Now().Add(sessionLifetime).Unix(), a.fingerprint)
+		_, err = tx.ExecContext(r.Context(), "INSERT INTO sessions VALUES(?,?,?,?)", hash(token), csrf, time.Now().Add(sessionLifetime).Unix(), a.fingerprint)
 	}
 	if err == nil {
 		err = tx.Commit()

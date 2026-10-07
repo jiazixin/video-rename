@@ -5,6 +5,10 @@
   import { api } from '../../app/api';
   import { time } from '../../lib/date/format';
   import { statusNames } from '../../app/labels';
+
+  function statusName(status: string): string {
+    return statusNames[status] || status;
+  }
   import { type AnalysisReport } from '../../app/contracts';
   import SelectField from '../../components/SelectField.vue';
   import DateField from '../../components/DateField.vue';
@@ -510,7 +514,7 @@
             ><AnalysisScatter
               :points="report.scatter"
               :format-ms="duration"
-              :status-name="(s: string) => statusNames[s] || s"
+              :status-name="statusName"
               :color="LINE_COLOR"
           /></div>
         </div>

@@ -30,6 +30,10 @@ func failure(w http.ResponseWriter, err error) {
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 	d := jsontext.NewDecoder(r.Body)
+	if d.PeekKind() != '{' {
+		send(w, 400, map[string]string{"message": "请求必须为 JSON 对象"})
+		return false
+	}
 	if err := json.UnmarshalDecode(d, v, json.RejectUnknownMembers(true)); err != nil {
 		send(w, 400, map[string]string{"message": "请求字段或格式无效"})
 		return false

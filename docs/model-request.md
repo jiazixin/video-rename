@@ -1,4 +1,4 @@
-# 模型请求排查（2026-09-21）
+# 模型请求排查
 
 ## 当前结构
 
@@ -43,4 +43,4 @@
 - Claude 使用 POST /messages、x-api-key 与 anthropic-version: 2023-06-01；system 是顶层字段，messages 仅有一条 user。JPEG 以 image/source/base64 内容块发送；max_tokens 截断、tool_use 等非正常标题响应不执行改名。
 - 模型列表检测使用 GET /models；Anthropic 列表按 after_id 分页。不跟随重定向，错误不透传上游响应中的密钥。
 
-接口依据（2026-09-21）：[OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)、[OpenAI Models](https://developers.openai.com/api/reference/resources/models/methods/list)、[Anthropic Messages](https://platform.claude.com/docs/en/api/messages/create)、[Anthropic Models](https://platform.claude.com/docs/en/api/models/list)、[Ollama 兼容接口](https://docs.ollama.com/api/openai-compatibility)、[DeepSeek Models](https://api-docs.deepseek.com/api/list-models/)、[智谱模型文档](https://docs.bigmodel.cn/cn/guide/start/model-overview)。
+协议参考（服务实际支持以所选型号和端点为准）：[OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)、[OpenAI Models](https://developers.openai.com/api/reference/resources/models/methods/list)、[Anthropic Messages](https://platform.claude.com/docs/en/api/messages/create)、[Anthropic Models](https://platform.claude.com/docs/en/api/models/list)、[Ollama 兼容接口](https://docs.ollama.com/api/openai-compatibility)、[DeepSeek Models](https://api-docs.deepseek.com/api/list-models/)、[智谱模型文档](https://docs.bigmodel.cn/cn/guide/start/model-overview)。

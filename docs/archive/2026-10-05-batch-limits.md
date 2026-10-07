@@ -1,3 +1,5 @@
+> 历史记录：已完成或被后续实现取代；当前使用见 [文档索引](../README.md)，最新验证见 [验收记录](../ACCEPTANCE.md)。
+
 # 批次容量配置 Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
