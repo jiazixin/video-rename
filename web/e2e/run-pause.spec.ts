@@ -10,7 +10,7 @@ test('批次暂停确认、错误重试、恢复、详情与窄屏',async({page}
  const completed={...run,id:911,status:'completed',done:4,finished:new Date().toISOString()}
  await mockRunPages(page,[run,completed])
  await page.route('**/api/runs/910',route=>route.fulfill({json:run}))
- await page.route('**/api/runs/910/items?*',route=>route.fulfill({json:{items:[],total:0,page:1}}))
+ await page.route('**/api/runs/910/items?*',route=>route.fulfill({json:{items:[],directories:[],all_total:0,failed_total:0,total:0,page:1}}))
  let pauses=0,resumes=0,fail=true
  await page.route('**/api/runs/910/pause',route=>{
   expect(route.request().postDataJSON()).toEqual({confirm:true});pauses++

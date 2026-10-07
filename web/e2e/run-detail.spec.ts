@@ -1,5 +1,6 @@
 import {test,expect,type Page} from '@playwright/test'
 import {mockRunPages} from './run-pages'
+import {recordPage} from './run-record-pages'
 
 const sampleRun = () => ({
  id:146,task:'rename',source:'manual',plan:0,status:'running',targets:[1],target_names:['color1 / ts'],recursive:true,
@@ -8,9 +9,9 @@ const sampleRun = () => ({
  request_config:{model:'vision-main',retry_enabled:true,retry_count:3,fallback_model_title:'5060ti'},error:'',token_count:0
 })
 const sampleItems = () => [
- {id:1,entry:1,status:'running',original_path:`color1/ts/${'长文件名'.repeat(40)}.mp4`,current_path:`/path/to/current/${'长路径'.repeat(80)}/xxxxx.mp4`,message:'',attempts:[]},
- {id:2,entry:2,status:'done',original_path:'color1/ts/原文件.mp4',current_path:'color1/ts/新文件名.mp4',message:'',attempts:[{number:1,model_config_title:'主模型配置',model:'vision-main',fallback:false,started:'2026-10-03T10:51:32Z',duration_ms:12300,status:'success',message:''}]},
- {id:3,entry:3,status:'failed',original_path:'color1/ts/失败文件.mp4',current_path:'color1/ts/失败文件.mp4',message:'模型请求超时',attempts:Array.from({length:4},(_,i)=>({number:i+1,model_config_title:i?'兜底配置':'主模型配置',model:i?'5060ti':'vision-main',fallback:i>0,started:'2026-10-03T12:31:22Z',duration_ms:12000,status:'failed',message:'模型请求超时'}))}
+ {id:1,entry:1,status:'running',original_path:`color1 / ts / ${'长文件名'.repeat(40)}.mp4`,current_path:`/path/to/current/${'长路径'.repeat(80)}/xxxxx.mp4`,message:'',attempts:[]},
+ {id:2,entry:2,status:'done',original_path:'color1 / ts / 原文件.mp4',current_path:'color1 / ts / 后续名称.mp4',new_name:'新文件名.mp4',operation_status:'committed',message:'',attempts:[{number:1,model_config_title:'主模型配置',model:'vision-main',fallback:false,started:'2026-10-03T10:51:32Z',duration_ms:12300,status:'success',message:''}]},
+ {id:3,entry:3,status:'failed',original_path:'color1 / ts / 失败文件.mp4',current_path:'color1 / ts / 失败文件.mp4',message:'模型请求超时',attempts:Array.from({length:4},(_,i)=>({number:i+1,model_config_title:i?'兜底配置':'主模型配置',model:i?'5060ti':'vision-main',fallback:i>0,started:'2026-10-03T12:31:22Z',duration_ms:12000,status:'failed',message:'模型请求超时'}))}
 ]
 async function expectEvenTimeline(page:Page) {
  const nodes=await page.locator('.detail-lifecycle li').evaluateAll(items=>items.map(item=>{
@@ -33,15 +34,13 @@ async function openSample(page:Page,run=sampleRun()) {
  await mockRunPages(page,[run])
  await page.route('**/api/runs/146',route=>route.fulfill({json:run}))
  await page.route('**/api/runs/146/items?*',route=>{
-  const view=new URL(route.request().url()).searchParams.get('view')
-  const items=view==='failures'?sampleItems().filter(item=>item.status==='failed'):sampleItems()
-  return route.fulfill({json:{page:1,total:items.length,items}})
+  return route.fulfill({json:recordPage(sampleItems(),new URL(route.request().url()).searchParams)})
  })
  await login(page)
  await page.getByRole('button',{name:'批次记录',exact:true}).click()
  await page.getByRole('button',{name:'详情',exact:true}).click()
  const dialog=page.getByRole('dialog',{name:'运行 #146'})
- await expect(dialog.locator('.run-item')).toHaveCount(3)
+ await expect(dialog.locator('.detail-record-file')).toHaveCount(3)
  return dialog
 }
 
@@ -52,15 +51,14 @@ test('时间线详情示例、模型展开、复制、移动布局和实时刷�
  await expect(dialog.locator('.detail-statistic strong')).toHaveText(['1,887','108','1','1,996'])
  await expect(dialog.locator('.detail-statistic small').first()).toHaveText('94.5%')
  await expect(dialog.getByRole('progressbar')).toHaveAttribute('aria-valuenow','100')
- for(const [label,expanded] of [['目标目录与文件','true'],['运行日志','false'],['失败记录','false'],['配置信息','false']]) {
+ for(const [label,expanded] of [['运行记录','true'],['批次配置与提交范围','false']]) {
   await expect(dialog.getByRole('button',{name:new RegExp(`^${label}`)})).toHaveAttribute('aria-expanded',expanded)
  }
  await expect(dialog.locator('.detail-lifecycle [aria-current="step"]')).toContainText('处理中')
  await expect(dialog.locator('.modal-actions button')).toHaveText(['暂停','取消'])
  await expect(dialog.getByRole('button',{name:'关闭',exact:true})).toHaveCount(1)
- await expect(dialog.locator('.detail-current-path .detail-path-line > span')).toHaveAttribute('title',sampleItems()[0].current_path)
  await context.grantPermissions(['clipboard-read','clipboard-write'])
- await dialog.getByRole('button',{name:'复制当前路径',exact:true}).click()
+ await dialog.getByRole('button',{name:`复制当前路径 ${'长文件名'.repeat(40)}.mp4`,exact:true}).click()
  await expect(page.locator('.toast-message').first()).toContainText('路径已复制')
  expect(await page.evaluate(()=>navigator.clipboard.readText())).toBe(sampleItems()[0].current_path)
  await page.setViewportSize({width:1440,height:1200})
@@ -71,27 +69,30 @@ test('时间线详情示例、模型展开、复制、移动布局和实时刷�
  await expectEvenTimeline(page)
  await page.screenshot({path:'test-results/run-detail-timeline-mobile.png',animations:'disabled'})
  await page.setViewportSize({width:1440,height:1200})
- await dialog.getByRole('button',{name:/^运行日志/}).click()
- await dialog.locator('.attempt-history summary').first().click()
- await expect(dialog.locator('.detail-attempt').first()).toContainText('12300 ms')
- await expect(dialog.locator('.detail-attempt').first()).toContainText('vision-main')
- await dialog.getByRole('button',{name:/^失败记录/}).click()
- await expect(dialog.locator('.detail-failure')).toContainText('3 / 3')
- await expect(dialog.locator('.detail-failure')).toContainText('5060ti')
+ await dialog.locator('.detail-attempt-toggle').first().click()
+ await expect(dialog.locator('.detail-attempt:visible').first()).toContainText('12300 ms')
+ await expect(dialog.locator('.detail-attempt:visible').first()).toContainText('vision-main')
+ await dialog.locator('.detail-attempt-toggle').last().click()
+ const failed=dialog.locator('.detail-record-file').filter({hasText:'失败文件.mp4'})
+ await expect(failed.locator('.detail-attempt:visible')).toHaveCount(4)
+ await expect(failed).toContainText('重试第 3 次')
+ await expect(failed).toContainText('5060ti')
+ await expect(dialog.locator('.detail-record-names').nth(1)).toContainText('新文件名.mp4')
+ await expect(dialog.locator('.detail-record-names').nth(1)).not.toContainText('后续名称.mp4')
  // A polling update must keep user-controlled expansion and request details open.
  run.status='paused'
  await expect(dialog.locator('.detail-header-status')).toHaveText('已暂停',{timeout:10000})
  await expect(dialog.locator('.modal-actions button')).toHaveText(['继续','取消'])
- await expect(dialog.getByRole('button',{name:/^运行日志/})).toHaveAttribute('aria-expanded','true')
- await expect(dialog.locator('.attempt-history').first()).toHaveAttribute('open','')
+ await expect(dialog.getByRole('button',{name:/^运行记录/})).toHaveAttribute('aria-expanded','true')
+ await expect(dialog.locator('.detail-attempt-toggle').first()).toHaveAttribute('aria-expanded','true')
  await expect(dialog.locator('.detail-lifecycle [aria-current="step"]')).toHaveAttribute('data-tone','warning')
- await dialog.getByRole('button',{name:/^配置信息/}).click()
+ await dialog.getByRole('button',{name:/^批次配置与提交范围/}).click()
  await expect(dialog.locator('.detail-config')).toContainText('vision-main')
  await dialog.getByRole('button',{name:/^提示词快照/}).click()
  await expect(dialog.locator('.detail-prompt-body pre')).toContainText('长提示词内容')
  await page.setViewportSize({width:390,height:844})
  await expectEvenTimeline(page)
- const overflow=await dialog.evaluate(el=>Array.from(el.querySelectorAll<HTMLElement>('.modal-content,.detail-prompt-body,.detail-log-list,.detail-file-list')).some(node=>node.scrollWidth>node.clientWidth))
+ const overflow=await dialog.evaluate(el=>Array.from(el.querySelectorAll<HTMLElement>('.modal-content,.detail-prompt-body,.detail-directory-files,.detail-record-names')).some(node=>node.scrollWidth>node.clientWidth))
  expect(overflow).toBe(false)
  const header=await dialog.locator(':scope > header').boundingBox()
  await dialog.locator('.modal-content').evaluate(el=>{el.scrollTop=el.scrollHeight})
@@ -129,8 +130,8 @@ test('独立抽帧详情不展示命名配置，保留抽帧文件与批次控�
  const dialog=await openSample(page,run as ReturnType<typeof sampleRun>)
  await expect(dialog.locator('.detail-metadata')).toHaveText('独立抽帧 · 不使用模型')
  await expect(dialog.locator('.detail-prompt-tag')).toHaveCount(0)
- await expect(dialog.locator('.run-item')).toHaveCount(3)
- await dialog.getByRole('button',{name:/^配置信息/}).click()
+ await expect(dialog.locator('.detail-record-file')).toHaveCount(3)
+ await dialog.getByRole('button',{name:/^批次配置与提交范围/}).click()
  await expect(dialog.locator('.detail-config')).toContainText('独立抽帧')
  await expect(dialog.locator('.detail-config')).not.toContainText('主模型')
  await expect(dialog.getByRole('button',{name:'继续',exact:true})).toBeVisible()

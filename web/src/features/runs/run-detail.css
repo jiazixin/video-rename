@@ -362,60 +362,13 @@
   border: 1px solid var(--line);
   border-radius: 4px;
 }
-.detail-current-file {
-  padding: 14px 16px;
-  background: #f8fafc;
-  border-radius: 6px;
-  margin-bottom: 18px;
-  min-width: 0;
-}
 .run-detail-dialog .detail-caption {
   color: var(--ash);
   font-size: 12px;
   margin: 0 0 8px;
 }
-.detail-path-line {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.detail-path-line > span {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-}
 .run-detail-dialog .icon-btn {
   flex-shrink: 0;
-}
-.detail-current-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-  min-width: 0;
-  flex-wrap: wrap;
-}
-.detail-current-status .detail-caption {
-  margin: 0;
-}
-.detail-current-status > strong {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  font-weight: 500;
-}
-.detail-current-status small {
-  font-size: 11px;
-  color: var(--ash);
-}
-.detail-current-status .status-badge[data-status='running'] .status-dot {
-  animation: detail-breathe 2.8s ease-in-out infinite;
 }
 .detail-batch-progress {
   margin-bottom: 22px;
@@ -457,53 +410,10 @@
   background: var(--tone);
   transition: width 0.4s ease;
 }
-.detail-file-heading {
-  display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-  color: var(--steel);
-  margin-bottom: 6px;
-}
-.detail-file-heading strong {
-  font-weight: 500;
-}
-.detail-file-heading span {
-  color: var(--ash);
-}
-.detail-file-list {
-  max-height: 300px;
-  overflow: auto;
-  scrollbar-gutter: stable;
-}
-.run-detail-dialog .run-item {
-  gap: 8px;
-  padding: 10px 0;
-  border-bottom: 1px solid #f0f2f4;
-}
-.run-detail-dialog .run-file-paths {
-  gap: 3px;
-}
-.run-detail-dialog .run-file-paths strong,
-.run-detail-dialog .run-file-paths small {
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  overflow: hidden;
-}
-.run-detail-dialog .run-item p {
-  margin: 0;
-  color: var(--detail-error);
-  overflow-wrap: anywhere;
-}
 .run-detail-dialog .pagination {
   margin-top: 14px;
   gap: 12px;
   flex-wrap: wrap;
-}
-.detail-log-list,
-.detail-failure-list {
-  max-height: 360px;
-  overflow: auto;
-  scrollbar-gutter: stable;
 }
 .detail-record-error {
   display: flex;
@@ -519,54 +429,10 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.detail-log-row {
-  display: grid;
-  grid-template-columns: 64px 6px minmax(0, 1fr);
-  gap: 10px;
-  padding: 9px 0;
-  align-items: baseline;
-}
-.detail-log-row > time {
-  color: var(--ash);
-  font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-}
-.detail-log-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--tone);
-}
-.detail-log-content {
-  min-width: 0;
-  font-size: 12px;
-}
-.detail-log-title {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-}
-.detail-log-title strong {
-  color: var(--tone);
-  flex-shrink: 0;
-  font-weight: 500;
-}
-.detail-log-title span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--steel);
-}
-.run-detail-dialog .detail-log-message {
-  color: var(--tone);
-  font-size: 12px;
-  margin: 4px 0;
-}
 .attempt-history {
   font-size: 12px;
 }
-.attempt-history > summary {
+.detail-attempt-toggle {
   cursor: pointer;
   padding: 5px 0;
   color: var(--steel);
@@ -582,8 +448,7 @@
   font-weight: 500;
   color: var(--tone);
 }
-.detail-attempt dl,
-.detail-failure dl {
+.detail-attempt dl {
   display: grid;
   grid-template-columns: 80px minmax(0, 1fr);
   gap: 4px 12px;
@@ -597,40 +462,6 @@
   margin: 0;
   color: var(--steel);
   overflow-wrap: anywhere;
-}
-.detail-failure-count {
-  display: inline-block;
-  color: var(--tone);
-  background: var(--tone-bg);
-  border-radius: 4px;
-  min-width: 24px;
-  padding: 0 6px;
-  text-align: center;
-}
-.detail-failure {
-  padding: 14px 0;
-}
-.detail-failure + .detail-failure {
-  border-top: 1px solid #f0f2f4;
-}
-.detail-failure-heading {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-}
-.detail-failure-heading strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  font-weight: 500;
-}
-.run-detail-dialog .detail-failure-reason {
-  color: var(--detail-error);
-  margin: 8px 0;
-  font-size: 13px;
 }
 .detail-config {
   display: grid;
@@ -715,24 +546,161 @@
     display: block;
     margin-left: 0;
   }
-  .detail-current-file {
-    padding: 12px;
-  }
-  .detail-current-status small {
-    flex-basis: 100%;
-    order: 1;
-  }
-  .detail-log-row {
-    grid-template-columns: 56px 5px minmax(0, 1fr);
-    gap: 7px;
-  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .detail-lifecycle .is-live .lifecycle-node,
-  .detail-current-status .status-badge[data-status='running'] .status-dot {
+  .detail-lifecycle .is-live .lifecycle-node {
     animation: none;
   }
   .detail-progress-track > span {
     transition: none;
+  }
+}
+
+.detail-record-toolbar,
+.detail-record-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.detail-record-toolbar {
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.detail-record-toolbar .select-field {
+  min-width: 0;
+  max-width: min(100%, 360px);
+}
+.detail-record-toolbar .select-trigger {
+  max-width: 100%;
+}
+.detail-record-filters button[aria-pressed='true'] {
+  color: var(--detail-primary);
+  border-color: var(--detail-primary);
+  background: #edf5ef;
+}
+.detail-directory {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  margin-top: 14px;
+}
+.detail-directory-toggle {
+  display: flex;
+  justify-content: flex-start;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: var(--surface);
+  padding: 12px;
+  gap: 8px;
+  flex-wrap: wrap;
+  text-align: left;
+}
+.detail-directory-toggle > svg {
+  flex-shrink: 0;
+}
+.detail-directory-toggle > strong {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 500;
+}
+.detail-directory-counts {
+  flex-basis: 100%;
+  color: var(--steel);
+  font-size: 12px;
+  white-space: normal;
+  padding-left: 39px;
+}
+.directory-failures {
+  color: var(--detail-error);
+}
+.detail-directory-files {
+  padding: 12px 16px 0;
+}
+.detail-record-file {
+  border-top: 1px solid var(--line);
+  padding: 14px 0;
+  min-width: 0;
+}
+.detail-record-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.detail-record-heading > time,
+.detail-record-heading > .date-time-empty {
+  margin-left: auto;
+}
+.detail-record-heading > .detail-caption {
+  margin: 0;
+}
+.detail-record-names {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin: 14px 0 8px;
+}
+.detail-record-names dt {
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.detail-record-names dd {
+  font-size: 13px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.detail-record-message {
+  color: var(--tone);
+  margin: 8px 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.detail-attempt-toggle {
+  border: 0;
+  background: transparent;
+  color: var(--detail-primary);
+  text-align: left;
+  white-space: normal;
+  padding: 6px 0;
+}
+.detail-attempt-toggle > svg {
+  flex-shrink: 0;
+}
+.detail-directory-toggle .is-open,
+.detail-attempt-toggle .is-open {
+  transform: rotate(90deg);
+}
+@media (max-width: 700px) {
+  .detail-record-names {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+  .detail-directory-files {
+    padding: 12px 10px 0;
+  }
+  .detail-record-toolbar .select-field {
+    width: 100%;
+    max-width: 100%;
+  }
+  .detail-record-toolbar .select-trigger {
+    width: 100%;
+  }
+  .detail-attempt dl {
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 4px 8px;
+  }
+}
+@media (pointer: coarse) {
+  .detail-record-toolbar button,
+  .detail-directory-toggle,
+  .detail-attempt-toggle,
+  .detail-record-heading .icon-btn {
+    min-height: 44px;
   }
 }

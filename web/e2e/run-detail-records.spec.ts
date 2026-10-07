@@ -1,313 +1,271 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { mockRunPages } from './run-pages'
+import { recordPage } from './run-record-pages'
 
-test('折叠日志区分未读取计数和真实零条，并随批次刷新', async ({ page }) => {
-  const run = {
-    id: 962,
-    task: 'extract',
-    source: 'manual',
-    status: 'queued',
-    targets: [1],
-    created: new Date().toISOString(),
-    discovered: 1,
-    done: 0,
-    skipped: 0,
-    failed: 0
-  }
-  let release!: () => void
-  const pending = new Promise<void>((resolve) => {
-    release = resolve
-  })
-  let logTotal = 0
-  let recordRequests = 0
-  await mockRunPages(page, [run])
-  await page.route('**/api/runs/962', (route) => route.fulfill({ json: run }))
-  await page.route('**/api/runs/962/items?*', async (route) => {
-    if (new URL(route.request().url()).searchParams.has('view')) recordRequests++
-    await pending
-    await route.fulfill({ json: { items: [], total: 1, page: 1, log_total: logTotal } })
-  })
-  await page.goto('/')
-  await page.getByLabel('用户名', { exact: true }).fill('admin')
-  await page.getByLabel('密码', { exact: true }).fill('test-password-123')
-  await page.getByRole('button', { name: '登录', exact: true }).click()
-  await page.getByRole('button', { name: '批次记录', exact: true }).click()
-  await page.getByRole('button', { name: '详情', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: '运行 #962' })
-  const toggle = dialog.getByRole('button', { name: /^运行日志/ })
-  await expect(toggle).toContainText('正在统计…')
-  await expect(toggle).not.toContainText('共 0 条')
-  release()
-  await expect(toggle).toContainText('共 0 条')
-  logTotal = 1
-  run.status = 'running'
-  await expect(toggle).toContainText('共 1 条', { timeout: 10000 })
-  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
-  expect(recordRequests).toBe(0)
-  await toggle.scrollIntoViewIfNeeded()
-  await page.screenshot({ path: 'test-results/run-detail-collapsed-log-count.png' })
+const sampleRun = () => ({
+  id: 960,
+  task: 'rename',
+  source: 'manual',
+  status: 'running',
+  targets: [1],
+  target_names: ['素材'],
+  created: '2026-10-07T00:00:00Z',
+  discovered: 205,
+  done: 100,
+  skipped: 0,
+  failed: 104
 })
-
-test('详情日志和失败记录覆盖整批、独立分页和自动刷新', async ({ page }) => {
-  const stamp = new Date().toISOString()
-  const run = {
-    id: 960,
-    task: 'rename',
-    source: 'manual',
-    status: 'running',
-    targets: [1],
-    created: stamp,
-    started: stamp,
-    discovered: 208,
-    done: 100,
-    skipped: 0,
-    failed: 105
-  }
-  const records = Array.from({ length: 205 }, (_, i) => ({
+const records = () =>
+  Array.from({ length: 205 }, (_, i) => ({
     id: i + 1,
     entry: i + 1,
-    status: i < 100 ? 'done' : 'failed',
-    original_path: `clip-${i + 1}.mp4`,
-    current_path: `clip-${i + 1}.mp4`,
+    status: i === 204 ? 'queued' : i < 100 ? 'done' : 'failed',
+    original_path: `${i < 103 ? '上海' : '杭州'} / clip-${String(i + 1).padStart(3, '0')}.mp4`,
+    current_path: '当前目录 / 当前文件.mp4',
+    new_name: i < 100 ? `新名称-${i}.mp4` : '',
+    operation_status: i < 100 ? 'committed' : '',
     message: i < 100 ? '' : `失败原因 ${i + 1}`,
-    updated_ms: Date.now() + i,
-    attempts: [
-      {
-        number: 1,
-        model_config_title: '测试模型',
-        model: 'vision',
-        fallback: false,
-        started: stamp,
-        duration_ms: 500,
-        status: i < 100 ? 'success' : 'failed',
-        message: ''
-      }
-    ]
+    updated_ms: 1791331200000,
+    attempts: Array.from({ length: 4 }, (_, n) => ({
+      number: n + 1,
+      model_config_title: '测试模型',
+      model: n === 3 ? 'fallback' : 'vision',
+      fallback: n === 3,
+      started: '2026-10-07T00:00:00Z',
+      duration_ms: 500,
+      status: i < 100 && n === 3 ? 'success' : 'failed',
+      message: `第 ${n + 1} 次请求结果`
+    }))
   }))
-  let failFailures = false
-  const queued = Array.from({ length: 3 }, (_, i) => ({
-    ...records[0],
-    id: 300 + i,
-    entry: 300 + i,
-    status: 'queued'
-  }))
-  const requests: string[] = []
+async function open(page: Page, run = sampleRun()) {
   await mockRunPages(page, [run])
-  await page.route('**/api/runs/960', (route) => route.fulfill({ json: run }))
+  await page.route('**/api/runs/960', (r) => r.fulfill({ json: run }))
+  await page.request.post('/api/auth/login', {
+    data: { username: 'admin', password: 'test-password-123' }
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: '批次记录', exact: true }).click()
+  await page.getByRole('button', { name: '详情', exact: true }).click()
+  return page.getByRole('dialog', { name: '运行 #960' })
+}
+
+test('目录统计覆盖整批，筛选分页保留排队文件与全部尝试', async ({ page }) => {
+  const items = records(),
+    run = sampleRun()
+  let fail = false
+  const requests: string[] = []
   await page.route('**/api/runs/960/items?*', (route) => {
     const query = new URL(route.request().url()).searchParams
-    const view = query.get('view') || 'files'
-    requests.push(`${view}:${query.get('page')}`)
-    if (view === 'failures' && failFailures)
-      return route.fulfill({ status: 503, json: { message: '暂时不可用' } })
-    const items =
-      view === 'failures'
-        ? records.filter((item) => item.status === 'failed').toReversed()
-        : view === 'logs'
-          ? records.toReversed()
-          : [...records, ...queued]
-    const index = Math.min(Math.max(1, Number(query.get('page'))), Math.ceil(items.length / 100))
-    return route.fulfill({
-      json: {
-        page: index,
-        total: items.length,
-        log_total: records.length,
-        items: items.slice((index - 1) * 100, index * 100)
-      }
-    })
+    requests.push(query.toString())
+    return fail
+      ? route.fulfill({ status: 503, json: { message: '暂时不可用' } })
+      : route.fulfill({ json: recordPage(items, query) })
   })
-  await page.goto('/')
-  await page.getByLabel('用户名', { exact: true }).fill('admin')
-  await page.getByLabel('密码', { exact: true }).fill('test-password-123')
-  await page.getByRole('button', { name: '登录', exact: true }).click()
-  await page.getByRole('button', { name: '批次记录', exact: true }).click()
-  await page.getByRole('button', { name: '详情', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: '运行 #960' })
-  const logs = dialog.locator('#run-detail-logs')
-  const failures = dialog.locator('#run-detail-failures')
-  await expect(dialog.locator('.run-item')).toHaveCount(100)
-  const logToggle = dialog.getByRole('button', { name: /^运行日志/ })
-  await expect(logToggle).toHaveAttribute('aria-expanded', 'false')
-  await expect(logToggle).toContainText('共 205 条')
-  expect(requests.filter((query) => !query.startsWith('files'))).toHaveLength(0)
-  await dialog.getByRole('button', { name: /^运行日志/ }).click()
-  await dialog.getByRole('button', { name: /^失败记录/ }).click()
-  await expect(logs.locator('.detail-log-row')).toHaveCount(100)
-  await expect(failures.locator('.detail-failure')).toHaveCount(100)
-  await expect(logs.locator('.detail-log-title').first()).toContainText('clip-205.mp4')
-  await expect(failures.locator('.detail-failure').first()).toContainText('失败原因 205')
-  await expect(logs.getByLabel('运行日志分页', { exact: true })).toContainText('共 205 条')
-  await expect(failures.getByLabel('失败记录分页', { exact: true })).toContainText('共 105 条')
-  await logs.locator('.attempt-history summary').first().click()
-  records.push({
-    ...records[204],
-    id: 206,
-    entry: 206,
-    original_path: 'clip-206.mp4',
-    current_path: 'clip-206.mp4',
-    message: '新增失败',
-    updated_ms: Date.now() + 1000
-  })
-  run.failed++
-  run.discovered++
-  await expect(logs.locator('.detail-log-title').first()).toContainText('clip-206.mp4', {
-    timeout: 10000
-  })
-  await expect(failures.locator('.detail-failure').first()).toContainText('新增失败', {
-    timeout: 10000
-  })
-  await expect(
-    logs.locator('.detail-log-row').filter({ hasText: 'clip-205.mp4' }).locator('.attempt-history')
-  ).toHaveAttribute('open', '')
-  await logs.getByRole('button', { name: '下页日志' }).click()
-  await expect(
-    logs.getByLabel('运行日志翻页', { exact: true }).locator('.page-current')
-  ).toHaveText('2')
-  await failures.getByRole('button', { name: '下页失败' }).click()
-  await expect(failures.locator('.detail-failure')).toHaveCount(6)
-  await expect(dialog.locator('.run-item').first()).toContainText('clip-1.mp4')
-  const before = requests.filter((query) => query === 'logs:2').length
-  await expect
-    .poll(() => requests.filter((query) => query === 'logs:2').length, { timeout: 10000 })
-    .toBeGreaterThan(before)
-  await expect(
-    logs.getByLabel('运行日志翻页', { exact: true }).locator('.page-current')
-  ).toHaveText('2')
-  await expect(
-    failures.getByLabel('失败记录翻页', { exact: true }).locator('.page-current')
-  ).toHaveText('2')
-  failFailures = true
-  await expect(failures.getByRole('alert')).toContainText('暂时不可用', { timeout: 10000 })
-  await expect(failures.locator('.detail-failure')).toHaveCount(6)
-  failFailures = false
-  await failures.getByRole('button', { name: '重试', exact: true }).click()
-  await expect(failures.getByRole('alert')).toHaveCount(0)
-  await logs.getByRole('button', { name: '查看最新日志' }).click()
-  await failures.getByRole('button', { name: '查看最新失败' }).click()
-  await expect(logs.locator('.detail-log-title').first()).toContainText('clip-206.mp4')
-  await expect(failures.locator('.detail-failure').first()).toContainText('新增失败')
-  await page.setViewportSize({ width: 390, height: 844 })
-  expect(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy()
-  expect(await logs.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy()
-  expect(await failures.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy()
-  await failures.getByLabel('失败记录分页', { exact: true }).scrollIntoViewIfNeeded()
-  await page.screenshot({ path: 'test-results/run-detail-records-mobile.png' })
-  await dialog.getByRole('button', { name: /^运行日志/ }).click()
-  await dialog.getByRole('button', { name: /^失败记录/ }).click()
-  const count = requests.filter((query) => !query.startsWith('files')).length
-  const filesCount = requests.filter((query) => query.startsWith('files')).length
-  records.push({ ...records[0], id: 207, entry: 207, status: 'running' })
-  run.discovered++
-  await expect
-    .poll(() => requests.filter((query) => query.startsWith('files')).length, { timeout: 10000 })
-    .toBeGreaterThan(filesCount)
-  await expect(logToggle).toContainText('共 207 条')
-  expect(requests.filter((query) => !query.startsWith('files')).length).toBe(count)
+  const dialog = await open(page, run),
+    body = dialog.locator('#run-detail-records')
+  await expect(body.locator('.detail-record-file')).toHaveCount(100)
+  await expect(dialog.getByRole('button', { name: /^运行记录/ })).toContainText(
+    '205 个文件 · 2 个目录'
+  )
+  await expect(body.locator('.detail-directory-toggle').first()).toContainText('103 个文件')
+  await expect(body).toContainText('本页 100 / 103')
+  const attempts = body.locator('.detail-attempt-toggle').first()
+  await attempts.click()
+  await expect(body.locator('.detail-attempt:visible')).toHaveCount(4)
+  const content = dialog.locator('.modal-content')
+  await content.evaluate((el) => (el.scrollTop = 250))
+  const before = requests.length
+  await expect.poll(() => requests.length, { timeout: 10000 }).toBeGreaterThan(before)
+  await expect(attempts).toHaveAttribute('aria-expanded', 'true')
+  expect(await content.evaluate((el) => el.scrollTop)).toBeCloseTo(250, 0)
+  await body.getByRole('button', { name: '下页文件' }).click()
+  await expect(body.locator('.detail-directory')).toHaveCount(2)
+  await expect(body.locator('.page-current')).toHaveText('2')
+  await body.getByRole('button', { name: '下页文件' }).click()
+  await expect(body.locator('.detail-record-file')).toHaveCount(5)
+  await expect(body).toContainText('等待处理')
+  await body.getByRole('button', { name: /^最终失败/ }).click()
+  await expect(body.locator('.page-current')).toHaveText('1')
+  await expect(body.getByLabel('运行记录分页', { exact: true })).toContainText('共 104 个文件')
+  await body.getByRole('combobox', { name: '记录目录筛选' }).click()
+  await page.getByRole('option', { name: '上海（103）', exact: true }).click()
+  await expect(body.locator('.detail-record-file')).toHaveCount(3)
+  const failed = body.locator('.detail-record-file').first()
+  await failed.locator('.detail-attempt-toggle').click()
+  await expect(failed.locator('.detail-attempt:visible')).toHaveCount(4)
+  await expect(failed).toContainText('重试第 3 次 · 兜底模型')
+  await expect(failed).toContainText('未生成有效名称')
+  await body.locator('.detail-directory-toggle').click()
+  await expect(body.locator('.detail-directory-toggle')).toHaveAttribute('aria-expanded', 'false')
+  const collapsed = requests.length
+  await expect.poll(() => requests.length, { timeout: 10000 }).toBeGreaterThan(collapsed)
+  await expect(body.locator('.detail-directory-toggle')).toHaveAttribute('aria-expanded', 'false')
+  await body.locator('.detail-directory-toggle').click()
+  fail = true
+  await expect(body.getByRole('alert')).toContainText('保留上次读取', { timeout: 10000 })
+  await expect(body.locator('.detail-record-file')).toHaveCount(3)
+  fail = false
+  await body.getByRole('button', { name: '重试', exact: true }).click()
+  await expect(body.getByRole('alert')).toHaveCount(0)
+  await page.setViewportSize({ width: 320, height: 844 })
+  expect(await body.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy()
+  await failed.scrollIntoViewIfNeeded()
+  await page.screenshot({ path: 'test-results/run-directory-failures-320.png' })
+  await body.getByRole('combobox', { name: '记录目录筛选' }).focus()
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('Home')
+  await page.keyboard.press('Enter')
+  await expect(body.getByRole('combobox', { name: '记录目录筛选' })).toContainText('全部目录')
+  await expect(body.getByRole('combobox', { name: '记录目录筛选' })).toBeFocused()
 })
 
-test('批次状态刷新不打断日志读取，收起后忽略迟到响应', async ({ page }) => {
-  const run = {
-    id: 961,
-    task: 'extract',
-    source: 'manual',
-    status: 'running',
-    targets: [1],
-    created: new Date().toISOString(),
-    discovered: 1,
-    done: 0,
-    skipped: 0,
-    failed: 1
-  }
-  let releaseFirst!: () => void
-  let releaseSecond!: () => void
-  const first = new Promise<void>((resolve) => {
-    releaseFirst = resolve
+test('加载、错误、空记录与无失败状态不混淆', async ({ page }) => {
+  const run = sampleRun()
+  run.status = 'completed'
+  let release!: () => void
+  const pending = new Promise<void>((r) => (release = r))
+  let fail = true
+  await page.route('**/api/runs/960/items?*', async (route) => {
+    await pending
+    return fail
+      ? route.fulfill({ status: 503, json: { message: '读取失败' } })
+      : route.fulfill({ json: recordPage([], new URL(route.request().url()).searchParams) })
   })
-  const second = new Promise<void>((resolve) => {
-    releaseSecond = resolve
-  })
-  let logRequests = 0
-  await mockRunPages(page, [run])
-  await page.route('**/api/runs/961', (route) => route.fulfill({ json: run }))
-  await page.route('**/api/runs/961/items?*', async (route) => {
-    const view = new URL(route.request().url()).searchParams.get('view')
-    if (!view) return route.fulfill({ json: { items: [], page: 1, total: 0, log_total: 1 } })
-    const request = ++logRequests
-    if (request === 1) await first
-    if (request === 2) await second
+  const dialog = await open(page, run),
+    body = dialog.locator('#run-detail-records')
+  await expect(body.getByRole('status')).toHaveText('正在读取运行记录…')
+  await expect(dialog.getByRole('button', { name: /^运行记录/ })).not.toContainText('0 个文件')
+  release()
+  await expect(body.getByRole('alert')).toContainText('读取失败')
+  await expect(body.getByRole('status')).toHaveText('暂时无法读取运行记录')
+  fail = false
+  await body.getByRole('button', { name: '重试', exact: true }).click()
+  await expect(body.getByRole('status')).toHaveText('当前范围没有文件任务。')
+  await body.getByRole('button', { name: /^最终失败/ }).click()
+  await expect(body.getByRole('status')).toHaveText('当前范围没有最终失败的文件。')
+})
+
+test('切换筛选忽略迟到响应，终态最后刷新后停止轮询', async ({ page }) => {
+  const run = sampleRun(),
+    items = records()
+  let count = 0
+  let release!: () => void
+  const pending = new Promise<void>((r) => (release = r))
+  await page.route('**/api/runs/960/items?*', async (route) => {
+    const n = ++count
+    const query = new URL(route.request().url()).searchParams
+    if (n === 1) await pending
     try {
-      await route.fulfill({
-        json: {
-          page: 1,
-          total: 1,
-          items: [
-            {
-              id: 1,
-              entry: 1,
-              status: 'failed',
-              original_path: 'clip.mp4',
-              current_path: 'clip.mp4',
-              message: request === 2 ? '迟到的旧记录' : request === 1 ? '首次记录' : '最新记录',
-              updated_ms: Date.now(),
-              attempts: []
-            }
-          ]
-        }
-      })
+      await route.fulfill({ json: recordPage(items, query) })
     } catch {
-      /* A collapsed section cancels its pending request. */
+      /* cancelled request */
     }
   })
-  await page.goto('/')
-  await page.getByLabel('用户名', { exact: true }).fill('admin')
-  await page.getByLabel('密码', { exact: true }).fill('test-password-123')
-  await page.getByRole('button', { name: '登录', exact: true }).click()
-  await page.getByRole('button', { name: '批次记录', exact: true }).click()
-  await page.getByRole('button', { name: '详情', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: '运行 #961' })
-  const logs = dialog.locator('#run-detail-logs')
-  await dialog.getByRole('button', { name: /^运行日志/ }).click()
-  await expect.poll(() => logRequests).toBe(1)
-  run.status = 'paused'
-  await expect(dialog.locator('.detail-header-status')).toHaveText('已暂停', { timeout: 10000 })
-  expect(logRequests).toBe(1)
-  releaseFirst()
-  await expect(logs).toContainText('首次记录')
-  await expect.poll(() => logRequests, { timeout: 10000 }).toBe(2)
-  await dialog.getByRole('button', { name: /^运行日志/ }).click()
-  await dialog.getByRole('button', { name: /^运行日志/ }).click()
-  await expect(logs).toContainText('最新记录')
-  releaseSecond()
-  await expect(logs).not.toContainText('迟到的旧记录')
-  await dialog.getByRole('button', { name: '关闭', exact: true }).click()
-  await expect(dialog).toHaveCount(0)
+  const dialog = await open(page, run),
+    body = dialog.locator('#run-detail-records')
+  await expect.poll(() => count).toBe(1)
+  await body.getByRole('button', { name: /^最终失败/ }).click()
+  await expect(body.getByLabel('运行记录分页', { exact: true })).toContainText('共 104 个文件')
+  release()
+  await expect(body.locator('.status-badge[data-status="done"]')).toHaveCount(0)
+  items[100].message = '最终结果已写入'
+  run.status = 'completed'
+  await expect(body).toContainText('最终结果已写入', { timeout: 10000 })
+  await expect(dialog.locator('.detail-header-status')).toHaveText('已完成', { timeout: 10000 })
+  await page.clock.install()
+  await page.clock.runFor(1000)
+  const stopped = count
+  await page.clock.runFor(10000)
+  expect(count).toBe(stopped)
+  const toggle = dialog.getByRole('button', { name: /^运行记录/ })
+  await toggle.click()
+  await toggle.click()
+  await expect.poll(() => count).toBe(stopped + 1)
 })
 
-test('终态日志读取最后状态后停止轮询，重新展开仍能刷新', async ({ page }) => {
-  const run = {id: 963, task: 'extract', source: 'manual', status: 'running', targets: [1], created: new Date().toISOString(), discovered: 1, done: 0, skipped: 0, failed: 0}
-  let requests = 0
-  await mockRunPages(page, [run])
-  await page.route('**/api/runs/963', route => route.fulfill({json: run}))
-  await page.route('**/api/runs/963/items?*', route => {
-    if (new URL(route.request().url()).searchParams.has('view')) requests++
-    return route.fulfill({json: {items: [{id: 1, entry: 1, status: run.status === 'completed' ? 'done' : 'running', original_path: 'clip.mp4', current_path: 'clip.mp4', message: run.status === 'completed' ? '最终完成记录' : '处理中', attempts: []}], total: 1, page: 1, log_total: 1}})
+test('批次状态轮询不打断慢请求，收起记录取消请求并停止读取', async ({ page }) => {
+  const run = sampleRun()
+  let count = 0
+  let release!: () => void
+  const pending = new Promise<void>((r) => (release = r))
+  await page.route('**/api/runs/960/items?*', async (route) => {
+    const n = ++count
+    if (n === 1) await pending
+    try {
+      await route.fulfill({
+        json: recordPage(records(), new URL(route.request().url()).searchParams)
+      })
+    } catch {}
   })
-  await page.goto('/')
-  await page.getByLabel('用户名', {exact: true}).fill('admin')
-  await page.getByLabel('密码', {exact: true}).fill('test-password-123')
-  await page.getByRole('button', {name: '登录', exact: true}).click()
-  await page.getByRole('button', {name: '批次记录', exact: true}).click()
-  await page.getByRole('button', {name: '详情', exact: true}).click()
-  const dialog = page.getByRole('dialog', {name: '运行 #963'})
-  const toggle = dialog.getByRole('button', {name: /^运行日志/})
+  const dialog = await open(page, run),
+    toggle = dialog.getByRole('button', { name: /^运行记录/ })
+  await expect.poll(() => count).toBe(1)
+  run.status = 'paused'
+  await expect(dialog.locator('.detail-header-status')).toHaveText('已暂停', { timeout: 10000 })
+  expect(count).toBe(1)
   await toggle.click()
-  await expect(dialog.locator('#run-detail-logs')).toContainText('处理中')
-  run.status = 'completed'; run.done = 1
-  await expect(dialog.locator('#run-detail-logs')).toContainText('最终完成记录', {timeout: 10000})
+  release()
   await page.clock.install()
-  const terminalRequests = requests
   await page.clock.runFor(10000)
-  expect(requests).toBe(terminalRequests)
-  await toggle.click(); await toggle.click()
-  await expect.poll(() => requests).toBe(terminalRequests + 1)
+  expect(count).toBe(1)
+  await toggle.click()
+  await expect(dialog.locator('.detail-record-file')).toHaveCount(100)
+  expect(count).toBe(2)
+})
+
+test('多目录同名文件与未提交名称不会被混淆', async ({ page }) => {
+  const run = { ...sampleRun(), status: 'completed', discovered: 3, done: 1, failed: 2 }
+  const items = [
+    {
+      id: 1,
+      entry: 1,
+      status: 'done',
+      original_path: '上海 / clip.mp4',
+      current_path: '其他 / 后续名称.mp4',
+      new_name: '本批次名称.mp4',
+      operation_status: 'committed',
+      undone: true
+    },
+    {
+      id: 2,
+      entry: 2,
+      status: 'failed',
+      original_path: '杭州 / clip.mp4',
+      current_path: '杭州 / clip.mp4',
+      new_name: '占用名称.mp4',
+      operation_status: 'failed',
+      message: '目标名称已存在'
+    },
+    {
+      id: 3,
+      entry: 3,
+      status: 'failed',
+      original_path: '杭州 / 待核对.mp4',
+      current_path: '杭州 / 不确定.mp4',
+      new_name: '拟用名称.mp4',
+      operation_status: 'review',
+      message: '文件可能已改名，需核对'
+    }
+  ]
+  await page.route('**/api/runs/960/items?*', (r) =>
+    r.fulfill({ json: recordPage(items, new URL(r.request().url()).searchParams) })
+  )
+  const dialog = await open(page, run)
+  const groups = dialog.locator('.detail-directory')
+  await expect(groups).toHaveCount(2)
+  await expect(groups.nth(0)).toContainText('上海')
+  await expect(groups.nth(0)).toContainText('clip.mp4')
+  await expect(groups.nth(0)).toContainText('本批次名称.mp4')
+  await expect(groups.nth(0)).not.toContainText('后续名称.mp4')
+  await expect(groups.nth(0)).toContainText('本次改名已还原')
+  await expect(groups.nth(1)).toContainText('杭州')
+  await expect(groups.nth(1)).toContainText('clip.mp4')
+  await expect(groups.nth(1)).toContainText('拟用名称 · 改名失败')
+  await expect(groups.nth(1)).toContainText('拟用名称 · 待核对')
+  await groups.nth(0).scrollIntoViewIfNeeded()
+  await page.screenshot({ path: 'test-results/run-directory-names-desktop.png' })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await groups.nth(1).scrollIntoViewIfNeeded()
+  expect(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy()
+  await page.screenshot({ path: 'test-results/run-directory-names-mobile.png' })
 })

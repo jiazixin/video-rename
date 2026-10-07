@@ -184,14 +184,7 @@
   const cancelTarget = ref<Run>(),
     cancelling = ref(false),
     cancelError = ref('');
-  type ItemPage = { items: any[]; total: number; page: number; log_total: number };
-  const logTotal = ref<number>();
-  const itemNumber = ref(1),
-    itemTotal = ref(0),
-    itemBusy = ref(false);
-  let itemSequence = 0;
   const detail = ref<Run>(),
-    items = ref<any[]>([]),
     deletePlan = ref<Plan>();
   let timer: ReturnType<typeof setTimeout> | undefined,
     alive = true;
@@ -355,25 +348,9 @@
       trackEta(r.items);
       error.value = '';
       if (detail.value) {
-        const id = detail.value.id,
-          requested = itemNumber.value;
-        const [run, files] = await Promise.all([
-          api<Run>(`/runs/${id}`),
-          api<ItemPage>(`/runs/${id}/items?page=${requested}`)
-        ]);
-        if (
-          alive &&
-          sequence === loadSequence &&
-          detail.value?.id === id &&
-          itemNumber.value === requested &&
-          !itemBusy.value
-        ) {
-          detail.value = run;
-          items.value = files.items;
-          itemTotal.value = files.total;
-          logTotal.value = files.log_total;
-          itemNumber.value = files.page;
-        }
+        const id = detail.value.id;
+        const run = await api<Run>(`/runs/${id}`);
+        if (alive && sequence === loadSequence && detail.value?.id === id) detail.value = run;
       }
     } catch (e) {
       if (alive && sequence === loadSequence) error.value = (e as Error).message;
@@ -537,37 +514,12 @@
       cancelling.value = false;
     }
   }
-  async function itemPage(requested: number) {
-    if (!detail.value) return;
-    const id = detail.value.id,
-      n = ++itemSequence;
-    itemBusy.value = true;
-    try {
-      const files = await api<ItemPage>(`/runs/${id}/items?page=${requested}`);
-      if (n === itemSequence && detail.value?.id === id) {
-        items.value = files.items;
-        itemTotal.value = files.total;
-        logTotal.value = files.log_total;
-        itemNumber.value = files.page;
-      }
-    } catch (e) {
-      if (n === itemSequence) error.value = (e as Error).message;
-    } finally {
-      if (n === itemSequence) itemBusy.value = false;
-    }
-  }
   async function inspect(r: Run) {
     detail.value = r;
-    items.value = [];
-    itemNumber.value = 1;
-    itemTotal.value = 0;
-    logTotal.value = undefined;
-    itemSequence++;
     try {
       const run = await api<Run>(`/runs/${r.id}`);
       if (detail.value?.id === r.id) {
         detail.value = run;
-        await itemPage(1);
       }
     } catch (e) {
       error.value = (e as Error).message;
@@ -1047,15 +999,9 @@
     v-if="detail"
     :key="detail.id"
     :run="detail"
-    :items="items"
-    :total="itemTotal"
-    :log-total="logTotal"
-    :page="itemNumber"
-    :busy="itemBusy || loading"
     :elapsed="elapsed(detail)"
     @notice="toast?.show($event)"
     @close="detail = undefined"
-    @page="itemPage"
     @pause="askPause(detail)"
     @cancel="askCancel(detail)"
   />

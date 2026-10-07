@@ -1,5 +1,6 @@
 import {test,expect,type Page} from '@playwright/test'
 import {mockRunPages} from './run-pages'
+import {recordPage} from './run-record-pages'
 
 async function login(page:Page){
  await page.request.post('/api/auth/login',{data:{username:'admin',password:'test-password-123'}})
@@ -42,8 +43,8 @@ test('批次与详情直接跳页，目录选择器跳页不提交外层表单',
  await mockRunPages(page,Array.from({length:501},(_,i)=>({...run,id:1001-i})))
  await page.route('**/api/runs/1001',route=>route.fulfill({json:{...run,targets:[]}}))
  await page.route('**/api/runs/1001/items?*',route=>{
-  const index=Number(new URL(route.request().url()).searchParams.get('page'))
-  return route.fulfill({json:{page:index,total:205,items:[{id:index,entry:index,status:'done',original_path:`第${index}页视频.mp4`}]}})
+  const query=new URL(route.request().url()).searchParams
+  return route.fulfill({json:recordPage(Array.from({length:205},(_,i)=>({id:i+1,entry:i+1,status:'done',original_path:`第${Math.floor(i/100)+1}页视频.mp4`})),query)})
  })
  await login(page)
  await page.getByRole('button',{name:'批次记录',exact:true}).click()
@@ -53,7 +54,7 @@ test('批次与详情直接跳页，目录选择器跳页不提交外层表单',
  await pager.getByRole('button',{name:'首页',exact:true}).click()
  await page.locator('.run-entry').first().getByRole('button',{name:'详情',exact:true}).click()
  const detail=page.getByRole('dialog')
- await detail.locator('#run-detail-targets').getByLabel('跳转页码').fill('3');await detail.locator('#run-detail-targets').getByLabel('跳转页码').press('Enter')
+ await detail.locator('#run-detail-records').getByLabel('跳转页码').fill('3');await detail.locator('#run-detail-records').getByLabel('跳转页码').press('Enter')
  await expect(detail).toContainText('第3页视频.mp4')
  await detail.getByRole('button',{name:'关闭',exact:true}).last().click()
  await page.getByRole('button',{name:'计划管理',exact:true}).click()

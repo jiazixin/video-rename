@@ -31,7 +31,7 @@ func TestReadHandlersCancelWhilePoolIsExhausted(t *testing.T) {
 		{"performance", "/api/runs/analytics", a.runsAnalytics},
 		{"usage", "/api/usage/analytics", a.usageAnalytics},
 		{"entries", "/api/entries/status?ids=500", a.entryStatus},
-		{"items", "/api/runs/1/items?view=logs", a.items},
+		{"items", "/api/runs/1/items?page=1", a.items},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
@@ -72,7 +72,7 @@ func TestRunReadsDoNotWaitForWriter(t *testing.T) {
 	if _, err = a.Jobs.List(ctx, 0); err != nil {
 		t.Fatal(err)
 	}
-	r := httptest.NewRequest("GET", "/api/runs/1/items?view=logs", nil).WithContext(ctx)
+	r := httptest.NewRequest("GET", "/api/runs/1/items?page=1", nil).WithContext(ctx)
 	r.SetPathValue("id", "1")
 	w := httptest.NewRecorder()
 	a.items(w, r)

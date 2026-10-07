@@ -1,107 +1,33 @@
-# 上线前检查与修复：2026-10-07
+# 最新验收：批次详情目录分组（2026-10-07）
 
-## 批次详情配色与对齐（2026-10-07）
+基于干净工作区 `123bc0096dbe`，实现用户选定的 A 方案。上一轮检查保留在 [历史验收](archive/2026-10-07-before-directory-layout-acceptance.md)，历史全量和规模结果不代表本次重新执行。
 
-采用用户选定的墨绿方案，移除统计卡片装饰图标，将标签与百分比统一字号、行高及基线。此次仅修改详情展示，未更改统计或处理逻辑。
+## 本次行为与证据
 
-- `npm --prefix web run format:check`、`npm --prefix web run build`：通过（构建包含严格类型检查）。
-- `GOCACHE=/tmp/video-rename-go-cache go build -o bin/video-rename ./cmd/video-rename`：通过。
-- `npm --prefix web run test:e2e -- run-detail.spec.ts run-detail-records.spec.ts`：7/7 通过，53.1 秒。覆盖生命周期状态、详情与日志刷新、空日志计数、长路径/提示词、窄屏及键盘焦点。
-- 已查看 1440px 桌面与 390px 窄屏截图，确认卡片无装饰图标、标签与百分比同行对齐、窄屏两列布局正常。截图位于 `web/test-results/run-detail-timeline-desktop.png` 与 `web/test-results/run-detail-timeline-mobile.png`。
-- 首次测试因沙箱禁止本机监听未能启动，获得测试执行权限后重跑通过；使用隔离配置、临时数据和合成媒体，未使用用户数据或真实外部服务。未重跑全量后端或全量浏览器测试，未重启用户运行服务。
-
-本记录对应本次工作区，起点为 `6b2e9f8`，开始时 Git 工作区干净。检查使用 macOS arm64 / Apple M2 Max、Go 1.27.1、Node 26.8.2、npm 11.19.1、FFmpeg 9.0.1；本机测试不能替代部署环境验收。旧记录在 [历史验收](archive/2026-10-05-acceptance.md)。
-
-## 已确认并修复
-
-| 问题 | 修复及证据 |
-| --- | --- |
-| 并发登录可绕过失败限流 | 原先检查和计数分开加锁，32 个同步错误登录全部得到 401；改为同一锁内检查及记账，回归验证 10 个 401、22 个 429。成功登录仍不消耗失败预算 |
-| 登录/退出忽略客户端取消，等待单写池 | 事务和 SQL 使用请求 Context；持有写连接时取消请求的回归在旧实现上失败，修复后及时结束、不修改会话、不发新 Cookie |
-| HEAD 被当作写入，媒体/API 请求返回 403 | GET/HEAD 统一只读认证语义，仍需有效会话；单测及真实 HTTP 冒烟验证通过 |
-| JSON 输入边界不一致 | 通用解析拒绝 null/数组/标量；登录拒绝 null、未知字段和多个对象；Content-Type 按媒体类型解析，不再接受 application/jsonp 前缀伪装 |
-| 构建工具与依赖过时 | 更新 Vite/plugin-vue/vue-tsc、Go 扩展库和 SQLite；迁移停止维护的 YAML 导入，移除旧依赖，不保留转发层 |
-| 传递依赖安全公告 | 原 source-map-js 1.2.1 命中高危 GHSA-68fv-2mgg-jv7q，更新为修复版本；最终 npm audit 零公告。该问题位于 source map 处理链，不能直接等同于已证实的生产 API 攻击 |
-| 升级后的类型检查失败 | 引入 Vite 的客户端样式类型声明；运行分析状态格式化移入有类型的函数，保留全部严格检查 |
-| 文档不一致与冗余 | 中英文 README 改为人的安装/使用入口，AI 约束集中 AGENTS；已完成计划和旧验收归档；修正活动批次上限、请求体预算说明、过时协议标题和测试覆盖表述 |
-
-## 依赖结论
-
-| 依赖 | 本次采用 |
-| --- | --- |
-| YAML | gopkg.in/yaml.v3 3.0.1 → go.yaml.in/yaml/v3 3.0.5 |
-| modernc SQLite / libc | 1.59.0 / 1.75.7 → 1.60.1 / 1.77.1 |
-| golang.org/x/sys / x/text | 0.47.0 / 0.39.0 → 0.48.0 / 0.42.0 |
-| go-humanize / go-strftime | 1.0.1 / 1.0.0 → 1.1.0 / 1.1.0 |
-| Vite / plugin-vue | 6.4.3 / 5.2.4 → 8.3.3 / 6.0.9 |
-| vue-tsc / TypeScript | 2.2.12 / 5.7.3 → 3.3.12 / 6.0.3 |
-
-Vue 3.5.43、Inter 5.3.0、@lucide/vue 1.52.0、Playwright 1.63.0、Prettier 3.9.9 已核对当前注册表。cron v3.0.1 仍为当前稳定版，无需因发布年份而替换。YAML v4 当前为 4.0.0-rc.6，采用维护中的 v3 稳定系列。
-
-Go 全模块图仍显示 pprof、x/tools、modernc cc/ccgo/gc 五个上游测试工具模块有新版；`go mod why -m` 确认均由 SQLite/libc 的依赖测试引入，`go list -deps` 确认不进入服务构建。沿用上游配套版本，不人为把上游编译器工具加入本项目运行依赖。
-
-TypeScript 7.0.2 曾实际安装验证，但当前 vue-tsc 3.3.12 无法加载其 `typescript/lib/tsc` 导出。最终固定仍提供所需编译器 API 的 6.0.3，不打补丁、不跳过类型检查；npm outdated 唯一剩余直接依赖差异是该项，不能宣称所有包都处于最高主版本。
-
-来源：[YAML 维护声明](https://github.com/yaml/go-yaml)、[Vite 版本支持](https://vite.dev/releases)、[Vue 类型检查实现](https://github.com/vuejs/language-tools/tree/master/packages/tsc)、[source-map-js 安全公告](https://github.com/advisories/GHSA-68fv-2mgg-jv7q)。具体清单与校验由 go.mod/go.sum、web/package.json/package-lock.json 固定。
+- 统一运行记录按提交时目录分组，包含排队文件；服务端目录/最终失败筛选在每页100文件的分页前生效，目录统计覆盖整批，跨页目录显示本页/目录数量。
+- 每项显示原名、本批次新名及状态，按实际次数展开首次/重试/兜底请求。对应 run/item 操作日志区分成功名称、未提交拟用名称和待核对；后续改名不会冒充历史结果。
+- 自动刷新保持分页、目录折叠、请求展开和滚动位置；筛选变化取消旧查询，迟到响应被丢弃。终态最后读取后停止，收起/关闭停止；错误保留旧内容并提供重试。
+- 保留已有概览和批次控制，提交范围放入默认折叠的配置区，删除废弃列表及样式。没有改变数据库 schema、处理链或重试策略。
 
 ## 已执行验证
 
-| 检查 | 结果 |
+| 命令 | 结果 |
 | --- | --- |
-| npm 冻结安装、格式、严格类型、构建 | 通过；干净副本重新安装、构建通过 |
-| Go 全量测试与覆盖率 | 23 个有测试的包全部通过，语句覆盖率 79.6%，含隔离 SQLite、认证、调度、取消、恢复、模型与通知 HTTP 夹具 |
-| Go 全量竞态 / vet / 模块校验 | 全部通过，无检测到的数据竞态 |
-| 真实 FFmpeg 集成 | 通过；横屏、4K 竖屏、非方形像素、短视频及损坏媒体夹具；旋转元信息另由单元夹具覆盖 |
-| Chromium 完整端到端 | **177/177 通过，9.0 分钟**；使用最终依赖和修复后程序 |
-| UI 人工截图检查 | 文件目录窄屏、运行分析桌面、模型编辑表单、运行详情窄屏、320px 长提示词页面已查看；未发现本轮升级引入的遮挡或水平溢出 |
-| 普通数据库 scale 全套 | library/jobs/app/runstats 的 12 项全部通过；按包顺序执行，包含30万索引、5万分页、2万标记/编号、提交及10万条目/请求分析 |
-| 超大规模 scale_large | 2/2 通过：53万文件扫描、50万文件标记；精确计数、完整性、外键及候选清理检查通过 |
-| 性能基准 | 历史来源筛选与缓存保留检查均通过，见下表 |
-| 干净副本启动 | 静态页面/CSP、认证前后 API、HEAD、CSRF、退出及 SIGTERM 退出通过；临时源码、配置、媒体和数据已清理 |
-| Linux amd64 / arm64 无 CGO 交叉构建 | 均通过；未在 Linux 实机运行 |
-| npm audit / govulncheck | 执行时均未发现已知漏洞；不等于不存在未知漏洞 |
+| `npm --prefix web run format:check` | 通过 |
+| `npm --prefix web run build` | 通过，包含严格类型检查 |
+| `GOCACHE=/tmp/video-rename-go-cache go build -o bin/video-rename ./cmd/video-rename` | 通过 |
+| `GOCACHE=/tmp/video-rename-go-cache go test ./internal/app ./internal/jobs` | app 通过；jobs 首轮因沙箱不能监听 httptest 端口中断，获准后单独执行 `go test ./internal/jobs` 通过 |
+| `GOCACHE=/tmp/video-rename-go-cache go test -race ./internal/app -run 'TestRunDirectoryRecords\|TestNumberedHistoryExtractionAndItemPages\|TestReadHandlersCancel\|TestRunReads' -count=1` | 通过：目录筛选、边界分页、请求取消与读取并发 |
+| `GOCACHE=/tmp/video-rename-go-cache go vet ./internal/app` | 通过 |
+| `npm --prefix web run test:e2e -- run-detail.spec.ts run-detail-records.spec.ts page-navigation.spec.ts run-pause.spec.ts run-pagination.spec.ts` | 当时已有的12项全部通过，54.5秒 |
+| `npm --prefix web run test:e2e -- run-detail-records.spec.ts workspace.spec.ts --grep '多目录同名\|运行详情显示目录文件' --output=test-results/run-directory-followup` | 新增同名/历史名称场景与已有历史诊断流程，2/2通过，2.6秒；合计14个不同场景 |
+| `GOCACHE=/tmp/video-rename-go-cache go test ./internal/app -run '^TestRunDirectoryRecords$' -count=1` | 新增实时失败汇总断言后通过 |
+| `git diff --check` | 通过 |
 
-## 本机性能记录
+服务端回归使用205文件、交错目录、另一个批次、根目录、精确路径/特殊字符筛选、四次请求和后续改名日志，核验无丢失、无重复和统计更新。新增测试在旧实现上先失败，随后修复通过。首次浏览器回归发现配置标题未更新，修复产品文案后通过；补充测试夹具有一处括号笔误，修复后2项通过，没有修改断言掩盖产品失败。
 
-| 夹具 / 操作 | 本次实测 |
-| --- | --- |
-| 30万索引目录统计 | 首次 1.936 秒；缓存读取 0.724 / 0.587 毫秒 |
-| 5万文件目录分页 | 30 次缓存100行页面的 P95 为 16.205 毫秒 |
-| 10万条目运行分析 | 首页 135.266 毫秒；缓存第二页 1.553 毫秒；单小时索引筛选 0.368 毫秒 |
-| 10万请求用量分析 | 首页 464.143 毫秒；缓存第二页 1.165 毫秒 |
-| 53万文件 / 111目录 | 首次扫描 48.305 秒；未变复扫 13.370 秒 |
-| 50万文件递归标记 | 77.358 秒，4000 个已提交批次，无失败、无遗漏 |
-| 11000条历史完整接口，100行页 | 兜底首页 42.878 毫秒、末页 70.095 毫秒；全部来源首页 2.728 毫秒 |
-| 11000条截图缓存账目保留检查 | 1.856 毫秒，90112 B/op、1 alloc/op；不含磁盘删除 |
+已查看1440px桌面、390px和320px窄屏截图：原/新名称可读、长文件名换行、请求历史完整、没有水平溢出。键盘选择目录、弹窗焦点、长提示词、加载/空/错误及复制路径均有浏览器覆盖。截图保存在忽略目录 `web/test-results/`，包括 `run-detail-timeline-desktop.png`、`run-directory-names-mobile.png`、`run-directory-failures-320.png`。
 
-这些是本机合成负载下的单次观测，规模测试按包顺序执行；初段与交叉编译/干净构建有重叠，不能用作严格版本间加速比。50万级文件测试和最后基准执行时其他重构建已完成。耗时不包含文件夹具生成，不能预测实际 NAS、模型吞吐或生产内存峰值。
+## 验证边界
 
-改动复核：OCR 确定性文件选择列出的 6 个生产文件均已人工复核（6/6，无跳过），另检查了新增回归、Go/npm 清单与锁文件、当前文档及链接。格式、Go 格式和本地 Markdown 文件引用均通过。该覆盖率只针对工具选出的变更文件，不代表全仓每行均被人工穷举审查。
-
-## 安全与数据库核对范围
-
-复核了 SQL 参数化/排序白名单、读写连接与快照、索引计划及缓存失效、文件路径与符号链接、无覆盖移动及恢复、会话/CSRF/Cookie、严格输入、密钥加密与诊断脱敏、上游重定向限制和媒体命令参数数组。现有回归覆盖外键、事务回滚、只读池、连接重建、实例锁、错误数据库拒绝、密钥丢失保护等路径。
-
-本次没有修改数据库 schema，结构号保持 **20261005**，没有新增迁移或历史兼容逻辑。模型地址允许本地/局域网是自托管模型的产品能力，配置端点属于管理员信任边界；未把这一能力当作任意匿名 URL 抓取开放。
-
-## 边界与记录
-
-没有访问或修改用户的运行数据库、媒体和部署配置，没有部署或重启真实服务。浏览器使用合成媒体与本地假模型，不能证明真实模型质量、配额或通知送达；真实 NAS/Linux 文件系统、HTTPS 代理和长期负载仍需在实际部署环境验收。
-
-首次沙箱测试因禁止本地监听/缓存写入失败，获准环境重跑通过。干净副本首次冒烟脚本误用了不存在的 `/api/models`，修正为当前 `/api/model-configs` 后整套通过；没有为此修改产品路由或添加兼容入口。
-
-完整命令输出位于本地忽略目录 `test-results/prelaunch-2026-10-07/`，截图在 `web/test-results/`。覆盖率在 `coverage/go.out`，这些产物不提交。历史文档只增加归档标识或修正相对链接，历史测试结论不作为本次结果。
-
-## 目录处理状态排序修复（2026-10-07）
-
-本节对应起点 `29d0d0a` 的工作区修改。已用隔离目录复现：原实现给所有目录固定排序值 0，升降序实际均按名称排列，运行中、部分已处理与全部已处理相互穿插。修复后在分页前汇总子树状态，活动任务优先于处理进度，同组使用自然名称排序。
-
-- `TestDirectoryStatusSorting`：原实现升降序均失败；修复后通过，覆盖嵌套视频、运行中覆盖已有处理标记。
-- 210 个合成目录覆盖待统计、空目录、未处理、部分处理及三种全部处理来源，验证筛选、双向排序、页码与游标分页的一致性。
-- `GOCACHE=/tmp/video-rename-go-cache go test -count=1 ./internal/library ./internal/app`：通过。
-- `GOCACHE=/tmp/video-rename-go-cache go vet ./internal/library ./internal/app`：通过。
-- `GOCACHE=/tmp/video-rename-go-cache go test -race -count=1 ./internal/library`：通过。
-- `npm --prefix web run build`、`GOCACHE=/tmp/video-rename-go-cache go build -o bin/video-rename ./cmd/video-rename`：通过。
-- `npm --prefix web run test:e2e -- library-status.spec.ts`：8 项通过，包括新增 1440px / 390px 目录状态排序。首次因沙箱禁止本地监听未启动，获得测试权限后在隔离服务器重跑通过。
-
-本次未使用用户媒体、配置、数据库或真实模型；未执行 NAS 性能、Linux 目标环境实测或全套浏览器回归。默认 Go 缓存曾受沙箱写权限限制，因此后续 Go 验证将缓存放入临时目录。
+所有验证均为本机隔离夹具，浏览器服务使用18790端口、临时数据库与合成媒体。未访问用户的配置、数据库、媒体或真实模型/通知服务；未部署或重启用户服务。没有重跑全仓Go测试、全量浏览器套件、规模测试或Linux目标实测；本次目录汇总和排序的超大批次成本尚未专项测量。

@@ -1,3 +1,4 @@
+import {recordPage} from './run-record-pages'
 import { test,expect } from '@playwright/test'
 import {readFileSync} from 'node:fs'
 import {mockRunPages} from './run-pages'
@@ -589,16 +590,16 @@ test('运行详情显示目录文件清单与翻页、成功历史诊断',async(
  const run={id:9901,source:'manual',plan:0,status:'completed',targets:[1],target_names:['旅行记录 / 九月'],recursive:true,done:101,discovered:101,skipped:0,failed:0,created:'2026-09-21T01:00:00Z',prompt_body:'测试提示词',model_config_title:'默认视频命名',request_config:{model:'test'}}
  await mockRunPages(page,[run])
  await page.route('**/api/runs/9901',r=>r.fulfill({json:run}))
- await page.route('**/api/runs/9901/items?*',r=>{const page=Number(new URL(r.request().url()).searchParams.get('page'))||1,after=(page-1)*100;return r.fulfill({json:{page,total:101,items:Array.from({length:after?1:100},(_,i)=>({id:after+i+1,entry:i+1,status:'done',original_path:`旅行记录 / 九月 / 原视频${after+i}.mp4`,current_path:`旅行记录 / 九月 / 新标题${after+i}.mp4`,message:''}))}})})
+ await page.route('**/api/runs/9901/items?*',r=>r.fulfill({json:recordPage(Array.from({length:101},(_,i)=>({id:i+1,entry:i+1,status:'done',original_path:`旅行记录 / 九月 / 原视频${i}.mp4`,current_path:`旅行记录 / 九月 / 新标题${i}.mp4`,new_name:`新标题${i}.mp4`,operation_status:'committed',message:''})),new URL(r.request().url()).searchParams)}))
  await page.getByRole('button',{name:'批次记录',exact:true}).click()
  await page.getByRole('button',{name:'详情',exact:true}).click()
  const dialog=page.getByRole('dialog')
  await expect(dialog).toContainText('旅行记录 / 九月')
  await expect(dialog).not.toContainText('模型请求参数')
- await expect(dialog.locator('.run-item')).toHaveCount(100)
+ await expect(dialog.locator('.detail-record-file')).toHaveCount(100)
  await dialog.getByRole('button',{name:'下页文件',exact:true}).click()
  await expect(dialog).toContainText('原视频100.mp4')
- await expect(dialog.locator('.run-item')).toHaveCount(1)
+ await expect(dialog.locator('.detail-record-file')).toHaveCount(1)
  await page.screenshot({path:'test-results/run-detail-files.png',fullPage:true})
  await dialog.locator(':scope > header').getByRole('button',{name:'关闭',exact:true}).click()
  await page.route('**/api/logs?*',r=>r.fulfill({json:[{id:9902,category:'success',action:'automatic',run:9901,created:'2026-09-21T01:00:00Z',old_path:'目录/a.mp4',new_path:'目录/新标题.mp4'}]}))

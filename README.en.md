@@ -46,7 +46,7 @@ Open [http://127.0.0.1:8790](http://127.0.0.1:8790) and sign in with your config
 1. Open **文件目录** (media library). Opening a directory starts indexing it; the complete listing appears when indexing finishes.
 2. Check your selection before renaming or numbering. Numbering includes a preview. Renaming never overwrites an existing target; eligible renames can be undone from history.
 3. For automatic naming, create a prompt under **系统设置 → Prompt配置**, then configure the endpoint, model, and API key under **模型配置**. Try a small sample before processing a large library.
-4. Select videos or directories and start extraction or naming. **批次记录** shows progress and pause/cancel controls; **运行记录** shows results and diagnostics.
+4. Select videos or directories and start extraction or naming. **批次记录** shows progress and pause/cancel controls. Batch details group files by directory, with original/new names, every request attempt, and a final-failure filter. **运行记录** shows rename history and failure diagnostics.
 
 | Feature | Behavior |
 | --- | --- |

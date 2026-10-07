@@ -2,6 +2,7 @@ package app
 
 import (
 	"net/http"
+	"strings"
 	"video-rename/internal/jobs"
 )
 
@@ -100,66 +101,61 @@ func (a *App) runRoutes(api *http.ServeMux) {
 	})
 }
 
+// The trim character set contains every character except slash, so this leaves
+// the display directory prefix (including its separator), without reading the
+// current entries tree. queueFiles stores paths joined with " / ".
+const runDirectoryPrefix = "rtrim(original_path,replace(original_path,'/',''))"
+
+type runDirectory struct {
+	Path      string `json:"path"`
+	Total     int64  `json:"total"`
+	Done      int64  `json:"done"`
+	Failed    int64  `json:"failed"`
+	Running   int64  `json:"running"`
+	Queued    int64  `json:"queued"`
+	Skipped   int64  `json:"skipped"`
+	Cancelled int64  `json:"cancelled"`
+}
+
 func (a *App) items(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	after, run := number(q.Get("after")), number(r.PathValue("id"))
-	view := q.Get("view")
-	where, order := "run=?", "id"
-	switch view {
-	case "":
-	case "logs":
-		where += " AND status<>'queued'"
-		order = "MAX(started_ms,finished_ms) DESC,id DESC"
-	case "failures":
-		where += " AND status='failed'"
-		order = "MAX(started_ms,finished_ms) DESC,id DESC"
-	default:
-		send(w, 400, map[string]string{"message": "批次记录类型无效"})
+	q, run := r.URL.Query(), number(r.PathValue("id"))
+	if q.Has("view") || (q.Get("status") != "" && q.Get("status") != "failed") {
+		send(w, 400, map[string]string{"message": "批次记录筛选无效"})
 		return
 	}
-	paged := q.Has("page") || view != ""
 	tx, err := a.DB.Read().BeginTx(r.Context(), nil)
 	if err != nil {
 		failure(w, err)
 		return
 	}
 	defer tx.Rollback()
-	var total, logTotal int64
-	if view == "" {
-		err = tx.QueryRowContext(r.Context(), "SELECT count(*),count(*) FILTER (WHERE status<>'queued') FROM run_items WHERE run=?", run).Scan(&total, &logTotal)
-	} else {
-		err = tx.QueryRowContext(r.Context(), "SELECT count(*) FROM run_items WHERE "+where, run).Scan(&total)
-	}
+	directories := []runDirectory{}
+	rows, err := tx.QueryContext(r.Context(), `SELECT `+runDirectoryPrefix+`,count(*),
+ count(*) FILTER (WHERE status='done'),count(*) FILTER (WHERE status='failed'),
+ count(*) FILTER (WHERE status='running'),count(*) FILTER (WHERE status='queued'),
+ count(*) FILTER (WHERE status='skipped'),count(*) FILTER (WHERE status='cancelled')
+ FROM run_items WHERE run=? GROUP BY 1 ORDER BY 1`, run)
 	if err != nil {
 		failure(w, err)
 		return
 	}
-	page, offset := int64(1), int64(0)
-	if paged {
-		page = min(max(1, number(q.Get("page"))), max(1, (total+99)/100))
-		offset = (page - 1) * 100
-		after = 0
-	}
-	pageWhere := where
-	args := []any{run}
-	if after > 0 {
-		pageWhere += " AND id>?"
-		args = append(args, after)
-	}
-	args = append(args, offset)
-	rows, err := tx.QueryContext(r.Context(), "SELECT id,entry,status,message,original_path,MAX(started_ms,finished_ms) FROM run_items WHERE "+pageWhere+" ORDER BY "+order+" LIMIT 100 OFFSET ?", args...)
-	if err != nil {
-		failure(w, err)
-		return
-	}
-	out := []map[string]any{}
+	var total, allTotal, failedTotal int64
 	for rows.Next() {
-		var id, entry, updated int64
-		var status, message, original string
-		if err = rows.Scan(&id, &entry, &status, &message, &original, &updated); err != nil {
+		var d runDirectory
+		if err = rows.Scan(&d.Path, &d.Total, &d.Done, &d.Failed, &d.Running, &d.Queued, &d.Skipped, &d.Cancelled); err != nil {
 			break
 		}
-		out = append(out, map[string]any{"id": id, "entry": entry, "status": status, "message": message, "original_path": original, "updated_ms": updated})
+		d.Path = strings.TrimSuffix(d.Path, " /")
+		allTotal += d.Total
+		failedTotal += d.Failed
+		if !q.Has("directory") || q.Get("directory") == d.Path {
+			if q.Get("status") == "failed" {
+				total += d.Failed
+			} else {
+				total += d.Total
+			}
+		}
+		directories = append(directories, d)
 	}
 	if err == nil {
 		err = rows.Err()
@@ -169,14 +165,56 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
 		failure(w, err)
 		return
 	}
-	if err := tx.Commit(); err != nil {
+	page := min(max(1, number(q.Get("page"))), max(1, (total+99)/100))
+	where := "i.run=?"
+	args := []any{run}
+	if q.Get("status") == "failed" {
+		where += " AND i.status='failed'"
+	}
+	if q.Has("directory") {
+		prefix := q.Get("directory")
+		if prefix != "" {
+			prefix += " /"
+		}
+		where += " AND " + runDirectoryPrefix + "=?"
+		args = append(args, prefix)
+	}
+	args = append(args, (page-1)*100)
+	rows, err = tx.QueryContext(r.Context(), `SELECT i.id,i.entry,i.status,i.message,i.original_path,
+ MAX(i.started_ms,i.finished_ms),COALESCE(o.new_name,''),COALESCE(o.status,''),COALESCE(o.undone,0)
+ FROM run_items i LEFT JOIN operations o ON o.request_key='run:'||i.run||':item:'||i.id AND o.run=i.run AND o.entry=i.entry
+ WHERE `+where+` ORDER BY `+runDirectoryPrefix+`,i.id LIMIT 100 OFFSET ?`, args...)
+	if err != nil {
 		failure(w, err)
 		return
 	}
-	itemIDs, entryIDs := make([]int64, 0, len(out)), make([]int64, 0, len(out))
-	for _, item := range out {
-		itemIDs = append(itemIDs, item["id"].(int64))
-		entryIDs = append(entryIDs, item["entry"].(int64))
+	out := []map[string]any{}
+	itemIDs, entryIDs := []int64{}, []int64{}
+	for rows.Next() {
+		var id, entry, updated, undone int64
+		var status, message, original, newName, operationStatus string
+		if err = rows.Scan(&id, &entry, &status, &message, &original, &updated, &newName, &operationStatus, &undone); err != nil {
+			break
+		}
+		directory, name, found := strings.CutLast(original, " / ")
+		if !found {
+			directory, name = "", original
+		}
+		out = append(out, map[string]any{"id": id, "entry": entry, "status": status, "message": message, "original_path": original, "directory": directory, "original_name": name, "new_name": newName, "operation_status": operationStatus, "undone": undone != 0, "updated_ms": updated})
+		itemIDs = append(itemIDs, id)
+		entryIDs = append(entryIDs, entry)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	rows.Close()
+	if err != nil {
+		failure(w, err)
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		failure(w, err)
+		return
 	}
 	paths, err := a.Library.DisplayPaths(r.Context(), entryIDs)
 	if err != nil {
@@ -192,13 +230,5 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
 		item["current_path"] = paths[item["entry"].(int64)]
 		item["attempts"] = attempts[item["id"].(int64)]
 	}
-	if paged {
-		result := map[string]any{"items": out, "total": total, "page": page}
-		if view == "" {
-			result["log_total"] = logTotal
-		}
-		send(w, 200, result)
-		return
-	}
-	send(w, 200, out)
+	send(w, 200, map[string]any{"items": out, "directories": directories, "total": total, "all_total": allTotal, "failed_total": failedTotal, "page": page})
 }

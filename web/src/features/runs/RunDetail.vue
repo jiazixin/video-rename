@@ -16,6 +16,8 @@
   } from '@lucide/vue';
   import Modal from '../../components/Modal.vue';
   import StatusBadge from '../../components/StatusBadge.vue';
+  import DateTime from '../../components/DateTime.vue';
+  import SelectField from '../../components/SelectField.vue';
   import PageNavigation from '../../components/PageNavigation.vue';
   import { clockPart, time } from '../../lib/date/format';
   import { statusNames } from '../../app/labels';
@@ -26,16 +28,10 @@
 
   const props = defineProps<{
     run: Run;
-    items: RunItem[];
-    total: number;
-    logTotal?: number;
-    page: number;
-    busy: boolean;
     elapsed: string;
   }>();
   const emit = defineEmits<{
     close: [];
-    page: [page: number];
     pause: [];
     cancel: [];
     notice: [message: string];
@@ -43,19 +39,52 @@
   const active = computed(() =>
     ['queued', 'scanning', 'running', 'paused', 'cancelling'].includes(props.run.status)
   );
-  const sections = ref({ targets: true, logs: false, failures: false, config: false });
-  const { state: logs, refresh: refreshLogs } = useRunRecords(
+  const sections = ref({ records: true, config: false });
+  const {
+    state: records,
+    refresh: refreshRecords,
+    filter,
+    directory
+  } = useRunRecords(
     () => props.run.id,
-    () => sections.value.logs,
-    () => active.value,
-    'logs'
+    () => sections.value.records,
+    () => active.value
   );
-  const { state: failures, refresh: refreshFailures } = useRunRecords(
-    () => props.run.id,
-    () => sections.value.failures,
-    () => active.value,
-    'failures'
+  const closedDirectories = ref(new Set<string>());
+  const expandedAttempts = ref(new Set<number>());
+  const directoryOptions = computed(() => [
+    { value: 'all', label: `全部目录（${records.directories.length}）` },
+    ...records.directories.map((d) => ({
+      value: `path:${d.path}`,
+      label: `${d.path || '媒体根目录'}（${d.total}）`
+    }))
+  ]);
+  const groups = computed(() => {
+    const groups = new Map<string, RunItem[]>();
+    for (const item of records.items) {
+      const files = groups.get(item.directory) || [];
+      files.push(item);
+      groups.set(item.directory, files);
+    }
+    return [...groups].map(([path, items]) => ({
+      path,
+      items,
+      stats: records.directories.find((d) => d.path === path)
+    }));
+  });
+  const selectedStats = computed(() =>
+    records.directories.find((d) => `path:${d.path}` === directory.value)
   );
+  const selectedTotal = computed(() => selectedStats.value?.total ?? records.all_total);
+  const selectedFailed = computed(() => selectedStats.value?.failed ?? records.failed_total);
+  function toggleDirectory(path: string) {
+    if (closedDirectories.value.has(path)) closedDirectories.value.delete(path);
+    else closedDirectories.value.add(path);
+  }
+  function toggleAttempts(id: number) {
+    if (expandedAttempts.value.has(id)) expandedAttempts.value.delete(id);
+    else expandedAttempts.value.add(id);
+  }
   const promptOpen = ref(false);
   const copyError = ref('');
   const processed = computed(
@@ -132,8 +161,6 @@
       linkReached: step.reached && !!(steps[i + 1]?.reached || steps[i + 1]?.current)
     }));
   });
-  const currentItems = computed(() => props.items.filter((item) => item.status === 'running'));
-  const currentItem = computed(() => currentItems.value[0]);
   const targetNames = computed(() =>
     props.run.targets.map((target, i) => props.run.target_names?.[i] || `条目 #${target}`)
   );
@@ -141,7 +168,6 @@
     props.run.request_config?.retry_enabled ? (props.run.request_config.retry_count ?? 0) : 0
   );
   const path = (item: RunItem) => item.current_path || item.original_path || `文件 #${item.entry}`;
-  const filename = (item: RunItem) => path(item).split('/').filter(Boolean).at(-1) || path(item);
   const lastAttempt = (item: RunItem) => item.attempts?.at(-1);
   const attemptSummary = (item: RunItem) => {
     const last = lastAttempt(item);
@@ -151,13 +177,28 @@
         : (item.attempts?.length || 0) > 1
           ? '重试成功'
           : '主模型成功';
-    if (item.status === 'running') return '重试中';
+    if (item.status === 'running') return '处理中';
     if (item.status === 'cancelled') return '已取消';
-    return '最终失败';
+    return item.status === 'failed' ? '请求失败' : '请求记录';
   };
   const itemStamp = (item: RunItem) =>
     item.updated_ms ? new Date(item.updated_ms).toISOString() : lastAttempt(item)?.started;
-  const itemClock = (item: RunItem) => clock(itemStamp(item));
+  const nameLabel = (item: RunItem) =>
+    item.new_name && item.operation_status !== 'committed'
+      ? item.operation_status === 'failed'
+        ? '拟用名称 · 改名失败'
+        : '拟用名称 · 待核对'
+      : '新文件名';
+  const nameValue = (item: RunItem) => {
+    if (props.run.task === 'extract') return '— 独立抽帧，不改名';
+    if (item.new_name) return item.new_name;
+    if (item.status === 'queued') return '— 等待处理';
+    if (item.status === 'running') return '— 处理中';
+    if (item.status === 'skipped') return '— 已跳过';
+    if (item.status === 'cancelled') return '— 已取消';
+    if (item.status === 'done') return '— 未记录改名结果';
+    return lastAttempt(item)?.status === 'success' ? '— 未记录拟用名称' : '— 未生成有效名称';
+  };
   const promptBody = ref<HTMLElement>();
   async function inspectPrompt() {
     promptOpen.value = !promptOpen.value;
@@ -257,272 +298,209 @@
       <div v-if="run.error" role="alert" class="detail-run-error"
         ><CircleAlert :size="16" /><span>{{ run.error }}</span></div
       >
+      <div class="detail-batch-progress">
+        <div
+          ><span>批次处理进度 <small>含完成、跳过与失败</small></span
+          ><strong
+            >{{ processed.toLocaleString() }} / {{ (run.discovered || 0).toLocaleString()
+            }}<span>{{ percent(processed) }}</span></strong
+          ></div
+        >
+        <div
+          class="detail-progress-track"
+          role="progressbar"
+          aria-label="批次处理进度"
+          :aria-valuenow="progress"
+          :aria-valuemin="0"
+          :aria-valuemax="100"
+          ><span :style="{ width: `${progress}%` }" :data-tone="tone(run.status)"
+        /></div>
+      </div>
       <div class="detail-sections">
         <section class="detail-section">
           <button
             class="detail-section-toggle"
-            :aria-expanded="sections.targets"
-            aria-controls="run-detail-targets"
-            @click="sections.targets = !sections.targets"
+            :aria-expanded="sections.records"
+            aria-controls="run-detail-records"
+            @click="sections.records = !sections.records"
           >
-            <Folder :size="17" /><strong>目标目录与文件</strong
-            ><span class="section-summary" :title="targetNames.join(' · ')">{{
-              targetNames.join(' · ')
+            <FileText :size="17" /><strong>运行记录</strong
+            ><span class="section-summary">{{
+              records.loaded
+                ? `${records.all_total} 个文件 · ${records.directories.length} 个目录`
+                : records.error
+                  ? '读取失败'
+                  : '正在读取…'
             }}</span
-            ><ChevronRight :size="16" :class="{ 'is-open': sections.targets }" />
+            ><ChevronRight :size="16" :class="{ 'is-open': sections.records }" />
           </button>
-          <div v-show="sections.targets" id="run-detail-targets" class="detail-section-content">
-            <div class="detail-targets"
-              ><span v-for="(target, i) in targetNames" :key="i" :title="target"
-                ><Folder :size="15" /><span>{{ target }}</span></span
-              ><small class="detail-recursive">{{
-                run.recursive ? '包含子目录' : '仅所选目标的当前层'
-              }}</small></div
-            >
-            <div v-if="active" class="detail-current-file">
-              <div class="detail-current-path"
-                ><span class="detail-caption">当前路径</span
-                ><div v-if="currentItem" class="detail-path-line"
-                  ><span :title="path(currentItem)">{{ path(currentItem) }}</span
-                  ><button
-                    class="icon-btn"
-                    aria-label="复制当前路径"
-                    @click="copyPath(path(currentItem))"
-                    ><Copy :size="15" /></button></div
-                ><p v-else class="detail-caption">{{
-                  run.status === 'queued'
-                    ? '等待开始'
-                    : run.status === 'scanning'
-                      ? '正在扫描目标目录'
-                      : '当前页暂无正在处理的文件'
-                }}</p></div
-              >
-              <div v-if="currentItem" class="detail-current-status"
-                ><span class="detail-caption"
-                  >{{ run.status === 'paused' ? '当前文件' : '正在处理' }}：</span
-                ><strong :title="filename(currentItem)">{{ filename(currentItem) }}</strong
-                ><small v-if="currentItems.length > 1"
-                  >本页另有 {{ currentItems.length - 1 }} 个文件处理中</small
-                ><StatusBadge :status="currentItem.status">{{
-                  statusNames[currentItem.status]
-                }}</StatusBadge></div
-              >
-            </div>
-            <div class="detail-batch-progress"
-              ><div
-                ><span>批次处理进度 <small>含完成、跳过与失败</small></span
-                ><strong
-                  >{{ processed.toLocaleString() }} / {{ (run.discovered || 0).toLocaleString()
-                  }}<span>{{ percent(processed) }}</span></strong
-                ></div
-              ><div
-                class="detail-progress-track"
-                role="progressbar"
-                aria-label="批次处理进度"
-                :aria-valuenow="progress"
-                :aria-valuemin="0"
-                :aria-valuemax="100"
-                ><span :style="{ width: `${progress}%` }" :data-tone="tone(run.status)" /></div
-            ></div>
-            <div class="detail-file-heading"
-              ><strong>文件清单</strong><span>本页 {{ items.length }} 项</span></div
-            >
-            <div class="detail-file-list">
-              <div v-for="item in items" :key="item.id" class="run-item">
-                <div class="run-file-paths"
-                  ><strong :title="item.original_path || path(item)">{{
-                    item.original_path || path(item)
-                  }}</strong
-                  ><small
-                    v-if="item.current_path && item.current_path !== item.original_path"
-                    :title="item.current_path"
-                    >当前路径：{{ item.current_path }}</small
-                  ></div
+          <div
+            v-show="sections.records"
+            id="run-detail-records"
+            class="detail-section-content"
+            :aria-busy="records.busy"
+          >
+            <div class="detail-record-toolbar">
+              <div class="detail-record-filters" role="group" aria-label="文件状态筛选">
+                <button :aria-pressed="filter === 'all'" @click="filter = 'all'"
+                  >全部文件 <span v-if="records.loaded">{{ selectedTotal }}</span></button
                 >
-                <StatusBadge :status="item.status">{{
-                  statusNames[item.status] || item.status
-                }}</StatusBadge>
-                <button
-                  class="icon-btn"
-                  :aria-label="`复制路径 ${filename(item)}`"
-                  @click="copyPath(path(item))"
-                  ><Copy :size="14"
-                /></button>
-                <p v-if="item.message">{{ item.message }}</p>
+                <button :aria-pressed="filter === 'failed'" @click="filter = 'failed'"
+                  >最终失败 <span v-if="records.loaded">{{ selectedFailed }}</span></button
+                >
               </div>
-              <p v-if="!items.length" class="detail-empty">{{
-                busy
-                  ? '正在读取文件清单…'
-                  : run.status === 'paused'
-                    ? '批次已暂停，继续运行后会处理剩余任务。'
-                    : active
-                      ? '发现文件后会显示在这里。'
-                      : '当前页没有文件任务。'
-              }}</p>
+              <SelectField v-model="directory" :options="directoryOptions" label="记录目录筛选" />
             </div>
-            <div class="pagination"
-              ><span class="subtle">共 {{ total }} 项 · 每页 100 项</span
+            <p class="detail-caption"
+              >按提交时的目录分组，包含排队文件；失败次数在文件内展开。{{
+                active ? '运行期间自动刷新。' : '批次已结束。'
+              }}</p
+            >
+            <div v-if="records.error" class="detail-record-error" role="alert"
+              ><span
+                >运行记录读取失败：{{ records.error
+                }}{{ records.items.length ? '；保留上次读取的记录。' : '' }}</span
+              ><button :disabled="records.busy" @click="refreshRecords()">重试</button></div
+            >
+            <section
+              v-for="(group, groupIndex) in groups"
+              :key="group.path"
+              class="detail-directory"
+            >
+              <button
+                class="detail-directory-toggle"
+                :aria-expanded="!closedDirectories.has(group.path)"
+                :aria-controls="`run-directory-${groupIndex}`"
+                @click="toggleDirectory(group.path)"
+              >
+                <ChevronRight
+                  :size="15"
+                  :class="{ 'is-open': !closedDirectories.has(group.path) }"
+                /><Folder :size="16" /><strong :title="group.path || '媒体根目录'">{{
+                  group.path || '媒体根目录'
+                }}</strong>
+                <span v-if="group.stats" class="detail-directory-counts"
+                  >{{ group.stats.total }} 个文件<span v-if="group.stats.done">
+                    · {{ group.stats.done }} 完成</span
+                  ><span v-if="group.stats.failed" class="directory-failures">
+                    · {{ group.stats.failed }} 失败</span
+                  ><span v-if="group.stats.running"> · {{ group.stats.running }} 处理中</span
+                  ><span v-if="group.stats.queued"> · {{ group.stats.queued }} 排队</span
+                  ><span v-if="group.stats.skipped"> · {{ group.stats.skipped }} 跳过</span
+                  ><span v-if="group.stats.cancelled">
+                    · {{ group.stats.cancelled }} 取消</span
+                  ></span
+                >
+              </button>
+              <div
+                v-show="!closedDirectories.has(group.path)"
+                :id="`run-directory-${groupIndex}`"
+                class="detail-directory-files"
+              >
+                <p class="detail-caption"
+                  >本页 {{ group.items.length }} /
+                  {{ filter === 'failed' ? group.stats?.failed : group.stats?.total }} 个{{
+                    filter === 'failed' ? '失败' : ''
+                  }}文件</p
+                >
+                <article
+                  v-for="item in group.items"
+                  :key="item.id"
+                  class="detail-record-file"
+                  :data-tone="tone(item.status)"
+                >
+                  <div class="detail-record-heading"
+                    ><StatusBadge :status="item.status">{{
+                      item.status === 'failed'
+                        ? '最终失败'
+                        : statusNames[item.status] || item.status
+                    }}</StatusBadge
+                    ><span v-if="item.undone" class="detail-caption">本次改名已还原</span
+                    ><DateTime :value="itemStamp(item)" /><button
+                      class="icon-btn"
+                      :aria-label="`复制当前路径 ${item.original_name}`"
+                      :title="path(item)"
+                      @click="copyPath(path(item))"
+                      ><Copy :size="14" /></button
+                  ></div>
+                  <dl class="detail-record-names"
+                    ><div
+                      ><dt>原文件名</dt><dd>{{ item.original_name || '未记录原名' }}</dd></div
+                    ><div
+                      ><dt>{{ nameLabel(item) }}</dt
+                      ><dd>{{ nameValue(item) }}</dd></div
+                    ></dl
+                  >
+                  <p v-if="item.message" class="detail-record-message">{{ item.message }}</p>
+                  <div v-if="item.attempts?.length" class="attempt-history">
+                    <button
+                      class="detail-attempt-toggle"
+                      :aria-expanded="expandedAttempts.has(item.id)"
+                      :aria-controls="`run-attempts-${item.id}`"
+                      @click="toggleAttempts(item.id)"
+                      ><ChevronRight
+                        :size="13"
+                        :class="{ 'is-open': expandedAttempts.has(item.id) }"
+                      />全部 {{ item.attempts.length }} 次尝试 · {{ attemptSummary(item) }}</button
+                    >
+                    <div v-show="expandedAttempts.has(item.id)" :id="`run-attempts-${item.id}`">
+                      <div
+                        v-for="attempt in item.attempts"
+                        :key="attempt.number"
+                        class="detail-attempt"
+                        :data-tone="tone(attempt.status)"
+                        ><strong
+                          >{{
+                            attempt.number === 1 ? '首次请求' : `重试第 ${attempt.number - 1} 次`
+                          }}
+                          · {{ attempt.fallback ? '兜底模型' : '主模型' }}</strong
+                        ><dl
+                          ><dt>模型</dt
+                          ><dd>{{ attempt.model_config_title }} · {{ attempt.model }}</dd
+                          ><dt>开始时间</dt><dd><DateTime :value="attempt.started" /></dd
+                          ><dt>耗时</dt><dd>{{ attempt.duration_ms }} ms</dd><dt>请求状态</dt
+                          ><dd>{{
+                            attempt.status === 'success'
+                              ? '成功'
+                              : attempt.status === 'cancelled'
+                                ? '已取消'
+                                : '失败'
+                          }}</dd
+                          ><dt>错误信息</dt><dd>{{ attempt.message || '—' }}</dd></dl
+                        ></div
+                      >
+                    </div>
+                  </div>
+                </article>
+              </div>
+            </section>
+            <p v-if="!records.items.length" class="detail-empty" role="status">{{
+              records.busy
+                ? '正在读取运行记录…'
+                : records.error
+                  ? '暂时无法读取运行记录'
+                  : filter === 'failed'
+                    ? '当前范围没有最终失败的文件。'
+                    : active
+                      ? '发现文件后会显示在这里，排队文件也会保留。'
+                      : '当前范围没有文件任务。'
+            }}</p>
+            <div class="pagination" aria-label="运行记录分页"
+              ><span class="subtle">{{
+                records.loaded
+                  ? `共 ${records.total} 个文件 · 每页 100 项`
+                  : records.error
+                    ? '读取失败'
+                    : '正在读取…'
+              }}</span
               ><PageNavigation
-                :page="page"
-                :total-pages="Math.ceil(total / 100)"
-                :disabled="busy"
+                :page="records.page"
+                :total-pages="Math.ceil(records.total / 100)"
+                :disabled="records.busy"
                 previous-label="上页文件"
                 next-label="下页文件"
-                @change="emit('page', $event)"
-            /></div>
-          </div>
-        </section>
-        <section class="detail-section">
-          <button
-            class="detail-section-toggle"
-            :aria-expanded="sections.logs"
-            aria-controls="run-detail-logs"
-            @click="sections.logs = !sections.logs"
-            ><FileText :size="17" /><strong>运行日志</strong
-            ><span class="section-summary">{{
-              logTotal === undefined ? '正在统计…' : `共 ${logTotal} 条`
-            }}</span
-            ><ChevronRight :size="16" :class="{ 'is-open': sections.logs }"
-          /></button>
-          <div v-show="sections.logs" id="run-detail-logs" class="detail-section-content">
-            <p class="detail-caption"
-              >整个批次的处理记录，最新处理在前；运行期间展开时自动刷新，结束后停止。</p
-            >
-            <div v-if="logs.error" class="detail-record-error" role="alert"
-              ><span>运行日志读取失败：{{ logs.error }}</span
-              ><button :disabled="logs.busy" @click="refreshLogs()">重试</button></div
-            >
-            <div class="detail-log-list">
-              <div
-                v-for="item in logs.items"
-                :key="item.id"
-                class="detail-log-row"
-                :data-tone="tone(item.status)"
-              >
-                <time
-                  :datetime="itemStamp(item)"
-                  :title="itemStamp(item) ? time(itemStamp(item)!) : '未记录处理时间'"
-                  >{{ itemClock(item) }}</time
-                ><span class="detail-log-dot" aria-hidden="true" />
-                <div class="detail-log-content"
-                  ><div class="detail-log-title"
-                    ><strong>{{ statusNames[item.status] || item.status }}</strong
-                    ><span :title="path(item)">{{ filename(item) }}</span></div
-                  ><p v-if="item.message" class="detail-log-message">{{ item.message }}</p>
-                  <details v-if="item.attempts?.length" class="attempt-history"
-                    ><summary
-                      >模型请求 {{ item.attempts.length }} 次 · {{ attemptSummary(item) }}</summary
-                    >
-                    <div
-                      v-for="attempt in item.attempts"
-                      :key="attempt.number"
-                      class="detail-attempt"
-                      :data-tone="tone(attempt.status)"
-                      ><strong
-                        >{{ attempt.number === 1 ? '首次请求' : `重试第 ${attempt.number - 1} 次`
-                        }}{{ attempt.fallback ? ' · 兜底模型' : ' · 主模型' }}</strong
-                      ><dl
-                        ><dt>模型</dt><dd>{{ attempt.model_config_title }} · {{ attempt.model }}</dd
-                        ><dt>耗时</dt><dd>{{ attempt.duration_ms }} ms</dd><dt>开始时间</dt
-                        ><dd>{{ time(attempt.started) }}</dd
-                        ><dt>请求状态</dt
-                        ><dd>{{
-                          attempt.status === 'success'
-                            ? '成功'
-                            : attempt.status === 'cancelled'
-                              ? '已取消'
-                              : '失败'
-                        }}</dd
-                        ><dt>错误信息</dt><dd>{{ attempt.message || '—' }}</dd></dl
-                      ></div
-                    >
-                  </details>
-                </div>
-              </div>
-              <p v-if="!logs.items.length" class="detail-empty">{{
-                logs.busy
-                  ? '正在读取运行日志…'
-                  : logs.error
-                    ? '暂时无法读取运行日志'
-                    : '暂无处理记录'
-              }}</p>
-            </div>
-            <div class="pagination" aria-label="运行日志分页"
-              ><span class="subtle">共 {{ logs.total }} 条 · 每页 100 条</span
-              ><button v-if="logs.page > 1" :disabled="logs.busy" @click="refreshLogs(1)"
-                >查看最新日志</button
-              ><PageNavigation
-                :page="logs.page"
-                :total-pages="Math.ceil(logs.total / 100)"
-                :disabled="logs.busy"
-                label="运行日志翻页"
-                previous-label="上页日志"
-                next-label="下页日志"
-                @change="refreshLogs"
-            /></div>
-          </div>
-        </section>
-        <section class="detail-section">
-          <button
-            class="detail-section-toggle"
-            :aria-expanded="sections.failures"
-            aria-controls="run-detail-failures"
-            @click="sections.failures = !sections.failures"
-            ><CircleAlert :size="17" /><strong>失败记录</strong
-            ><span class="section-summary"
-              ><span class="detail-failure-count" :data-tone="run.failed > 0 ? 'error' : 'muted'">{{
-                run.failed || 0
-              }}</span>
-              条</span
-            ><ChevronRight :size="16" :class="{ 'is-open': sections.failures }"
-          /></button>
-          <div v-show="sections.failures" id="run-detail-failures" class="detail-section-content">
-            <p class="detail-caption"
-              >整个批次的失败记录，最新失败在前；运行期间展开时自动刷新，结束后停止。</p
-            >
-            <div v-if="failures.error" class="detail-record-error" role="alert"
-              ><span>失败记录读取失败：{{ failures.error }}</span
-              ><button :disabled="failures.busy" @click="refreshFailures()">重试</button></div
-            >
-            <div class="detail-failure-list">
-              <div v-for="item in failures.items" :key="item.id" class="detail-failure"
-                ><div class="detail-failure-heading"
-                  ><strong :title="path(item)">{{ filename(item) }}</strong
-                  ><StatusBadge status="failed">失败</StatusBadge></div
-                ><p class="detail-failure-reason">{{
-                  item.message || lastAttempt(item)?.message || '未记录失败原因'
-                }}</p
-                ><dl
-                  ><dt>重试</dt
-                  ><dd>{{ Math.max(0, (item.attempts?.length || 0) - 1) }} / {{ retryLimit }}</dd
-                  ><dt>最终模型</dt><dd>{{ lastAttempt(item)?.model || '—' }}</dd
-                  ><dt>最后请求</dt
-                  ><dd>{{ lastAttempt(item) ? time(lastAttempt(item)!.started) : '—' }}</dd></dl
-                ></div
-              >
-              <p v-if="!failures.items.length" class="detail-empty">{{
-                failures.busy
-                  ? '正在读取失败记录…'
-                  : failures.error
-                    ? '暂时无法读取失败记录'
-                    : '暂无失败记录'
-              }}</p>
-            </div>
-            <div class="pagination" aria-label="失败记录分页"
-              ><span class="subtle">共 {{ failures.total }} 条 · 每页 100 条</span
-              ><button
-                v-if="failures.page > 1"
-                :disabled="failures.busy"
-                @click="refreshFailures(1)"
-                >查看最新失败</button
-              ><PageNavigation
-                :page="failures.page"
-                :total-pages="Math.ceil(failures.total / 100)"
-                :disabled="failures.busy"
-                label="失败记录翻页"
-                previous-label="上页失败"
-                next-label="下页失败"
-                @change="refreshFailures"
+                label="运行记录翻页"
+                @change="refreshRecords"
             /></div>
           </div>
         </section>
@@ -532,13 +510,19 @@
             :aria-expanded="sections.config"
             aria-controls="run-detail-config"
             @click="sections.config = !sections.config"
-            ><Settings2 :size="17" /><strong>配置信息</strong
+            ><Settings2 :size="17" /><strong>批次配置与提交范围</strong
             ><span class="section-summary">{{
               run.task === 'extract' ? '独立抽帧' : '自动命名'
             }}</span
             ><ChevronRight :size="16" :class="{ 'is-open': sections.config }"
           /></button>
           <div v-show="sections.config" id="run-detail-config" class="detail-section-content"
+            ><div class="detail-targets"
+              ><span v-for="(target, i) in targetNames" :key="i"
+                ><Folder :size="15" /><span :title="target">{{ target }}</span></span
+              ><small class="detail-recursive">{{
+                run.recursive ? '包含子目录' : '仅所选目标的当前层'
+              }}</small></div
             ><dl class="detail-config">
               <div
                 ><dt>任务类型</dt

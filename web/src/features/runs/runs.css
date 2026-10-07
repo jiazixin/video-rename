@@ -47,21 +47,6 @@
   padding-left: 18px;
   overflow-wrap: anywhere;
 }
-.run-file-paths {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  flex-direction: column;
-  gap: 5px;
-  overflow-wrap: anywhere;
-}
-.run-file-paths strong {
-  font-size: 12px;
-  font-weight: 500;
-}
-.run-file-paths small {
-  color: var(--ash);
-}
 .plan-config-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

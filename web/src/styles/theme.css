@@ -1211,23 +1211,6 @@ tbody tr:hover {
   font-weight: 500;
   margin-top: 7px;
 }
-.run-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  border-bottom: 1px solid var(--line);
-  padding: 12px 0;
-  font-size: 12px;
-}
-.run-item .badge {
-  margin-left: auto;
-}
-.run-item p {
-  width: 100%;
-  font-size: 11px;
-  color: var(--ash);
-}
 @keyframes appear {
   from {
     opacity: 0;
@@ -1693,9 +1676,6 @@ textarea:focus-visible {
   --status-ink: #7a6f81;
   --status-bg: #f4f1f5;
   --status-line: #e3dce7;
-}
-.run-item .status-badge {
-  margin-left: auto;
 }
 .pagination .select-trigger {
   position: relative;
