@@ -3,9 +3,7 @@
   import {
     Check,
     Minus,
-    ChevronsRight,
     X,
-    List,
     Folder,
     FileText,
     CircleAlert,
@@ -71,10 +69,10 @@
     props.run.discovered > 0 ? Math.min(100, (processed.value / props.run.discovered) * 100) : 0
   );
   const stats = computed(() => [
-    { label: '已完成', value: props.run.done || 0, tone: 'success', icon: Check },
-    { label: '已跳过', value: props.run.skipped || 0, tone: 'muted', icon: ChevronsRight },
-    { label: '失败', value: props.run.failed || 0, tone: 'error', icon: X },
-    { label: '总任务', value: props.run.discovered || 0, tone: 'primary', icon: List }
+    { label: '已完成', value: props.run.done || 0, tone: 'success' },
+    { label: '已跳过', value: props.run.skipped || 0, tone: 'muted' },
+    { label: '失败', value: props.run.failed || 0, tone: 'error' },
+    { label: '总任务', value: props.run.discovered || 0, tone: 'primary' }
   ]);
   const tone = (status: string) => {
     if (['done', 'completed', 'success'].includes(status)) return 'success';
@@ -221,10 +219,10 @@
           class="detail-statistic"
           :data-tone="stat.tone"
         >
-          <component :is="stat.icon" :size="18" aria-hidden="true" />
           <strong>{{ stat.value.toLocaleString() }}</strong
           ><span :title="i === 3 ? '已发现任务' : undefined"
-            >{{ stat.label }}<small v-if="i < 3">{{ percent(stat.value) }}</small></span
+            ><span>{{ stat.label }}</span
+            ><small v-if="i < 3">{{ percent(stat.value) }}</small></span
           >
         </div>
       </div>

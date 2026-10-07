@@ -1,5 +1,15 @@
 # 上线前检查与修复：2026-10-07
 
+## 批次详情配色与对齐（2026-10-07）
+
+采用用户选定的墨绿方案，移除统计卡片装饰图标，将标签与百分比统一字号、行高及基线。此次仅修改详情展示，未更改统计或处理逻辑。
+
+- `npm --prefix web run format:check`、`npm --prefix web run build`：通过（构建包含严格类型检查）。
+- `GOCACHE=/tmp/video-rename-go-cache go build -o bin/video-rename ./cmd/video-rename`：通过。
+- `npm --prefix web run test:e2e -- run-detail.spec.ts run-detail-records.spec.ts`：7/7 通过，53.1 秒。覆盖生命周期状态、详情与日志刷新、空日志计数、长路径/提示词、窄屏及键盘焦点。
+- 已查看 1440px 桌面与 390px 窄屏截图，确认卡片无装饰图标、标签与百分比同行对齐、窄屏两列布局正常。截图位于 `web/test-results/run-detail-timeline-desktop.png` 与 `web/test-results/run-detail-timeline-mobile.png`。
+- 首次测试因沙箱禁止本机监听未能启动，获得测试执行权限后重跑通过；使用隔离配置、临时数据和合成媒体，未使用用户数据或真实外部服务。未重跑全量后端或全量浏览器测试，未重启用户运行服务。
+
 本记录对应本次工作区，起点为 `6b2e9f8`，开始时 Git 工作区干净。检查使用 macOS arm64 / Apple M2 Max、Go 1.27.1、Node 26.8.2、npm 11.19.1、FFmpeg 9.0.1；本机测试不能替代部署环境验收。旧记录在 [历史验收](archive/2026-10-05-acceptance.md)。
 
 ## 已确认并修复
