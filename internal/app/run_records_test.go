@@ -1,13 +1,20 @@
 package app
 
 import (
+	"context"
 	"encoding/json/v2"
 	"fmt"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"video-rename/internal/config"
+	"video-rename/internal/domain"
+	"video-rename/internal/jobs"
+	"video-rename/internal/models"
+	"video-rename/internal/systemsettings"
 )
 
 func TestRunDirectoryRecords(t *testing.T) {
@@ -50,9 +57,12 @@ func TestRunDirectoryRecords(t *testing.T) {
 		key, name, status string
 		run               int
 	}{
-		{"run:1:item:1", "本批次名称.mp4", "committed", 1},
-		{"run:2:item:206", "后续名称.mp4", "committed", 2},
-		{"run:1:item:3", "未提交名称.mp4", "failed", 1},
+		{"run:1:item:1:0", "首次冲突.mp4", "failed", 1},
+		{"run:1:item:1:9", "再次冲突.mp4", "failed", 1},
+		{"run:1:item:1:10", "本批次名称.mp4", "committed", 1},
+		{"run:2:item:206:0", "后续名称.mp4", "committed", 2},
+		{"run:1:item:3:0", "未提交名称.mp4", "failed", 1},
+		{"run:1:item:10:0", "其他条目.mp4", "committed", 1},
 	} {
 		if _, err := a.DB.Exec(`INSERT INTO operations(entry,parent,old_name,new_name,identity,size,mtime,kind,source,status,request_key,created,run,undone) VALUES(1,1,'old.mp4',?,'x',0,'now','file','automatic',?,?,'now',?,1)`, op.name, op.status, op.key, op.run); err != nil {
 			t.Fatal(err)
@@ -173,4 +183,93 @@ func TestRunDirectoryRecords(t *testing.T) {
 			t.Fatal("invalid query accepted", query, w.Code)
 		}
 	}
+}
+
+// Exercise the producer and HTTP reader together. Fabricated operation keys
+// previously hid a mismatch with the suffix added by Library.AutoCommit.
+func TestRunRecordsAfterAutomaticRenameAndRestore(t *testing.T) {
+	root := t.TempDir()
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { a.Close() })
+	tools := t.TempDir()
+	for _, name := range []string{"ffmpeg", "ffprobe"} {
+		if err := os.WriteFile(filepath.Join(tools, name), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", tools)
+	profile, err := (models.Store{DB: a.DB}).Get(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test", Timeout: "2s", MaxTokens: 128}
+	if _, err := (models.Store{DB: a.DB}).Save(profile); err != nil {
+		t.Fatal(err)
+	}
+	settings := systemsettings.Default()
+	settings.StabilitySeconds = 0
+	if err := (systemsettings.Store{DB: a.DB}).Save(settings); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "原视频.mp4"), []byte("isolated video fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	a.Jobs.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
+		return "本批次标题", nil
+	}
+	run, err := a.Jobs.Create(jobs.Request{Targets: []int64{1}, Key: "record-integration"}, "manual", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Jobs.Execute(t.Context(), run)
+	if _, err := os.Stat(filepath.Join(root, "本批次标题.mp4")); err != nil {
+		t.Fatal(err)
+	}
+	var operation, entry int64
+	if err := a.DB.QueryRow("SELECT id,entry FROM operations WHERE run=? AND status='committed'", run).Scan(&operation, &entry); err != nil {
+		t.Fatal(err)
+	}
+	check := func(undone bool, current string) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", fmt.Sprintf("/api/runs/%d/items?page=1", run), nil)
+		r.SetPathValue("id", fmt.Sprint(run))
+		a.items(w, r)
+		var result struct {
+			Items []struct {
+				Status          string `json:"status"`
+				OriginalName    string `json:"original_name"`
+				NewName         string `json:"new_name"`
+				CurrentPath     string `json:"current_path"`
+				OperationStatus string `json:"operation_status"`
+				Undone          bool   `json:"undone"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != 200 || len(result.Items) != 1 {
+			t.Fatalf("unexpected records: %d %s", w.Code, w.Body.String())
+		}
+		item := result.Items[0]
+		if item.Status != "done" || item.OriginalName != "原视频.mp4" || item.NewName != "本批次标题.mp4" || item.OperationStatus != "committed" || item.Undone != undone || item.CurrentPath != current {
+			t.Fatalf("real rename result missing or replaced: %+v", item)
+		}
+	}
+	check(false, "本批次标题.mp4")
+	if _, err := a.Library.Restore(operation, "record-restore"); err != nil {
+		t.Fatal(err)
+	}
+	check(true, "原视频.mp4")
+	e, err := a.Library.Get(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Library.Rename(entry, e.Version, "后续手动标题.mp4", "record-later-rename"); err != nil {
+		t.Fatal(err)
+	}
+	check(true, "后续手动标题.mp4")
 }

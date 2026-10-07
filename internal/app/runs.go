@@ -180,9 +180,16 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
 		args = append(args, prefix)
 	}
 	args = append(args, (page-1)*100)
+	// AutoCommit journals each collision attempt as run:R:item:I:N. Select the
+	// latest attempt by insertion order (not the textual suffix), once per item.
+	// The bounded key range includes the final colon to keep item 1 and 10 apart
+	// and allows the unique request_key index to locate only this item's attempts.
 	rows, err = tx.QueryContext(r.Context(), `SELECT i.id,i.entry,i.status,i.message,i.original_path,
  MAX(i.started_ms,i.finished_ms),COALESCE(o.new_name,''),COALESCE(o.status,''),COALESCE(o.undone,0)
- FROM run_items i LEFT JOIN operations o ON o.request_key='run:'||i.run||':item:'||i.id AND o.run=i.run AND o.entry=i.entry
+ FROM run_items i LEFT JOIN operations o ON o.id=(
+ SELECT op.id FROM operations op WHERE op.request_key>='run:'||i.run||':item:'||i.id||':'
+ AND op.request_key<'run:'||i.run||':item:'||i.id||';'
+ ORDER BY op.id DESC LIMIT 1) AND o.run=i.run AND o.entry=i.entry AND o.source='automatic'
  WHERE `+where+` ORDER BY `+runDirectoryPrefix+`,i.id LIMIT 100 OFFSET ?`, args...)
 	if err != nil {
 		failure(w, err)

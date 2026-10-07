@@ -1,35 +1,51 @@
-# 最新验收：扫描排除目录与统一选择弹窗（2026-10-07）
+# 最新验收：批次详情丢失新文件名修复（2026-10-07）
 
-基于干净工作区 `14449628d14c`。上一轮验收已移至 [历史记录](archive/2026-10-07-before-scan-exclusions-acceptance.md)，不作为本次验证依据。
+基于干净工作区 `af2e3e4140b0`。上一轮扫描排除验收已移至 [历史记录](archive/2026-10-07-before-rename-record-fix-acceptance.md)。
 
-## 本次行为
+## 问题与漏测原因
 
-- 系统设置新增“排除目录”，支持最多100个目录、多选、取消、逐项移除与保存；扫描范围复用同一列表及模态选择组件。确认弹窗只更新草稿，保存后重开保留。
-- 手动与后台递归索引扫描使用同一排除规则；排除优先于扫描范围，显式选择排除目录或其子目录也跳过。父子重叠排除项合并，清空后恢复扫描。
-- 每轮冻结启动时的排除列表，保存不改变运行中的轮次。已有索引保留，浏览时按需索引及命名、抽帧不受限制；排除不是访问权限。
-- 复用现有设置JSON存储，不更改数据库结构。目录展示路径只读索引，保存验证目录真实可用，拒绝文件、无效ID、重复ID和超量列表。
-- 列表显示完整路径标题，长路径最多三行，目录较多时列表内部滚动；复用原有模态的焦点限制、Escape关闭与焦点恢复。
+实际自动改名操作键为 `run:R:item:I:N`，末尾 N 为文件提交遇到名称冲突时的尝试序号；详情接口此前只匹配 `run:R:item:I`。文件已经改名、日志已经保存，页面却显示“已完成 / 主模型成功 / 未记录改名结果”。
+
+此前接口夹具手写了不符合实际写入格式的操作键，页面测试又直接模拟 `new_name`。已有真实 FFmpeg 命名用例只检查文件目录和成功诊断，没有打开详情核对新名称。局部测试通过无法证明写入、读取与页面之间的契约一致，上一轮验收对此存在覆盖缺口。
+
+新增隔离回归在修复前明确失败：磁盘存在 `本批次标题.mp4`，详情返回空 `new_name`；真实 FFmpeg 和本地假模型浏览器用例也复现了截图中的原文。原始浏览器失败证据在 `web/test-results/rename-record-red/`。
+
+## 修复与回归范围
+
+- 按包含末尾冒号的精确任务键范围查找操作，按操作 ID 选择最后一次尝试；保留批次、条目与自动命名来源核对，不使用当前文件名冒充本批次结果。
+- 多次冲突只产生一条详情记录，序号 9/10 按实际写入顺序选取；item 1/10 不串名。键范围可通过唯一 request_key 索引定位，避免为每条文件扫描整个批次的操作。
+- 后端贯通真实任务执行、临时文件改名、持久日志和详情 HTTP handler，并验证还原、后续手动改名不改变本批次历史名称。该用例替换分析函数和工具探测，不声称执行了 FFmpeg；真实抽帧与模型 HTTP 协议由浏览器用例覆盖。
+- 原有真实 FFmpeg 浏览器用例增加详情新名称断言、桌面/390px截图、无水平溢出及 Escape 关闭后焦点恢复检查。模型使用本地假服务，详情接口不拦截、不模拟。
+- 不修改数据库结构或历史数据。已保存且遵循实际操作键格式的日志可由修复后的接口直接读出，无需重新命名媒体。
 
 ## 已执行验证
 
 | 命令 | 结果 |
 | --- | --- |
-| `npm --prefix web run format:check` | 通过 |
-| `npm --prefix web run build` | 通过，含严格类型检查 |
-| `GOCACHE=/tmp/video-rename-go-cache go build -o bin/video-rename ./cmd/video-rename` | 通过 |
-| `GOCACHE=/tmp/video-rename-go-cache go test ./internal/libraryscan ./internal/systemsettings ./internal/app` | 通过 |
-| `GOCACHE=/tmp/video-rename-go-cache go test -race -count=1 ./internal/libraryscan ./internal/systemsettings` | 通过 |
-| `GOCACHE=/tmp/video-rename-go-cache go test -race -count=1 ./internal/app -run 'TestScanExcludedTargetsAPI\|TestLibraryScanAPISettingsAndDiscovery'` | 通过 |
-| `GOCACHE=/tmp/video-rename-go-cache go vet ./internal/libraryscan ./internal/systemsettings ./internal/app` | 通过 |
-| `npm --prefix web run test:e2e -- library-scan.spec.ts` | 15/15通过，最终样式调整后重跑通过（18.8秒） |
-| `git diff --check` | 通过 |
+| `npm --prefix web run format:check` / `npm --prefix web run check` / `npm --prefix web run build` | 通过 |
+| `go mod verify` | 通过 |
+| `GOCACHE=/tmp/video-rename-go-cache go test -count=1 ./...` | 全仓通过 |
+| `GOCACHE=/tmp/video-rename-go-cache go test -race -count=1 ./...` | 全仓通过 |
+| `GOCACHE=/tmp/video-rename-go-cache go vet ./...` | 通过 |
+| `GOCACHE=/tmp/video-rename-go-cache go test -tags=integration -count=1 ./internal/media` | 通过，真实 FFmpeg/ffprobe |
+| `GOCACHE=/tmp/video-rename-go-cache go test -race -count=1 ./internal/app` | 最终键范围查询版本再次通过，44.9秒；该版本再执行 app vet 通过 |
+| `GOCACHE=/tmp/video-rename-go-cache go build -o bin/video-rename ./cmd/video-rename` | 最终代码构建通过 |
+| `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 GOCACHE=/tmp/video-rename-go-cache go build -o bin/video-rename-linux-amd64 ./cmd/video-rename` | 最终代码交叉编译通过 |
 
-服务端覆盖两种扫描来源、排除子树、显式子目录绕过、保留已有索引、移除后恢复、运行中设置快照、保存重开和独立设置互不覆盖。接口补测覆盖目录路径回读、父子范围合并、非目录拒绝和手动扫描排除。
+`npm --prefix web run test:e2e -- --output=test-results/rename-record-full`：**182/182通过，9.1分钟**。覆盖本次真实改名详情、全套目录/历史/批次/模型/设置/通知/播放操作，以及桌面、窄屏、加载/空/错误、焦点、选择和滚动保持。
 
-浏览器覆盖保存重开、多选、取消与Escape不改草稿、移除后保存空列表、键盘焦点恢复与循环、加载失败重试、长路径、320/390px窄屏，以及已有扫描状态、目录更新与交互保留场景。截图在忽略目录 `web/test-results/`，包括 `scan-exclusions-desktop.png`、`scan-exclusions-modal-mobile.png`、`scan-exclusions-long-320.png`。
+完整套件运行期间仅调整了等价查询的索引定位方式，并补充窄屏截图滚动；最终版本已补跑整个 app 包竞态和构建，以及以下浏览器命令，**3/3通过，1.4分钟**：
 
-首次Go编译发现基准测试需同步新参数，已更新调用；空排除列表的JSON数组语义已明确，并同步测试夹具。首次浏览器启动因沙箱不能监听本地端口中断，授权执行隔离服务后通过，没有修改断言掩盖失败。
+```bash
+npm --prefix web run test:e2e -- workspace.spec.ts run-detail-records.spec.ts --grep '真实 FFmpeg|目录统计覆盖整批|多目录同名' --output=test-results/rename-record-final
+```
+
+已查看 `web/test-results/real-rename-record-desktop.png` 与 `web/test-results/real-rename-record-mobile.png`：桌面和390px窄屏均显示真实新文件名；窄屏已滚动到记录，原名、新名、状态完整可读。最终 `git diff --check` 通过。
+
+首次浏览器尝试因沙箱禁止本机监听而中断，获准启动隔离服务后正常执行。修复前失败断言保持不变；未修改断言掩盖产品失败。
 
 ## 验证边界
 
-全部为本机临时数据库和合成媒体，浏览器使用18790隔离端口。未读取用户配置或媒体，未调用真实模型或通知服务；未部署、未重启用户服务。本次未重跑全仓Go测试、完整浏览器套件、规模测试、Linux目标或真实NAS实测。
+所有运行均使用本机隔离数据库、合成媒体和本地假模型，不读取用户配置、数据库或媒体。未访问截图中的局域网服务，未部署或重启用户实例；用户实例的实际文件与日志尚未核验。Linux 交叉编译仅代表可构建，不代表 Linux/NAS 目标环境实测。
+
+本次未重跑 `scale` / `scale_large` 专项规模与吞吐基准；没有依赖升级，未重新进行联网漏洞审计。
