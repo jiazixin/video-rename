@@ -304,7 +304,14 @@ func (l *Library) commit(e Entry, name, source, key string, undo, run int64, dia
 	oid, _ := res.LastInsertId()
 	o, err := l.Operation(oid)
 	if err != nil {
+		l.broken = err
 		return o, err
+	}
+	// Journaling can block long enough for another process to replace the leaf.
+	// Retain prepared evidence on any mismatch; recovery must inspect both names.
+	if err = verifyOperationFile(dir, e.Name, o); err != nil {
+		l.broken = err
+		return o, fmt.Errorf("日志写入后源文件已变化，需重启核对: %w", err)
 	}
 	if name != e.Name {
 		if je := rename.NoReplaceAt(int(dir.Fd()), e.Name, name); je != nil {
@@ -325,12 +332,27 @@ func (l *Library) commit(e Entry, name, source, key string, undo, run int64, dia
 		l.broken = err
 		return o, fmt.Errorf("文件已改名，但父目录已变化，需重启核对: %w", err)
 	}
+	if err = verifyOperationFile(dir, name, o); err != nil {
+		l.broken = err
+		return o, fmt.Errorf("改名结果身份或内容已变化，需重启核对: %w", err)
+	}
 	if err = l.finish(o, oldrel, newrel); err != nil {
 		l.broken = err
 		return o, fmt.Errorf("文件可能已改名，结果未确认，需重启恢复: %w", err)
 	}
 	o.Status = "committed"
 	return o, nil
+}
+
+func verifyOperationFile(dir *os.File, name string, o Operation) error {
+	snap, err := directorySnapshot(dir, name)
+	if err != nil {
+		return err
+	}
+	if Identity(snap) != o.Identity || (o.Kind != "directory" && (snap.Size != o.Size || stamp(snap) != o.Mtime)) {
+		return fmt.Errorf("文件身份或内容与操作日志不一致")
+	}
+	return nil
 }
 func (l *Library) finish(o Operation, oldrel, newrel string) error {
 	tx, err := l.DB.Begin()
@@ -339,6 +361,19 @@ func (l *Library) finish(o Operation, oldrel, newrel string) error {
 	}
 	defer tx.Rollback()
 	if err = l.finishTx(tx, o, oldrel, newrel); err != nil {
+		return err
+	}
+	// Revalidate after database writes as well: they can wait on storage while
+	// another process changes the renamed leaf. Roll back the success journal.
+	dir, err := l.openDirectory(o.Parent)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	if err = verifyOperationFile(dir, o.New, o); err != nil {
+		return err
+	}
+	if _, err = l.Path(o.Parent); err != nil {
 		return err
 	}
 	return tx.Commit()

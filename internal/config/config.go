@@ -26,6 +26,7 @@ type Config struct {
 	Storage     string     `yaml:"storage"`
 	Auth        AuthConfig `yaml:"auth"`
 	ConfigDir   string     `yaml:"-"`
+	ConfigFile  string     `yaml:"-"`
 }
 
 // Load strictly decodes deployment YAML; ValidateService resolves paths and validates startup settings.
@@ -46,6 +47,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("配置解析失败: %w", err)
 	}
 	cfg.ConfigDir = filepath.Dir(abs)
+	cfg.ConfigFile = abs
 	return cfg, nil
 }
 

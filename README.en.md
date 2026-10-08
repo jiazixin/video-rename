@@ -33,7 +33,7 @@ auth:
   password: "" # Set a strong, unique password.
 ```
 
-The media directory must already exist. Keep configuration, storage, and cache outside that directory. Relative paths in YAML resolve against the configuration file's directory. Environment variables do not override configuration. Replace the example password before starting.
+The media directory must already exist. Keep configuration, storage, and cache outside that directory. Also keep media, configuration, and persistent data out of `tmp-storage/video-rename-frames-v1/`, which the application cleans automatically. Unsafe path overlaps are rejected before startup. Relative paths in YAML resolve against the configuration file's directory. Environment variables do not override configuration. Replace the example password before starting.
 
 ```bash
 ./bin/video-rename --config configs/config.local.yaml

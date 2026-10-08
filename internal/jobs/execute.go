@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -43,7 +44,9 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 	defer func() { m.mu.Lock(); delete(m.active, id); m.mu.Unlock() }()
 
 	failAt := func(e error, target int64) {
-		_, _ = m.DB.Exec("UPDATE runs SET status='failed',failed=failed+CASE WHEN ?>0 THEN 1 ELSE 0 END,error=?,finished=? WHERE id=?", target, e.Error(), storage.Now(), id)
+		if err := m.failRun(id, target, e); err != nil {
+			slog.Error("保存批次失败状态失败，保留活动状态等待重启恢复", "run", id, "error", err, "cause", e)
+		}
 		path, action := "", "run"
 		if target > 0 {
 			path, action = m.Library.DisplayPath(target), "scan"
@@ -139,27 +142,12 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 			return
 		}
 		err = m.processPending(ctx, r, runConfig)
-		if err != nil && ctx.Err() == nil {
+		if err != nil && (ctx.Err() == nil || !errors.Is(err, ctx.Err())) {
 			fail(err)
 			return
 		}
 	}
-	status := "completed"
-	if ctx.Err() != nil {
-		status = "cancelled"
-		current, _ := m.Get(parent, id)
-		if current.Error != "" {
-			status = "failed"
-		}
-		_, _ = m.DB.Exec("UPDATE run_items SET status='cancelled',finished_ms=? WHERE run=? AND status IN ('queued','running')", time.Now().UnixMilli(), id)
-	} else {
-		r, _ = m.Get(parent, id)
-		if r.Failed > 0 {
-			status = "failed"
-			if r.Done > 0 || r.Skipped > 0 {
-				status = "partial_failure"
-			}
-		}
+	if err = m.completeRun(id, ctx.Err() != nil); err != nil {
+		fail(fmt.Errorf("保存批次结束状态失败: %w", err))
 	}
-	_, _ = m.DB.Exec("UPDATE runs SET status=?,finished=? WHERE id=?", status, storage.Now(), id)
 }

@@ -78,7 +78,7 @@ func Key(job domain.VideoJob, cfg *config.TaskConfig) string {
 	return hex.EncodeToString(h[:])
 }
 func New(base string, limit int64, policies ...systemsettings.Policy) (*Cache, error) {
-	root := filepath.Join(base, "video-rename-frames-v1")
+	root := config.FrameCachePath(base)
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return nil, err
 	}

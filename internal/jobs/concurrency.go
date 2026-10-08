@@ -9,9 +9,21 @@ import (
 // Dispatch only when an extraction slot is available. Release that slot once
 // frames are cached; waiting for inference is bounded by pinned cache capacity,
 // not by a fixed number of videos in the run.
-func (m *Manager) processPending(ctx context.Context, run Run, cfg config.TaskConfig) error {
+func (m *Manager) processPending(ctx context.Context, run Run, cfg config.TaskConfig) (result error) {
+	ctx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
-	defer wg.Wait()
+	var firstFailure sync.Once
+	var workerErr error
+	defer func() {
+		if result != nil {
+			cancel()
+		}
+		wg.Wait()
+		cancel()
+		if workerErr != nil {
+			result = workerErr
+		}
+	}()
 	var after int64
 	for ctx.Err() == nil {
 		rows, err := m.DB.QueryContext(ctx, "SELECT id,entry,identity,size,mtime FROM run_items WHERE run=? AND status='queued' AND id>? ORDER BY id LIMIT 128", run.ID, after)
@@ -50,7 +62,19 @@ func (m *Manager) processPending(ctx context.Context, run Run, cfg config.TaskCo
 			wg.Go(func() {
 				defer extracted()
 				copy := cfg
-				m.process(ctx, run, it, &copy, extracted)
+				if err := m.process(ctx, run, it, &copy, extracted); err != nil {
+					firstFailure.Do(func() {
+						workerErr = err
+						cancel()
+						// Stage-slot waits use the active run's scheduling context.
+						// Cancel it too, including workers waiting behind another batch.
+						m.mu.Lock()
+						if active, ok := m.active[run.ID]; ok {
+							active.cancel()
+						}
+						m.mu.Unlock()
+					})
+				}
 			})
 			after = it.ID
 		}

@@ -87,7 +87,7 @@ func (m *Manager) scan(ctx context.Context, batch Run, id int64) error {
 		}
 	}
 }
-func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.TaskConfig, extracted func()) {
+func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.TaskConfig, extracted func()) (result error) {
 	run := batch.ID
 	if ctx.Err() != nil {
 		return
@@ -95,16 +95,8 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.T
 	committed := false
 	extractionLogged := false
 	finish := func(status, msg string) {
-		_, _ = m.DB.Exec("UPDATE run_items SET status=?,message=?,finished_ms=? WHERE id=?", status, msg, time.Now().UnixMilli(), it.ID)
-		column := "done"
-		if status == "skipped" {
-			column = "skipped"
-		}
-		if status == "failed" {
-			column = "failed"
-		}
-		if status != "cancelled" {
-			_, _ = m.DB.Exec("UPDATE runs SET "+column+"="+column+"+1 WHERE id=?", run)
+		if err := m.finishItem(run, it.ID, status, msg); err != nil {
+			result = fmt.Errorf("保存文件处理结果失败: %w", err)
 		}
 	}
 	e, err := m.Library.Get(it.Entry)
@@ -193,9 +185,11 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.T
 				r.cancel()
 			}
 			m.mu.Unlock()
-			_, _ = m.DB.Exec("UPDATE runs SET error=? WHERE id=?", err.Error(), run)
+			_, writeErr := m.DB.Exec("UPDATE runs SET error=? WHERE id=?", err.Error(), run)
+			result = errors.Join(result, writeErr)
 		}
 		return
 	}
 	finish("done", "")
+	return
 }

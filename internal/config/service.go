@@ -96,7 +96,41 @@ func (c *Config) ValidateService() error {
 			return fmt.Errorf("配置、storage 与 tmp-storage 不得位于媒体根目录内")
 		}
 	}
+	cachePath := FrameCachePath(c.TempStorage)
+	if st, err := os.Lstat(cachePath); err == nil && st.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("截图缓存受管目录不能是符号链接")
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	cacheRoot, err := resolveDirectory(cachePath)
+	if err != nil {
+		return fmt.Errorf("截图缓存目录: %w", err)
+	}
+	// Only the generated cache namespace is disposable. Its parent may also
+	// contain configuration or storage, but none may live inside the namespace.
+	protected := []string{c.Path, c.Storage, database, configDir}
+	if c.ConfigFile != "" {
+		file, err := filepath.EvalSymlinks(c.ConfigFile)
+		if err != nil {
+			return err
+		}
+		protected = append(protected, file)
+	}
+	for _, p := range protected {
+		rel, err := filepath.Rel(cacheRoot, p)
+		if err != nil {
+			return err
+		}
+		if rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			return fmt.Errorf("媒体、配置与 storage 不得位于截图缓存受管目录 %s 内", cacheRoot)
+		}
+	}
 	return nil
+}
+
+// FrameCachePath is the disposable namespace shared by validation and cleanup.
+func FrameCachePath(base string) string {
+	return filepath.Join(base, "video-rename-frames-v1")
 }
 
 // DatabasePath keeps the on-disk filename internal; Storage always denotes a directory.
