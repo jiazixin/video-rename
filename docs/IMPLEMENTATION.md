@@ -1,6 +1,6 @@
 # 开发与测试
 
-应用是 Go 1.27.1 + Vue 3 / TypeScript + SQLite 的单实例服务。安装入口见 [中文 README](../README.md) / [English README](../README.en.md)，行为约定见 [当前设计](DESIGN.md)，文件归属见 [目录规范](../目录规范.md)。
+应用是 Go 1.27.2 + Vue 3 / TypeScript + SQLite 的单实例服务。安装入口见 [中文 README](../README.md) / [English README](../README.en.md)，行为约定见 [当前设计](DESIGN.md)，文件归属见 [目录规范](../目录规范.md)。
 
 ## 模块入口
 
@@ -104,14 +104,34 @@ go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
 版本与安全检查需要联网，结果仅代表执行时的公告数据库。依据：[YAML 维护声明](https://github.com/yaml/go-yaml)、[Vite 支持范围](https://vite.dev/releases)、[Vue 类型工具](https://github.com/vuejs/language-tools/tree/master/packages/tsc)。
 
-普通构建版本是 `dev`，存在 VCS 信息时附加提交号与未提交状态。发布时注入版本：
+Go 最低版本为 **1.27.2**。这是 1.27 系列的补丁升级，包含工具链与标准库安全修复；部署时需要重新构建并替换旧二进制，单独修改 `go.mod` 不会更新已经运行的程序。版本背景见 [Go 发布记录](https://go.dev/doc/devel/release#go1.27.0)。
+
+构建版本按以下优先级确定：有效的 `-ldflags '-X main.version=…'` 显式注入 > Go 构建信息中的主模块版本 > 12 位提交号 > `dev`。覆盖值和模块版本先去除首尾空白，空值、`dev`、`(devel)` 不覆盖可用信息。版本输出与启动日志保留可取得的提交号和 `modified` 标记；缺少 VCS 信息不代表已核验干净状态。运行时不调用 Git，`--version` 不读取配置、不打开业务数据库或启动服务。
+
+普通 Git 构建直接使用 Go 自 [1.24](https://go.dev/doc/go1.24#go-command) 起写入的主模块版本，不通过额外脚本解析 tag。新发布 tag 使用 `v主.次.修订`，例如 `v1.2.0`，预发布使用 `v1.2.0-rc.1`；现有 `1.0`、`1.1` 不重命名、删除或重打，也不作为 Go 模块版本。精确有效 tag 显示对应版本，其余提交保留 Go 的伪版本，未提交修改保留 `+dirty`。模块路径的主版本与子目录前缀须满足 [Go 模块版本规则](https://go.dev/ref/mod#vcs-version)。
+
+在带 Git 元数据的检出中，先完成上述 Web 构建，再以包路径编译；`-buildvcs=true` 要求 Go 在无法取得所需 VCS 信息时报告错误：
 
 ```bash
-release_version=1.0.0
-go build -buildvcs=true -ldflags "-X main.version=$release_version" -o bin/video-rename ./cmd/video-rename
+go build -buildvcs=true -o bin/video-rename ./cmd/video-rename
 ./bin/video-rename --version
 # 交叉编译只验证构建，不证明 Linux 实机运行
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/video-rename-linux-amd64 ./cmd/video-rename
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -buildvcs=true -o bin/video-rename-linux-amd64 ./cmd/video-rename
+```
+
+Docker 上下文或源码包缺少 `.git` 时允许显式注入。先设置与实际源码对应的 `release_version`；不硬编码正式版本作为默认值，仍须先安装并构建 Web：
+
+```bash
+go build -ldflags "-X main.version=${release_version:?请先设置实际源码版本}" -o bin/video-rename ./cmd/video-rename
+./bin/video-rename --version
+```
+
+无 Git 且未注入时显示 `dev`。普通 Git 构建不使用 `-buildvcs=false`，否则会丢失 Go 自动版本和 VCS 信息。版本只基于本地可见的提交历史与 tag；发布检出应带完整历史与标签，浅克隆或缺少标签时先补全，不能把伪版本误当作正式发布。构建不自动拉取或创建标签。
+
+构建版本集成测试使用临时 Git 仓库和源码包，执行真实 `go build`，不改动本仓库标签。需要 Go、Git 和已构建的 Web 资源：
+
+```bash
+go test -tags=integration -run '^TestBuildVersion$' -count=1 -v ./cmd/video-rename
 ```
 
 Web 私有包不独立发布。数据库结构号、缓存命名空间与编号快照版本有独立存储语义，不随应用版本变化。图标由 `node scripts/generate-favicon.mjs` 从 `web/public/logo.png` 生成，需要 FFmpeg。

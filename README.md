@@ -8,7 +8,7 @@
 
 ## 快速开始
 
-从源码构建需要 Go **1.27.1**、Node.js **22.12 或更高版本**和 npm。抽帧与自动命名还需要 `ffmpeg`、`ffprobe` 在 PATH 中；自动命名需要支持图片输入的 OpenAI 兼容或 Anthropic 服务。浏览和手动改名无需模型服务。
+从源码构建需要 Go **1.27.2**、Node.js **22.12 或更高版本**和 npm；从 Git 检出构建还需要 Git。抽帧与自动命名还需要 `ffmpeg`、`ffprobe` 在 PATH 中；自动命名需要支持图片输入的 OpenAI 兼容或 Anthropic 服务。浏览和手动改名无需模型服务。
 
 在仓库根目录运行：
 
@@ -40,6 +40,17 @@ auth:
 ```
 
 打开 [http://127.0.0.1:8790](http://127.0.0.1:8790)，用配置中的账号登录。默认配置入口是 `configs/config.local.yaml`；其他参数见 `./bin/video-rename --help`，构建身份见 `--version`。
+
+普通 Git 构建使用 Go 自动写入的主模块版本：有效的标准 tag 显示对应版本，其他提交显示伪版本，未提交修改保留 `+dirty` 和 `modified`。新发布标签使用 `v主.次.修订`（如 `v1.2.0`）；现有 `1.0`、`1.1` 保留，但不作为 Go 模块版本。版本查询不读取运行配置，也不需要 Git。
+
+没有 `.git` 的源码包默认显示 `dev`；需要标识版本时，先设置与实际源码对应的 `release_version`，再显式注入（仍须先构建 Web）：
+
+```bash
+go build -ldflags "-X main.version=${release_version:?请先设置实际源码版本}" -o bin/video-rename ./cmd/video-rename
+./bin/video-rename --version
+```
+
+版本优先级为有效显式注入 → 主模块版本 → 12 位提交号 → `dev`；空值、`dev`、`(devel)` 不覆盖可用版本。有 VCS 信息时保留提交号和修改状态；无 VCS 信息不能证明源码干净。浅克隆或缺少 tag 会限制版本识别，详见 [构建版本](docs/IMPLEMENTATION.md#依赖维护与构建版本)。
 
 ## 第一次使用
 

@@ -8,7 +8,7 @@ The application combines a Go server, a Vue interface, and SQLite in one executa
 
 ## Quick start
 
-Building from source requires **Go 1.27.1**, **Node.js 22.12 or newer**, and npm. Frame extraction and automatic naming also require `ffmpeg` and `ffprobe` on PATH. Automatic naming needs an image-capable OpenAI-compatible or Anthropic service. Browsing and manual renaming do not require a model service.
+Building from source requires **Go 1.27.2**, **Node.js 22.12 or newer**, and npm; building a Git checkout also requires Git. Frame extraction and automatic naming also require `ffmpeg` and `ffprobe` on PATH. Automatic naming needs an image-capable OpenAI-compatible or Anthropic service. Browsing and manual renaming do not require a model service.
 
 Run from the repository root:
 
@@ -40,6 +40,17 @@ The media directory must already exist. Keep configuration, storage, and cache o
 ```
 
 Open [http://127.0.0.1:8790](http://127.0.0.1:8790) and sign in with your configured credentials. The default configuration path is `configs/config.local.yaml`. Use `--help` for CLI options and `--version` for build information. The application interface is in Chinese.
+
+Ordinary Git builds use Go's embedded main-module version: a valid standard tag produces its version, other commits produce pseudo-versions, and uncommitted changes retain `+dirty` and `modified`. New release tags use `vMAJOR.MINOR.PATCH` (for example, `v1.2.0`). Existing `1.0` and `1.1` tags remain intact but are not Go module versions. Version queries need neither runtime configuration nor Git.
+
+Source archives without `.git` default to `dev`. To identify such a build, first set `release_version` to the version matching the actual source, then inject it explicitly (build the Web assets first):
+
+```bash
+go build -ldflags "-X main.version=${release_version:?Set the actual source version first}" -o bin/video-rename ./cmd/video-rename
+./bin/video-rename --version
+```
+
+Version precedence is valid explicit override → main-module version → 12-character commit ID → `dev`. Empty values, `dev`, and `(devel)` never hide an available version. Available VCS metadata retains the commit ID and modification marker; missing metadata does not establish a clean checkout. Shallow clones and missing tags limit version detection. See [build versions](docs/IMPLEMENTATION.md#依赖维护与构建版本) for details.
 
 ## Using the application
 
