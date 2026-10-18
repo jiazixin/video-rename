@@ -8,8 +8,11 @@
     FileAudio,
     File,
     ChevronRight,
-    ChevronLeft,
     RefreshCw,
+    RotateCw,
+    Scan,
+    ZoomIn,
+    ZoomOut,
     Info,
     ScanLine,
     Search,
@@ -44,6 +47,7 @@
   import SelectField from '../../components/SelectField.vue';
   import VideoPlayer from './VideoPlayer.vue';
   import AudioPlayer from './AudioPlayer.vue';
+  import ImageViewer from './ImageViewer.vue';
   import MediaNumbering from './MediaNumbering.vue';
   import DirectoryNumbering from './DirectoryNumbering.vue';
   import ScanStatus from './ScanStatus.vue';
@@ -255,17 +259,24 @@
     limit = ref(100);
   const {
     preview,
-    imageError,
     imageBusy,
     galleryError,
+    imageZoom,
+    imageTurn,
+    imagePosition,
+    imageStrip,
     playing,
     videoBusy,
     videoNotice,
+    videoPosition,
     audioPlaying,
     audioBusy,
     audioNotice,
+    audioPosition,
+    audioQueue,
     closeImage,
     showImage,
+    openImage,
     switchImage,
     imageKeys,
     closePlayback,
@@ -273,7 +284,8 @@
     switchVideo,
     switchAudio,
     play,
-    playAudio
+    playAudio,
+    selectAudio
   } = useMediaPreview(() => ({
     directory: dir.value,
     search: q.value,
@@ -1258,7 +1270,7 @@
                     v-else-if="isImage(e)"
                     class="file-symbol image-symbol"
                     :aria-label="`预览图片 ${e.name}`"
-                    @click="showImage(e)"
+                    @click="openImage(e)"
                     ><ImageIcon :size="21" /></button
                   ><button
                     v-else-if="isAudio(e)"
@@ -1336,7 +1348,7 @@
                     v-if="isImage(e)"
                     :aria-label="`查看图片 ${e.name}`"
                     title="查看图片"
-                    @click="showImage(e)"
+                    @click="openImage(e)"
                     ><ImageIcon :size="15" /></button
                   ><button
                     v-if="e.kind === 'directory'"
@@ -1642,64 +1654,121 @@
       ></ModalTransition
     >
     <ModalTransition
-      ><Modal v-if="playing" :title="playing.name" player @close="closePlayback"
+      ><Modal v-if="playing" :title="playing.name" theater @close="closePlayback"
+        ><template #header
+          ><span v-if="videoPosition" class="theater-count"
+            >第 {{ videoPosition }} 个</span
+          ></template
         ><VideoPlayer
           :key="playing.id"
           :src="`/api/entries/${playing.id}/video`"
           :switching="videoBusy"
+          :notice="videoNotice"
           @previous="switchVideo(true)"
-          @next="switchVideo(false)"
-        /><p v-if="videoNotice" role="status">{{ videoNotice }}</p
-        ><p class="help">← 快退 10 秒 · → 快进 10 秒 · 两侧按钮切换上一集 / 下一集</p></Modal
-      ></ModalTransition
-    >
+          @next="switchVideo(false)" /></Modal
+    ></ModalTransition>
     <ModalTransition
-      ><Modal v-if="audioPlaying" :title="audioPlaying.name" @close="closeAudio()"
+      ><Modal
+        v-if="audioPlaying"
+        :title="audioPlaying.name"
+        class="audio-dialog"
+        @close="closeAudio()"
         ><AudioPlayer
           :key="audioPlaying.id"
-          :src="`/api/entries/${audioPlaying.id}/audio`"
+          :entry="audioPlaying"
           :switching="audioBusy"
+          :notice="audioNotice"
+          :position="audioPosition"
+          :queue="audioQueue"
           @previous="switchAudio(true)"
           @next="switchAudio(false)"
-        /><p v-if="audioNotice" role="status">{{ audioNotice }}</p
-        ><p class="help"
-          >← 快退 10 秒 · → 快进 10 秒 · 按钮切换上一首 / 下一首 ·
-          使用浏览器原生解码，不支持时会提示失败。</p
-        ></Modal
-      ></ModalTransition
-    >
-
+          @select="selectAudio" /></Modal
+    ></ModalTransition>
     <ModalTransition
-      ><Modal v-if="preview" :title="preview.name" wide @close="closeImage"
-        ><div class="image-gallery"
-          ><button
-            class="image-nav previous"
-            aria-label="上一张图片"
-            :disabled="imageBusy"
-            @click="switchImage(true)"
-            ><ChevronLeft :size="25" /></button
-          ><img
-            v-if="!imageError"
-            :key="preview.id"
-            class="image-preview"
-            :src="`/api/entries/${preview.id}/image`"
-            :alt="preview.name"
-            @error="imageError = true" /><p v-else class="notice error" role="alert"
-            >无法显示图片，文件可能不可用或浏览器不支持其格式。</p
-          ><button
-            class="image-nav next"
-            aria-label="下一张图片"
-            :disabled="imageBusy"
-            @click="switchImage(false)"
-            ><ChevronRight :size="25" /></button></div
-        ><p v-if="galleryError" class="notice error" role="alert">{{ galleryError }}</p
-        ><p class="help gallery-hint">← / ↑ 上一张 · → / ↓ 下一张 · 仅切换当前目录的图片</p></Modal
-      ></ModalTransition
-    >
+      ><Modal v-if="preview" :title="preview.name" theater @close="closeImage"
+        ><template #header
+          ><span v-if="imagePosition" class="theater-count">第 {{ imagePosition }} 张</span
+          ><span class="theater-tools" role="group" aria-label="图片查看"
+            ><button
+              aria-label="缩小"
+              title="缩小"
+              :disabled="imageZoom <= 0.5"
+              @click="imageZoom = Math.max(0.5, imageZoom - 0.5)"
+              ><ZoomOut :size="18" /></button
+            ><span class="theater-zoom">{{ Math.round(imageZoom * 100) }}%</span
+            ><button
+              aria-label="放大"
+              title="放大"
+              :disabled="imageZoom >= 4"
+              @click="imageZoom = Math.min(4, imageZoom + 0.5)"
+              ><ZoomIn :size="18" /></button
+            ><button
+              aria-label="适应窗口"
+              title="适应窗口"
+              :disabled="imageZoom === 1 && !imageTurn"
+              @click="
+                imageZoom = 1;
+                imageTurn = 0;
+              "
+              ><Scan :size="18" /></button
+            ><button aria-label="旋转" title="旋转" @click="imageTurn = (imageTurn + 90) % 360"
+              ><RotateCw :size="18" /></button></span></template
+        ><ImageViewer
+          :entry="preview"
+          :strip="imageStrip"
+          :busy="imageBusy"
+          :zoom="imageZoom"
+          :turn="imageTurn"
+          :notice="galleryError"
+          @previous="switchImage(true)"
+          @next="switchImage(false)"
+          @select="showImage"
+          @zoom="imageZoom = $event" /></Modal
+    ></ModalTransition>
   </section>
 </template>
 
 <style scoped>
+  /* Header extras for the theater viewers: the "3 / 12" counter and the image tools. */
+  .theater-count {
+    flex-shrink: 0;
+    padding: 2px 9px;
+    border: 1px solid var(--stage-line);
+    border-radius: 999px;
+    font-size: 12px;
+    color: var(--stage-dim);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .theater-tools {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: auto;
+  }
+  .theater-tools button {
+    padding: 7px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--stage-ink);
+  }
+  .theater-tools button:hover:not(:disabled) {
+    background: var(--stage-hover);
+    border: 0;
+  }
+  .theater-zoom {
+    min-width: 44px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--stage-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  @media (max-width: 600px) {
+    .theater-zoom {
+      display: none;
+    }
+  }
   .library-scan-status {
     margin-bottom: 12px;
   }

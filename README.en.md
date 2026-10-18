@@ -61,7 +61,7 @@ Version precedence is valid explicit override → main-module version → 12-cha
 
 | Feature | Behavior |
 | --- | --- |
-| Media preview | Native browser video/audio decoding and seeking; image browsing; no server-side transcoding |
+| Media preview | Native browser video/audio decoding with seeking and playback speed; videos and images open in a dark full-screen viewer, images with zoom, rotation and a same-folder thumbnail strip; audio shows the same-folder track list, click to play; no server-side transcoding |
 | Processed marks | Protect existing names: marked images/audio skip numbering, and marked videos skip normal automatic naming |
 | Frame extraction | Does not rename files; cached frames can be reused for naming |
 | Schedules | Naming or extraction with an explicit time zone; missed runs are not replayed after downtime |

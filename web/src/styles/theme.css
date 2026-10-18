@@ -892,6 +892,10 @@ tbody tr:hover {
   opacity: 0;
   transform: translateY(-4px);
 }
+/* Audio player: now playing beside the folder list needs more room than a regular dialog. */
+.modal.audio-dialog {
+  width: 860px;
+}
 .modal.wide {
   width: 650px;
 }
@@ -1964,13 +1968,6 @@ textarea:focus-visible {
 .select-menu {
   overscroll-behavior: contain;
 }
-.video-player {
-  display: block;
-  width: 100%;
-  max-height: 70vh;
-  background: #101212;
-  border-radius: 8px;
-}
 .video-symbol,
 .image-symbol,
 .audio-symbol {
@@ -2246,13 +2243,6 @@ textarea:focus-visible {
   transform: translateY(-50%);
 }
 
-.image-preview {
-  display: block;
-  max-width: 100%;
-  max-height: 70vh;
-  object-fit: contain;
-  margin: auto;
-}
 .row-actions button.cancel-run,
 .cancel-run {
   border: 1px solid #e7c6bd;
@@ -2273,38 +2263,6 @@ textarea:focus-visible {
 .cancel-run svg {
   stroke-width: 2;
 }
-.image-gallery {
-  position: relative;
-  min-height: 180px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 42px;
-}
-.image-nav {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 34px;
-  height: 46px;
-  padding: 0;
-  border-radius: 7px;
-  background: #f4f7f5;
-  color: #345b47;
-  border-color: #dbe5df;
-}
-.image-nav.previous {
-  left: 0;
-}
-.image-nav.next {
-  right: 0;
-}
-.gallery-hint {
-  text-align: center;
-  margin-bottom: 0;
-  font-size: 11px;
-}
-
 .history-heading-actions {
   display: flex;
   gap: 8px;

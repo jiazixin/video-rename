@@ -1,8 +1,22 @@
 <script setup lang="ts">
-  import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
-  import { Play, Pause, Volume2, VolumeX, Disc3, SkipBack, SkipForward } from '@lucide/vue';
-  defineProps<{ src: string; switching?: boolean }>();
-  const emit = defineEmits<{ previous: []; next: [] }>();
+  import { ref, onMounted, onBeforeUnmount, computed, nextTick } from 'vue';
+  import { Play, Pause, Volume2, VolumeX, Music, SkipBack, SkipForward } from '@lucide/vue';
+  import type { Entry } from '../../app/contracts';
+  import type { MediaQueue } from './media-preview';
+  import { size } from '../../lib/bytes/format';
+  const props = defineProps<{
+    entry: Entry;
+    switching?: boolean;
+    notice?: string;
+    position?: string;
+    queue?: MediaQueue | null;
+  }>();
+  const emit = defineEmits<{ previous: []; next: []; select: [entry: Entry] }>();
+  const list = ref<HTMLElement>();
+  // A stable colour per file name stands in for cover art, which the server does not extract.
+  const hue = computed(() =>
+    [...props.entry.name].reduce((sum, ch) => (sum * 31 + ch.charCodeAt(0)) % 360, 7)
+  );
   const audio = ref<HTMLAudioElement>(),
     paused = ref(true),
     current = ref(0),
@@ -72,7 +86,22 @@
     const s = Math.floor(n || 0);
     return `${Math.floor(s / 3600) ? `${Math.floor(s / 3600)}:` : ''}${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
   }
-  onMounted(() => document.addEventListener('keydown', keyboard));
+  onMounted(() => {
+    document.addEventListener('keydown', keyboard);
+    void nextTick(revealCurrent);
+  });
+  // Keep the playing track in view inside the list without scrolling the dialog itself.
+  function revealCurrent() {
+    const box = list.value,
+      row = box?.querySelector<HTMLElement>('[aria-current="true"]');
+    if (!box || !row) return;
+    if (
+      row.offsetTop < box.scrollTop ||
+      row.offsetTop + row.offsetHeight > box.scrollTop + box.clientHeight
+    )
+      box.scrollTop = row.offsetTop - box.clientHeight / 2 + row.offsetHeight / 2;
+  }
+  defineExpose({ revealCurrent });
   onBeforeUnmount(() => {
     document.removeEventListener('keydown', keyboard);
     const a = audio.value;
@@ -84,188 +113,373 @@
   });
 </script>
 <template>
-  <div class="audio-player">
-    <div class="audio-stage"><Disc3 :size="46" :class="{ spinning: !paused }" /></div>
-    <audio
-      ref="audio"
-      :src="src"
-      autoplay
-      preload="metadata"
-      @loadedmetadata="sync"
-      @durationchange="sync"
-      @timeupdate="sync"
-      @play="sync"
-      @pause="sync"
-      @ended="sync"
-      @volumechange="sync"
-      @error="error = '无法播放此音频，文件可能不可用或浏览器不支持其编码。'"
-    />
-    <div class="media-controls">
-      <input
-        class="media-seek"
-        type="range"
-        aria-label="播放进度"
-        :aria-valuetext="`${time(current)} / ${time(duration)}`"
-        min="0"
-        :max="duration || 1"
-        step="0.1"
-        :value="current"
-        :disabled="!duration"
-        :style="{ '--progress': `${progress}%` }"
-        @input="seek"
+  <div class="audio-deck">
+    <section class="now-playing" aria-label="正在播放">
+      <div class="cover" :style="{ '--hue': hue }" aria-hidden="true"
+        ><Music :size="38" :class="{ pulsing: !paused }"
+      /></div>
+      <p class="track-position">{{ position ? `第 ${position} 首` : '同目录音频' }}</p>
+      <audio
+        ref="audio"
+        :src="`/api/entries/${entry.id}/audio`"
+        autoplay
+        preload="metadata"
+        @loadedmetadata="sync"
+        @durationchange="sync"
+        @timeupdate="sync"
+        @play="sync"
+        @pause="sync"
+        @ended="sync"
+        @volumechange="sync"
+        @error="error = '无法播放此音频，文件可能不可用或浏览器不支持其编码。'"
       />
-      <div class="media-buttons">
+      <div class="seek">
+        <input
+          class="media-seek"
+          type="range"
+          aria-label="播放进度"
+          :aria-valuetext="`${time(current)} / ${time(duration)}`"
+          min="0"
+          :max="duration || 1"
+          step="0.1"
+          :value="current"
+          :disabled="!duration"
+          :style="{ '--progress': `${progress}%` }"
+          @input="seek"
+        /><span class="media-time"
+          ><span>{{ time(current) }}</span
+          ><span>{{ time(duration) }}</span></span
+        >
+      </div>
+      <div class="transport">
         <button aria-label="上一首" title="上一首" :disabled="switching" @click="emit('previous')"
-          ><SkipBack :size="17"
+          ><SkipBack :size="18"
         /></button>
-        <button :aria-label="paused ? '播放音频' : '暂停音频'" @click="toggle"
-          ><Play v-if="paused" :size="19" /><Pause v-else :size="19"
+        <button class="play" :aria-label="paused ? '播放音频' : '暂停音频'" @click="toggle"
+          ><Play v-if="paused" :size="20" /><Pause v-else :size="20"
         /></button>
         <button aria-label="下一首" title="下一首" :disabled="switching" @click="emit('next')"
-          ><SkipForward :size="17"
+          ><SkipForward :size="18"
         /></button>
-        <span class="media-time"
-          >{{ time(current) }} <span>/ {{ time(duration) }}</span></span
-        >
-        <div class="media-volume"
-          ><button :aria-label="muted ? '取消静音' : '静音'" @click="mute"
-            ><VolumeX v-if="muted || !volume" :size="18" /><Volume2 v-else :size="18" /></button
-          ><input
-            type="range"
-            aria-label="音量"
-            min="0"
-            max="1"
-            step="0.05"
-            :value="muted ? 0 : volume"
-            :style="{ '--progress': `${(muted ? 0 : volume) * 100}%` }"
-            @input="changeVolume"
-        /></div>
       </div>
-    </div>
-    <p v-if="error" class="media-error" role="alert">{{ error }}</p>
+      <div class="media-volume"
+        ><button :aria-label="muted ? '取消静音' : '静音'" @click="mute"
+          ><VolumeX v-if="muted || !volume" :size="17" /><Volume2 v-else :size="17" /></button
+        ><input
+          type="range"
+          aria-label="音量"
+          min="0"
+          max="1"
+          step="0.05"
+          :value="muted ? 0 : volume"
+          :style="{ '--progress': `${(muted ? 0 : volume) * 100}%` }"
+          @input="changeVolume"
+      /></div>
+      <p v-if="error" class="deck-status error" role="alert">{{ error }}</p>
+      <p v-else-if="notice" class="deck-status" role="status">{{ notice }}</p>
+    </section>
+    <section class="track-list" aria-label="同目录音频">
+      <header
+        ><strong>同目录音频</strong
+        ><span v-if="queue"
+          >{{ queue.items.length }}{{ queue.complete ? '' : '+' }} 首</span
+        ></header
+      >
+      <ol v-if="queue?.items.length" ref="list"
+        ><li v-for="(item, index) in queue.items" :key="item.id"
+          ><button
+            :aria-label="`播放 ${item.name}`"
+            :aria-current="item.id === entry.id ? 'true' : undefined"
+            :class="{ playing: item.id === entry.id && !paused }"
+            @click="item.id !== entry.id && emit('select', item)"
+            ><span class="n">{{ String(index + 1).padStart(2, '0') }}</span
+            ><span class="t" :title="item.name">{{ item.name }}</span
+            ><span v-if="item.id === entry.id" class="eq" aria-hidden="true"><i /><i /><i /></span
+            ><span v-else class="d">{{ size(item.size) }}</span></button
+          ></li
+        ></ol
+      >
+      <p v-else class="list-empty">{{
+        queue === null
+          ? '同目录列表读取失败，仍可用上一首 / 下一首切换。'
+          : queue
+            ? '当前筛选下没有其他音频。'
+            : '正在读取同目录音频…'
+      }}</p>
+      <p class="list-hint">← → 快退 / 快进 10 秒 · 使用浏览器原生解码</p>
+    </section>
   </div>
 </template>
 <style scoped>
-  .audio-player {
-    background: #121817;
-    border: 1px solid #26332e;
-    border-radius: 10px;
+  /* Two panes: the track that is playing on the left, the folder it came from on the right. */
+  .audio-deck {
+    display: grid;
+    grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
+    min-height: 0;
+    height: min(460px, 70vh);
+    border: 1px solid var(--line);
+    border-radius: 12px;
     overflow: hidden;
-    color: #eef5f1;
+  }
+  .now-playing {
     display: flex;
     flex-direction: column;
+    align-items: stretch;
+    justify-content: center;
+    gap: 12px;
+    padding: 22px 20px;
+    background: var(--tone-green-bg);
     min-width: 0;
   }
-  .audio-stage {
+  .cover {
+    --hue: 150;
+    align-self: center;
+    width: 132px;
+    aspect-ratio: 1;
     display: grid;
     place-items: center;
-    padding: 30px 0 24px;
-    background: #090d0b;
+    border-radius: 16px;
+    color: rgba(255, 255, 255, 0.92);
+    background: linear-gradient(
+      135deg,
+      hsl(var(--hue) 42% 34%),
+      hsl(calc(var(--hue) + 36) 48% 66%)
+    );
+    box-shadow: 0 12px 26px rgba(20, 40, 30, 0.18);
   }
-  .audio-stage svg {
-    color: #76c9a5;
+  .cover .pulsing {
+    animation: cover-pulse 1.6s linear infinite;
   }
-  .audio-stage svg.spinning {
-    animation: audio-spin 3.2s linear infinite;
-  }
-  @keyframes audio-spin {
-    to {
-      transform: rotate(360deg);
+  @keyframes cover-pulse {
+    50% {
+      transform: scale(1.08);
     }
   }
-  .audio-player audio {
-    display: none;
+  .track-position {
+    margin: 0;
+    text-align: center;
+    font-size: 12px;
+    color: var(--steel);
+    font-variant-numeric: tabular-nums;
   }
-  .media-controls {
-    padding: 12px 16px 10px;
-    background: #18211d;
-  }
-  .media-buttons {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-top: 8px;
-  }
-  .media-buttons button {
-    border: 0;
-    background: transparent;
-    color: #eef5f1;
-    padding: 7px;
-    border-radius: 5px;
-  }
-  .media-buttons button:hover:not(:disabled) {
-    background: #2c3c33;
-  }
-  .media-buttons button:disabled {
-    opacity: 0.45;
-    cursor: default;
+  .seek {
+    display: grid;
+    gap: 4px;
   }
   .media-time {
-    font-size: 12px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--ash);
     font-variant-numeric: tabular-nums;
-    white-space: nowrap;
   }
-  .media-time span {
-    color: #9baea3;
+  .transport {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 14px;
+  }
+  .transport button,
+  .media-volume button {
+    border: 0;
+    background: transparent;
+    color: var(--steel);
+    padding: 8px;
+    border-radius: 50%;
+  }
+  .transport button:hover:not(:disabled),
+  .media-volume button:hover:not(:disabled) {
+    background: rgba(0, 0, 0, 0.06);
+    border: 0;
+  }
+  .transport .play,
+  .transport .play:hover:not(:disabled) {
+    width: 46px;
+    height: 46px;
+    padding: 0;
+    background: var(--tone-green-ink);
+    color: #fff;
+  }
+  .transport .play:hover:not(:disabled) {
+    filter: brightness(1.08);
   }
   .media-volume {
-    margin-left: auto;
     display: flex;
     align-items: center;
-    gap: 5px;
+    justify-content: center;
+    gap: 6px;
   }
-  .audio-player input[type='range'] {
+  .media-volume input {
+    width: 110px;
+  }
+  .audio-deck input[type='range'] {
     display: block;
     appearance: none;
     -webkit-appearance: none;
     border: 0;
     border-radius: 10px;
-    height: 6px;
+    height: 5px;
     min-height: 0;
     padding: 0;
-    background: linear-gradient(to right, #76c9a5 var(--progress), #3c4d43 var(--progress));
+    background: linear-gradient(
+      to right,
+      var(--tone-green-ink) var(--progress),
+      var(--tone-green-line) var(--progress)
+    );
     cursor: pointer;
     box-shadow: none;
   }
   .media-seek {
     width: 100%;
-    margin: 6px 0;
   }
-  .media-volume input {
-    width: 72px;
-  }
-  .audio-player input::-webkit-slider-thumb {
+  .audio-deck input::-webkit-slider-thumb {
     appearance: none;
     width: 13px;
     height: 13px;
     border-radius: 50%;
-    background: #d9f5e7;
-    border: 2px solid #76c9a5;
+    background: #fff;
+    box-shadow: 0 0 0 3px var(--tone-green-ink);
   }
-  .audio-player input::-moz-range-thumb {
+  .audio-deck input::-moz-range-thumb {
     width: 10px;
     height: 10px;
+    border: 0;
     border-radius: 50%;
-    background: #d9f5e7;
-    border: 2px solid #76c9a5;
+    background: #fff;
+    box-shadow: 0 0 0 3px var(--tone-green-ink);
   }
-  .media-error {
-    padding: 10px 16px;
-    color: #ffc9c9;
+  .deck-status {
+    margin: 0;
     font-size: 12px;
+    line-height: 1.6;
+    text-align: center;
+    color: var(--steel);
   }
-  @media (max-width: 500px) {
-    .media-controls {
-      padding: 10px;
+  .deck-status.error {
+    color: var(--tone-red-ink);
+  }
+  .track-list {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+  }
+  .track-list header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--line);
+    font-size: 13px;
+  }
+  .track-list header span {
+    font-size: 12px;
+    color: var(--ash);
+  }
+  ol {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    list-style: none;
+    margin: 0;
+    padding: 6px;
+    position: relative;
+  }
+  ol button {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    text-align: left;
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--ink);
+  }
+  ol button:hover:not(:disabled) {
+    background: var(--control-hover);
+    border: 0;
+  }
+  ol button[aria-current='true'],
+  ol button[aria-current='true']:hover:not(:disabled) {
+    background: var(--tone-green-bg);
+    color: var(--tone-green-ink);
+    font-weight: 600;
+  }
+  .n,
+  .d {
+    font-size: 11px;
+    color: var(--ash);
+    font-variant-numeric: tabular-nums;
+  }
+  .t {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .eq {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 12px;
+  }
+  .eq i {
+    width: 2px;
+    height: 40%;
+    border-radius: 1px;
+    background: currentColor;
+  }
+  .playing .eq i {
+    animation: eq 0.9s linear infinite;
+  }
+  .playing .eq i:nth-child(2) {
+    animation-delay: -0.3s;
+  }
+  .playing .eq i:nth-child(3) {
+    animation-delay: -0.6s;
+  }
+  @keyframes eq {
+    0%,
+    100% {
+      height: 30%;
     }
-    .media-buttons {
-      gap: 6px;
+    50% {
+      height: 100%;
     }
-    .media-volume input {
-      width: 48px;
+  }
+  .list-empty {
+    flex: 1;
+    margin: 0;
+    padding: 24px 16px;
+    font-size: 12px;
+    color: var(--ash);
+    text-align: center;
+  }
+  .list-hint {
+    margin: 0;
+    padding: 8px 16px 10px;
+    border-top: 1px solid var(--line);
+    font-size: 11px;
+    color: var(--ash);
+  }
+  @media (max-width: 700px) {
+    .audio-deck {
+      grid-template-columns: minmax(0, 1fr);
+      height: auto;
     }
-    .media-time {
-      font-size: 10px;
+    .track-list {
+      max-height: 240px;
+      border-top: 1px solid var(--line);
+    }
+    .cover {
+      width: 96px;
+    }
+    .list-hint {
+      display: none;
     }
   }
 </style>

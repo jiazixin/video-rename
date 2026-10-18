@@ -10,7 +10,7 @@
     ChevronLeft,
     ChevronRight
   } from '@lucide/vue';
-  defineProps<{ src: string; switching?: boolean }>();
+  defineProps<{ src: string; switching?: boolean; notice?: string }>();
   const emit = defineEmits<{ previous: []; next: [] }>();
   const video = ref<HTMLVideoElement>(),
     shell = ref<HTMLElement>();
@@ -20,7 +20,14 @@
     volume = ref(1),
     muted = ref(false),
     error = ref(''),
-    fullscreen = ref(false);
+    fullscreen = ref(false),
+    speed = ref(1);
+  const speeds = [1, 1.25, 1.5, 2, 0.5, 0.75];
+  // Cycles through the common rates; the next click after 2× drops to half speed.
+  function nextSpeed() {
+    speed.value = speeds[(speeds.indexOf(speed.value) + 1) % speeds.length]!;
+    if (video.value) video.value.playbackRate = speed.value;
+  }
   const progress = computed(() => (duration.value ? (current.value / duration.value) * 100 : 0));
   function sync() {
     const v = video.value;
@@ -30,6 +37,7 @@
     duration.value = Number.isFinite(v.duration) ? v.duration : 0;
     volume.value = v.volume;
     muted.value = v.muted;
+    speed.value = v.playbackRate;
   }
   async function toggle() {
     const v = video.value;
@@ -110,16 +118,8 @@
   });
 </script>
 <template>
-  <div ref="shell" class="media-player">
-    <div class="video-stage"
-      ><button
-        class="episode previous"
-        aria-label="上一集"
-        title="上一集"
-        :disabled="switching"
-        @click="emit('previous')"
-        ><ChevronLeft :size="28"
-      /></button>
+  <div ref="shell" class="video-theater">
+    <div class="video-stage">
       <video
         ref="video"
         class="video-player"
@@ -135,16 +135,35 @@
         @pause="sync"
         @ended="sync"
         @volumechange="sync"
-        @error="error = '无法播放此视频，文件可能不可用或浏览器不支持其编码。'" />
+        @ratechange="sync"
+        @error="error = '无法播放此视频，文件可能不可用或浏览器不支持其编码。'"
+      />
+      <button
+        v-if="paused && !error"
+        class="stage-play"
+        tabindex="-1"
+        aria-hidden="true"
+        @click="toggle"
+        ><Play :size="28"
+      /></button>
+      <button
+        class="episode previous"
+        aria-label="上一集"
+        title="上一集"
+        :disabled="switching"
+        @click="emit('previous')"
+        ><ChevronLeft :size="30"
+      /></button>
       <button
         class="episode next"
         aria-label="下一集"
         title="下一集"
         :disabled="switching"
         @click="emit('next')"
-        ><ChevronRight :size="28" /></button
-    ></div>
-    <div class="media-controls">
+        ><ChevronRight :size="30"
+      /></button>
+    </div>
+    <div class="video-bar">
       <input
         class="media-seek"
         type="range"
@@ -158,12 +177,20 @@
         :style="{ '--progress': `${progress}%` }"
         @input="seek"
       />
-      <div class="media-buttons">
+      <div class="bar-row">
         <button :aria-label="paused ? '播放视频' : '暂停视频'" @click="toggle"
           ><Play v-if="paused" :size="19" /><Pause v-else :size="19"
         /></button>
         <span class="media-time"
           >{{ time(current) }} <span>/ {{ time(duration) }}</span></span
+        >
+        <p class="bar-status" role="status">
+          <span v-if="error" class="bar-error">{{ error }}</span
+          ><span v-else-if="notice">{{ notice }}</span
+          ><span v-else class="bar-hint">← → 快退 / 快进 10 秒 · 两侧切换上一集 / 下一集</span>
+        </p>
+        <button class="speed" :aria-label="`播放速度 ${speed}×`" title="播放速度" @click="nextSpeed"
+          >{{ speed }}×</button
         >
         <div class="media-volume"
           ><button :aria-label="muted ? '取消静音' : '静音'" @click="mute"
@@ -183,51 +210,111 @@
         /></button>
       </div>
     </div>
-    <p v-if="error" class="media-error" role="alert">{{ error }}</p>
   </div>
 </template>
 <style scoped>
-  .media-player {
-    background: #121817;
-    border: 1px solid #26332e;
-    border-radius: 10px;
-    overflow: hidden;
-    color: #eef5f1;
+  /* Theater layout: the picture takes every spare pixel; the control bar stays fixed below it. */
+  .video-theater {
     display: flex;
     flex-direction: column;
-    min-width: 0;
-  }
-  .media-player .video-player {
-    width: 100%;
-    height: 72vh;
-    max-height: calc(96vh - 160px);
-    min-height: 100px;
-    border-radius: 0;
-    object-fit: contain;
-    background: #090d0b;
     flex: 1;
+    min-height: 0;
     min-width: 0;
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--stage);
+    color: var(--stage-ink);
   }
-  .media-controls {
-    padding: 12px 16px 10px;
+  .video-stage {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    background: #000;
+  }
+  .video-player {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    object-fit: contain;
+    background: #000;
+    cursor: pointer;
+  }
+  .stage-play {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 64px;
+    height: 64px;
+    padding: 0 0 0 4px;
+    border: 0;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(255, 255, 255, 0.92);
+    color: #0c1110;
+  }
+  .stage-play:hover:not(:disabled) {
+    background: #fff;
+    border: 0;
+  }
+  /* Previous/next: full-height strips at the edges, dim until the pointer gets close. */
+  .episode {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: clamp(48px, 7%, 96px);
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    color: var(--stage-ink);
+    background: transparent;
+    opacity: 0.55;
+    transition:
+      opacity var(--motion-hover) linear,
+      background var(--motion-hover) linear;
+  }
+  .episode.previous {
+    left: 0;
+  }
+  .episode.next {
+    right: 0;
+  }
+  .episode:hover:not(:disabled),
+  .episode:focus-visible {
+    opacity: 1;
+    border: 0;
+  }
+  .episode.previous:hover:not(:disabled) {
+    background: linear-gradient(to right, rgba(0, 0, 0, 0.45), transparent);
+  }
+  .episode.next:hover:not(:disabled) {
+    background: linear-gradient(to left, rgba(0, 0, 0, 0.45), transparent);
+  }
+  .episode:disabled {
+    opacity: 0.25;
+  }
+  .video-bar {
     flex-shrink: 0;
-    background: #18211d;
+    padding: 12px 14px 10px;
+    background: var(--stage-bar);
+    border-top: 1px solid var(--stage-line);
   }
-  .media-buttons {
+  .bar-row {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     margin-top: 8px;
   }
-  .media-buttons button {
+  .bar-row button {
     border: 0;
     background: transparent;
-    color: #eef5f1;
+    color: var(--stage-ink);
     padding: 7px;
-    border-radius: 5px;
+    border-radius: 8px;
   }
-  .media-buttons button:hover {
-    background: #2c3c33;
+  .bar-row button:hover:not(:disabled) {
+    background: var(--stage-hover);
+    border: 0;
   }
   .media-time {
     font-size: 12px;
@@ -235,110 +322,109 @@
     white-space: nowrap;
   }
   .media-time span {
-    color: #9baea3;
+    color: var(--stage-dim);
+  }
+  .bar-status {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--stage-ink);
+  }
+  .bar-hint {
+    color: var(--stage-dim);
+  }
+  .bar-error {
+    color: #ffc9c9;
+  }
+  .bar-row .speed {
+    min-width: 46px;
+    padding: 4px 8px;
+    border: 1px solid var(--stage-line);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .bar-row .speed:hover:not(:disabled) {
+    border: 1px solid var(--stage-line);
   }
   .media-volume {
-    margin-left: auto;
     display: flex;
     align-items: center;
     gap: 5px;
   }
-  .media-player input[type='range'] {
+  .video-theater input[type='range'] {
     display: block;
     appearance: none;
     -webkit-appearance: none;
     border: 0;
     border-radius: 10px;
-    height: 6px;
+    height: 5px;
     min-height: 0;
     padding: 0;
-    background: linear-gradient(to right, #76c9a5 var(--progress), #3c4d43 var(--progress));
+    background: linear-gradient(
+      to right,
+      var(--stage-accent) var(--progress),
+      rgba(255, 255, 255, 0.2) var(--progress)
+    );
     cursor: pointer;
     box-shadow: none;
+    transition: height var(--motion-hover) linear;
+  }
+  .video-theater input[type='range']:hover {
+    height: 7px;
   }
   .media-seek {
     width: 100%;
-    margin: 6px 0;
+    margin: 4px 0;
   }
   .media-volume input {
-    width: 72px;
+    width: 76px;
   }
-  .media-player input::-webkit-slider-thumb {
+  .video-theater input::-webkit-slider-thumb {
     appearance: none;
     width: 13px;
     height: 13px;
     border-radius: 50%;
-    background: #d9f5e7;
-    border: 2px solid #76c9a5;
+    background: #fff;
+    box-shadow: 0 0 0 3px var(--stage-accent);
   }
-  .media-player input::-moz-range-thumb {
+  .video-theater input::-moz-range-thumb {
     width: 10px;
     height: 10px;
-    border-radius: 50%;
-    background: #d9f5e7;
-    border: 2px solid #76c9a5;
-  }
-  .media-error {
-    padding: 10px 16px;
-    color: #ffc9c9;
-    font-size: 12px;
-  }
-  .media-player:fullscreen {
     border: 0;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 0 0 3px var(--stage-accent);
+  }
+  .video-theater:fullscreen {
     border-radius: 0;
-    width: 100%;
-    height: 100%;
-    justify-content: center;
   }
-  .media-player:fullscreen .video-stage {
-    flex: 1;
-    min-height: 0;
-  }
-  .media-player:fullscreen .video-player {
-    height: 100%;
-    max-height: calc(100vh - 100px);
-    min-height: 0;
-  }
-  .media-player:fullscreen .media-controls {
-    width: 100%;
+  @media (max-width: 700px) {
+    .bar-hint {
+      display: none;
+    }
   }
   @media (max-width: 500px) {
-    .media-controls {
+    .video-bar {
       padding: 10px;
     }
-    .media-buttons {
-      gap: 6px;
+    .bar-row {
+      gap: 4px;
     }
     .media-volume input {
       width: 48px;
     }
     .media-time {
-      font-size: 10px;
+      font-size: 11px;
     }
   }
-  .video-stage {
-    position: relative;
-    min-height: 0;
-    background: #090d0b;
-  }
-  .episode {
-    position: absolute;
-    top: 50%;
-    transform: translateY(-50%);
-    z-index: 1;
-    border: 1px solid #ffffff55;
-    border-radius: 8px;
-    padding: 12px 5px;
-    background: #101817bb;
-    color: white;
-  }
-  .episode:hover {
-    background: #33483ddd;
-  }
-  .episode.previous {
-    left: 10px;
-  }
-  .episode.next {
-    right: 10px;
+  @media (pointer: coarse) {
+    .episode {
+      opacity: 0.85;
+    }
   }
 </style>

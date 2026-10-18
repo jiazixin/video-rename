@@ -22,7 +22,7 @@
   import { onMounted, onUnmounted, ref } from 'vue';
   import { X } from '@lucide/vue';
   defineOptions({ inheritAttrs: false });
-  defineProps<{ title: string; wide?: boolean; player?: boolean; contained?: boolean }>();
+  defineProps<{ title: string; wide?: boolean; theater?: boolean; contained?: boolean }>();
   const emit = defineEmits<{ close: [] }>();
   const panel = ref<HTMLElement>();
   const previous = document.activeElement as HTMLElement | null;
@@ -62,7 +62,7 @@
 </script>
 <!-- Wrap each v-if'd Modal in ModalTransition, which teleports it and animates open and close. -->
 <template>
-  <div class="modal-backdrop" @mousedown.self.prevent="emit('close')"
+  <div class="modal-backdrop" :class="{ theater }" @mousedown.self.prevent="emit('close')"
     ><section
       v-bind="$attrs"
       ref="panel"
@@ -70,7 +70,7 @@
       aria-modal="true"
       :aria-label="title"
       class="modal"
-      :class="{ wide, 'player-modal': player, 'contained-modal': contained }"
+      :class="{ wide, 'theater-modal': theater, 'contained-modal': contained }"
       ><header
         ><div class="modal-heading"
           ><h2>{{ title }}</h2
@@ -89,16 +89,64 @@
   .modal-content {
     overflow-wrap: anywhere;
   }
-  .modal.player-modal {
-    width: 1280px;
-    max-width: 96vw;
-    max-height: 96vh;
+  /* Theater: media viewers take the whole screen on a dark stage. A thin margin of backdrop
+     stays around the panel so clicking outside still closes it. */
+  .modal-backdrop.theater {
+    padding: 10px;
+    background: rgba(6, 9, 8, 0.92);
+    backdrop-filter: blur(6px);
   }
-  .player-modal .modal-content {
-    padding: 14px;
+  .modal.theater-modal {
+    --stage: #0c1110;
+    --stage-bar: #121a17;
+    --stage-ink: #eef5f1;
+    --stage-dim: #9db0a6;
+    --stage-line: rgba(238, 245, 241, 0.14);
+    --stage-hover: rgba(255, 255, 255, 0.12);
+    --stage-accent: #6fcf9f;
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    color: var(--stage-ink);
   }
-  .player-modal > header {
-    padding: 12px 18px;
+  .theater-modal > header {
+    gap: 12px;
+    padding: 2px 4px 10px 6px;
+    border-bottom: 0;
+  }
+  .theater-modal .modal-heading {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .theater-modal .modal-heading h2 {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 15px;
+    color: var(--stage-ink);
+  }
+  .theater-modal > header .icon-btn {
+    color: var(--stage-ink);
+    border-radius: 8px;
+  }
+  .theater-modal > header .icon-btn:hover {
+    background: var(--stage-hover);
+  }
+  .theater-modal > .modal-content {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    overflow: hidden;
   }
   .contained-modal > .modal-content {
     display: flex;

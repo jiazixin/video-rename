@@ -332,7 +332,7 @@ test('默认全部类型、视频和图片筛选与弹窗预览',async({page})=>
  await expect(page.getByText('photo.png',{exact:true})).toBeVisible()
  await expect(page.getByText('VID_20260920_001.mp4',{exact:true})).toHaveCount(0)
  await page.getByRole('button',{name:'查看图片 photo.png',exact:true}).click()
- const img=page.getByRole('dialog').locator('img')
+ const img=page.getByRole('dialog').getByRole('img',{name:'photo.png',exact:true})
  await expect.poll(()=>img.evaluate((e:HTMLImageElement)=>e.naturalWidth)).toBe(1)
  await page.getByRole('button',{name:'关闭',exact:true}).click();await expect(img).toHaveCount(0)
  await page.getByRole('button',{name:'预览图片 photo.png',exact:true}).click()
