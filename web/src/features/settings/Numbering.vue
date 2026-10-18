@@ -460,7 +460,7 @@
     cursor: pointer;
     padding: 0;
     margin: 0;
-    transition: background 0.15s;
+    transition: background var(--motion-hover) linear;
   }
   .numbering-toggle input::after {
     content: '';
@@ -472,7 +472,7 @@
     background: white;
     border-radius: 50%;
     box-shadow: 0 1px 2px #0002;
-    transition: transform 0.15s;
+    transition: transform var(--motion-hover) linear;
   }
   .numbering-toggle input:checked {
     background: #337b56;

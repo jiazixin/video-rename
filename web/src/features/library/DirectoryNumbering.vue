@@ -6,6 +6,7 @@
   import { api, ApiError } from '../../app/api';
   import DateTime from '../../components/DateTime.vue';
   import Modal from '../../components/Modal.vue';
+  import ModalTransition from '../../components/ModalTransition.vue';
   import NumberingDiagnostics from './NumberingDiagnostics.vue';
   import './media-numbering.css';
 
@@ -222,125 +223,131 @@
   <button class="library-action action-number" :disabled="disabled || busy" @click="open"
     ><Hash :size="16" />编号</button
   >
-  <Modal
-    v-if="show"
-    :title="
-      confirmingClose
-        ? '停止当前处理？'
-        : history
-          ? '目录编号记录'
-          : restoring
-            ? '还原目录编号'
-            : '目录编号预览'
-    "
-    wide
-    contained
-    @close="requestClose"
-  >
-    <div v-if="confirmingClose" class="cancel-confirmation">
-      <p>确定停止并关闭编号窗口吗？</p>
-      <p class="help"
-        >索引或预览将停止，重新打开需要重新预览。正在编号时，当前未完成目录会恢复原名，已完成目录保留。</p
-      >
-    </div>
-    <div v-else class="numbering-body">
-      <p class="help"
-        >当前目录及所有层级子目录的图片和音频，按文件夹独立编号，不受搜索、类型筛选或分页影响。已标记的图片和音频跳过编号并保留名称，已有号码仍会被保留。使用已保存的编号规则，按名称自然升序排列；默认图片、音频分别编号，启用共用序号时先图片后音频。</p
-      >
-      <div class="numbering-tools"
-        ><button :disabled="busy" @click="preview">重新预览</button
-        ><button :disabled="busy" @click="openHistory"><History :size="15" />编号记录</button></div
-      >
-      <p v-if="busy" class="help">关闭前会再次确认；正在改名的目录会安全恢复，已完成的目录保留。</p>
-      <p v-if="busy" role="status">{{ progress || '正在处理，请稍候…' }}</p>
-      <p v-if="error" class="notice error" role="alert">{{ error }}</p>
-      <NumberingDiagnostics v-if="diagnostics" :message="error" :diagnostics="diagnostics" />
-      <template v-if="!history && batches.length">
-        <p
-          >共 {{ batches.length }} 个目录、{{ total }} 个文件，{{ changed }} 个需要{{
-            restoring ? '还原' : '修改'
-          }}，{{ total - changed }} 个保持不变。</p
+  <ModalTransition
+    ><Modal
+      v-if="show"
+      :title="
+        confirmingClose
+          ? '停止当前处理？'
+          : history
+            ? '目录编号记录'
+            : restoring
+              ? '还原目录编号'
+              : '目录编号预览'
+      "
+      wide
+      contained
+      @close="requestClose"
+    >
+      <div v-if="confirmingClose" class="cancel-confirmation">
+        <p>确定停止并关闭编号窗口吗？</p>
+        <p class="help"
+          >索引或预览将停止，重新打开需要重新预览。正在编号时，当前未完成目录会恢复原名，已完成目录保留。</p
         >
-        <div class="table-scroll numbering-preview"
-          ><table
-            ><thead
-              ><tr
-                ><th>所在目录</th><th>原名</th><th>{{ restoring ? '还原为' : '新名' }}</th></tr
-              ></thead
-            ><tbody
-              ><tr v-for="item in visible" :key="item.entry"
-                ><td>{{ item.path }}</td
-                ><td>{{ item.old_name }}</td
-                ><td
-                  >{{ item.new_name
-                  }}<small v-if="item.old_name === item.new_name">（不变）</small></td
-                ></tr
-              ></tbody
-            ></table
+      </div>
+      <div v-else class="numbering-body">
+        <p class="help"
+          >当前目录及所有层级子目录的图片和音频，按文件夹独立编号，不受搜索、类型筛选或分页影响。已标记的图片和音频跳过编号并保留名称，已有号码仍会被保留。使用已保存的编号规则，按名称自然升序排列；默认图片、音频分别编号，启用共用序号时先图片后音频。</p
+        >
+        <div class="numbering-tools"
+          ><button :disabled="busy" @click="preview">重新预览</button
+          ><button :disabled="busy" @click="openHistory"
+            ><History :size="15" />编号记录</button
           ></div
         >
-        <div class="pagination"
-          ><PageNavigation
-            :page="page + 1"
-            :total-pages="Math.ceil(total / 100)"
-            :disabled="busy"
-            previous-label="上页"
-            next-label="下页"
-            @change="loadPage($event - 1)"
-        /></div>
-      </template>
-      <p v-else-if="!history && !busy && !error" class="empty compact"
-        >当前目录及子目录中没有可编号的图片或音频</p
-      >
-      <div v-if="history" class="numbering-history">
-        <p class="help">当前目录及子目录最近 100 次编号操作，按文件夹记录；支持刷新后还原。</p>
-        <article v-for="batch in records" :key="batch.id" class="numbering-record"
-          ><div
-            ><strong
-              >{{ batch.path }} · {{ batch.undo_of ? '还原' : '编号' }} ·
-              {{ states[batch.status] || batch.status }}</strong
-            ><p class="numbering-record-meta"
-              ><DateTime :value="batch.created" /><span
-                >{{ batch.changed }} 个修改 / {{ batch.total }} 个文件</span
-              ></p
-            ><p v-if="batch.error">{{ batch.error }}</p
-            ><NumberingDiagnostics
-              v-if="batch.processing_log"
-              :message="batch.error"
-              :diagnostics="batch.processing_log" /></div
-          ><button
-            v-if="batch.status === 'committed' && !batch.undo_of && batch.changed"
-            :disabled="busy"
-            @click="restore(batch)"
-            ><Undo2 :size="15" />还原本次编号</button
-          ><button
-            v-if="['review', 'running', 'rollback'].includes(batch.status)"
-            :disabled="busy"
-            @click="recover(batch)"
-            >重试恢复原名</button
-          ></article
+        <p v-if="busy" class="help"
+          >关闭前会再次确认；正在改名的目录会安全恢复，已完成的目录保留。</p
         >
-        <p v-if="!records.length && !busy" class="empty compact">暂无编号记录</p>
+        <p v-if="busy" role="status">{{ progress || '正在处理，请稍候…' }}</p>
+        <p v-if="error" class="notice error" role="alert">{{ error }}</p>
+        <NumberingDiagnostics v-if="diagnostics" :message="error" :diagnostics="diagnostics" />
+        <template v-if="!history && batches.length">
+          <p
+            >共 {{ batches.length }} 个目录、{{ total }} 个文件，{{ changed }} 个需要{{
+              restoring ? '还原' : '修改'
+            }}，{{ total - changed }} 个保持不变。</p
+          >
+          <div class="table-scroll numbering-preview"
+            ><table
+              ><thead
+                ><tr
+                  ><th>所在目录</th><th>原名</th><th>{{ restoring ? '还原为' : '新名' }}</th></tr
+                ></thead
+              ><tbody
+                ><tr v-for="item in visible" :key="item.entry"
+                  ><td>{{ item.path }}</td
+                  ><td>{{ item.old_name }}</td
+                  ><td
+                    >{{ item.new_name
+                    }}<small v-if="item.old_name === item.new_name">（不变）</small></td
+                  ></tr
+                ></tbody
+              ></table
+            ></div
+          >
+          <div class="pagination"
+            ><PageNavigation
+              :page="page + 1"
+              :total-pages="Math.ceil(total / 100)"
+              :disabled="busy"
+              previous-label="上页"
+              next-label="下页"
+              @change="loadPage($event - 1)"
+          /></div>
+        </template>
+        <p v-else-if="!history && !busy && !error" class="empty compact"
+          >当前目录及子目录中没有可编号的图片或音频</p
+        >
+        <div v-if="history" class="numbering-history">
+          <p class="help">当前目录及子目录最近 100 次编号操作，按文件夹记录；支持刷新后还原。</p>
+          <article v-for="batch in records" :key="batch.id" class="numbering-record"
+            ><div
+              ><strong
+                >{{ batch.path }} · {{ batch.undo_of ? '还原' : '编号' }} ·
+                {{ states[batch.status] || batch.status }}</strong
+              ><p class="numbering-record-meta"
+                ><DateTime :value="batch.created" /><span
+                  >{{ batch.changed }} 个修改 / {{ batch.total }} 个文件</span
+                ></p
+              ><p v-if="batch.error">{{ batch.error }}</p
+              ><NumberingDiagnostics
+                v-if="batch.processing_log"
+                :message="batch.error"
+                :diagnostics="batch.processing_log" /></div
+            ><button
+              v-if="batch.status === 'committed' && !batch.undo_of && batch.changed"
+              :disabled="busy"
+              @click="restore(batch)"
+              ><Undo2 :size="15" />还原本次编号</button
+            ><button
+              v-if="['review', 'running', 'rollback'].includes(batch.status)"
+              :disabled="busy"
+              @click="recover(batch)"
+              >重试恢复原名</button
+            ></article
+          >
+          <p v-if="!records.length && !busy" class="empty compact">暂无编号记录</p>
+        </div>
       </div>
-    </div>
-    <template #footer>
-      <div v-if="confirmingClose" class="modal-actions"
-        ><button ref="continueButton" class="primary" @click="confirmingClose = false"
-          >继续处理</button
-        ><button @click="close">确定停止并关闭</button></div
-      >
-      <div v-else class="modal-actions"
-        ><button @click="requestClose">{{ busy ? '停止并关闭' : '关闭' }}</button
-        ><button
-          v-if="!history && batches.length"
-          class="primary"
-          :disabled="busy || !changed"
-          @click="apply"
-          >{{ restoring ? '确认整批还原' : '确认编号' }}</button
-        ></div
-      >
-    </template>
-  </Modal>
+      <template #footer>
+        <div v-if="confirmingClose" class="modal-actions"
+          ><button ref="continueButton" class="primary" @click="confirmingClose = false"
+            >继续处理</button
+          ><button @click="close">确定停止并关闭</button></div
+        >
+        <div v-else class="modal-actions"
+          ><button @click="requestClose">{{ busy ? '停止并关闭' : '关闭' }}</button
+          ><button
+            v-if="!history && batches.length"
+            class="primary"
+            :disabled="busy || !changed"
+            @click="apply"
+            >{{ restoring ? '确认整批还原' : '确认编号' }}</button
+          ></div
+        >
+      </template>
+    </Modal></ModalTransition
+  >
 </template>
 <style scoped>
   .numbering-body {

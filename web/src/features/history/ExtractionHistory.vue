@@ -5,10 +5,12 @@
   import { AlertCircle, CheckCircle2, Copy, Search, RefreshCw, Trash2 } from '@lucide/vue';
   import { api } from '../../app/api';
   import { copyText } from '../../lib/clipboard/clipboard';
+  import { vTabIndicator } from '../../lib/motion/tab-indicator';
   import DateTime from '../../components/DateTime.vue';
   import DateField from '../../components/DateField.vue';
   import SelectField from '../../components/SelectField.vue';
   import Modal from '../../components/Modal.vue';
+  import ModalTransition from '../../components/ModalTransition.vue';
 
   type RecordItem = {
     id: number;
@@ -204,7 +206,7 @@
         ></div
       ></div
     >
-    <div class="log-tabs" aria-label="抽帧记录状态"
+    <div v-tab-indicator class="log-tabs" aria-label="抽帧记录状态"
       ><button
         :class="{ active: category === 'success' }"
         :aria-pressed="category === 'success'"
@@ -317,53 +319,58 @@
         /></div>
       </section>
     </div>
-  </section>
-  <Modal
-    v-if="selected"
-    title="抽帧失败详情"
-    wide
-    @close="
-      selected = undefined;
-      detailSeq++;
-    "
-  >
-    <dl class="detail-list"
-      ><dt>文件</dt><dd>{{ selected.path }}</dd
-      ><dt>批次</dt><dd>{{ selected.run ? `#${selected.run}` : '—' }}</dd
-      ><dt>开始时间</dt><dd><DateTime :value="selected.started" /></dd><dt>结束时间</dt
-      ><dd><DateTime :value="selected.finished" /></dd><dt>总耗时</dt
-      ><dd>{{ duration(selected.duration_ms) }}</dd
-      ><dt>失败原因</dt><dd>{{ selected.message }}</dd></dl
-    >
-    <p v-if="detailBusy" role="status">正在读取详细原因…</p
-    ><div v-if="detailError" class="notice error" role="alert"
-      >{{ detailError }}<button @click="inspect(selected)">重试</button></div
-    ><pre v-if="diagnostics" class="extraction-diagnostics">{{ diagnostics }}</pre
-    ><p v-else-if="!detailBusy && !detailError" class="help">{{ selected.message }}</p>
-    <div v-if="copyError" class="notice error" role="alert">{{ copyError }}</div>
-    <div class="modal-actions"
-      ><button :disabled="detailBusy || copying" @click="copy"><Copy :size="15" />复制详情</button
-      ><button
-        class="primary"
-        @click="
+    <ModalTransition
+      ><Modal
+        v-if="selected"
+        title="抽帧失败详情"
+        wide
+        @close="
           selected = undefined;
           detailSeq++;
         "
-        >关闭</button
-      ></div
+      >
+        <dl class="detail-list"
+          ><dt>文件</dt><dd>{{ selected.path }}</dd
+          ><dt>批次</dt><dd>{{ selected.run ? `#${selected.run}` : '—' }}</dd
+          ><dt>开始时间</dt><dd><DateTime :value="selected.started" /></dd><dt>结束时间</dt
+          ><dd><DateTime :value="selected.finished" /></dd><dt>总耗时</dt
+          ><dd>{{ duration(selected.duration_ms) }}</dd
+          ><dt>失败原因</dt><dd>{{ selected.message }}</dd></dl
+        >
+        <p v-if="detailBusy" role="status">正在读取详细原因…</p
+        ><div v-if="detailError" class="notice error" role="alert"
+          >{{ detailError }}<button @click="inspect(selected)">重试</button></div
+        ><pre v-if="diagnostics" class="extraction-diagnostics">{{ diagnostics }}</pre
+        ><p v-else-if="!detailBusy && !detailError" class="help">{{ selected.message }}</p>
+        <div v-if="copyError" class="notice error" role="alert">{{ copyError }}</div>
+        <div class="modal-actions"
+          ><button :disabled="detailBusy || copying" @click="copy"
+            ><Copy :size="15" />复制详情</button
+          ><button
+            class="primary"
+            @click="
+              selected = undefined;
+              detailSeq++;
+            "
+            >关闭</button
+          ></div
+        >
+      </Modal></ModalTransition
     >
-  </Modal>
-  <Modal v-if="clearOpen" title="清除抽帧记录" @close="!clearing && (clearOpen = false)"
-    ><p>清除全部已结束的抽帧成功和失败记录（含其他页）。</p
-    ><p class="help">正在抽帧的记录保留。清除日志后，已有截图缓存仍可使用。</p
-    ><div v-if="clearError" class="notice error" role="alert">{{ clearError }}</div
-    ><div class="modal-actions"
-      ><button :disabled="clearing" @click="clearOpen = false">取消</button
-      ><button class="cancel-run" :disabled="clearing" @click="clear">{{
-        clearing ? '正在清除…' : '确认清除'
-      }}</button></div
-    ></Modal
-  >
+    <ModalTransition
+      ><Modal v-if="clearOpen" title="清除抽帧记录" @close="!clearing && (clearOpen = false)"
+        ><p>清除全部已结束的抽帧成功和失败记录（含其他页）。</p
+        ><p class="help">正在抽帧的记录保留。清除日志后，已有截图缓存仍可使用。</p
+        ><div v-if="clearError" class="notice error" role="alert">{{ clearError }}</div
+        ><div class="modal-actions"
+          ><button :disabled="clearing" @click="clearOpen = false">取消</button
+          ><button class="cancel-run" :disabled="clearing" @click="clear">{{
+            clearing ? '正在清除…' : '确认清除'
+          }}</button></div
+        ></Modal
+      ></ModalTransition
+    >
+  </section>
 </template>
 
 <style scoped>

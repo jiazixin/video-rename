@@ -78,7 +78,7 @@
 .usage-trend-wrap {
   padding: 14px 18px 6px;
   position: relative;
-  transition: opacity 0.15s;
+  transition: opacity var(--motion-hover) linear;
 }
 .usage-trend-wrap.refreshing {
   opacity: 0.55;

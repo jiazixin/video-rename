@@ -60,27 +60,26 @@
     previous?.focus();
   });
 </script>
+<!-- Wrap each v-if'd Modal in ModalTransition, which teleports it and animates open and close. -->
 <template>
-  <Teleport to="body"
-    ><div class="modal-backdrop" @mousedown.self.prevent="emit('close')"
-      ><section
-        v-bind="$attrs"
-        ref="panel"
-        role="dialog"
-        aria-modal="true"
-        :aria-label="title"
-        class="modal"
-        :class="{ wide, 'player-modal': player, 'contained-modal': contained }"
-        ><header
-          ><div class="modal-heading"
-            ><h2>{{ title }}</h2
-            ><slot name="header" /></div
-          ><button class="icon-btn" aria-label="关闭" @click="emit('close')"
-            ><X :size="20" /></button></header
-        ><div class="modal-content"><slot /></div
-        ><footer v-if="$slots.footer" class="modal-footer"
-          ><slot name="footer" /></footer></section></div
-  ></Teleport>
+  <div class="modal-backdrop" @mousedown.self.prevent="emit('close')"
+    ><section
+      v-bind="$attrs"
+      ref="panel"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="title"
+      class="modal"
+      :class="{ wide, 'player-modal': player, 'contained-modal': contained }"
+      ><header
+        ><div class="modal-heading"
+          ><h2>{{ title }}</h2
+          ><slot name="header" /></div
+        ><button class="icon-btn" aria-label="关闭" @click="emit('close')"
+          ><X :size="20" /></button></header
+      ><div class="modal-content"><slot /></div
+      ><footer v-if="$slots.footer" class="modal-footer"><slot name="footer" /></footer></section
+  ></div>
 </template>
 
 <style scoped>

@@ -2,6 +2,7 @@
   import { computed, ref } from 'vue';
   import { Folder, Plus, X } from '@lucide/vue';
   import Modal from '../../components/Modal.vue';
+  import ModalTransition from '../../components/ModalTransition.vue';
   import DirectoryPicker from './DirectoryPicker.vue';
   const props = defineProps<{
     modelValue: number[];
@@ -54,19 +55,21 @@
       ></li>
     </ul>
     <p v-else class="empty compact">{{ empty }}</p>
-    <Modal v-if="open" :title="`选择${title}`" wide @close="open = false">
-      <p class="help">{{ description }} 确认后加入设置草稿，保存扫描设置后生效。</p>
-      <DirectoryPicker v-model="draft" @paths="Object.assign(knownPaths, $event)" />
-      <p v-if="draft.length > 100" role="alert" class="notice error">最多选择 100 个目录。</p>
-      <template #footer
-        ><div class="modal-actions"
-          ><button type="button" @click="open = false">取消</button
-          ><button type="button" class="primary" :disabled="draft.length > 100" @click="confirm"
-            >确认选择</button
-          ></div
-        ></template
-      >
-    </Modal>
+    <ModalTransition
+      ><Modal v-if="open" :title="`选择${title}`" wide @close="open = false">
+        <p class="help">{{ description }} 确认后加入设置草稿，保存扫描设置后生效。</p>
+        <DirectoryPicker v-model="draft" @paths="Object.assign(knownPaths, $event)" />
+        <p v-if="draft.length > 100" role="alert" class="notice error">最多选择 100 个目录。</p>
+        <template #footer
+          ><div class="modal-actions"
+            ><button type="button" @click="open = false">取消</button
+            ><button type="button" class="primary" :disabled="draft.length > 100" @click="confirm"
+              >确认选择</button
+            ></div
+          ></template
+        >
+      </Modal></ModalTransition
+    >
   </section>
 </template>
 <style scoped>

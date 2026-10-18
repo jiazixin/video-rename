@@ -29,7 +29,7 @@ test('批量删除跨页文件和非空目录，确认可取消，操作列右�
  expect(await page.locator('.file-table .row-actions').first().evaluate(el=>getComputedStyle(el).justifyContent)).toBe('flex-end')
  expect(await toolbar.getByRole('button').allTextContents()).toEqual(['全选','反选','清空','删除','抽帧','命名','标记已处理','取消标记','还原'])
  await expect(toolbar.locator('.batch-delete-group .batch-divider')).toHaveCount(2)
- expect(await remove.evaluate(el=>getComputedStyle(el).backgroundColor)).toBe('rgb(177, 69, 69)')
+ expect(await remove.evaluate(el=>getComputedStyle(el).backgroundColor)).toBe('rgb(255, 240, 240)')
  await page.getByLabel('选择 子目录',{exact:true}).check()
  await page.getByLabel('选择 file000.txt',{exact:true}).check()
  await toolbar.scrollIntoViewIfNeeded()

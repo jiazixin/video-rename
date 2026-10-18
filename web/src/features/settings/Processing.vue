@@ -5,6 +5,7 @@
   import { api } from '../../app/api';
   import { type ModelProfile } from '../../app/contracts';
   import Modal from '../../components/Modal.vue';
+  import ModalTransition from '../../components/ModalTransition.vue';
   import SelectField from '../../components/SelectField.vue';
   const toast = ref<InstanceType<typeof ToastNotice>>();
   type Settings = {
@@ -480,17 +481,19 @@
         ></footer
       >
     </form>
-    <Modal v-if="clearDialog" title="确认清空缓存？" @close="!clearing && (clearDialog = false)"
-      ><p
-        >将删除当前未被任务使用的截图缓存。后续命名需要重新抽帧，不影响原视频、命名结果和运行记录。</p
-      ><p class="help">正在使用或正在抽帧的缓存会保留。</p
-      ><div v-if="clearError" class="notice error" role="alert">{{ clearError }}</div
-      ><div class="modal-actions"
-        ><button :disabled="clearing" @click="clearDialog = false">取消</button
-        ><button class="cache-clear" :disabled="clearing" @click="clearCache">{{
-          clearing ? '正在清理…' : '清空缓存'
-        }}</button></div
-      ></Modal
+    <ModalTransition
+      ><Modal v-if="clearDialog" title="确认清空缓存？" @close="!clearing && (clearDialog = false)"
+        ><p
+          >将删除当前未被任务使用的截图缓存。后续命名需要重新抽帧，不影响原视频、命名结果和运行记录。</p
+        ><p class="help">正在使用或正在抽帧的缓存会保留。</p
+        ><div v-if="clearError" class="notice error" role="alert">{{ clearError }}</div
+        ><div class="modal-actions"
+          ><button :disabled="clearing" @click="clearDialog = false">取消</button
+          ><button class="cache-clear" :disabled="clearing" @click="clearCache">{{
+            clearing ? '正在清理…' : '清空缓存'
+          }}</button></div
+        ></Modal
+      ></ModalTransition
     >
   </section>
 </template>
@@ -639,18 +642,6 @@
     display: flex;
     gap: 10px;
     flex-wrap: wrap;
-  }
-  .cache-clear {
-    background: #b53d38;
-    color: white;
-    border-color: #b53d38;
-  }
-  .cache-clear:hover:not(:disabled) {
-    background: #96302d;
-    border-color: #96302d;
-  }
-  .cache-clear:disabled {
-    opacity: 0.55;
   }
   @media (max-width: 760px) {
     .processing-cache header {

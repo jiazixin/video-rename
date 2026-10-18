@@ -162,6 +162,12 @@
   padding: 0 16px !important;
   font-size: 12px !important;
 }
+/* The one solid button: signing in is the page's only action. */
+button.primary.login-submit {
+  background: var(--tone-green-ink);
+  border-color: var(--tone-green-ink);
+  color: #fff;
+}
 .login-hint {
   display: flex;
   align-items: center;

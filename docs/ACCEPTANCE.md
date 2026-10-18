@@ -1,40 +1,33 @@
-# 最新验收：Go 原生构建版本（2026-10-09）
+# 最新验收：按钮样式与线性动效（2026-10-18）
 
-范围：基线 `0a1d64dcfaa17c437844ae5c7f9112832fc51a25` 加当前工作区变更。本轮只调整版本选择、构建命令、测试与相关文档；保留此前 Go 1.27.2 等已有改动，未修改业务、配置、数据库或媒体。未提交、打 tag 或发布。此前脚本注入方案的记录见 [历史验收](archive/2026-10-09-before-native-version-acceptance.md)，不用于证明本轮通过。
+范围：基线 `851f60eb4639c08bd0d867c88ee712e0babed1bf` 加当前工作区变更。本轮只调整前端按钮样式、过渡动效、批次记录底色及相关文档与样式断言；未修改业务流程、接口、数据库、配置或媒体。未提交、打 tag 或发布。上一轮记录见 [历史验收](archive/2026-10-09-native-version-acceptance.md)，不用于证明本轮通过。
 
-## 实现与修复证据
+## 实现要点
 
-- 普通 Git 构建直接使用 `go build` 的主模块版本，删除原有 tag 解析脚本及当前调用方；双语 README 和开发说明同步普通构建、无 Git 显式注入及查询命令。
-- 版本优先级为有效显式覆盖 → 主模块版本 → 12 位提交号 → `dev`。空值、`dev`、`(devel)` 不再覆盖有效版本；仍保留可取得的提交号及修改状态，无 VCS 信息不声明干净。
-- 新发布 tag 采用标准语义化格式；本仓库原有 `1.0`、`1.1` 标签未修改。Web 私有清单、数据库结构号和缓存版本不随应用版本调整。
-- 先添加或修正回归断言：旧实现出现 7 处预期失败，涉及占位覆盖值和提交号回退；实现修复后测试通过。
-- 新增 `cmd/video-rename/version_build_test.go`，以 `integration` 标签运行真实构建。所有提交和标签只存在于临时夹具仓库，不操作项目 Git 元数据，不使用用户配置、数据库、媒体或外部服务。
+- 按钮参照 MirrorDock：`primary` 改为墨绿浅底，危险操作（删除、清空缓存、取消运行、删除计划/模型）统一浅红底，移除黑色主按钮和实心红按钮；登录按钮为唯一实心墨绿按钮。悬停加深同色系，行内图标操作按动作着色。颜色变量 `--tone-*` 与状态徽章一致。
+- 动效统一线性：页面切换淡出后淡入；全部 26 处 `Modal` 及 `RunDetail` 用新组件 `ModalTransition` 包裹，打开、关闭（含视频播放、图片预览）均有过渡；关闭中的弹窗、离开中的页面标记 `aria-hidden` 和 `inert`，文件目录判断弹窗时忽略正在淡出的弹窗。系统设置与用量分类内容进入动画，分类下划线由 `v-tab-indicator` 滑动；下拉菜单与日历进入动画、关闭立即移除；提示、侧栏、进度条等过渡改为线性。
+- 页面与设置分类组件需单一根节点才能过渡：文件目录、运行记录、抽帧记录、批次/计划、提示词、模型配置的弹窗移入各自根节点，仍通过 Teleport 渲染到 body。
+- 批次时间线条目移除浅色底（含抽帧紫底和活动底色），运行中左侧强调线保留。按用户选定的方案 B，任务类型改为图标加文字，只保留一个方角状态徽章，统计改为纯文字计数（非零按状态着色）。
+- 窄屏回归中发现分类下划线在视口缩窄后从旧位置滑动的 0.25 秒内撑宽页面；已对标签栏横向 `overflow-x: clip` 修复。
 
 ## 已执行验证
 
-本机 macOS / arm64，Go 1.27.2；Go 命令使用 `GOCACHE=/tmp/video-rename-go-cache`。
+本机 macOS / arm64。浏览器测试使用隔离服务器 18790、临时数据库、合成媒体、真实 FFmpeg 和本地假模型。
 
 | 命令或检查 | 结果 |
 | --- | --- |
-| `npm --prefix web run build` | 严格类型检查与 Vite 构建通过，输出为 `web/dist/` |
-| `go test -race -count=1 ./cmd/video-rename` | 命令入口及版本格式测试通过，竞态检查通过 |
-| `go vet -tags=integration ./cmd/video-rename` | 通过，包括构建夹具测试 |
-| `go test -tags=integration -run '^TestBuildVersion$' -count=1 -v ./cmd/video-rename` | 13 个真实构建场景通过 |
-| `go build -buildvcs=true -o bin/video-rename ./cmd/video-rename` | macOS arm64 应用构建通过 |
-| `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -buildvcs=true -o bin/video-rename-linux-amd64 ./cmd/video-rename` | Linux amd64 交叉编译通过；未实机执行 |
-| 应用二进制在临时空目录、PATH 不含 Git 的环境执行 `--version` | 通过，不依赖源码目录或运行配置 |
-| `gofmt -l`、`git diff --check`、双语 README 与开发文档中的 Bash 语法 | 通过；当前调用方已无旧版本脚本引用 |
+| `npm --prefix web run format:check` | 通过 |
+| `npm --prefix web run build` | 严格类型检查与 Vite 构建通过 |
+| `go build -o bin/video-rename ./cmd/video-rename` | 通过，嵌入本轮前端产物 |
+| `npm --prefix web run test:e2e`（首轮） | 173 通过、9 失败：2 项为旧实心红按钮颜色断言；5 项为窄屏横向溢出（上述下划线问题）；`workspace.spec.ts:77` 取消运行确认在全量顺序中超时，`workspace.spec.ts:572` 随后失败 |
+| 更新 2 项颜色断言为新浅红底 `rgb(255, 240, 240)`，修复溢出后重跑 7 项 | 7 通过 |
+| `npx playwright test e2e/workspace.spec.ts` | 45 通过，含单独失败的 77、572 |
+| 全量 E2E 复跑（批次方案 B 之前） | 182 通过、0 失败；首轮 77 号超时未复现，具体原因未确认 |
+| 批次方案 B 后重新构建，运行 `workspace`、`run-detail`、`run-detail-records`、`run-pagination`、`run-pause`、`run-tools`、`extraction` 共 7 个文件 | 59 通过 |
+| 预览中检查批次记录 1440px 与 375px | 无横向溢出，统计换行无孤立分隔符 |
 
-13 个构建场景：无 tag、旧格式 tag 不作为模块版本、标准 tag、空覆盖值、`dev` 覆盖值、`(devel)` 覆盖值、有效显式覆盖、dirty tag、dirty 显式覆盖、tag 后提交、禁用 VCS、无 Git 源码包、源码包显式注入。夹具二进制在源码目录之外、PATH 不含 Git 的环境运行。
-
-当前工作区应用的版本输出：
-
-```text
-video-rename v0.0.0-20261008133736-0a1d64dcfaa1+dirty (revision=0a1d64dcfaa1, modified)
-```
-
-这是 Go 生成的伪版本；`+dirty` 与 `modified` 如实反映未提交改动，不是新发布版本。
+颜色断言属于本轮有意的设计变更（实心红改浅红），其余断言未修改。
 
 ## 验证边界
 
-本轮未重跑全仓业务/竞态测试、浏览器 E2E、FFmpeg 集成、数据库规模测试、依赖漏洞扫描或全应用干净依赖安装。Web 构建使用已有依赖，应用构建使用本地 Go 缓存；版本夹具从临时源码目录真实编译。未执行 Docker 构建、Linux 实机运行、NAS 或真实模型/通知服务测试。未替换运行中的服务，不把历史验证结果作为本轮通过依据。
+方案 B 之后未再跑全量 E2E，只跑了批次相关的 7 个文件；改动仅涉及 `Runs.vue` 与 `runs.css`。预览检查在 Vite 开发服务器与隔离夹具上完成，内置浏览器面板隐藏时动画帧暂停，过渡过程以 Playwright 无头运行和截图确认，未逐帧录制动画。未执行 Go 单元/竞态测试（本轮无 Go 改动）、Linux 实机、Docker 构建或真实模型/通知服务测试。

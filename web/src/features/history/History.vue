@@ -16,9 +16,11 @@
   import { api, key } from '../../app/api';
   import { actionNames } from '../../app/labels';
   import { copyText } from '../../lib/clipboard/clipboard';
+  import { vTabIndicator } from '../../lib/motion/tab-indicator';
   import DateTime from '../../components/DateTime.vue';
   import DateField from '../../components/DateField.vue';
   import Modal from '../../components/Modal.vue';
+  import ModalTransition from '../../components/ModalTransition.vue';
   import SelectField from '../../components/SelectField.vue';
   import FailureDiagnostics from './FailureDiagnostics.vue';
   import { ModelPicker } from '../models';
@@ -363,7 +365,7 @@
         ></div
       ></div
     >
-    <div class="log-tabs" aria-label="运行记录状态"
+    <div v-tab-indicator class="log-tabs" aria-label="运行记录状态"
       ><button
         :class="{ active: category === 'success' }"
         :aria-pressed="category === 'success'"
@@ -572,105 +574,114 @@
           next-label="下一页运行记录"
           @change="changePage" /></div
     ></div>
+    <ModalTransition
+      ><Modal v-if="selected" title="运行记录详情" @close="selected = undefined"
+        ><dl class="detail-list"
+          ><dt>时间</dt><dd><DateTime :value="selected.created" /></dd><dt>操作类型</dt
+          ><dd>{{ actionNames[selected.action] || selected.action }}</dd
+          ><dt>原路径</dt><dd>{{ selected.old_path || '—' }}</dd
+          ><dt>新路径</dt><dd>{{ selected.new_path || '—' }}</dd
+          ><dt>批次</dt><dd>{{ selected.run ? `#${selected.run}` : '—' }}</dd
+          ><dt>模型配置</dt><dd :title="modelHint(selected)">{{ modelName(selected) }}</dd
+          ><template v-if="selected.action === 'automatic'"
+            ><dt>{{ selected.category === 'success' ? '模型来源' : '最后请求来源' }}</dt
+            ><dd
+              ><span
+                class="history-model-source"
+                :data-source="selected.model_source"
+                :title="modelSourceHint(selected)"
+                >{{ modelSource(selected) }}</span
+              ></dd
+            ><dt>模型 ID</dt><dd>{{ selected.model || '—' }}</dd></template
+          ><dt>详情</dt><dd>{{ selected.message || '操作已成功完成' }}</dd></dl
+        ><FailureDiagnostics
+          :key="selected.id"
+          :id="selected.id"
+          :processing="selected.category === 'failure'"
+        /><div v-if="detailError" role="alert" class="notice error">{{ detailError }}</div
+        ><div v-if="copyError" role="alert" class="notice error">{{ copyError }}</div
+        ><p v-if="selected.category === 'success' && selected.operation" class="help"
+          >仅最近一次尚未撤销的改名可还原；提交前将重新核验文件和名称占用。</p
+        ><div class="modal-actions"
+          ><button
+            v-if="canRetry(selected)"
+            :disabled="retrying"
+            @click="openRetry(false, selected)"
+            ><RefreshCw :size="15" />重试</button
+          ><button :disabled="copying" @click="copy"><Copy :size="15" />复制详情</button
+          ><button
+            v-if="
+              selected.category === 'success' && selected.operation && selected.action !== 'restore'
+            "
+            :disabled="busy"
+            class="primary"
+            @click="restore"
+            ><Undo2 :size="15" />还原此次命名</button
+          ></div
+        ></Modal
+      ></ModalTransition
+    >
+    <ModalTransition
+      ><Modal
+        v-if="retryScope"
+        :title="retryScope.category === 'success' ? '重试成功记录' : '重试失败记录'"
+        @close="!retrying && (retryScope = undefined)"
+        ><p v-if="retryScope.all">重试全部自动命名失败记录，包括其他页，不受筛选条件限制。</p
+        ><p v-else-if="retryScope.name">重试文件：{{ retryScope.name }}</p
+        ><p v-else
+          >重试选中的 {{ retryScope.ids.length }} 条自动命名{{
+            retryScope.category === 'success' ? '成功' : '失败'
+          }}记录。</p
+        ><div :inert="retrying"><ModelPicker v-model="retryModel" /></div
+        ><p class="help"
+          >使用所选模型配置的最新设置创建一个批次。同一文件只提交一次。{{
+            retryScope.category === 'success'
+              ? '本次会重新生成并修改当前文件名；仅对选中的有效自动命名结果允许本次重试。已处理标记始终保留，失败或取消仍受保护；原成功记录保留，新结果另行记录。手动改名、显式标记或已被后续改名取代的记录不支持重试。'
+              : '成功后自动移除旧失败记录。'
+          }}</p
+        ><div v-if="retryError" class="notice error" role="alert">{{ retryError }}</div
+        ><div class="modal-actions"
+          ><button :disabled="retrying" @click="retryScope = undefined">取消</button
+          ><button class="primary" :disabled="retrying || retryModel <= 0" @click="retry"
+            ><RefreshCw :size="16" :class="{ spin: retrying }" />{{
+              retrying ? '正在提交…' : '确认重试'
+            }}</button
+          ></div
+        ></Modal
+      ></ModalTransition
+    >
+    <ModalTransition
+      ><Modal v-if="clearOpen" title="清除运行记录" @close="!clearing && (clearOpen = false)"
+        ><p>清除{{ category === 'success' ? '成功' : '失败' }}记录</p
+        ><label class="check-label"
+          ><input
+            type="radio"
+            name="clear-scope"
+            :checked="!clearAll"
+            :disabled="!chosen.size"
+            @change="clearAll = false"
+          />已选 {{ chosen.size }} 条</label
+        ><label class="check-label"
+          ><input
+            type="radio"
+            name="clear-scope"
+            :checked="clearAll"
+            @change="clearAll = true"
+          />当前分类的全部记录（包括其他页，不受筛选条件限制）</label
+        ><p class="help">清除后无法恢复。文件、还原数据和已处理标记不受影响。</p
+        ><div v-if="clearError" class="notice error" role="alert">{{ clearError }}</div
+        ><div class="modal-actions"
+          ><button :disabled="clearing" @click="clearOpen = false">取消</button
+          ><button
+            class="cancel-run"
+            :disabled="clearing || (!clearAll && !chosen.size)"
+            @click="clearHistory"
+            ><Trash2 :size="16" />{{ clearing ? '正在清除…' : '确认清除' }}</button
+          ></div
+        ></Modal
+      ></ModalTransition
+    >
   </section>
-  <Modal v-if="selected" title="运行记录详情" @close="selected = undefined"
-    ><dl class="detail-list"
-      ><dt>时间</dt><dd><DateTime :value="selected.created" /></dd><dt>操作类型</dt
-      ><dd>{{ actionNames[selected.action] || selected.action }}</dd
-      ><dt>原路径</dt><dd>{{ selected.old_path || '—' }}</dd
-      ><dt>新路径</dt><dd>{{ selected.new_path || '—' }}</dd
-      ><dt>批次</dt><dd>{{ selected.run ? `#${selected.run}` : '—' }}</dd
-      ><dt>模型配置</dt><dd :title="modelHint(selected)">{{ modelName(selected) }}</dd
-      ><template v-if="selected.action === 'automatic'"
-        ><dt>{{ selected.category === 'success' ? '模型来源' : '最后请求来源' }}</dt
-        ><dd
-          ><span
-            class="history-model-source"
-            :data-source="selected.model_source"
-            :title="modelSourceHint(selected)"
-            >{{ modelSource(selected) }}</span
-          ></dd
-        ><dt>模型 ID</dt><dd>{{ selected.model || '—' }}</dd></template
-      ><dt>详情</dt><dd>{{ selected.message || '操作已成功完成' }}</dd></dl
-    ><FailureDiagnostics
-      :key="selected.id"
-      :id="selected.id"
-      :processing="selected.category === 'failure'"
-    /><div v-if="detailError" role="alert" class="notice error">{{ detailError }}</div
-    ><div v-if="copyError" role="alert" class="notice error">{{ copyError }}</div
-    ><p v-if="selected.category === 'success' && selected.operation" class="help"
-      >仅最近一次尚未撤销的改名可还原；提交前将重新核验文件和名称占用。</p
-    ><div class="modal-actions"
-      ><button v-if="canRetry(selected)" :disabled="retrying" @click="openRetry(false, selected)"
-        ><RefreshCw :size="15" />重试</button
-      ><button :disabled="copying" @click="copy"><Copy :size="15" />复制详情</button
-      ><button
-        v-if="
-          selected.category === 'success' && selected.operation && selected.action !== 'restore'
-        "
-        :disabled="busy"
-        class="primary"
-        @click="restore"
-        ><Undo2 :size="15" />还原此次命名</button
-      ></div
-    ></Modal
-  >
-  <Modal
-    v-if="retryScope"
-    :title="retryScope.category === 'success' ? '重试成功记录' : '重试失败记录'"
-    @close="!retrying && (retryScope = undefined)"
-    ><p v-if="retryScope.all">重试全部自动命名失败记录，包括其他页，不受筛选条件限制。</p
-    ><p v-else-if="retryScope.name">重试文件：{{ retryScope.name }}</p
-    ><p v-else
-      >重试选中的 {{ retryScope.ids.length }} 条自动命名{{
-        retryScope.category === 'success' ? '成功' : '失败'
-      }}记录。</p
-    ><div :inert="retrying"><ModelPicker v-model="retryModel" /></div
-    ><p class="help"
-      >使用所选模型配置的最新设置创建一个批次。同一文件只提交一次。{{
-        retryScope.category === 'success'
-          ? '本次会重新生成并修改当前文件名；仅对选中的有效自动命名结果允许本次重试。已处理标记始终保留，失败或取消仍受保护；原成功记录保留，新结果另行记录。手动改名、显式标记或已被后续改名取代的记录不支持重试。'
-          : '成功后自动移除旧失败记录。'
-      }}</p
-    ><div v-if="retryError" class="notice error" role="alert">{{ retryError }}</div
-    ><div class="modal-actions"
-      ><button :disabled="retrying" @click="retryScope = undefined">取消</button
-      ><button class="primary" :disabled="retrying || retryModel <= 0" @click="retry"
-        ><RefreshCw :size="16" :class="{ spin: retrying }" />{{
-          retrying ? '正在提交…' : '确认重试'
-        }}</button
-      ></div
-    ></Modal
-  >
-  <Modal v-if="clearOpen" title="清除运行记录" @close="!clearing && (clearOpen = false)"
-    ><p>清除{{ category === 'success' ? '成功' : '失败' }}记录</p
-    ><label class="check-label"
-      ><input
-        type="radio"
-        name="clear-scope"
-        :checked="!clearAll"
-        :disabled="!chosen.size"
-        @change="clearAll = false"
-      />已选 {{ chosen.size }} 条</label
-    ><label class="check-label"
-      ><input
-        type="radio"
-        name="clear-scope"
-        :checked="clearAll"
-        @change="clearAll = true"
-      />当前分类的全部记录（包括其他页，不受筛选条件限制）</label
-    ><p class="help">清除后无法恢复。文件、还原数据和已处理标记不受影响。</p
-    ><div v-if="clearError" class="notice error" role="alert">{{ clearError }}</div
-    ><div class="modal-actions"
-      ><button :disabled="clearing" @click="clearOpen = false">取消</button
-      ><button
-        class="cancel-run"
-        :disabled="clearing || (!clearAll && !chosen.size)"
-        @click="clearHistory"
-        ><Trash2 :size="16" />{{ clearing ? '正在清除…' : '确认清除' }}</button
-      ></div
-    ></Modal
-  >
 </template>
 <style scoped>
   .history-table.success {

@@ -408,7 +408,7 @@
   display: block;
   height: 100%;
   background: var(--tone);
-  transition: width 0.4s ease;
+  transition: width 0.4s linear;
 }
 .run-detail-dialog .pagination {
   margin-top: 14px;

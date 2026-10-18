@@ -14,6 +14,7 @@
   import PromptsSettings from '../features/prompts/PromptsSettings.vue';
   import Sampling from '../features/sampling/Sampling.vue';
   import Notifications from '../features/notifications/Notifications.vue';
+  import { vTabIndicator } from '../lib/motion/tab-indicator';
   import './system-settings.css';
   defineProps<{ tab: string }>();
   defineEmits<{ changed: [] }>();
@@ -37,7 +38,7 @@
         ><h1>系统设置<span class="title-dot">.</span></h1
         ><p>管理处理资源、后台目录扫描、编号规则、Prompt、模型、抽帧规则与通知。</p></div
       ></div
-    ><div class="log-tabs settings-tabs" aria-label="系统设置分类"
+    ><div v-tab-indicator class="log-tabs settings-tabs" aria-label="系统设置分类"
       ><button
         v-for="item in tabs"
         :key="item.id"
@@ -46,11 +47,12 @@
         @click="select(item.id)"
         ><component :is="item.icon" :size="18" />{{ item.label }}</button
       ></div
-    ><ProcessingSettings v-if="tab === 'processing'" /><LibraryScanSettings
-      v-else-if="tab === 'scan'" /><NumberingSettings
-      v-else-if="tab === 'numbering'" /><PromptsSettings v-else-if="tab === 'prompts'" /><Models
-      v-else-if="tab === 'models'"
-      @changed="$emit('changed')" /><Sampling v-else-if="tab === 'sampling'" /><Notifications
-      v-else-if="tab === 'notifications'"
-  /></section>
+    ><Transition name="panel" mode="out-in"
+      ><ProcessingSettings v-if="tab === 'processing'" /><LibraryScanSettings
+        v-else-if="tab === 'scan'" /><NumberingSettings
+        v-else-if="tab === 'numbering'" /><PromptsSettings v-else-if="tab === 'prompts'" /><Models
+        v-else-if="tab === 'models'"
+        @changed="$emit('changed')" /><Sampling v-else-if="tab === 'sampling'" /><Notifications
+        v-else-if="tab === 'notifications'" /></Transition
+  ></section>
 </template>

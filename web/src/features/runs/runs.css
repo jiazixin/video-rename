@@ -167,11 +167,7 @@
 .run-entry {
   /* Task categories use green/violet; activity uses the original green. */
   --task-ink: #287452;
-  --task-background: #e3f2e8;
-  --task-border: #badcc7;
   --task-edge: #a9d8bf;
-  --run-background: #f8fbf9;
-  --run-active-background: #f3faf5;
   --run-accent: #2e9b69;
   --run-accent-soft: #ccd6ce;
   --run-ink: #287452;
@@ -184,32 +180,26 @@
   margin: 0 6px 12px;
   padding: 8px 20px 8px 12px;
   border-radius: 6px;
-  background: var(--run-background);
 }
 .run-entry[data-task='extract'] {
   --task-ink: #6941a5;
-  --task-background: #f2edf9;
-  --task-border: #ddd0ef;
   --task-edge: #c4b2df;
-  --run-background: #faf8ff;
-  --run-active-background: #f5f1fc;
-}
-.run-entry.is-active {
-  background: var(--run-active-background);
 }
 .run-entry.is-running {
   box-shadow: inset 3px 0 0 var(--task-edge);
 }
-.run-entry .run-task-badge {
+/* Task type reads as icon + text; only the status keeps a badge. */
+.run-task {
   display: inline-flex;
   align-items: center;
-  padding: 3px 7px;
-  font-size: 11px;
+  gap: 5px;
+  font-size: 12px;
   line-height: 1.5;
-  font-weight: 500;
+  color: var(--steel);
+  white-space: nowrap;
+}
+.run-task svg {
   color: var(--task-ink);
-  background: var(--task-background);
-  border-color: var(--task-border);
 }
 .run-time {
   font-size: 11px;
@@ -305,7 +295,7 @@
 .run-head .status-badge {
   padding: 3px 8px;
   font-weight: 500;
-  border-radius: 999px;
+  border-radius: 6px;
 }
 .run-head .status-badge[data-status='scanning'] {
   --status-ink: #2468af;
@@ -388,7 +378,7 @@
   height: 100%;
   border-radius: 2px;
   background: var(--run-accent-soft);
-  transition: width 0.5s ease;
+  transition: width 0.5s linear;
 }
 .run-entry.is-running .run-progress-bar {
   height: 5px;
@@ -447,71 +437,61 @@
 .run-stat-row {
   display: flex;
   align-items: center;
-  gap: 6px;
   flex-wrap: wrap;
-}
-.run-stat-row .run-stat {
-  padding: 3px 7px;
-  line-height: 1.4;
+  column-gap: 14px;
+  row-gap: 2px;
 }
 .run-entry .run-actions button.icon-only-action {
   width: 30px;
   min-width: 30px;
   min-height: 30px;
 }
+/* Outlined like the other row actions; the icon color says what the action does. */
 .run-entry .run-actions button.cancel-run {
-  border-color: transparent;
-  background: transparent;
-  color: #737780;
+  border-color: var(--control-line);
+  background: #fff;
+  color: var(--tone-red-ink);
 }
 .run-entry .run-actions button.cancel-run:hover:not(:disabled) {
-  background: #fce9e9;
-  border-color: #d89999;
-  color: #943232;
+  border-color: var(--tone-red-line);
+  background: var(--tone-red-bg);
+  color: var(--tone-red-ink);
+  filter: none;
+}
+.run-entry .run-actions button.pause-run {
+  color: var(--tone-amber-ink);
+}
+.run-entry .run-actions button.pause-run.resume-run {
+  color: var(--tone-green-ink);
 }
 .run-foot .run-actions {
   margin-left: auto;
 }
+/* Counters are plain text; only non-zero results take their status color. Spacing, not dots,
+   separates them so a wrapped line never starts with a stray separator. */
 .run-stat {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
-  padding: 4px 8px;
-  border: 1px solid var(--stat-line);
-  border-radius: 5px;
-  background: var(--stat-bg);
-  color: var(--stat-ink);
+  color: var(--ash);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
-.run-stat::before {
-  content: '';
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: currentColor;
-  flex: none;
-}
-.run-stat[data-stat='total'] {
-  --stat-ink: #69717c;
-  --stat-bg: #f3f4f6;
-  --stat-line: #e1e4e8;
+.run-stat b {
+  font-weight: 600;
+  color: var(--stat-ink, var(--steel));
 }
 .run-stat[data-stat='done'] {
-  --stat-ink: #287452;
-  --stat-bg: #edf7f0;
-  --stat-line: #cde6d6;
+  --stat-ink: var(--tone-green-ink);
 }
 .run-stat[data-stat='skipped'] {
-  --stat-ink: #946200;
-  --stat-bg: #fff7df;
-  --stat-line: #ecd397;
+  --stat-ink: var(--tone-amber-ink);
 }
 .run-stat[data-stat='failed'] {
-  --stat-ink: #b14545;
-  --stat-bg: #fff0f0;
-  --stat-line: #f1cece;
+  --stat-ink: var(--tone-red-ink);
+}
+.run-stat[data-zero] b {
+  --stat-ink: var(--ash);
+  font-weight: 500;
 }
 
 @media (max-width: 600px) {

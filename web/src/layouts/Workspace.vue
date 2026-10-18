@@ -187,8 +187,8 @@
     font-weight: 500;
     box-shadow: none;
     transition:
-      background-color 120ms ease,
-      color 120ms ease;
+      background-color var(--motion-hover) linear,
+      color var(--motion-hover) linear;
   }
   .sidebar nav button svg {
     color: #707781;
@@ -275,7 +275,7 @@
     padding: 14px 8px;
     gap: 10px;
     border-top: 1px solid var(--sidebar-border);
-    transition: background-color 120ms ease;
+    transition: background-color var(--motion-hover) linear;
   }
   .sidebar .account:hover {
     background: #f4f5f6;

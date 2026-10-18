@@ -6,6 +6,7 @@
   import { time } from '../../lib/date/format';
   import { type PromptProfile } from '../../app/contracts';
   import Modal from '../../components/Modal.vue';
+  import ModalTransition from '../../components/ModalTransition.vue';
   import './prompts.css';
   const toast = ref<InstanceType<typeof ToastNotice>>();
   const fixed = ref(''),
@@ -363,45 +364,52 @@
         <p v-else class="help">暂无提示词，点击“新增提示词”创建。</p></section
       >
     </template>
+    <ModalTransition
+      ><Modal
+        v-if="editing"
+        :title="editId ? '编辑提示词' : '新增提示词'"
+        @close="!saving && (editing = false)"
+        ><form @submit.prevent="save" class="prompt-form"
+          ><label
+            >提示词名称<input
+              v-model="edit.title"
+              aria-label="提示词名称"
+              required
+              maxlength="80"
+              placeholder="例如：旅行视频标题" /></label
+          ><label
+            >提示词内容<textarea
+              v-model="edit.body"
+              aria-label="提示词内容"
+              required
+              rows="10"
+              maxlength="16000"
+            /></label
+          ><div v-if="dialogError" role="alert" class="notice error">{{ dialogError }}</div
+          ><div class="modal-actions"
+            ><button type="button" :disabled="saving" @click="editing = false">取消</button
+            ><button class="primary" :disabled="saving">{{
+              saving ? '正在保存…' : '保存提示词'
+            }}</button></div
+          ></form
+        ></Modal
+      ></ModalTransition
+    >
+    <ModalTransition
+      ><Modal
+        v-if="deleteTarget"
+        title="删除提示词"
+        @close="!deleting && (deleteTarget = undefined)"
+        ><p>确定删除“{{ deleteTarget.title }}”？</p
+        ><p class="help">删除不可恢复；被模型配置引用时，需先更换提示词。</p
+        ><div v-if="deleteError" role="alert" class="notice error">{{ deleteError }}</div
+        ><div class="modal-actions"
+          ><button :disabled="deleting" @click="deleteTarget = undefined">取消</button
+          ><button class="cancel-run" :disabled="deleting" @click="remove"
+            ><Trash2 :size="16" />{{ deleting ? '正在删除…' : '确认删除' }}</button
+          ></div
+        ></Modal
+      ></ModalTransition
+    >
   </section>
-  <Modal
-    v-if="editing"
-    :title="editId ? '编辑提示词' : '新增提示词'"
-    @close="!saving && (editing = false)"
-    ><form @submit.prevent="save" class="prompt-form"
-      ><label
-        >提示词名称<input
-          v-model="edit.title"
-          aria-label="提示词名称"
-          required
-          maxlength="80"
-          placeholder="例如：旅行视频标题" /></label
-      ><label
-        >提示词内容<textarea
-          v-model="edit.body"
-          aria-label="提示词内容"
-          required
-          rows="10"
-          maxlength="16000"
-        /></label
-      ><div v-if="dialogError" role="alert" class="notice error">{{ dialogError }}</div
-      ><div class="modal-actions"
-        ><button type="button" :disabled="saving" @click="editing = false">取消</button
-        ><button class="primary" :disabled="saving">{{
-          saving ? '正在保存…' : '保存提示词'
-        }}</button></div
-      ></form
-    ></Modal
-  >
-  <Modal v-if="deleteTarget" title="删除提示词" @close="!deleting && (deleteTarget = undefined)"
-    ><p>确定删除“{{ deleteTarget.title }}”？</p
-    ><p class="help">删除不可恢复；被模型配置引用时，需先更换提示词。</p
-    ><div v-if="deleteError" role="alert" class="notice error">{{ deleteError }}</div
-    ><div class="modal-actions"
-      ><button :disabled="deleting" @click="deleteTarget = undefined">取消</button
-      ><button class="cancel-run" :disabled="deleting" @click="remove"
-        ><Trash2 :size="16" />{{ deleting ? '正在删除…' : '确认删除' }}</button
-      ></div
-    ></Modal
-  >
 </template>

@@ -9,6 +9,23 @@
   --line: #e0e1e6;
   --mint: #19896d;
   --surface: #f7f8f9;
+  /* Buttons: white secondary plus tinted families; colors match the status badges. */
+  --control-line: #dce0e3;
+  --control-line-hover: #c3ccc6;
+  --control-hover: #f6f8f7;
+  --tone-green-ink: #287452;
+  --tone-green-bg: #edf7f0;
+  --tone-green-line: #cde6d6;
+  --tone-red-ink: #b14545;
+  --tone-red-bg: #fff0f0;
+  --tone-red-line: #f1cece;
+  --tone-amber-ink: #946200;
+  --tone-amber-bg: #fff7df;
+  --tone-amber-line: #ecd397;
+  /* Motion is linear: quick exits, slightly longer entrances. */
+  --motion-exit: 0.12s;
+  --motion-enter: 0.2s;
+  --motion-hover: 0.15s;
   font-size: 14px;
   line-height: 1.5;
 }
@@ -35,9 +52,9 @@ button {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: 8px 12px;
+  border: 1px solid var(--control-line);
+  border-radius: 8px;
+  padding: 8px 14px;
   line-height: 20px;
   background: white;
   color: var(--ink);
@@ -46,24 +63,31 @@ button {
   font-size: 13px;
   font-weight: 500;
   transition:
-    background 0.15s,
-    border-color 0.15s;
+    background var(--motion-hover) linear,
+    border-color var(--motion-hover) linear,
+    color var(--motion-hover) linear,
+    filter var(--motion-hover) linear;
 }
 button:hover:not(:disabled) {
-  background: #f1f3f3;
-  border-color: #c9ccd1;
+  background: var(--control-hover);
+  border-color: var(--control-line-hover);
 }
 button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
+/* Tinted families: hover deepens the tint instead of swapping colors. */
 button.primary {
-  background: var(--ink);
-  color: #fff;
-  border-color: var(--ink);
+  background: var(--tone-green-bg);
+  color: var(--tone-green-ink);
+  border-color: var(--tone-green-line);
+  font-weight: 600;
 }
-button.primary:hover:not(:disabled) {
-  background: #353535;
+button.primary:hover:not(:disabled),
+button.primary:active:not(:disabled) {
+  background: var(--tone-green-bg);
+  border-color: var(--tone-green-line);
+  filter: saturate(1.35) brightness(0.97);
 }
 button:focus-visible,
 a:focus-visible,
@@ -736,7 +760,68 @@ tbody tr:hover {
   box-shadow: 0 20px 100px #0002;
   display: flex;
   flex-direction: column;
-  animation: appear 0.15s ease-out;
+}
+/* ModalTransition: the scrim fades while the panel settles from slightly below; closing is quicker.
+   The backdrop only transitions opacity so Vue ends on its own transitionend. */
+.dialog-enter-active {
+  transition: opacity var(--motion-enter) linear;
+}
+.dialog-leave-active {
+  transition: opacity var(--motion-exit) linear;
+  pointer-events: none;
+}
+.dialog-enter-from,
+.dialog-leave-to {
+  opacity: 0;
+}
+.dialog-enter-active > .modal {
+  transition: transform var(--motion-enter) linear;
+}
+.dialog-leave-active > .modal {
+  transition: transform var(--motion-exit) linear;
+}
+.dialog-enter-from > .modal {
+  transform: translateY(8px) scale(0.98);
+}
+.dialog-leave-to > .modal {
+  transform: scale(0.98);
+}
+/* Page switching: the old page fades out, then the new one fades in while settling 6px upward. */
+.page-enter-active {
+  transition:
+    opacity var(--motion-enter) linear,
+    transform var(--motion-enter) linear;
+}
+.page-leave-active {
+  transition: opacity var(--motion-exit) linear;
+  pointer-events: none;
+}
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+.page-leave-to {
+  opacity: 0;
+}
+/* Tab panels only animate in; the old panel leaves at once so content never doubles up. */
+.panel-enter-active {
+  transition:
+    opacity var(--motion-enter) linear,
+    transform var(--motion-enter) linear;
+}
+.panel-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+/* Dropdowns and calendars drop in; closing is immediate so a stale menu never catches a click. */
+.popover-enter-active {
+  transition:
+    opacity var(--motion-exit) linear,
+    transform var(--motion-exit) linear;
+}
+.popover-enter-from {
+  opacity: 0;
+  transform: translateY(-4px);
 }
 .modal.wide {
   width: 650px;
@@ -1014,14 +1099,37 @@ tbody tr:hover {
 .log-tabs button.active {
   color: var(--ink);
 }
-.log-tabs button.active:after {
+.log-tabs button {
+  transition: color var(--motion-enter) linear;
+}
+.log-tabs button:hover:not(:disabled) {
+  color: var(--steel);
+}
+.log-tabs button.active,
+.log-tabs button.active:hover:not(:disabled) {
+  color: var(--ink);
+}
+/* v-tab-indicator: one bar on the list slides to the active tab, also across wrapped rows. */
+/* Clip sideways only: after a resize the bar slides from its old spot and must not widen the page. */
+.log-tabs.tab-indicator {
+  position: relative;
+  overflow-x: clip;
+}
+.log-tabs.tab-indicator::after {
   content: '';
   position: absolute;
-  height: 2px;
-  bottom: -1px;
   left: 0;
-  right: 0;
+  top: 0;
+  width: var(--tab-w, 0);
+  height: 2px;
   background: var(--ink);
+  transform: translate(var(--tab-x, 0), calc(var(--tab-y, 0) - 1px));
+  pointer-events: none;
+}
+.log-tabs.tab-indicator-ready::after {
+  transition:
+    transform 0.25s linear,
+    width 0.25s linear;
 }
 .log-tabs button.active svg {
   color: #45866c;
@@ -1210,16 +1318,6 @@ tbody tr:hover {
   font-size: 25px;
   font-weight: 500;
   margin-top: 7px;
-}
-@keyframes appear {
-  from {
-    opacity: 0;
-    transform: translateY(5px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 @media (min-width: 1600px) {
   .page-main {
@@ -1426,7 +1524,7 @@ tbody tr:hover {
 }
 .select-trigger svg {
   color: #8a9290;
-  transition: transform 0.15s;
+  transition: transform var(--motion-hover) linear;
 }
 .select-trigger svg.rotated {
   transform: rotate(180deg);
@@ -2253,11 +2351,11 @@ button.detail-button,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 32px;
-  padding: 5px 10px;
+  min-height: 34px;
+  padding: 6px 12px;
   gap: 6px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
+  border: 1px solid var(--control-line);
+  border-radius: 8px;
   background: #fff;
   color: var(--steel);
   font-size: 12px;
@@ -2267,10 +2365,11 @@ button.detail-button,
 button.detail-button:hover:not(:disabled),
 .row-actions button:hover:not(:disabled),
 .model-card-actions button:hover:not(:disabled),
-.plan-card footer > button:hover:not(:disabled) {
-  background: #f2f6f4;
-  border-color: #b9cdc2;
-  color: #285e47;
+.plan-card footer > button:hover:not(:disabled),
+.diagnostic-buttons button:hover:not(:disabled) {
+  background: var(--control-hover);
+  border-color: var(--control-line-hover);
+  color: var(--ink);
 }
 button.detail-button > svg,
 .row-actions button > svg,
@@ -2279,6 +2378,7 @@ button.detail-button > svg,
   width: 16px;
   height: 16px;
 }
+/* Icon-only row actions: outlined squares, the icon colored by what it does. */
 button.detail-button.icon-only-action,
 .row-actions button.icon-only-action {
   width: 36px;
@@ -2290,11 +2390,13 @@ button.cancel-run,
 .row-actions button.cancel-run,
 button.danger-button,
 .plan-card footer > button.danger-button,
-.model-card-actions button.model-delete {
-  color: #b44444;
-  background: #fff7f7;
-  border-color: #ebc9c9;
-  border-radius: 7px;
+.model-card-actions button.model-delete,
+button.delete-confirm,
+.batch-toolbar button.delete-confirm,
+button.cache-clear {
+  color: var(--tone-red-ink);
+  background: var(--tone-red-bg);
+  border-color: var(--tone-red-line);
   gap: 6px;
   line-height: 20px;
 }
@@ -2302,16 +2404,20 @@ button.cancel-run:hover:not(:disabled),
 .row-actions button.cancel-run:hover:not(:disabled),
 button.danger-button:hover:not(:disabled),
 .plan-card footer > button.danger-button:hover:not(:disabled),
-.model-card-actions button.model-delete:hover:not(:disabled) {
-  background: #fce9e9;
-  border-color: #d89999;
-  color: #943232;
+.model-card-actions button.model-delete:hover:not(:disabled),
+button.delete-confirm:hover:not(:disabled),
+.batch-toolbar button.delete-confirm:hover:not(:disabled),
+button.cache-clear:hover:not(:disabled) {
+  color: var(--tone-red-ink);
+  background: var(--tone-red-bg);
+  border-color: var(--tone-red-line);
+  filter: saturate(1.35) brightness(0.97);
 }
 .modal-actions > button {
   min-height: 38px;
-  padding: 8px 12px;
+  padding: 8px 14px;
   font-size: 13px;
-  border-radius: 7px;
+  border-radius: 8px;
   gap: 6px;
 }
 :root {

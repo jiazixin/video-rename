@@ -146,8 +146,8 @@
   .toast-enter-active,
   .toast-leave-active {
     transition:
-      opacity 0.18s ease,
-      transform 0.18s ease;
+      opacity var(--motion-enter) linear,
+      transform var(--motion-enter) linear;
   }
   .toast-enter-from,
   .toast-leave-to {

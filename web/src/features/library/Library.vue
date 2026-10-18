@@ -39,6 +39,7 @@
   import LibraryTableHeader from './LibraryTableHeader.vue';
   import DateTime from '../../components/DateTime.vue';
   import Modal from '../../components/Modal.vue';
+  import ModalTransition from '../../components/ModalTransition.vue';
   import { Trash2 } from '@lucide/vue';
   import SelectField from '../../components/SelectField.vue';
   import VideoPlayer from './VideoPlayer.vue';
@@ -550,6 +551,8 @@
     submitting: scanSubmitting,
     scanning
   } = scan;
+  // A closing dialog lingers for its fade-out marked aria-hidden; it no longer blocks updates.
+  const openDialog = '[role="dialog"]:not([aria-hidden="true"] *)';
   // Never replace a list while the user is selecting, editing or viewing media.
   // The explicit update button keeps selected IDs and the current page intact.
   function listInUse(ignoreSelection = false) {
@@ -560,7 +563,7 @@
       playing.value ||
       audioPlaying.value ||
       preview.value ||
-      document.querySelector('[role="dialog"]') ||
+      document.querySelector(openDialog) ||
       document.activeElement?.matches('input,textarea,[contenteditable="true"]')
     );
   }
@@ -588,12 +591,7 @@
     }
   }
   async function applyDirectoryUpdate(manual = false) {
-    if (
-      busy.value ||
-      saving.value ||
-      inlineEntry.value ||
-      document.querySelector('[role="dialog"]')
-    )
+    if (busy.value || saving.value || inlineEntry.value || document.querySelector(openDialog))
       return;
     const directory = dir.value,
       top = window.scrollY,
@@ -1034,7 +1032,8 @@
       compact
       :status="scanState.status"
       :submitting="scanSubmitting"
-      @cancel="scan.cancel" />
+      @cancel="scan.cancel"
+    />
     <Teleport to="body">
       <div
         v-if="active && directoryUpdateAvailable"
@@ -1412,268 +1411,292 @@
     </div>
     <div class="page-footnote"
       ><button class="text-button" @click="emit('run')"
-        >查看批次记录 <ArrowUpRight :size="14" /></button></div
-  ></section>
-  <Modal
-    v-if="deleting"
-    :title="deleting.kind === 'directory' ? '删除目录' : '删除文件'"
-    @close="!saving && (deleting = undefined)"
-    ><form @submit.prevent="deleteEntry"
-      ><p>确定永久删除以下{{ deleting.kind === 'directory' ? '目录' : '文件' }}？</p
-      ><p class="delete-path">媒体库 / {{ deletePath }}</p
-      ><p v-if="deleting.kind === 'directory'">目录内的所有文件和子目录都会一并删除。</p
-      ><p class="help">将从磁盘真实删除，不进入回收站，无法通过还原功能恢复。</p
-      ><div v-if="deleteError" class="notice error" role="alert">{{ deleteError }}</div
-      ><div class="modal-actions"
-        ><button type="button" :disabled="saving" @click="deleting = undefined">取消</button
-        ><button class="delete-confirm" :disabled="saving">{{
-          saving ? '正在删除…' : '确认永久删除'
-        }}</button></div
-      ></form
-    ></Modal
-  >
-  <Modal v-if="deletingBatch.length" title="批量删除" @close="!saving && (deletingBatch = [])"
-    ><form @submit.prevent="deleteBatch">
-      <p>确定永久删除选中的 {{ deletingBatch.length }} 个条目？包含其他分页的已选项。</p
-      ><p class="delete-path">{{ deleteBatchPath }}</p>
-      <ul class="delete-targets"
-        ><li v-for="entry in deletingBatch" :key="entry.id"
-          >{{ entry.name }}<span v-if="entry.kind === 'directory'">（目录）</span></li
-        ></ul
-      >
-      <p v-if="deletingBatch.some((e) => e.kind === 'directory')"
-        >所选目录内的所有文件和子目录都会一并删除。</p
-      ><p class="help"
-        >将从磁盘真实删除，不进入回收站，无法通过还原功能恢复。逐项执行，失败不会撤销已完成的删除。</p
-      >
-      <p v-if="deleteBatchProgress" role="status">{{ deleteBatchProgress }}</p
-      ><div v-if="deleteBatchError" class="notice error batch-errors" role="alert">{{
-        deleteBatchError
-      }}</div>
-      <div class="modal-actions"
-        ><button type="button" :disabled="saving" @click="deletingBatch = []">取消</button
-        ><button class="delete-confirm" :disabled="saving">{{
-          saving ? '正在删除…' : '确认永久删除'
-        }}</button></div
-      >
-    </form></Modal
-  >
-  <Modal
-    v-if="mode"
-    :title="
-      mode === 'extract'
-        ? '目录抽帧'
-        : mode === 'rename'
-          ? '重命名'
-          : mode === 'restore'
-            ? '还原名称'
-            : mode === 'history'
-              ? '命名历史'
-              : '自动命名'
-    "
-    @close="!saving && closeDialog()"
-    ><form @submit.prevent="submit">
-      <div class="selection-summary"
-        ><Folder v-if="selected?.kind === 'directory'" :size="23" /><FileVideo
-          v-else
-          :size="23"
-        /><strong>{{ selected?.name || '整个媒体库' }}</strong></div
-      >
-      <template v-if="mode === 'rename'"
-        ><label
-          >新名称<div class="extension-input"
-            ><input v-model="newName" aria-label="新名称" required maxlength="240" /><span>{{
-              extension
-            }}</span></div
-          ></label
-        ><p class="help">只修改名称，文件保留在原目录。成功后可以还原。</p></template
-      >
-      <template v-else-if="mode === 'restore'"
-        ><p>将恢复到最近一次改名前的名称：</p
-        ><div class="restore-target"
-          ><Undo2 :size="18" />{{
-            history.find((x) => x.id === selected?.restore_id)?.old_name || '正在读取…'
+        >查看批次记录 <ArrowUpRight :size="14" /></button
+    ></div>
+    <ModalTransition
+      ><Modal
+        v-if="deleting"
+        :title="deleting.kind === 'directory' ? '删除目录' : '删除文件'"
+        @close="!saving && (deleting = undefined)"
+        ><form @submit.prevent="deleteEntry"
+          ><p>确定永久删除以下{{ deleting.kind === 'directory' ? '目录' : '文件' }}？</p
+          ><p class="delete-path">媒体库 / {{ deletePath }}</p
+          ><p v-if="deleting.kind === 'directory'">目录内的所有文件和子目录都会一并删除。</p
+          ><p class="help">将从磁盘真实删除，不进入回收站，无法通过还原功能恢复。</p
+          ><div v-if="deleteError" class="notice error" role="alert">{{ deleteError }}</div
+          ><div class="modal-actions"
+            ><button type="button" :disabled="saving" @click="deleting = undefined">取消</button
+            ><button class="delete-confirm" :disabled="saving">{{
+              saving ? '正在删除…' : '确认永久删除'
+            }}</button></div
+          ></form
+        ></Modal
+      ></ModalTransition
+    >
+    <ModalTransition
+      ><Modal v-if="deletingBatch.length" title="批量删除" @close="!saving && (deletingBatch = [])"
+        ><form @submit.prevent="deleteBatch">
+          <p>确定永久删除选中的 {{ deletingBatch.length }} 个条目？包含其他分页的已选项。</p
+          ><p class="delete-path">{{ deleteBatchPath }}</p>
+          <ul class="delete-targets"
+            ><li v-for="entry in deletingBatch" :key="entry.id"
+              >{{ entry.name }}<span v-if="entry.kind === 'directory'">（目录）</span></li
+            ></ul
+          >
+          <p v-if="deletingBatch.some((e) => e.kind === 'directory')"
+            >所选目录内的所有文件和子目录都会一并删除。</p
+          ><p class="help"
+            >将从磁盘真实删除，不进入回收站，无法通过还原功能恢复。逐项执行，失败不会撤销已完成的删除。</p
+          >
+          <p v-if="deleteBatchProgress" role="status">{{ deleteBatchProgress }}</p
+          ><div v-if="deleteBatchError" class="notice error batch-errors" role="alert">{{
+            deleteBatchError
+          }}</div>
+          <div class="modal-actions"
+            ><button type="button" :disabled="saving" @click="deletingBatch = []">取消</button
+            ><button class="delete-confirm" :disabled="saving">{{
+              saving ? '正在删除…' : '确认永久删除'
+            }}</button></div
+          >
+        </form></Modal
+      ></ModalTransition
+    >
+    <ModalTransition
+      ><Modal
+        v-if="mode"
+        :title="
+          mode === 'extract'
+            ? '目录抽帧'
+            : mode === 'rename'
+              ? '重命名'
+              : mode === 'restore'
+                ? '还原名称'
+                : mode === 'history'
+                  ? '命名历史'
+                  : '自动命名'
+        "
+        @close="!saving && closeDialog()"
+        ><form @submit.prevent="submit">
+          <div class="selection-summary"
+            ><Folder v-if="selected?.kind === 'directory'" :size="23" /><FileVideo
+              v-else
+              :size="23"
+            /><strong>{{ selected?.name || '整个媒体库' }}</strong></div
+          >
+          <template v-if="mode === 'rename'"
+            ><label
+              >新名称<div class="extension-input"
+                ><input v-model="newName" aria-label="新名称" required maxlength="240" /><span>{{
+                  extension
+                }}</span></div
+              ></label
+            ><p class="help">只修改名称，文件保留在原目录。成功后可以还原。</p></template
+          >
+          <template v-else-if="mode === 'restore'"
+            ><p>将恢复到最近一次改名前的名称：</p
+            ><div class="restore-target"
+              ><Undo2 :size="18" />{{
+                history.find((x) => x.id === selected?.restore_id)?.old_name || '正在读取…'
+              }}</div
+            ><p class="help"
+              >还原后可再次自动命名，也会被后续计划重新处理。不会覆盖同名文件。</p
+            ></template
+          >
+          <template v-else-if="mode === 'auto' || mode === 'extract'"
+            ><ModelPicker v-if="mode === 'auto'" v-model="modelConfigID" /><p>{{
+              mode === 'extract'
+                ? '为当前目录内的视频预先生成截图，之后重命名可直接复用缓存。'
+                : '后台将抽取视频画面，由指定模型生成名称并自动修改。'
+            }}</p
+            ><label v-if="selected?.kind === 'directory'" class="check-label"
+              ><input type="checkbox" v-model="recursive" />包含子目录</label
+            ><p class="help">{{
+              mode === 'extract'
+                ? '覆盖目录内全部分页的视频，包括已处理视频；已有有效截图直接复用。进度见“批次记录”，结果见“抽帧记录”。'
+                : '已命名的视频自动跳过。进度见“批次记录”，命名结果见“运行记录”。'
+            }}</p></template
+          >
+          <template v-else
+            ><div v-for="h in history" :key="h.id" class="history-item"
+              ><span class="badge"
+                >{{
+                  h.source === 'restore' ? '还原' : h.source === 'manual' ? '手动命名' : '自动命名'
+                }}
+                · {{ h.status }}</span
+              ><p>{{ h.old_name }} <ArrowRight :size="14" /> {{ h.new_name }}</p
+              ><DateTime :value="h.created" /></div
+            ><p v-if="!history.length" class="empty compact">暂无命名历史</p></template
+          >
+          <div v-if="dialogError" class="notice error" role="alert">{{ dialogError }}</div
+          ><div class="modal-actions"
+            ><button type="button" :disabled="saving" @click="closeDialog()">{{
+              mode === 'history' ? '关闭' : '取消'
+            }}</button
+            ><button
+              v-if="mode !== 'history'"
+              class="primary"
+              :disabled="
+                saving ||
+                (mode === 'restore' && !history.length) ||
+                (mode === 'auto' && !modelConfigID)
+              "
+              >{{
+                saving
+                  ? '正在提交…'
+                  : mode === 'rename'
+                    ? '保存名称'
+                    : mode === 'restore'
+                      ? '确认还原'
+                      : mode === 'extract'
+                        ? '抽帧'
+                        : '重命名'
+              }}</button
+            ></div
+          ></form
+        ></Modal
+      ></ModalTransition
+    >
+    <ModalTransition
+      ><Modal
+        v-if="batch"
+        :title="batch === 'extract' ? '批量抽帧' : batch === 'auto' ? '批量自动命名' : '批量还原'"
+        @close="!saving && (batch = '')"
+        ><form @submit.prevent="submitBatch">
+          <template v-if="batch === 'auto' || batch === 'extract'"
+            ><p
+              >处理选中的
+              {{ batch === 'extract' ? extractEntries.length : autoEntries.length }}
+              个条目，创建一个批次。</p
+            ><ModelPicker v-if="batch === 'auto'" v-model="modelConfigID" /><label
+              class="check-label"
+              ><input type="checkbox" v-model="recursive" />包含子目录</label
+            ><p class="help">{{
+              batch === 'extract'
+                ? '预先生成截图供后续重命名使用，已有有效截图直接复用。结果见“抽帧记录”。'
+                : '已命名和正在处理的视频会跳过。'
+            }}</p></template
+          >
+          <template v-else
+            ><p
+              >还原选中的
+              {{ restoreEntries.length }} 个条目最近一次改名。目录还原只恢复目录名称。</p
+            ><p class="help">还原后可以再次自动命名。冲突条目保留原状。</p></template
+          ><p v-if="batchProgress" role="status">{{ batchProgress }}</p
+          ><div v-if="batchError" class="notice error batch-errors" role="alert">{{
+            batchError
           }}</div
-        ><p class="help"
-          >还原后可再次自动命名，也会被后续计划重新处理。不会覆盖同名文件。</p
-        ></template
-      >
-      <template v-else-if="mode === 'auto' || mode === 'extract'"
-        ><ModelPicker v-if="mode === 'auto'" v-model="modelConfigID" /><p>{{
-          mode === 'extract'
-            ? '为当前目录内的视频预先生成截图，之后重命名可直接复用缓存。'
-            : '后台将抽取视频画面，由指定模型生成名称并自动修改。'
-        }}</p
-        ><label v-if="selected?.kind === 'directory'" class="check-label"
-          ><input type="checkbox" v-model="recursive" />包含子目录</label
-        ><p class="help">{{
-          mode === 'extract'
-            ? '覆盖目录内全部分页的视频，包括已处理视频；已有有效截图直接复用。进度见“批次记录”，结果见“抽帧记录”。'
-            : '已命名的视频自动跳过。进度见“批次记录”，命名结果见“运行记录”。'
-        }}</p></template
-      >
-      <template v-else
-        ><div v-for="h in history" :key="h.id" class="history-item"
-          ><span class="badge"
-            >{{
-              h.source === 'restore' ? '还原' : h.source === 'manual' ? '手动命名' : '自动命名'
-            }}
-            · {{ h.status }}</span
-          ><p>{{ h.old_name }} <ArrowRight :size="14" /> {{ h.new_name }}</p
-          ><DateTime :value="h.created" /></div
-        ><p v-if="!history.length" class="empty compact">暂无命名历史</p></template
-      >
-      <div v-if="dialogError" class="notice error" role="alert">{{ dialogError }}</div
-      ><div class="modal-actions"
-        ><button type="button" :disabled="saving" @click="closeDialog()">{{
-          mode === 'history' ? '关闭' : '取消'
-        }}</button
-        ><button
-          v-if="mode !== 'history'"
-          class="primary"
-          :disabled="
-            saving || (mode === 'restore' && !history.length) || (mode === 'auto' && !modelConfigID)
-          "
-          >{{
-            saving
-              ? '正在提交…'
-              : mode === 'rename'
-                ? '保存名称'
-                : mode === 'restore'
-                  ? '确认还原'
-                  : mode === 'extract'
+          ><div class="modal-actions"
+            ><button type="button" :disabled="saving" @click="batch = ''">关闭</button
+            ><button
+              class="primary"
+              :disabled="
+                saving ||
+                (batch === 'extract'
+                  ? !extractEntries.length
+                  : batch === 'auto'
+                    ? !modelConfigID || !autoEntries.length
+                    : !restoreEntries.length)
+              "
+              >{{
+                saving
+                  ? '正在处理…'
+                  : batch === 'extract'
                     ? '抽帧'
-                    : '重命名'
-          }}</button
-        ></div
-      ></form
-    ></Modal
-  >
-  <Modal
-    v-if="batch"
-    :title="batch === 'extract' ? '批量抽帧' : batch === 'auto' ? '批量自动命名' : '批量还原'"
-    @close="!saving && (batch = '')"
-    ><form @submit.prevent="submitBatch">
-      <template v-if="batch === 'auto' || batch === 'extract'"
-        ><p
-          >处理选中的
-          {{ batch === 'extract' ? extractEntries.length : autoEntries.length }}
-          个条目，创建一个批次。</p
-        ><ModelPicker v-if="batch === 'auto'" v-model="modelConfigID" /><label class="check-label"
-          ><input type="checkbox" v-model="recursive" />包含子目录</label
-        ><p class="help">{{
-          batch === 'extract'
-            ? '预先生成截图供后续重命名使用，已有有效截图直接复用。结果见“抽帧记录”。'
-            : '已命名和正在处理的视频会跳过。'
-        }}</p></template
-      >
-      <template v-else
-        ><p>还原选中的 {{ restoreEntries.length }} 个条目最近一次改名。目录还原只恢复目录名称。</p
-        ><p class="help">还原后可以再次自动命名。冲突条目保留原状。</p></template
-      ><p v-if="batchProgress" role="status">{{ batchProgress }}</p
-      ><div v-if="batchError" class="notice error batch-errors" role="alert">{{ batchError }}</div
-      ><div class="modal-actions"
-        ><button type="button" :disabled="saving" @click="batch = ''">关闭</button
-        ><button
-          class="primary"
-          :disabled="
-            saving ||
-            (batch === 'extract'
-              ? !extractEntries.length
-              : batch === 'auto'
-                ? !modelConfigID || !autoEntries.length
-                : !restoreEntries.length)
-          "
-          >{{
-            saving
-              ? '正在处理…'
-              : batch === 'extract'
-                ? '抽帧'
-                : batch === 'auto'
-                  ? '重命名'
-                  : '确认批量还原'
-          }}</button
-        ></div
-      ></form
-    ></Modal
-  >
-  <Modal
-    v-if="marking.length"
-    :title="markValue ? '标记已处理' : '取消已处理标记'"
-    @close="!saving && (marking = [])"
-    ><form @submit.prevent="submitMark"
-      ><p
-        >已选择 {{ marking.length }} 个目标<span v-if="marking.length === 1"
-          >：{{ marking[0].name || '整个媒体库' }}</span
-        >。</p
-      ><p v-if="marking.some((e) => e.kind === 'directory')"
-        >包含所选目录及所有子目录中的现有视频、图片和音频；以后新增的文件不受影响。</p
-      ><p>{{
-        markValue
-          ? '标记后，视频会跳过自动命名和定时任务；图片和音频会跳过全局编号及一键编号，保留你自己的名称。已经处理的视频保留原状态。'
-          : '取消后，视频可以再次自动命名，图片和音频可以再次参与编号，包括之前实际改名的文件。'
-      }}</p
-      ><p class="help"
-        >只修改处理状态，不修改文件名、不删除命名历史。活动任务中的文件会报告失败，请等待任务结束后重试。标记保存在数据库中，数据库丢失后需重新标记。</p
-      ><p v-if="markProgress" role="status">{{ markProgress }}</p
-      ><div v-if="markError" class="notice error batch-errors" role="alert">{{ markError }}</div
-      ><div class="modal-actions"
-        ><button type="button" :disabled="saving" @click="marking = []">关闭</button
-        ><button class="primary" :disabled="saving || markRetryUnavailable">{{
-          saving ? '正在处理…' : markValue ? '确认标记' : '确认取消标记'
-        }}</button></div
-      ></form
-    ></Modal
-  >
-  <Modal v-if="playing" :title="playing.name" player @close="closePlayback"
-    ><VideoPlayer
-      :key="playing.id"
-      :src="`/api/entries/${playing.id}/video`"
-      :switching="videoBusy"
-      @previous="switchVideo(true)"
-      @next="switchVideo(false)"
-    /><p v-if="videoNotice" role="status">{{ videoNotice }}</p
-    ><p class="help">← 快退 10 秒 · → 快进 10 秒 · 两侧按钮切换上一集 / 下一集</p></Modal
-  >
-  <Modal v-if="audioPlaying" :title="audioPlaying.name" @close="closeAudio()"
-    ><AudioPlayer
-      :key="audioPlaying.id"
-      :src="`/api/entries/${audioPlaying.id}/audio`"
-      :switching="audioBusy"
-      @previous="switchAudio(true)"
-      @next="switchAudio(false)"
-    /><p v-if="audioNotice" role="status">{{ audioNotice }}</p
-    ><p class="help"
-      >← 快退 10 秒 · → 快进 10 秒 · 按钮切换上一首 / 下一首 ·
-      使用浏览器原生解码，不支持时会提示失败。</p
-    ></Modal
-  >
+                    : batch === 'auto'
+                      ? '重命名'
+                      : '确认批量还原'
+              }}</button
+            ></div
+          ></form
+        ></Modal
+      ></ModalTransition
+    >
+    <ModalTransition
+      ><Modal
+        v-if="marking.length"
+        :title="markValue ? '标记已处理' : '取消已处理标记'"
+        @close="!saving && (marking = [])"
+        ><form @submit.prevent="submitMark"
+          ><p
+            >已选择 {{ marking.length }} 个目标<span v-if="marking.length === 1"
+              >：{{ marking[0].name || '整个媒体库' }}</span
+            >。</p
+          ><p v-if="marking.some((e) => e.kind === 'directory')"
+            >包含所选目录及所有子目录中的现有视频、图片和音频；以后新增的文件不受影响。</p
+          ><p>{{
+            markValue
+              ? '标记后，视频会跳过自动命名和定时任务；图片和音频会跳过全局编号及一键编号，保留你自己的名称。已经处理的视频保留原状态。'
+              : '取消后，视频可以再次自动命名，图片和音频可以再次参与编号，包括之前实际改名的文件。'
+          }}</p
+          ><p class="help"
+            >只修改处理状态，不修改文件名、不删除命名历史。活动任务中的文件会报告失败，请等待任务结束后重试。标记保存在数据库中，数据库丢失后需重新标记。</p
+          ><p v-if="markProgress" role="status">{{ markProgress }}</p
+          ><div v-if="markError" class="notice error batch-errors" role="alert">{{ markError }}</div
+          ><div class="modal-actions"
+            ><button type="button" :disabled="saving" @click="marking = []">关闭</button
+            ><button class="primary" :disabled="saving || markRetryUnavailable">{{
+              saving ? '正在处理…' : markValue ? '确认标记' : '确认取消标记'
+            }}</button></div
+          ></form
+        ></Modal
+      ></ModalTransition
+    >
+    <ModalTransition
+      ><Modal v-if="playing" :title="playing.name" player @close="closePlayback"
+        ><VideoPlayer
+          :key="playing.id"
+          :src="`/api/entries/${playing.id}/video`"
+          :switching="videoBusy"
+          @previous="switchVideo(true)"
+          @next="switchVideo(false)"
+        /><p v-if="videoNotice" role="status">{{ videoNotice }}</p
+        ><p class="help">← 快退 10 秒 · → 快进 10 秒 · 两侧按钮切换上一集 / 下一集</p></Modal
+      ></ModalTransition
+    >
+    <ModalTransition
+      ><Modal v-if="audioPlaying" :title="audioPlaying.name" @close="closeAudio()"
+        ><AudioPlayer
+          :key="audioPlaying.id"
+          :src="`/api/entries/${audioPlaying.id}/audio`"
+          :switching="audioBusy"
+          @previous="switchAudio(true)"
+          @next="switchAudio(false)"
+        /><p v-if="audioNotice" role="status">{{ audioNotice }}</p
+        ><p class="help"
+          >← 快退 10 秒 · → 快进 10 秒 · 按钮切换上一首 / 下一首 ·
+          使用浏览器原生解码，不支持时会提示失败。</p
+        ></Modal
+      ></ModalTransition
+    >
 
-  <Modal v-if="preview" :title="preview.name" wide @close="closeImage"
-    ><div class="image-gallery"
-      ><button
-        class="image-nav previous"
-        aria-label="上一张图片"
-        :disabled="imageBusy"
-        @click="switchImage(true)"
-        ><ChevronLeft :size="25" /></button
-      ><img
-        v-if="!imageError"
-        :key="preview.id"
-        class="image-preview"
-        :src="`/api/entries/${preview.id}/image`"
-        :alt="preview.name"
-        @error="imageError = true" /><p v-else class="notice error" role="alert"
-        >无法显示图片，文件可能不可用或浏览器不支持其格式。</p
-      ><button
-        class="image-nav next"
-        aria-label="下一张图片"
-        :disabled="imageBusy"
-        @click="switchImage(false)"
-        ><ChevronRight :size="25" /></button></div
-    ><p v-if="galleryError" class="notice error" role="alert">{{ galleryError }}</p
-    ><p class="help gallery-hint">← / ↑ 上一张 · → / ↓ 下一张 · 仅切换当前目录的图片</p></Modal
-  >
+    <ModalTransition
+      ><Modal v-if="preview" :title="preview.name" wide @close="closeImage"
+        ><div class="image-gallery"
+          ><button
+            class="image-nav previous"
+            aria-label="上一张图片"
+            :disabled="imageBusy"
+            @click="switchImage(true)"
+            ><ChevronLeft :size="25" /></button
+          ><img
+            v-if="!imageError"
+            :key="preview.id"
+            class="image-preview"
+            :src="`/api/entries/${preview.id}/image`"
+            :alt="preview.name"
+            @error="imageError = true" /><p v-else class="notice error" role="alert"
+            >无法显示图片，文件可能不可用或浏览器不支持其格式。</p
+          ><button
+            class="image-nav next"
+            aria-label="下一张图片"
+            :disabled="imageBusy"
+            @click="switchImage(false)"
+            ><ChevronRight :size="25" /></button></div
+        ><p v-if="galleryError" class="notice error" role="alert">{{ galleryError }}</p
+        ><p class="help gallery-hint">← / ↑ 上一张 · → / ↓ 下一张 · 仅切换当前目录的图片</p></Modal
+      ></ModalTransition
+    >
+  </section>
 </template>
 
 <style scoped>
@@ -1898,18 +1921,6 @@
   .file-table .row-actions {
     justify-content: flex-end;
   }
-  .batch-toolbar button.delete-confirm,
-  button.delete-confirm {
-    background: #b14545;
-    border-color: #b14545;
-    color: white;
-  }
-  .batch-toolbar button.delete-confirm:hover:not(:disabled),
-  button.delete-confirm:hover:not(:disabled) {
-    background: #943737;
-    border-color: #943737;
-    color: white;
-  }
   .batch-delete-group {
     display: inline-flex;
     align-items: center;
@@ -1929,11 +1940,6 @@
   }
   .delete-action {
     color: #b14545;
-  }
-  .delete-confirm {
-    background: #b14545;
-    border-color: #b14545;
-    color: white;
   }
   .delete-path {
     overflow-wrap: anywhere;

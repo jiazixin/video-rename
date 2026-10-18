@@ -91,7 +91,7 @@ test('重试与缓存保留设置、清空确认和失败反馈',async({page})=>
  await expect(page.getByLabel('按闲置时间自动清理',{exact:true})).not.toBeChecked()
  await expect(page.locator('.processing-cache')).toContainText('成功改名后保留 7 天。不按闲置时间自动删除。')
  const clear=page.getByRole('button',{name:'清空缓存',exact:true})
- await expect(clear).toHaveCSS('background-color','rgb(181, 61, 56)')
+ await expect(clear).toHaveCSS('background-color','rgb(255, 240, 240)')
  const buttons=await page.locator('.cache-actions button').allTextContents()
  expect(buttons).toEqual(['清空缓存','刷新状态'])
  let calls=0

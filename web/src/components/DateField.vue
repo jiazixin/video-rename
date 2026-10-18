@@ -152,67 +152,69 @@
       @keydown.down.prevent="show"
       ><CalendarDays :size="15" /><span>{{ modelValue || label }}</span></button
     ><Teleport to="body"
-      ><section
-        v-if="open"
-        ref="panel"
-        class="calendar-panel"
-        role="dialog"
-        :aria-label="`${label}日历`"
-        :style="position"
-        @keydown="keys"
-        ><header
-          ><button type="button" class="icon-btn" aria-label="上个月" @click="shift(-1)"
-            ><ChevronLeft :size="16" /></button
-          ><SelectField
-            v-model="year"
-            :label="`${label}年份`"
-            :options="years"
-            @change="changeMonth" /><SelectField
-            v-model="month"
-            :label="`${label}月份`"
-            :options="months"
-            @change="changeMonth" /><button
-            type="button"
-            class="icon-btn"
-            aria-label="下个月"
-            @click="shift(1)"
-            ><ChevronRight :size="16" /></button></header
-        ><div class="calendar-week"
-          ><span v-for="day in ['一', '二', '三', '四', '五', '六', '日']" :key="day">{{
-            day
-          }}</span></div
-        ><div class="calendar-grid"
-          ><button
-            v-for="day in days"
-            :id="`${id}-${day.value}`"
-            :key="day.value"
-            type="button"
-            class="calendar-day"
-            :class="{
-              outside: day.outside,
-              today: day.value === today,
-              selected: day.value === modelValue
-            }"
-            :aria-label="day.value"
-            :aria-pressed="day.value === modelValue"
-            :aria-disabled="disabled(day.value)"
-            :tabindex="day.value === active ? 0 : -1"
-            @focus="active = day.value"
-            @click="choose(day.value)"
-            >{{ day.day }}</button
-          ></div
-        ><footer
-          ><button type="button" @click="choose('')">清除</button
-          ><button type="button" :disabled="disabled(today)" @click="choose(today)">今天</button
-          ><button
-            type="button"
-            @click="
-              close();
-              trigger?.focus();
-            "
-            >关闭</button
-          ></footer
-        ></section
+      ><Transition name="popover"
+        ><section
+          v-if="open"
+          ref="panel"
+          class="calendar-panel"
+          role="dialog"
+          :aria-label="`${label}日历`"
+          :style="position"
+          @keydown="keys"
+          ><header
+            ><button type="button" class="icon-btn" aria-label="上个月" @click="shift(-1)"
+              ><ChevronLeft :size="16" /></button
+            ><SelectField
+              v-model="year"
+              :label="`${label}年份`"
+              :options="years"
+              @change="changeMonth" /><SelectField
+              v-model="month"
+              :label="`${label}月份`"
+              :options="months"
+              @change="changeMonth" /><button
+              type="button"
+              class="icon-btn"
+              aria-label="下个月"
+              @click="shift(1)"
+              ><ChevronRight :size="16" /></button></header
+          ><div class="calendar-week"
+            ><span v-for="day in ['一', '二', '三', '四', '五', '六', '日']" :key="day">{{
+              day
+            }}</span></div
+          ><div class="calendar-grid"
+            ><button
+              v-for="day in days"
+              :id="`${id}-${day.value}`"
+              :key="day.value"
+              type="button"
+              class="calendar-day"
+              :class="{
+                outside: day.outside,
+                today: day.value === today,
+                selected: day.value === modelValue
+              }"
+              :aria-label="day.value"
+              :aria-pressed="day.value === modelValue"
+              :aria-disabled="disabled(day.value)"
+              :tabindex="day.value === active ? 0 : -1"
+              @focus="active = day.value"
+              @click="choose(day.value)"
+              >{{ day.day }}</button
+            ></div
+          ><footer
+            ><button type="button" @click="choose('')">清除</button
+            ><button type="button" :disabled="disabled(today)" @click="choose(today)">今天</button
+            ><button
+              type="button"
+              @click="
+                close();
+                trigger?.focus();
+              "
+              >关闭</button
+            ></footer
+          ></section
+        ></Transition
       ></Teleport
     ></span
   >

@@ -19,7 +19,8 @@
     RefreshCw,
     CalendarDays,
     Undo2,
-    ChevronRight
+    ChevronRight,
+    Images
   } from '@lucide/vue';
   import { api, key } from '../../app/api';
   import { time, clockPart } from '../../lib/date/format';
@@ -30,6 +31,7 @@
   import StatusBadge from '../../components/StatusBadge.vue';
   import './runs.css';
   import Modal from '../../components/Modal.vue';
+  import ModalTransition from '../../components/ModalTransition.vue';
   import RunDetail from './RunDetail.vue';
   import SelectField from '../../components/SelectField.vue';
   const toast = ref<InstanceType<typeof ToastNotice>>();
@@ -729,9 +731,12 @@
             ><div class="run-body">
               <div class="run-head"
                 ><strong class="run-id">#{{ r.id }}</strong
-                ><span class="badge run-task-badge">{{
-                  r.task === 'extract' ? '抽帧' : '重命名'
-                }}</span
+                ><span class="run-task"
+                  ><component
+                    :is="r.task === 'extract' ? Images : PenLine"
+                    :size="14"
+                    aria-hidden="true"
+                  />{{ r.task === 'extract' ? '抽帧' : '重命名' }}</span
                 ><StatusBadge :status="r.status"
                   ><template #icon
                     ><component
@@ -777,14 +782,20 @@
               >
               <div class="run-foot"
                 ><div class="run-stat-row"
-                  ><span class="run-stat" data-stat="total">总数 {{ r.discovered }}</span
-                  ><span class="run-stat" data-stat="done">成功 {{ r.done }}</span
-                  ><span class="run-stat" data-stat="skipped">跳过 {{ r.skipped }}</span
-                  ><span class="run-stat" data-stat="failed">失败 {{ r.failed }}</span></div
+                  ><span class="run-stat" data-stat="total"
+                    >总数 <b>{{ r.discovered }}</b></span
+                  ><span class="run-stat" data-stat="done" :data-zero="!r.done || undefined"
+                    >成功 <b>{{ r.done }}</b></span
+                  ><span class="run-stat" data-stat="skipped" :data-zero="!r.skipped || undefined"
+                    >跳过 <b>{{ r.skipped }}</b></span
+                  ><span class="run-stat" data-stat="failed" :data-zero="!r.failed || undefined"
+                    >失败 <b>{{ r.failed }}</b></span
+                  ></div
                 ><div class="row-actions run-actions"
                   ><button
                     v-if="pausable(r) || r.status === 'paused'"
                     class="pause-run icon-only-action"
+                    :class="{ 'resume-run': r.status === 'paused' }"
                     :aria-label="r.status === 'paused' ? '继续运行' : '暂停调度'"
                     :title="r.status === 'paused' ? '继续运行' : '暂停调度'"
                     @click="askPause(r)"
@@ -837,172 +848,188 @@
           :page="currentPage.page"
           :total-pages="pageCount"
           :disabled="loading"
-          @change="changePage" /></div></section
-  ></section>
-  <Modal
-    v-if="mode"
-    :title="mode === 'manual' ? '新建手动计划' : edit ? '编辑自动计划' : '新建自动计划'"
-    wide
-    @close="!busy && (mode = '')"
-    ><form @submit.prevent="submit">
-      <div class="plan-config-row"
-        ><label
-          >任务类型<SelectField
-            v-model="taskType"
-            label="计划任务类型"
-            :options="[
-              { value: 'rename', label: '命名' },
-              { value: 'extract', label: '抽帧' }
-            ]" /></label
-        ><ModelPicker v-if="taskType !== 'extract'" v-model="modelConfigID"
-      /></div>
-      <template v-if="mode === 'plan'"
-        ><label
-          >计划名称<input
-            v-model="name"
-            required
-            maxlength="80"
-            placeholder="例如：每天整理旅行视频" /></label
-        ><div class="form-grid"
-          ><label
-            >执行频率<SelectField
-              v-model="kind"
-              @change="preview = []"
-              label="执行频率"
-              :options="[
-                { value: 'hourly', label: '按小时' },
-                { value: 'daily', label: '按日' },
-                { value: 'weekly', label: '按周' },
-                { value: 'cron', label: 'Cron 表达式' }
-              ]" /></label
-          ><label>时区<input v-model="timezone" required placeholder="Asia/Shanghai" /></label></div
-        ><div v-if="kind !== 'cron'" class="form-grid"
-          ><label v-if="kind !== 'hourly'"
-            >小时<input type="number" v-model="hour" min="0" max="23" required /></label
-          ><label
-            >分钟<input type="number" v-model="minute" min="0" max="59" required /></label></div
-        ><div v-if="kind === 'weekly'" class="weekday-picker"
-          ><label v-for="(d, i) in ['日', '一', '二', '三', '四', '五', '六']" :key="i"
-            ><input type="checkbox" :value="i" v-model="days" />周{{ d }}</label
+          @change="changePage" /></div
+    ></section>
+    <ModalTransition
+      ><Modal
+        v-if="mode"
+        :title="mode === 'manual' ? '新建手动计划' : edit ? '编辑自动计划' : '新建自动计划'"
+        wide
+        @close="!busy && (mode = '')"
+        ><form @submit.prevent="submit">
+          <div class="plan-config-row"
+            ><label
+              >任务类型<SelectField
+                v-model="taskType"
+                label="计划任务类型"
+                :options="[
+                  { value: 'rename', label: '命名' },
+                  { value: 'extract', label: '抽帧' }
+                ]" /></label
+            ><ModelPicker v-if="taskType !== 'extract'" v-model="modelConfigID"
+          /></div>
+          <template v-if="mode === 'plan'"
+            ><label
+              >计划名称<input
+                v-model="name"
+                required
+                maxlength="80"
+                placeholder="例如：每天整理旅行视频" /></label
+            ><div class="form-grid"
+              ><label
+                >执行频率<SelectField
+                  v-model="kind"
+                  @change="preview = []"
+                  label="执行频率"
+                  :options="[
+                    { value: 'hourly', label: '按小时' },
+                    { value: 'daily', label: '按日' },
+                    { value: 'weekly', label: '按周' },
+                    { value: 'cron', label: 'Cron 表达式' }
+                  ]" /></label
+              ><label
+                >时区<input v-model="timezone" required placeholder="Asia/Shanghai" /></label></div
+            ><div v-if="kind !== 'cron'" class="form-grid"
+              ><label v-if="kind !== 'hourly'"
+                >小时<input type="number" v-model="hour" min="0" max="23" required /></label
+              ><label
+                >分钟<input type="number" v-model="minute" min="0" max="59" required /></label></div
+            ><div v-if="kind === 'weekly'" class="weekday-picker"
+              ><label v-for="(d, i) in ['日', '一', '二', '三', '四', '五', '六']" :key="i"
+                ><input type="checkbox" :value="i" v-model="days" />周{{ d }}</label
+              ></div
+            ><label v-if="kind === 'cron'"
+              >Cron 表达式<input
+                v-model="cron"
+                aria-label="Cron 表达式"
+                required
+                placeholder="0 */6 * * *"
+                class="mono"
+              /><small class="help"
+                >五段：分 时 日 月 周。日与周同时限制时，任一匹配即触发。</small
+              ></label
+            ><div class="preview-rule"
+              ><code>{{ expression }}</code
+              ><button type="button" @click="showPreview"
+                >预览执行时间<ChevronRight :size="14" /></button></div
+            ><ol v-if="preview.length" class="schedule-preview"
+              ><li v-for="p in preview" :key="p">{{ p }}</li></ol
+            ></template
+          >
+          <label class="field-heading">选择目标目录</label
+          ><DirectoryPicker v-model="targets" /><label class="check-label"
+            ><input type="checkbox" v-model="recursive" />包含所选目录的子目录</label
+          ><label v-if="mode === 'plan'" class="check-label"
+            ><input type="checkbox" v-model="enabled" />保存后启用计划</label
+          >
+          <p class="help">{{
+            taskType === 'extract'
+              ? '为所选目录中的视频预先生成截图，包括已处理视频；有效缓存直接复用，供之后重命名使用。结果见“抽帧记录”。'
+              : '已命名或手动标记已处理的视频会跳过；还原后的视频可再次处理。新文件会先进行稳定性检查。'
+          }}</p
+          ><div v-if="dialogError" class="notice error" role="alert">{{ dialogError }}</div
+          ><div class="modal-actions"
+            ><button type="button" :disabled="busy" @click="mode = ''">取消</button
+            ><button
+              class="primary"
+              :disabled="
+                busy ||
+                !targets.length ||
+                (taskType !== 'extract' && !modelConfigID) ||
+                (taskType !== 'extract' && mode === 'manual' && !props.ready)
+              "
+              >{{ busy ? '正在提交…' : mode === 'manual' ? '立即运行' : '保存计划' }}</button
+            ></div
+          ></form
+        ></Modal
+      ></ModalTransition
+    >
+    <ModalTransition
+      ><Modal
+        v-if="restoreTarget"
+        :title="`还原批次 #${restoreTarget.id}`"
+        @close="!restoring && (restoreTarget = undefined)"
+        ><p>将本批次成功改名的文件恢复为本批次处理前的名称。</p
+        ><p class="help"
+          >已还原的文件会跳过；后续又改名、内容变化或原名被占用的文件不会强制覆盖。还原成功后可重新自动命名，已启用的定时计划也可能再次处理。</p
+        ><div v-if="restoreError" class="notice error" role="alert">{{ restoreError }}</div
+        ><div v-if="restoreResult?.failed" role="alert" class="notice error"
+          >已还原 {{ restoreResult.restored }} 项 · 已还原跳过 {{ restoreResult.skipped }} 项 · 失败
+          {{ restoreResult.failed }} 项<ul v-if="restoreResult.errors.length"
+            ><li v-for="message in restoreResult.errors" :key="message">{{ message }}</li></ul
+          ><p v-if="restoreResult.failed > 100">仅显示前 100 条失败详情。</p></div
+        ><div class="modal-actions"
+          ><button :disabled="restoring" @click="restoreTarget = undefined">{{
+            restoreResult ? '关闭' : '暂不还原'
+          }}</button
+          ><button
+            v-if="!restoreResult || restoreResult.failed"
+            class="primary"
+            :disabled="restoring"
+            @click="restoreBatch"
+            >{{ restoring ? '正在还原…' : restoreResult ? '重试失败项' : '确认还原批次' }}</button
           ></div
-        ><label v-if="kind === 'cron'"
-          >Cron 表达式<input
-            v-model="cron"
-            aria-label="Cron 表达式"
-            required
-            placeholder="0 */6 * * *"
-            class="mono"
-          /><small class="help"
-            >五段：分 时 日 月 周。日与周同时限制时，任一匹配即触发。</small
-          ></label
-        ><div class="preview-rule"
-          ><code>{{ expression }}</code
-          ><button type="button" @click="showPreview"
-            >预览执行时间<ChevronRight :size="14" /></button></div
-        ><ol v-if="preview.length" class="schedule-preview"
-          ><li v-for="p in preview" :key="p">{{ p }}</li></ol
-        ></template
-      >
-      <label class="field-heading">选择目标目录</label><DirectoryPicker v-model="targets" /><label
-        class="check-label"
-        ><input type="checkbox" v-model="recursive" />包含所选目录的子目录</label
-      ><label v-if="mode === 'plan'" class="check-label"
-        ><input type="checkbox" v-model="enabled" />保存后启用计划</label
-      >
-      <p class="help">{{
-        taskType === 'extract'
-          ? '为所选目录中的视频预先生成截图，包括已处理视频；有效缓存直接复用，供之后重命名使用。结果见“抽帧记录”。'
-          : '已命名或手动标记已处理的视频会跳过；还原后的视频可再次处理。新文件会先进行稳定性检查。'
-      }}</p
-      ><div v-if="dialogError" class="notice error" role="alert">{{ dialogError }}</div
-      ><div class="modal-actions"
-        ><button type="button" :disabled="busy" @click="mode = ''">取消</button
-        ><button
-          class="primary"
-          :disabled="
-            busy ||
-            !targets.length ||
-            (taskType !== 'extract' && !modelConfigID) ||
-            (taskType !== 'extract' && mode === 'manual' && !props.ready)
-          "
-          >{{ busy ? '正在提交…' : mode === 'manual' ? '立即运行' : '保存计划' }}</button
-        ></div
-      ></form
-    ></Modal
-  >
-  <Modal
-    v-if="restoreTarget"
-    :title="`还原批次 #${restoreTarget.id}`"
-    @close="!restoring && (restoreTarget = undefined)"
-    ><p>将本批次成功改名的文件恢复为本批次处理前的名称。</p
-    ><p class="help"
-      >已还原的文件会跳过；后续又改名、内容变化或原名被占用的文件不会强制覆盖。还原成功后可重新自动命名，已启用的定时计划也可能再次处理。</p
-    ><div v-if="restoreError" class="notice error" role="alert">{{ restoreError }}</div
-    ><div v-if="restoreResult?.failed" role="alert" class="notice error"
-      >已还原 {{ restoreResult.restored }} 项 · 已还原跳过 {{ restoreResult.skipped }} 项 · 失败
-      {{ restoreResult.failed }} 项<ul v-if="restoreResult.errors.length"
-        ><li v-for="message in restoreResult.errors" :key="message">{{ message }}</li></ul
-      ><p v-if="restoreResult.failed > 100">仅显示前 100 条失败详情。</p></div
-    ><div class="modal-actions"
-      ><button :disabled="restoring" @click="restoreTarget = undefined">{{
-        restoreResult ? '关闭' : '暂不还原'
-      }}</button
-      ><button
-        v-if="!restoreResult || restoreResult.failed"
-        class="primary"
-        :disabled="restoring"
-        @click="restoreBatch"
-        >{{ restoring ? '正在还原…' : restoreResult ? '重试失败项' : '确认还原批次' }}</button
-      ></div
-    ></Modal
-  >
-  <Modal
-    v-if="pauseTarget"
-    :title="pauseTarget.status === 'paused' ? '继续运行' : '暂停调度'"
-    @close="!pauseBusy && (pauseTarget = undefined)"
-    ><p
-      >确定{{ pauseTarget.status === 'paused' ? '继续运行' : '暂停' }}批次 #{{
-        pauseTarget.id
-      }}？</p
-    ><p class="help">{{
-      pauseTarget.status === 'paused'
-        ? '将从未完成的任务继续处理，与其他运行中的批次共享并发名额。'
-        : '确认后停止调度新的抽帧与模型请求，正在执行的步骤会正常完成并释放名额，其他批次可继续运行。已完成的结果保留，之后可点击“继续运行”。'
-    }}</p
-    ><div v-if="pauseError" class="notice error" role="alert">{{ pauseError }}</div
-    ><div class="modal-actions"
-      ><button :disabled="pauseBusy" @click="pauseTarget = undefined">返回</button
-      ><button class="primary" :disabled="pauseBusy" @click="confirmPause">{{
-        pauseBusy ? '正在提交…' : pauseTarget.status === 'paused' ? '确认继续' : '确认暂停'
-      }}</button></div
-    ></Modal
-  >
-  <Modal v-if="cancelTarget" title="取消运行" @close="!cancelling && (cancelTarget = undefined)"
-    ><p>确定取消运行 #{{ cancelTarget.id }}？</p
-    ><p class="help">未完成的任务将停止，已完成的改名不会撤销。定时计划仍保持原设置。</p
-    ><div v-if="cancelError" class="notice error" role="alert">{{ cancelError }}</div
-    ><div class="modal-actions"
-      ><button :disabled="cancelling" @click="cancelTarget = undefined">继续运行</button
-      ><button class="cancel-run" :disabled="cancelling" @click="confirmCancel"
-        ><X :size="16" />{{ cancelling ? '正在取消…' : '确认取消' }}</button
-      ></div
-    ></Modal
-  >
-  <Modal v-if="deletePlan" title="删除运行计划" @close="deletePlan = undefined"
-    ><p>删除“{{ deletePlan.name }}”后，将不再自动触发。已有运行和历史记录会保留。</p
-    ><div class="modal-actions"
-      ><button @click="deletePlan = undefined">取消</button
-      ><button class="danger-button" @click="remove"><Trash2 :size="16" />删除计划</button></div
-    ></Modal
-  >
-  <RunDetail
-    v-if="detail"
-    :key="detail.id"
-    :run="detail"
-    :elapsed="elapsed(detail)"
-    @notice="toast?.show($event)"
-    @close="detail = undefined"
-    @pause="askPause(detail)"
-    @cancel="askCancel(detail)"
-  />
+        ></Modal
+      ></ModalTransition
+    >
+    <ModalTransition
+      ><Modal
+        v-if="pauseTarget"
+        :title="pauseTarget.status === 'paused' ? '继续运行' : '暂停调度'"
+        @close="!pauseBusy && (pauseTarget = undefined)"
+        ><p
+          >确定{{ pauseTarget.status === 'paused' ? '继续运行' : '暂停' }}批次 #{{
+            pauseTarget.id
+          }}？</p
+        ><p class="help">{{
+          pauseTarget.status === 'paused'
+            ? '将从未完成的任务继续处理，与其他运行中的批次共享并发名额。'
+            : '确认后停止调度新的抽帧与模型请求，正在执行的步骤会正常完成并释放名额，其他批次可继续运行。已完成的结果保留，之后可点击“继续运行”。'
+        }}</p
+        ><div v-if="pauseError" class="notice error" role="alert">{{ pauseError }}</div
+        ><div class="modal-actions"
+          ><button :disabled="pauseBusy" @click="pauseTarget = undefined">返回</button
+          ><button class="primary" :disabled="pauseBusy" @click="confirmPause">{{
+            pauseBusy ? '正在提交…' : pauseTarget.status === 'paused' ? '确认继续' : '确认暂停'
+          }}</button></div
+        ></Modal
+      ></ModalTransition
+    >
+    <ModalTransition
+      ><Modal
+        v-if="cancelTarget"
+        title="取消运行"
+        @close="!cancelling && (cancelTarget = undefined)"
+        ><p>确定取消运行 #{{ cancelTarget.id }}？</p
+        ><p class="help">未完成的任务将停止，已完成的改名不会撤销。定时计划仍保持原设置。</p
+        ><div v-if="cancelError" class="notice error" role="alert">{{ cancelError }}</div
+        ><div class="modal-actions"
+          ><button :disabled="cancelling" @click="cancelTarget = undefined">继续运行</button
+          ><button class="cancel-run" :disabled="cancelling" @click="confirmCancel"
+            ><X :size="16" />{{ cancelling ? '正在取消…' : '确认取消' }}</button
+          ></div
+        ></Modal
+      ></ModalTransition
+    >
+    <ModalTransition
+      ><Modal v-if="deletePlan" title="删除运行计划" @close="deletePlan = undefined"
+        ><p>删除“{{ deletePlan.name }}”后，将不再自动触发。已有运行和历史记录会保留。</p
+        ><div class="modal-actions"
+          ><button @click="deletePlan = undefined">取消</button
+          ><button class="danger-button" @click="remove"><Trash2 :size="16" />删除计划</button></div
+        ></Modal
+      ></ModalTransition
+    >
+    <ModalTransition
+      ><RunDetail
+        v-if="detail"
+        :key="detail.id"
+        :run="detail"
+        :elapsed="elapsed(detail)"
+        @notice="toast?.show($event)"
+        @close="detail = undefined"
+        @pause="askPause(detail)"
+        @cancel="askCancel(detail)"
+    /></ModalTransition>
+  </section>
 </template>

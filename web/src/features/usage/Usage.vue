@@ -13,7 +13,9 @@
         }}</p></div
       ></div
     >
-    <UsageTokens v-if="tab !== 'analysis'" />
-    <UsageAnalysis v-else />
+    <Transition name="panel" mode="out-in">
+      <UsageTokens v-if="tab !== 'analysis'" />
+      <UsageAnalysis v-else />
+    </Transition>
   </section>
 </template>

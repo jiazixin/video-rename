@@ -143,26 +143,29 @@
       ><span>{{ selected }}</span
       ><ChevronDown :size="15" :class="{ rotated: open }" /></button
     ><Teleport to="body"
-      ><span
-        v-if="open"
-        ref="menu"
-        :id="id"
-        role="listbox"
-        :aria-label="label"
-        class="select-menu"
-        :style="position"
+      ><Transition name="popover"
         ><span
-          v-for="(option, index) in options"
-          :id="`${id}-${index}`"
-          :key="option.value"
-          role="option"
-          :aria-selected="option.value === modelValue"
-          class="select-option"
-          :class="{ highlighted: index === active }"
-          @pointermove="active = index"
-          @mousedown.prevent
-          @click.prevent.stop="choose(index)"
-          ><span>{{ option.label }}</span
-          ><Check v-if="option.value === modelValue" :size="14" /></span></span></Teleport
+          v-if="open"
+          ref="menu"
+          :id="id"
+          role="listbox"
+          :aria-label="label"
+          class="select-menu"
+          :style="position"
+          ><span
+            v-for="(option, index) in options"
+            :id="`${id}-${index}`"
+            :key="option.value"
+            role="option"
+            :aria-selected="option.value === modelValue"
+            class="select-option"
+            :class="{ highlighted: index === active }"
+            @pointermove="active = index"
+            @mousedown.prevent
+            @click.prevent.stop="choose(index)"
+            ><span>{{ option.label }}</span
+            ><Check
+              v-if="option.value === modelValue"
+              :size="14" /></span></span></Transition></Teleport
   ></span>
 </template>
