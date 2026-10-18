@@ -597,7 +597,7 @@
                 :aria-checked="p.enabled"
                 :aria-label="`${p.enabled ? '暂停' : '启用'} ${p.name}`"
                 @click="toggle(p)"
-                ><span /></button></header
+              ></button></header
             ><h3>{{ p.name }}</h3
             ><p class="plan-expression"
               >{{
@@ -918,9 +918,9 @@
           >
           <label class="field-heading">选择目标目录</label
           ><DirectoryPicker v-model="targets" /><label class="check-label"
-            ><input type="checkbox" v-model="recursive" />包含所选目录的子目录</label
+            ><input type="checkbox" role="switch" v-model="recursive" />包含所选目录的子目录</label
           ><label v-if="mode === 'plan'" class="check-label"
-            ><input type="checkbox" v-model="enabled" />保存后启用计划</label
+            ><input type="checkbox" role="switch" v-model="enabled" />保存后启用计划</label
           >
           <p class="help">{{
             taskType === 'extract'

@@ -109,12 +109,81 @@ select {
 input::placeholder {
   color: #94979e;
 }
-input[type='checkbox'] {
+input[type='checkbox'],
+input[type='radio'] {
+  flex-shrink: 0;
   min-height: 0;
   width: 16px;
   height: 16px;
-  accent-color: #1b1b1b;
   margin: 0;
+}
+/* Selection checkboxes and radios share the brand green; on/off options use the switch below. */
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: var(--tone-green-ink);
+}
+/* Switch (as in MirrorDock): an on/off option drawn as a pill track with a sliding knob.
+   Form options use <input type="checkbox" role="switch">; instant toggles use button.switch. */
+input[type='checkbox'][role='switch'],
+button.switch {
+  appearance: none;
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+  width: 36px;
+  min-width: 36px;
+  height: 20px;
+  min-height: 20px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--control-line);
+  border-radius: 999px;
+  background: #f3f5f4;
+  cursor: pointer;
+  transition:
+    background var(--motion-hover) linear,
+    border-color var(--motion-hover) linear;
+}
+input[type='checkbox'][role='switch']::before,
+button.switch::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(18, 26, 21, 0.25);
+  transition: transform var(--motion-hover) linear;
+}
+input[type='checkbox'][role='switch']:not(:checked):hover:not(:disabled),
+label:hover > input[type='checkbox'][role='switch']:not(:checked):not(:disabled),
+button.switch:not(.on):hover:not(:disabled) {
+  border-color: var(--control-line-hover);
+  background: #f3f5f4;
+}
+input[type='checkbox'][role='switch']:checked,
+button.switch.on,
+button.switch.on:hover:not(:disabled) {
+  border-color: var(--tone-green-ink);
+  background: var(--tone-green-ink);
+}
+input[type='checkbox'][role='switch']:checked::before,
+button.switch.on::before {
+  transform: translateX(16px);
+}
+input[type='checkbox'][role='switch']:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+@media (forced-colors: active) {
+  input[type='checkbox'][role='switch'] {
+    appearance: auto;
+  }
+  input[type='checkbox'][role='switch']::before {
+    display: none;
+  }
 }
 label {
   display: flex;
@@ -1214,29 +1283,6 @@ tbody tr:hover {
   border-radius: 8px;
   display: flex;
 }
-.switch {
-  width: 31px;
-  height: 18px;
-  border: 0;
-  padding: 2px;
-  background: #d2d5d9;
-  border-radius: 15px;
-  justify-content: flex-start;
-}
-.switch span {
-  width: 14px;
-  height: 14px;
-  background: white;
-  border-radius: 50%;
-  box-shadow: 0 1px 2px #0001;
-}
-.switch.on {
-  justify-content: flex-end;
-  background: #538d70;
-}
-.switch.on:hover:not(:disabled) {
-  background: #3a7f5d;
-}
 .plan-card h3 {
   font-size: 15px;
   margin-bottom: 8px;
@@ -1689,8 +1735,8 @@ textarea:focus-visible {
   background: white;
 }
 .prompt-title input[type='radio']:checked {
-  border-color: #348365;
-  background: radial-gradient(circle, #348365 0 4px, white 4.5px);
+  border-color: var(--tone-green-ink);
+  background: radial-gradient(circle, var(--tone-green-ink) 0 4px, white 4.5px);
 }
 .prompt-title input[type='radio']:disabled {
   opacity: 0.5;
@@ -2345,6 +2391,7 @@ button > svg {
 button.detail-button,
 .row-actions button,
 .model-card-actions button,
+.prompt-card-actions button,
 .plan-card footer > button,
 .batch-toolbar button,
 .diagnostic-buttons button {
@@ -2365,6 +2412,7 @@ button.detail-button,
 button.detail-button:hover:not(:disabled),
 .row-actions button:hover:not(:disabled),
 .model-card-actions button:hover:not(:disabled),
+.prompt-card-actions button:hover:not(:disabled),
 .plan-card footer > button:hover:not(:disabled),
 .diagnostic-buttons button:hover:not(:disabled) {
   background: var(--control-hover);
@@ -2374,6 +2422,7 @@ button.detail-button:hover:not(:disabled),
 button.detail-button > svg,
 .row-actions button > svg,
 .model-card-actions button > svg,
+.prompt-card-actions button > svg,
 .plan-card footer > button > svg {
   width: 16px;
   height: 16px;

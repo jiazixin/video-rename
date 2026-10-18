@@ -26,7 +26,6 @@
   width: 16px;
   height: 16px;
   min-height: 0;
-  accent-color: #19896d;
   margin: 4px 0 0;
 }
 .model-title h2 {
@@ -169,14 +168,6 @@
 .model-card-actions {
   display: flex;
   gap: 8px;
-}
-.model-card-actions button {
-  padding: 5px 9px;
-  font-size: 11px;
-}
-.model-card-actions .model-delete {
-  color: #a54e39;
-  border-color: #e7c6bd;
 }
 .vision-probe {
   margin-bottom: 20px;

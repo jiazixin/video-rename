@@ -261,7 +261,11 @@
             ></div
           ><div class="processing-fields"
             ><label class="processing-check"
-              ><input v-model="form.retry_enabled" type="checkbox" />开启失败自动重试</label
+              ><input
+                v-model="form.retry_enabled"
+                type="checkbox"
+                role="switch"
+              />开启失败自动重试</label
             ><fieldset :disabled="!form.retry_enabled" class="processing-fields"
               ><div class="retry-config-row">
                 <div class="retry-field"
@@ -417,7 +421,11 @@
             ><fieldset class="processing-options"
               ><legend>闲置缓存清理</legend
               ><label class="processing-check"
-                ><input v-model="idleEnabled" type="checkbox" />按闲置时间自动清理</label
+                ><input
+                  v-model="idleEnabled"
+                  type="checkbox"
+                  role="switch"
+                />按闲置时间自动清理</label
               ><div v-if="idleEnabled" class="cache-duration"
                 ><label
                   >连续未使用时长<input
@@ -600,13 +608,6 @@
     align-items: center;
     gap: 10px;
     font-weight: 400;
-  }
-  .processing-check input {
-    width: 16px;
-    height: 16px;
-    min-height: 16px;
-    flex-shrink: 0;
-    accent-color: #45866c;
   }
   .processing-options {
     display: flex;

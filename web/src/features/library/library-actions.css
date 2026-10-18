@@ -2,41 +2,38 @@
   --action-ink: #28649b;
   --action-bg: #edf5fc;
   --action-border: #c6dcef;
-  --action-hover: #dfedfa;
 }
 .action-name {
   --action-ink: #7251a1;
   --action-bg: #f5f0fc;
   --action-border: #ddcfee;
-  --action-hover: #ece2f8;
 }
 .action-number {
   --action-ink: #426b70;
   --action-bg: #edf6f5;
   --action-border: #c9dfdf;
-  --action-hover: #dfeeed;
 }
 .action-mark {
-  --action-ink: #287452;
-  --action-bg: #edf7f0;
-  --action-border: #cde6d6;
-  --action-hover: #dfeee4;
+  --action-ink: var(--tone-green-ink);
+  --action-bg: var(--tone-green-bg);
+  --action-border: var(--tone-green-line);
 }
 .action-unmark {
-  --action-ink: #896018;
-  --action-bg: #fff8e9;
-  --action-border: #ebdbb3;
-  --action-hover: #f9edcf;
+  --action-ink: var(--tone-amber-ink);
+  --action-bg: var(--tone-amber-bg);
+  --action-border: var(--tone-amber-line);
 }
 button.library-action {
   color: var(--action-ink);
   background: var(--action-bg);
   border-color: var(--action-border);
 }
+/* Same hover as the shared tinted buttons: the tint deepens, colors stay put. */
 button.library-action:hover:not(:disabled) {
   color: var(--action-ink);
-  background: var(--action-hover);
-  border-color: var(--action-ink);
+  background: var(--action-bg);
+  border-color: var(--action-border);
+  filter: saturate(1.35) brightness(0.97);
 }
 button.library-action:focus-visible {
   outline: 2px solid var(--action-ink);

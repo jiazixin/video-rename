@@ -401,7 +401,6 @@
     width: 15px;
     height: 15px;
     margin: 2px 0 0;
-    accent-color: #327651;
     flex-shrink: 0;
   }
   .method-option > span {
@@ -446,40 +445,6 @@
   }
   .numbering-toggle > span {
     min-width: 0;
-  }
-  .numbering-toggle input {
-    flex-shrink: 0;
-    appearance: none;
-    position: relative;
-    width: 34px;
-    height: 20px;
-    min-width: 34px;
-    border: 1px solid #a8b3ad;
-    border-radius: 20px;
-    background: #b6c0ba;
-    cursor: pointer;
-    padding: 0;
-    margin: 0;
-    transition: background var(--motion-hover) linear;
-  }
-  .numbering-toggle input::after {
-    content: '';
-    position: absolute;
-    width: 14px;
-    height: 14px;
-    left: 2px;
-    top: 2px;
-    background: white;
-    border-radius: 50%;
-    box-shadow: 0 1px 2px #0002;
-    transition: transform var(--motion-hover) linear;
-  }
-  .numbering-toggle input:checked {
-    background: #337b56;
-    border-color: #337b56;
-  }
-  .numbering-toggle input:checked::after {
-    transform: translateX(14px);
   }
   .numbering-settings :focus-visible {
     outline: 2px solid #337b56;

@@ -57,6 +57,7 @@
             ><input
               v-model="form.enabled"
               type="checkbox"
+              role="switch"
               aria-label="开启定时扫描"
             />开启定时扫描</label
           >

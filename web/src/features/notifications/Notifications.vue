@@ -245,6 +245,7 @@
           ><label class="check-label"
             ><input
               type="checkbox"
+              role="switch"
               v-model="c.enabled"
               :aria-label="`启用${names[c.kind]}`"
             />启用</label
@@ -280,10 +281,14 @@
                 :placeholder="c.has_secret ? '已保存，留空保持不变' : 'SEC…'"
                 autocomplete="new-password" /></label
             ><label v-if="c.has_secret" class="check-label"
-              ><input type="checkbox" v-model="c.clear_secret" />清除已保存的加签密钥</label
+              ><input
+                type="checkbox"
+                role="switch"
+                v-model="c.clear_secret"
+              />清除已保存的加签密钥</label
             ></template
           ><label class="check-label"
-            ><input type="checkbox" v-model="c.failure_only" />仅失败时通知</label
+            ><input type="checkbox" role="switch" v-model="c.failure_only" />仅失败时通知</label
           ><small class="help">包含部分失败、失败与服务中断；关闭此选项也通知完成和取消。</small
           ><div v-if="errors[c.kind]" class="notice error" role="alert">{{ errors[c.kind] }}</div
           ><footer

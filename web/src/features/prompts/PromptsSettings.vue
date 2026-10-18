@@ -350,7 +350,7 @@
                   ><PenLine :size="15" />编辑</button
                 ><button
                   :aria-label="`删除提示词 ${p.title}`"
-                  class="model-delete"
+                  class="danger-button"
                   @click="
                     deleteTarget = p;
                     deleteError = '';

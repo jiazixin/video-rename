@@ -462,7 +462,7 @@
                 selected?.has_api_key ? '已保存，留空保持原密钥' : '本地无鉴权服务可留空'
               " /></label
           ><label v-if="selected?.has_api_key" class="check-label"
-            ><input type="checkbox" v-model="clearKey" />清除已保存密钥</label
+            ><input type="checkbox" role="switch" v-model="clearKey" />清除已保存密钥</label
           >
           <div class="model-detect"
             ><label
@@ -623,8 +623,11 @@
                 required /></label
           ></div>
           <label class="check-label"
-            ><input v-model="form.omit_temperature" type="checkbox" />使用模型默认温度（不发送
-            temperature）</label
+            ><input
+              v-model="form.omit_temperature"
+              type="checkbox"
+              role="switch"
+            />使用模型默认温度（不发送 temperature）</label
           >
           <p class="help"
             >跟随默认不发送思考参数。开启思考时不发送温度，思考仍计入输出额度。部分型号无法关闭思考；自定义服务必须确认参数支持。</p

@@ -1509,7 +1509,7 @@
                 : '后台将抽取视频画面，由指定模型生成名称并自动修改。'
             }}</p
             ><label v-if="selected?.kind === 'directory'" class="check-label"
-              ><input type="checkbox" v-model="recursive" />包含子目录</label
+              ><input type="checkbox" role="switch" v-model="recursive" />包含子目录</label
             ><p class="help">{{
               mode === 'extract'
                 ? '覆盖目录内全部分页的视频，包括已处理视频；已有有效截图直接复用。进度见“批次记录”，结果见“抽帧记录”。'
@@ -1569,7 +1569,7 @@
               个条目，创建一个批次。</p
             ><ModelPicker v-if="batch === 'auto'" v-model="modelConfigID" /><label
               class="check-label"
-              ><input type="checkbox" v-model="recursive" />包含子目录</label
+              ><input type="checkbox" role="switch" v-model="recursive" />包含子目录</label
             ><p class="help">{{
               batch === 'extract'
                 ? '预先生成截图供后续重命名使用，已有有效截图直接复用。结果见“抽帧记录”。'
@@ -1739,17 +1739,20 @@
     line-height: 1.6;
     overflow-wrap: anywhere;
   }
+  /* Amber member of the shared tinted button family, matching the notice it sits in. */
   .directory-update-content button {
-    border-color: #dcc28a;
-    background: #fffdf6;
-    color: #73551b;
+    border-color: var(--tone-amber-line);
+    background: var(--tone-amber-bg);
+    color: var(--tone-amber-ink);
+    font-weight: 600;
   }
   .directory-update-content button:hover:not(:disabled) {
-    border-color: #c6a45b;
-    background: #f7edcf;
+    border-color: var(--tone-amber-line);
+    background: var(--tone-amber-bg);
+    filter: saturate(1.35) brightness(0.97);
   }
   .directory-update-content button:focus-visible {
-    outline-color: #c6a45b;
+    outline-color: var(--tone-amber-ink);
   }
   .library-fixed-controls {
     position: sticky;
