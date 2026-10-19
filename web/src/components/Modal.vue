@@ -22,7 +22,12 @@
   import { onMounted, onUnmounted, ref } from 'vue';
   import { X } from '@lucide/vue';
   defineOptions({ inheritAttrs: false });
-  defineProps<{ title: string; wide?: boolean; theater?: boolean; contained?: boolean }>();
+  const props = defineProps<{
+    title: string;
+    wide?: boolean;
+    theater?: boolean;
+    contained?: boolean;
+  }>();
   const emit = defineEmits<{ close: [] }>();
   const panel = ref<HTMLElement>();
   const previous = document.activeElement as HTMLElement | null;
@@ -51,7 +56,10 @@
   }
   onMounted(() => {
     lockScroll();
-    panel.value?.querySelector<HTMLElement>('input,button')?.focus();
+    // Media viewers take focus on the panel itself: landing on the first tool button would
+    // light its focus ring at the first key press and let Space trigger it.
+    if (props.theater) panel.value?.focus();
+    else panel.value?.querySelector<HTMLElement>('input,button')?.focus();
     document.addEventListener('keydown', keys);
   });
   onUnmounted(() => {
@@ -69,6 +77,7 @@
       role="dialog"
       aria-modal="true"
       :aria-label="title"
+      :tabindex="theater ? -1 : undefined"
       class="modal"
       :class="{ wide, 'theater-modal': theater, 'contained-modal': contained }"
       ><header
@@ -89,11 +98,11 @@
   .modal-content {
     overflow-wrap: anywhere;
   }
-  /* Theater: media viewers take the whole screen on a dark stage. A thin margin of backdrop
-     stays around the panel so clicking outside still closes it. */
+  /* Theater: media viewers sit in a large dark frame. A clear margin of dimmed page stays
+     around it so clicking outside closes the viewer. */
   .modal-backdrop.theater {
-    padding: 10px;
-    background: rgba(6, 9, 8, 0.92);
+    padding: clamp(16px, 5vh, 56px) clamp(16px, 6vw, 96px);
+    background: rgba(6, 9, 8, 0.78);
     backdrop-filter: blur(6px);
   }
   .modal.theater-modal {
@@ -104,15 +113,17 @@
     --stage-line: rgba(238, 245, 241, 0.14);
     --stage-hover: rgba(255, 255, 255, 0.12);
     --stage-accent: #6fcf9f;
-    width: 100%;
+    width: min(100%, 1440px);
     max-width: none;
     height: 100%;
-    max-height: none;
-    background: transparent;
-    border: 0;
-    border-radius: 0;
-    box-shadow: none;
+    max-height: 960px;
+    padding: 12px;
+    background: var(--stage);
+    border: 1px solid var(--stage-line);
+    border-radius: 14px;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
     color: var(--stage-ink);
+    outline: none;
   }
   .theater-modal > header {
     gap: 12px;
@@ -169,6 +180,12 @@
     border: 0;
   }
   @media (max-width: 600px) {
+    .modal-backdrop.theater {
+      padding: 12px;
+    }
+    .modal.theater-modal {
+      padding: 8px;
+    }
     .contained-modal > .modal-content {
       padding: 12px 16px;
     }

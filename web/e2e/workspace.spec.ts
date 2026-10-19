@@ -391,6 +391,11 @@ test('llama.cpp 预算保存与参数双列布局',async({page})=>{
 test('图片按钮和方向键循环仅遍历图片',async({page})=>{
  await login(page);await page.getByRole('combobox',{name:'类型筛选'}).click();await page.getByRole('option',{name:'图片',exact:true}).click()
  await page.getByRole('button',{name:'查看图片 photo.png',exact:true}).click()
+ // 查看器聚焦自身而非首个工具按钮，按键不会点亮按钮焦点环；四周留出可点击关闭的边距。
+ const viewer=page.getByRole('dialog');await expect(viewer).toBeFocused()
+ const frame=(await viewer.boundingBox())!;expect(frame.x).toBeGreaterThanOrEqual(40);expect(frame.y).toBeGreaterThanOrEqual(40)
+ for(const [key,name]of [['ArrowLeft','photo5.png'],['ArrowRight','photo.png']]){await page.keyboard.press(key);await expect(viewer).toHaveAttribute('aria-label',name)}
+ await expect(viewer).toBeFocused()
  for(const name of ['photo2.png','photo3.png','photo4.png','photo5.png','photo.png']){await page.getByRole('button',{name:'下一张图片',exact:true}).click();await expect(page.getByRole('dialog')).toHaveAttribute('aria-label',name)}
  await page.getByRole('button',{name:'上一张图片',exact:true}).click();await expect(page.getByRole('dialog')).toHaveAttribute('aria-label','photo5.png')
  for(const [key,name]of [['ArrowRight','photo.png'],['ArrowDown','photo2.png'],['ArrowLeft','photo.png'],['ArrowUp','photo5.png']]){await page.keyboard.press(key);await expect(page.getByRole('dialog')).toHaveAttribute('aria-label',name)}
