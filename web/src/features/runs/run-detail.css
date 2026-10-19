@@ -669,6 +669,9 @@
   white-space: normal;
   padding: 6px 0;
 }
+.detail-attempt-toggle:hover:not(:disabled) {
+  background: transparent;
+}
 .detail-attempt-toggle > svg {
   flex-shrink: 0;
 }

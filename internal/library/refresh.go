@@ -5,7 +5,6 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 const (
@@ -13,23 +12,9 @@ const (
 	refreshMetadataWorkers = 4
 )
 
-// RefreshMetrics records wall time; parallel metadata calls are not added together.
-// ReadDir can itself fetch metadata, so both read stages reflect filesystem work.
-// IndexDuration covers the remaining coordination, staging and publication time.
-type RefreshMetrics struct {
-	ReadDirectoryDuration time.Duration
-	MetadataDuration      time.Duration
-	IndexDuration         time.Duration
-}
-
 func (l *Library) Refresh(ctx context.Context, id int64) error {
-	_, err := l.refreshWithMetrics(ctx, id)
+	_, err := l.ScanDirectory(ctx, id)
 	return err
-}
-
-func (l *Library) refreshWithMetrics(ctx context.Context, id int64) (RefreshMetrics, error) {
-	result, err := l.ScanDirectory(ctx, id)
-	return result.Metrics, err
 }
 
 type scannedDirectoryEntry struct {

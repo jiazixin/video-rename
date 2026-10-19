@@ -543,7 +543,7 @@ func TestScanDirectoryReclaimsInterruptedCandidatesAfterRestart(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = collectScanMetadata(t.Context(), stage, "snapshot", dir, func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) }, nil)
+			err = collectScanMetadata(t.Context(), stage, "snapshot", dir, func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) })
 			dir.Close()
 			if err != nil {
 				t.Fatal(err)
@@ -721,7 +721,7 @@ func TestScanCleanupFindsCommittedPageAfterStageUpdateFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = collectScanMetadata(t.Context(), stage, "snapshot", dir, func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) }, nil)
+	err = collectScanMetadata(t.Context(), stage, "snapshot", dir, func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) })
 	dir.Close()
 	if err != nil {
 		t.Fatal(err)

@@ -24,7 +24,6 @@ var ErrDirectoryScanChanged = errors.New("目录扫描校验不一致，请稍�
 // Counts refer to indexed entries; Files counts regular files of every media type.
 // Replacing a name with another identity counts as one removal and one addition.
 type ScanDirectoryResult struct {
-	Metrics                        RefreshMetrics
 	Directories                    []int64
 	Files, Added, Changed, Removed int64
 }
@@ -157,10 +156,6 @@ func (l *Library) scanDirectoryWithMetadata(ctx context.Context, id int64, read 
 }
 
 func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *sql.DB, path string, read func(*os.File, int) ([]os.DirEntry, error), inspect func(*os.File, os.DirEntry) (scannedDirectoryEntry, error)) (result ScanDirectoryResult, err error) {
-	start := time.Now()
-	defer func() {
-		result.Metrics.IndexDuration = time.Since(start) - result.Metrics.ReadDirectoryDuration - result.Metrics.MetadataDuration
-	}()
 	release, err := l.lockDirectoryScan(ctx, id)
 	if err != nil {
 		return result, err
@@ -210,7 +205,7 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *s
 			scanErr = scanSnapshotDifference("两遍读取之间的目录属性", observed, before)
 		}
 		if scanErr == nil {
-			scanErr = collectScanMetadata(ctx, stage, table, dir, read, &result.Metrics, inspect)
+			scanErr = collectScanMetadata(ctx, stage, table, dir, read, inspect)
 		}
 		after, statErr := scanDirectorySnapshot(dir)
 		if dir != pinned {
@@ -537,7 +532,7 @@ func scanPinnedDirectoryEntry(dir *os.File, de os.DirEntry) (scannedDirectoryEnt
 	return scannedDirectoryEntry{name, kind, Identity(snap), stamp(snap), snap.Size}, nil
 }
 
-func collectScanMetadata(ctx context.Context, stage *sql.DB, table string, dir *os.File, read func(*os.File, int) ([]os.DirEntry, error), metrics *RefreshMetrics, inspectors ...func(*os.File, os.DirEntry) (scannedDirectoryEntry, error)) error {
+func collectScanMetadata(ctx context.Context, stage *sql.DB, table string, dir *os.File, read func(*os.File, int) ([]os.DirEntry, error), inspectors ...func(*os.File, os.DirEntry) (scannedDirectoryEntry, error)) error {
 	inspect := scanPinnedDirectoryEntry
 	if len(inspectors) > 0 {
 		inspect = inspectors[0]
@@ -546,16 +541,8 @@ func collectScanMetadata(ctx context.Context, stage *sql.DB, table string, dir *
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		start := time.Now()
 		batch, readErr := read(dir, refreshPageSize)
-		if metrics != nil {
-			metrics.ReadDirectoryDuration += time.Since(start)
-		}
-		start = time.Now()
 		scanned, err := readDirectoryMetadata(ctx, batch, func(de os.DirEntry) (scannedDirectoryEntry, error) { return inspect(dir, de) })
-		if metrics != nil {
-			metrics.MetadataDuration += time.Since(start)
-		}
 		if err != nil {
 			return err
 		}

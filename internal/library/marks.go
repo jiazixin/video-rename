@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"time"
 	"video-rename/internal/discovery"
 	"video-rename/internal/domain"
 )
@@ -20,17 +19,6 @@ type MarkResult struct {
 	Failed      int           `json:"failed"`
 	Failures    []MarkFailure `json:"failures"`
 	Interrupted bool          `json:"interrupted"`
-	Metrics     MarkMetrics   `json:"-"`
-}
-
-type MarkMetrics struct {
-	RefreshDuration              time.Duration
-	RefreshReadDirectoryDuration time.Duration
-	RefreshMetadataDuration      time.Duration
-	RefreshIndexDuration         time.Duration
-	ValidationDuration           time.Duration
-	WriteDuration                time.Duration
-	CommittedBatches             int64
 }
 
 const markBatchSize = 128
@@ -72,11 +60,8 @@ func (l *Library) SetProcessedWithProgress(ctx context.Context, ids []int64, mar
 		if len(pending) == 0 {
 			return
 		}
-		files, metrics := l.setFilesProcessed(ctx, pending, marked)
+		files := l.setFilesProcessed(ctx, pending, marked)
 		pending = pending[:0]
-		result.Metrics.ValidationDuration += metrics.ValidationDuration
-		result.Metrics.WriteDuration += metrics.WriteDuration
-		result.Metrics.CommittedBatches += metrics.CommittedBatches
 		// The whole batch is durable before exposing any of its counts.
 		for _, file := range files {
 			if file.err != nil {
@@ -114,13 +99,7 @@ func (l *Library) SetProcessedWithProgress(ctx context.Context, ids []int64, mar
 		if ctx.Err() != nil {
 			return
 		}
-		start := time.Now()
-		refreshMetrics, err := l.refreshWithMetrics(ctx, e.ID)
-		result.Metrics.RefreshDuration += time.Since(start)
-		result.Metrics.RefreshReadDirectoryDuration += refreshMetrics.ReadDirectoryDuration
-		result.Metrics.RefreshMetadataDuration += refreshMetrics.MetadataDuration
-		result.Metrics.RefreshIndexDuration += refreshMetrics.IndexDuration
-		if err != nil {
+		if err := l.Refresh(ctx, e.ID); err != nil {
 			fail(e.ID, err)
 			return
 		}
@@ -187,7 +166,7 @@ type fileMarkResult struct {
 	err     error
 }
 
-func (l *Library) setFilesProcessed(ctx context.Context, ids []int64, marked bool) (files []fileMarkResult, metrics MarkMetrics) {
+func (l *Library) setFilesProcessed(ctx context.Context, ids []int64, marked bool) (files []fileMarkResult) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	files = make([]fileMarkResult, len(ids))
@@ -202,7 +181,6 @@ func (l *Library) setFilesProcessed(ctx context.Context, ids []int64, marked boo
 			}
 		}
 	}
-	start := time.Now()
 	valid := 0
 	for i := range files {
 		if ctx.Err() != nil {
@@ -213,7 +191,6 @@ func (l *Library) setFilesProcessed(ctx context.Context, ids []int64, marked boo
 			valid++
 		}
 	}
-	metrics.ValidationDuration = time.Since(start)
 	if err := ctx.Err(); err != nil {
 		batchFailed(err)
 		return
@@ -223,8 +200,6 @@ func (l *Library) setFilesProcessed(ctx context.Context, ids []int64, marked boo
 	}
 	// All filesystem and write-pool queries finish before taking the sole
 	// writer connection. Keep only SQL in this short transaction.
-	start = time.Now()
-	defer func() { metrics.WriteDuration = time.Since(start) }()
 	tx, err := l.DB.BeginTx(ctx, nil)
 	if err != nil {
 		batchFailed(err)
@@ -271,7 +246,6 @@ func (l *Library) setFilesProcessed(ctx context.Context, ids []int64, marked boo
 		batchFailed(err)
 		return
 	}
-	metrics.CommittedBatches = 1
 	return
 }
 

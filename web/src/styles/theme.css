@@ -949,9 +949,16 @@ tbody tr:hover {
   border-radius: 6px;
   align-items: center;
 }
+.extension-input:focus-within {
+  outline: 3px solid #a8d9cb;
+  outline-offset: 3px;
+}
 .extension-input input {
   border: 0;
   flex: 1;
+}
+.extension-input input:focus-visible {
+  outline: 0;
 }
 .extension-input > span {
   padding-right: 12px;
