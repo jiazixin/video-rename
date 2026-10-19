@@ -108,7 +108,7 @@ Go 最低版本为 **1.27.2**。这是 1.27 系列的补丁升级，包含工具
 
 构建版本按以下优先级确定：有效的 `-ldflags '-X main.version=…'` 显式注入 > Go 构建信息中的主模块版本 > 12 位提交号 > `dev`。覆盖值和模块版本先去除首尾空白，空值、`dev`、`(devel)` 不覆盖可用信息。版本输出与启动日志保留可取得的提交号和 `modified` 标记；缺少 VCS 信息不代表已核验干净状态。运行时不调用 Git，`--version` 不读取配置、不打开业务数据库或启动服务。
 
-普通 Git 构建直接使用 Go 自 [1.24](https://go.dev/doc/go1.24#go-command) 起写入的主模块版本，不通过额外脚本解析 tag。新发布 tag 使用 `v主.次.修订`，例如 `v1.2.0`，预发布使用 `v1.2.0-rc.1`；现有 `1.0`、`1.1` 不重命名、删除或重打，也不作为 Go 模块版本。精确有效 tag 显示对应版本，其余提交保留 Go 的伪版本，未提交修改保留 `+dirty`。模块路径的主版本与子目录前缀须满足 [Go 模块版本规则](https://go.dev/ref/mod#vcs-version)。
+普通 Git 构建直接使用 Go 自 [1.24](https://go.dev/doc/go1.24#go-command) 起写入的主模块版本，不通过额外脚本解析 tag。新发布 tag 使用 `v主.次.修订`，例如 `v1.2.0`，预发布使用 `v1.2.0-rc.1`；不带 `v` 前缀的 tag（如 `1.1`）不是 Go 模块版本，构建会忽略。精确有效 tag 显示对应版本，其余提交保留 Go 的伪版本，未提交修改保留 `+dirty`。模块路径的主版本与子目录前缀须满足 [Go 模块版本规则](https://go.dev/ref/mod#vcs-version)。
 
 在带 Git 元数据的检出中，先完成上述 Web 构建，再以包路径编译；`-buildvcs=true` 要求 Go 在无法取得所需 VCS 信息时报告错误：
 
@@ -136,4 +136,20 @@ go test -tags=integration -run '^TestBuildVersion$' -count=1 -v ./cmd/video-rena
 
 Web 私有包不独立发布。数据库结构号、缓存命名空间与编号快照版本有独立存储语义，不随应用版本变化。`web/public/favicon.ico` 是由 `web/public/logo.png` 生成并提交的静态资源（16–256px 多尺寸，圆角比例与工作台品牌标记一致）；更换 logo 时需同步重新生成。
 
-仓库目前没有 CI 平台配置；CI 可依次执行上述原生命令。最新实测及未覆盖环境见 [验收记录](ACCEPTANCE.md)，历史方案和旧测量在 `archive/`。
+## CI 与发布
+
+CI 使用 GitHub Actions，配置只在 `.github/workflows/` 维护，步骤与上文原生命令一致，Action 均按提交固定并在注释中标明已核对的 tag：
+
+- `ci.yml`：推送 `main` 和 Pull Request 时运行。`web` 检查 Prettier 格式并执行含严格类型检查的构建；`go` 先构建 Web，再执行 `go mod verify`、gofmt、Linux 与 darwin/arm64 交叉 `go vet`、`go test -race`，以及安装 FFmpeg 后的 `-tags=integration` 媒体与构建版本测试；`e2e` 构建 `bin/video-rename` 后在 Chromium 中运行完整 Playwright，失败时上传 `web/test-results/`；`release-snapshot` 执行 `goreleaser check` 和快照构建。macOS 只做交叉 vet 与交叉编译，未在 CI 中实机运行。
+- `release.yml`：推送 `v主.次.修订` 或 `v主.次.修订-预发布` tag 时运行，不使用依赖或构建缓存。先构建一次并核对 `--version` 精确等于 `video-rename <tag> (revision=<12位提交号>)`，再由 GoReleaser 构建并上传 Release。
+
+[.goreleaser.yaml](../.goreleaser.yaml) 先执行 `npm --prefix web ci --ignore-scripts` 与构建，再以 `CGO_ENABLED=0 -trimpath` 构建 linux amd64/arm64/ppc64le/s390x/riscv64/loong64 与 darwin amd64/arm64；32 位目标无法编译。不注入 `-X main.version`，版本由 Go 从检出的 tag 写入。输出在被忽略的 `bin/release/`，避免根 `dist/` 让工作区变脏。归档附带 LICENSE、中英文 README、配置示例及配置、运行、模型三份文档，并生成 SHA-256 `checksums.txt`。本地预演：
+
+```bash
+go run github.com/goreleaser/goreleaser/v2@v2.18.3 check
+go run github.com/goreleaser/goreleaser/v2@v2.18.3 release --snapshot --clean
+```
+
+发布前确认 `main` 的 CI 通过，再创建并推送标准 tag（如 `git tag v1.0.0 && git push github v1.0.0`）。交叉编译产物只证明可构建，不代表目标架构实机运行。
+
+最新实测及未覆盖环境见 [验收记录](ACCEPTANCE.md)，历史方案和旧测量在 `archive/`。
