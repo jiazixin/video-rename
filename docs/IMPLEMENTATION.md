@@ -134,6 +134,6 @@ go build -ldflags "-X main.version=${release_version:?请先设置实际源码�
 go test -tags=integration -run '^TestBuildVersion$' -count=1 -v ./cmd/video-rename
 ```
 
-Web 私有包不独立发布。数据库结构号、缓存命名空间与编号快照版本有独立存储语义，不随应用版本变化。图标由 `node scripts/generate-favicon.mjs` 从 `web/public/logo.png` 生成，需要 FFmpeg。
+Web 私有包不独立发布。数据库结构号、缓存命名空间与编号快照版本有独立存储语义，不随应用版本变化。`web/public/favicon.ico` 是由 `web/public/logo.png` 生成并提交的静态资源（16–256px 多尺寸，圆角比例与工作台品牌标记一致）；更换 logo 时需同步重新生成。
 
 仓库目前没有 CI 平台配置；CI 可依次执行上述原生命令。最新实测及未覆盖环境见 [验收记录](ACCEPTANCE.md)，历史方案和旧测量在 `archive/`。
