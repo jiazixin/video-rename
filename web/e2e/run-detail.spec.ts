@@ -40,6 +40,11 @@ async function openSample(page:Page,run=sampleRun()) {
  await page.getByRole('button',{name:'批次记录',exact:true}).click()
  await page.getByRole('button',{name:'详情',exact:true}).click()
  const dialog=page.getByRole('dialog',{name:'运行 #146'})
+ // Active batches open on the files being processed; the extract timeline has no model step.
+ await expect(dialog.getByRole('button',{name:/^处理中/})).toHaveAttribute('aria-pressed','true')
+ await expect(dialog.locator('.run-live-file')).toHaveCount(1)
+ await expect(dialog.locator('.run-live-steps li')).toHaveCount(run.task==='extract'?3:5)
+ await dialog.getByRole('button',{name:/^全部文件/}).click()
  await expect(dialog.locator('.detail-record-file')).toHaveCount(3)
  return dialog
 }

@@ -38,7 +38,7 @@ video-rename combines a Go server, an embedded Vue 3 interface, and SQLite in a 
 - **AI naming**: frames are sampled from each video and sent to an image-capable model to produce a Chinese filename. Presets cover Zhipu, DeepSeek, OpenAI, Claude and Ollama, plus custom OpenAI-compatible or Anthropic Messages endpoints, with thinking parameters and an image-recognition test.
 - **Batch processing**: standalone frame extraction (frames are reused for later naming), image/audio numbering with a frozen preview and two-phase moves, and processed marks that protect existing names.
 - **Queue and schedules**: a persistent job queue with pause, retry and cancel that resumes after restart; per-directory, time-zone-aware naming or extraction schedules; background directory scans with configurable scopes and exclusions.
-- **History and analytics**: batch details grouped by directory with original/new names and every attempt; run history and failure diagnostics; model request usage, latency and failure analysis.
+- **History and analytics**: batch details grouped by directory with original/new names and every attempt, plus the live stage of files being processed; run history and failure diagnostics; model request usage, latency and failure analysis.
 - **Notifications**: DingTalk, WeCom, Bark, Telegram and generic webhooks, optionally only on failure.
 - **Data safety**: model credentials are encrypted at rest; file operations open each parent directory, reject symbolic links and verify file identity; unsupported databases are rejected and left untouched.
 
@@ -115,7 +115,7 @@ To cross-compile, keep the same Web build and set the target for `go build`: `GO
 1. Open **文件目录** (media library). Opening a directory starts indexing it; the complete listing appears after a refresh.
 2. Check your selection before renaming or numbering. Numbering includes a preview. Renaming never overwrites an existing target; eligible renames can be undone from history.
 3. For automatic naming, create a prompt under **系统设置 → Prompt配置**, then configure the endpoint, model, and API key under **模型配置**. Try a small sample to check quality and cost first.
-4. Select videos or directories and start extraction or naming. **批次记录** shows progress with pause/cancel controls, and its details can filter final failures. **运行记录** shows rename history and failure diagnostics.
+4. Select videos or directories and start extraction or naming. **批次记录** shows progress with pause/cancel controls, and its details can filter files that are processing, done, skipped, or finally failed; processing files show a stage timeline with old and new names. **运行记录** shows rename history and failure diagnostics.
 
 | Feature | Behavior |
 | --- | --- |

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"video-rename/internal/config"
 	"video-rename/internal/domain"
@@ -167,6 +168,71 @@ func TestRunDirectoryRecords(t *testing.T) {
 	if refreshed.Total != 1 || refreshed.FailedTotal != 69 || refreshed.Items[0].ID != 205 {
 		t.Fatal("live summary not updated", refreshed)
 	}
+	if _, err := a.DB.Exec(`UPDATE run_items SET status='skipped',message='已处理，跳过' WHERE id IN (1,4);
+UPDATE run_items SET status='skipped',message='文件尚不稳定，留待下次运行' WHERE id=2;
+UPDATE run_items SET status='running',started_ms=50 WHERE id=5;
+UPDATE run_items SET status='running',started_ms=10 WHERE id=7;
+UPDATE run_items SET finished_ms=100 WHERE id=8`); err != nil {
+		t.Fatal(err)
+	}
+	var counts struct {
+		DoneTotal    int `json:"done_total"`
+		RunningTotal int `json:"running_total"`
+		SkippedTotal int `json:"skipped_total"`
+		Total        int `json:"total"`
+		Items        []struct {
+			ID int64 `json:"id"`
+		} `json:"items"`
+		Recent []struct {
+			ID           int64  `json:"id"`
+			Status       string `json:"status"`
+			OriginalName string `json:"original_name"`
+			Attempts     int    `json:"attempts"`
+		} `json:"recent"`
+		SkipReasons []struct {
+			Message string `json:"message"`
+			Count   int    `json:"count"`
+		} `json:"skip_reasons"`
+	}
+	readCounts := func(query string) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", "/api/runs/1/items?"+query, nil)
+		r.SetPathValue("id", "1")
+		a.items(w, r)
+		counts.Recent, counts.SkipReasons, counts.Items = nil, nil, nil
+		if err := json.Unmarshal(w.Body.Bytes(), &counts); w.Code != 200 || err != nil {
+			t.Fatal(query, w.Code, err)
+		}
+	}
+	readCounts("status=skipped")
+	if counts.Total != 3 || counts.SkippedTotal != 3 || counts.RunningTotal != 2 || counts.DoneTotal != 131 ||
+		len(counts.SkipReasons) != 2 || counts.SkipReasons[0].Message != "已处理，跳过" || counts.SkipReasons[0].Count != 2 {
+		t.Fatalf("skipped filter: %+v", counts)
+	}
+	readCounts("status=skipped&directory=" + url.QueryEscape("杭州"))
+	if counts.Total != 2 || len(counts.SkipReasons) != 2 || counts.SkipReasons[0].Count != 1 {
+		t.Fatalf("skipped directory scope: %+v", counts)
+	}
+	readCounts("status=done&directory=" + url.QueryEscape("上海"))
+	if counts.Total != 65 || len(counts.Items) != 65 || counts.Recent != nil {
+		t.Fatalf("done filter: %+v", counts)
+	}
+	readCounts("status=running")
+	if counts.Total != 2 || len(counts.Items) != 2 || counts.Items[0].ID != 7 || counts.Items[1].ID != 5 {
+		t.Fatalf("running order: %+v", counts.Items)
+	}
+	if len(counts.Recent) != 20 || counts.Recent[0].ID != 8 || counts.Recent[1].ID != 205 || counts.Recent[0].OriginalName != "clip-008.mp4" {
+		t.Fatalf("recent finished: %+v", counts.Recent)
+	}
+	for _, item := range counts.Recent {
+		if item.ID == 3 && item.Attempts != 4 {
+			t.Fatal("recent attempt count", item)
+		}
+		if item.Status == "running" || item.Status == "queued" {
+			t.Fatal("unfinished item in recent", item)
+		}
+	}
 	if _, err := a.DB.Exec(`DELETE FROM model_attempts; DELETE FROM run_items WHERE run=1`); err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +253,10 @@ func TestRunDirectoryRecords(t *testing.T) {
 
 // Exercise the producer and HTTP reader together. Fabricated operation keys
 // previously hid a mismatch with the suffix added by Library.AutoCommit.
-func TestRunRecordsAfterAutomaticRenameAndRestore(t *testing.T) {
+// automaticRunApp prepares an isolated app with stub media tools, a local
+// model profile and one video fixture for automatic rename runs.
+func automaticRunApp(t *testing.T) (*App, string) {
+	t.Helper()
 	root := t.TempDir()
 	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
 	if err != nil {
@@ -217,6 +286,11 @@ func TestRunRecordsAfterAutomaticRenameAndRestore(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "原视频.mp4"), []byte("isolated video fixture"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	return a, root
+}
+
+func TestRunRecordsAfterAutomaticRenameAndRestore(t *testing.T) {
+	a, root := automaticRunApp(t)
 	a.Jobs.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 		return "本批次标题", nil
 	}
@@ -272,4 +346,71 @@ func TestRunRecordsAfterAutomaticRenameAndRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(true, "后续手动标题.mp4")
+}
+
+// A running item exposes its in-memory stage; once finished it moves to the
+// recent list with the committed name and the stage is dropped.
+func TestRunRecordsLiveStage(t *testing.T) {
+	a, _ := automaticRunApp(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	a.Jobs.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
+		close(entered)
+		<-release
+		return "实时标题", nil
+	}
+	run, err := a.Jobs.Create(jobs.Request{Targets: []int64{1}, Key: "live-stage"}, "manual", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		a.Jobs.Execute(t.Context(), run)
+	}()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("model request never started")
+	}
+	type page struct {
+		Items []struct {
+			ID           int64           `json:"id"`
+			OriginalName string          `json:"original_name"`
+			Stage        *jobs.LiveStage `json:"stage"`
+		} `json:"items"`
+		Recent []struct {
+			Status  string `json:"status"`
+			NewName string `json:"new_name"`
+		} `json:"recent"`
+		RunningTotal int `json:"running_total"`
+	}
+	read := func() page {
+		t.Helper()
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", fmt.Sprintf("/api/runs/%d/items?status=running", run), nil)
+		r.SetPathValue("id", fmt.Sprint(run))
+		a.items(w, r)
+		var p page
+		if err := json.Unmarshal(w.Body.Bytes(), &p); w.Code != 200 || err != nil {
+			t.Fatal(w.Code, err, w.Body.String())
+		}
+		return p
+	}
+	live := read()
+	if live.RunningTotal != 1 || len(live.Items) != 1 || len(live.Recent) != 0 {
+		t.Fatalf("running page: %+v", live)
+	}
+	item := live.Items[0]
+	if item.OriginalName != "原视频.mp4" || item.Stage == nil || item.Stage.Stage != "model" || item.Stage.Attempt != 1 || item.Stage.Fallback || item.Stage.SinceMS == 0 {
+		t.Fatalf("live stage: %+v %+v", item, item.Stage)
+	}
+	close(release)
+	<-done
+	finished := read()
+	if finished.RunningTotal != 0 || len(finished.Items) != 0 || len(finished.Recent) != 1 || finished.Recent[0].Status != "done" || finished.Recent[0].NewName != "实时标题.mp4" {
+		t.Fatalf("finished page: %+v", finished)
+	}
+	if stages := a.Jobs.Live([]int64{item.ID}); len(stages) != 0 {
+		t.Fatal("stage kept after finish", stages)
+	}
 }

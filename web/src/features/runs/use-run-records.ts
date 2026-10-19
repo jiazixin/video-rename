@@ -11,6 +11,14 @@ export interface Attempt {
   status: string
   message: string
 }
+export interface LiveStage {
+  stage: 'extracting' | 'model_wait' | 'model' | 'retry_wait' | 'committing'
+  since_ms: number
+  attempt: number
+  fallback: boolean
+  frames: number
+  title: string
+}
 export interface RunItem {
   id: number
   entry: number
@@ -25,7 +33,26 @@ export interface RunItem {
   message: string
   updated_ms?: number
   attempts: Attempt[]
+  stage?: LiveStage
 }
+export interface RecentItem {
+  id: number
+  status: string
+  message: string
+  directory: string
+  original_name: string
+  new_name: string
+  operation_status: string
+  undone: boolean
+  started_ms: number
+  finished_ms: number
+  attempts: number
+}
+export interface SkipReason {
+  message: string
+  count: number
+}
+export type RecordFilter = 'all' | 'running' | 'done' | 'skipped' | 'failed'
 export interface RunDirectory {
   path: string
   total: number
@@ -41,19 +68,30 @@ interface RecordPage {
   directories: RunDirectory[]
   total: number
   all_total: number
+  done_total: number
+  running_total: number
+  skipped_total: number
   failed_total: number
   page: number
+  recent?: RecentItem[]
+  skip_reasons?: SkipReason[]
 }
 
 export function useRunRecords(runID: () => number, enabled: () => boolean, active: () => boolean) {
-  const filter = ref<'all' | 'failed'>('all')
+  // An active batch opens on the files being processed right now.
+  const filter = ref<RecordFilter>(active() ? 'running' : 'all')
   const directory = ref('all')
   const state = reactive({
     items: [] as RunItem[],
     directories: [] as RunDirectory[],
     total: 0,
     all_total: 0,
+    done_total: 0,
+    running_total: 0,
+    skipped_total: 0,
     failed_total: 0,
+    recent: [] as RecentItem[],
+    skip_reasons: [] as SkipReason[],
     page: 1,
     busy: false,
     loaded: false,
@@ -85,7 +123,7 @@ export function useRunRecords(runID: () => number, enabled: () => boolean, activ
     controller = abort
     state.busy = true
     const query = new URLSearchParams({ page: String(requested) })
-    if (filter.value === 'failed') query.set('status', 'failed')
+    if (filter.value !== 'all') query.set('status', filter.value)
     if (directory.value !== 'all') query.set('directory', directory.value.slice(5))
     try {
       const page = await api<RecordPage>(
@@ -95,7 +133,7 @@ export function useRunRecords(runID: () => number, enabled: () => boolean, activ
         abort.signal
       )
       if (!alive || request !== sequence || id !== runID() || !enabled()) return
-      Object.assign(state, page, { loaded: true, error: '' })
+      Object.assign(state, { recent: [], skip_reasons: [] }, page, { loaded: true, error: '' })
     } catch (error) {
       if (!abort.signal.aborted && alive && request === sequence)
         state.error = (error as Error).message
@@ -111,6 +149,8 @@ export function useRunRecords(runID: () => number, enabled: () => boolean, activ
     state.items = []
     state.page = 1
     state.total = 0
+    state.recent = []
+    state.skip_reasons = []
     state.loaded = false
     state.error = ''
     if (enabled()) void refresh()
@@ -120,7 +160,10 @@ export function useRunRecords(runID: () => number, enabled: () => boolean, activ
     ([id, open], previous) => {
       cancel()
       if (previous && id !== previous[0]) {
+        filter.value = active() ? 'running' : 'all'
         state.items = []
+        state.recent = []
+        state.skip_reasons = []
         state.directories = []
         state.page = 1
         state.loaded = false

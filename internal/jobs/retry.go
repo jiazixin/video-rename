@@ -116,6 +116,12 @@ func (m *Manager) inferWithRetry(ctx context.Context, run Run, entry int64, cfg 
 			}
 			id, title = run.retry.FallbackID, run.retry.FallbackTitle
 		}
+		m.updateStage(itemID, func(s *LiveStage) {
+			s.Stage, s.Attempt, s.Fallback = "model_wait", attempt+1, fallback
+			if lease != nil {
+				s.Frames = len(lease.Set.Frames)
+			}
+		})
 		waitStarted := time.Now()
 		release, n, err := m.inferenceSlot(ctx, run, entry, id, &current, job, probe, ffmpeg, &lease)
 		if err != nil {
@@ -139,6 +145,12 @@ func (m *Manager) inferWithRetry(ctx context.Context, run Run, entry int64, cfg 
 			return "", err
 		}
 		attempt++
+		m.updateStage(itemID, func(s *LiveStage) {
+			s.Stage = "model"
+			if lease != nil {
+				s.Frames = len(lease.Set.Frames)
+			}
+		})
 		started := time.Now()
 		var exchange domain.ModelDiagnostics
 		requestCtx := domain.WithModelDiagnostics(ctx, &exchange)
@@ -151,8 +163,12 @@ func (m *Manager) inferWithRetry(ctx context.Context, run Run, entry int64, cfg 
 		release()
 		if err == nil {
 			invalid := naming.FailureTitleError(result, current.FailureKeywords)
+			var cleaned string
 			if invalid == nil {
-				_, invalid = naming.CleanTitle(result, filepath.Ext(job.Path))
+				cleaned, invalid = naming.CleanTitle(result, filepath.Ext(job.Path))
+			}
+			if invalid == nil {
+				m.updateStage(itemID, func(s *LiveStage) { s.Title = cleaned + naming.NormalizeExtension(filepath.Ext(job.Path)) })
 			}
 			if invalid != nil {
 				invalid.RawRequest, invalid.RawResponse = exchange.Request, exchange.Response
@@ -192,6 +208,7 @@ func (m *Manager) inferWithRetry(ctx context.Context, run Run, entry int64, cfg 
 			slot = total - 2
 			continue
 		}
+		m.setStage(itemID, "retry_wait")
 		delay = max(delay, time.Duration(float64(min(15*time.Second, time.Second*2*time.Duration(1<<slot)))*(0.5+0.5*rand.Float64())))
 		// Preserve Retry-After across pause/resume, without pinning screenshots.
 		until := time.Now().Add(delay)

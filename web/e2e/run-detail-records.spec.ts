@@ -63,6 +63,11 @@ test('目录统计覆盖整批，筛选分页保留排队文件与全部尝试',
   })
   const dialog = await open(page, run),
     body = dialog.locator('#run-detail-records')
+  await expect(body.getByRole('button', { name: /^处理中/ })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await body.getByRole('button', { name: /^全部文件/ }).click()
   await expect(body.locator('.detail-record-file')).toHaveCount(100)
   await expect(dialog.getByRole('button', { name: /^运行记录/ })).toContainText(
     '205 个文件 · 2 个目录'
@@ -209,7 +214,7 @@ test('批次状态轮询不打断慢请求，收起记录取消请求并停止�
   await page.clock.runFor(10000)
   expect(count).toBe(1)
   await toggle.click()
-  await expect(dialog.locator('.detail-record-file')).toHaveCount(100)
+  await expect(dialog.locator('.run-live-recent li')).toHaveCount(20)
   expect(count).toBe(2)
 })
 
@@ -268,4 +273,160 @@ test('多目录同名文件与未提交名称不会被混淆', async ({ page }) 
   await groups.nth(1).scrollIntoViewIfNeeded()
   expect(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy()
   await page.screenshot({ path: 'test-results/run-directory-names-mobile.png' })
+})
+
+test('处理中视图按用时排列阶段时间轴，并显示拟用名称、最近结束与跳过原因', async ({ page }) => {
+  const now = Date.now()
+  const run = { ...sampleRun(), discovered: 7, done: 2, skipped: 2, failed: 1 }
+  const attempt = (status: string, message = '') => ({
+    number: 1,
+    model_config_title: '测试模型',
+    model: 'vision',
+    fallback: false,
+    started: new Date(now - 90000).toISOString(),
+    duration_ms: 60000,
+    status,
+    message
+  })
+  const items = [
+    {
+      id: 1,
+      entry: 1,
+      status: 'running',
+      original_path: '综艺 / 第三季 / EP07_raw.mkv',
+      updated_ms: now - 18000,
+      stage: {
+        stage: 'committing',
+        since_ms: now - 1000,
+        attempt: 1,
+        fallback: false,
+        frames: 6,
+        title: '嘉宾雨中拆盲盒.mkv'
+      },
+      attempts: [attempt('success')]
+    },
+    {
+      id: 2,
+      entry: 2,
+      status: 'running',
+      original_path: `电影 / 2024 / ${'超长原始文件名'.repeat(12)}.mp4`,
+      updated_ms: now - 102000,
+      stage: {
+        stage: 'model',
+        since_ms: now - 12000,
+        attempt: 2,
+        fallback: false,
+        frames: 6,
+        title: ''
+      },
+      attempts: [attempt('failed', '响应超时（60s）')]
+    },
+    {
+      id: 3,
+      entry: 3,
+      status: 'done',
+      original_path: '电影 / DSC0042.mp4',
+      new_name: '海边日落延时.mp4',
+      operation_status: 'committed',
+      updated_ms: now - 5000
+    },
+    {
+      id: 4,
+      entry: 4,
+      status: 'skipped',
+      original_path: '电影 / 旧片头.mp4',
+      message: '已处理，跳过',
+      updated_ms: now - 7000
+    },
+    {
+      id: 5,
+      entry: 5,
+      status: 'skipped',
+      original_path: '综艺 / 花絮.mp4',
+      message: '已处理，跳过',
+      updated_ms: now - 8000
+    },
+    {
+      id: 6,
+      entry: 6,
+      status: 'failed',
+      original_path: '综艺 / clip_009.mov',
+      message: '未生成有效名称',
+      updated_ms: now - 9000,
+      attempts: [attempt('failed'), { ...attempt('failed'), number: 2 }]
+    },
+    {
+      id: 7,
+      entry: 7,
+      status: 'done',
+      original_path: '电影 / 已完成.mp4',
+      new_name: '新片名.mp4',
+      operation_status: 'committed',
+      updated_ms: now - 30000
+    }
+  ]
+  const statuses: string[] = []
+  await page.route('**/api/runs/960/items?*', (route) => {
+    const query = new URL(route.request().url()).searchParams
+    statuses.push(query.get('status') || 'all')
+    return route.fulfill({ json: recordPage(items, query) })
+  })
+  const dialog = await open(page, run),
+    body = dialog.locator('#run-detail-records')
+  const running = body.getByRole('button', { name: /^处理中/ })
+  await expect(running).toHaveAttribute('aria-pressed', 'true')
+  await expect(running).toContainText('2')
+  expect(statuses[0]).toBe('running')
+  const cards = body.locator('.run-live-file')
+  await expect(cards).toHaveCount(2)
+  const slow = cards.first()
+  await expect(slow).toContainText('电影 / 2024')
+  await expect(slow).toContainText('已用时 1:4')
+  await expect(slow).toContainText('等待模型生成…')
+  await expect(slow.locator('[aria-current="step"]')).toHaveText('重试第 1 次')
+  await expect(slow.locator('[data-state="done"]')).toHaveText(['开始', '抽帧 6 张'])
+  await expect(slow).toContainText('首次请求失败：响应超时（60s）')
+  const committing = cards.nth(1)
+  await expect(committing).toContainText('拟用名称')
+  await expect(committing).toContainText('嘉宾雨中拆盲盒.mkv')
+  await expect(committing.locator('[aria-current="step"]')).toHaveText('提交改名中')
+  const recent = body.locator('.run-live-recent li')
+  await expect(recent).toHaveCount(5)
+  await expect(recent.first()).toContainText('DSC0042.mp4')
+  await expect(recent.first()).toContainText('海边日落延时.mp4')
+  await expect(recent.first()).toContainText('已完成 · 用时 0:24')
+  await expect(recent.nth(1)).toContainText('已跳过 · 用时 0:24 · 已处理，跳过')
+  await expect(recent.nth(1)).toContainText('保留原名')
+  await expect(recent.nth(3)).toContainText('最终失败 · 用时 0:24 · 2 次尝试')
+  await expect(recent.nth(3)).toContainText('未生成有效名称')
+  await slow.scrollIntoViewIfNeeded()
+  await dialog.screenshot({ path: 'test-results/run-live-desktop.png', animations: 'disabled' })
+
+  await body.locator('.run-live-recent').screenshot({ path: 'test-results/run-live-recent.png' })
+  await body.getByRole('button', { name: /^已跳过/ }).click()
+  await expect(body.getByRole('list', { name: '跳过原因' })).toHaveText('已处理，跳过 2')
+  await expect(body.locator('.detail-record-file')).toHaveCount(2)
+  await expect(body).toContainText('本页 1 / 1 个跳过文件')
+  await body.getByRole('button', { name: /^已完成/ }).click()
+  await expect(body.locator('.detail-record-file')).toHaveCount(2)
+  await expect(body).toContainText('海边日落延时.mp4')
+  await expect(body.getByRole('list', { name: '跳过原因' })).toHaveCount(0)
+  await body.getByRole('combobox', { name: '记录目录筛选' }).click()
+  await page.getByRole('option', { name: '综艺（2）', exact: true }).click()
+  await expect(body.getByRole('button', { name: /^已完成/ })).toContainText('0')
+  await expect(body.getByRole('status')).toHaveText('当前范围没有已完成的文件。')
+  await body.getByRole('button', { name: /^处理中/ }).focus()
+  await page.keyboard.press('Enter')
+  await expect(cards).toHaveCount(0)
+  await expect(body.locator('.run-live-file')).toHaveCount(0)
+  await expect(body.getByRole('status')).toHaveCount(1)
+  await expect(body.locator('.run-live-recent li')).toHaveCount(2)
+  await body.getByRole('combobox', { name: '记录目录筛选' }).click()
+  await page.getByRole('option', { name: /^全部目录/ }).click()
+  await expect(body.locator('.run-live-file')).toHaveCount(2)
+  await page.setViewportSize({ width: 320, height: 844 })
+  await slow.scrollIntoViewIfNeeded()
+  expect(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy()
+  expect(await body.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy()
+  await page.screenshot({ path: 'test-results/run-live-320.png' })
 })

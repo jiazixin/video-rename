@@ -24,6 +24,8 @@ type Manager struct {
 	createMu     sync.Mutex
 	mu           sync.Mutex
 	active       map[int64]activeRun
+	liveMu       sync.Mutex
+	live         map[int64]LiveStage
 	Cache        *framecache.Cache
 	extractSlots limiter
 	modelSlots   limiter

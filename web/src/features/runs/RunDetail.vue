@@ -23,7 +23,8 @@
   import { statusNames } from '../../app/labels';
   import { type Run } from '../../app/contracts';
   import { copyText } from '../../lib/clipboard/clipboard';
-  import { useRunRecords, type RunItem } from './use-run-records';
+  import { useRunRecords, type RecordFilter, type RunItem } from './use-run-records';
+  import RunLiveRecords from './RunLiveRecords.vue';
   import './run-detail.css';
 
   const props = defineProps<{
@@ -75,8 +76,39 @@
   const selectedStats = computed(() =>
     records.directories.find((d) => `path:${d.path}` === directory.value)
   );
-  const selectedTotal = computed(() => selectedStats.value?.total ?? records.all_total);
-  const selectedFailed = computed(() => selectedStats.value?.failed ?? records.failed_total);
+  const filters = computed(() => {
+    const d = selectedStats.value;
+    return [
+      { value: 'all', label: '全部文件', count: d?.total ?? records.all_total },
+      { value: 'running', label: '处理中', count: d?.running ?? records.running_total },
+      { value: 'done', label: '已完成', count: d?.done ?? records.done_total },
+      { value: 'skipped', label: '已跳过', count: d?.skipped ?? records.skipped_total },
+      { value: 'failed', label: '最终失败', count: d?.failed ?? records.failed_total }
+    ] satisfies { value: RecordFilter; label: string; count: number }[];
+  });
+  const filterNoun: Record<RecordFilter, string> = {
+    all: '',
+    running: '处理中',
+    done: '完成',
+    skipped: '跳过',
+    failed: '失败'
+  };
+  const groupCount = (stats?: (typeof records.directories)[number]) =>
+    !stats ? 0 : filter.value === 'all' ? stats.total : stats[filter.value];
+  const captions: Record<RecordFilter, string> = {
+    all: '按提交时的目录分组，包含排队文件；失败次数在文件内展开。',
+    running: '正在处理的文件按开始时间排列，最久的在前；下方是最近结束的文件。',
+    done: '按提交时的目录分组，列出本批次已完成的文件及新文件名。',
+    skipped: '按提交时的目录分组，列出未处理的文件及跳过原因。',
+    failed: '按提交时的目录分组，只列出重试后仍失败的文件。'
+  };
+  const emptyText = computed(() => {
+    if (records.busy) return '正在读取运行记录…';
+    if (records.error) return '暂时无法读取运行记录';
+    if (filter.value === 'all')
+      return active.value ? '发现文件后会显示在这里，排队文件也会保留。' : '当前范围没有文件任务。';
+    return `当前范围没有${filters.value.find((f) => f.value === filter.value)?.label}的文件。`;
+  });
   function toggleDirectory(path: string) {
     if (closedDirectories.value.has(path)) closedDirectories.value.delete(path);
     else closedDirectories.value.add(path);
@@ -342,28 +374,45 @@
           >
             <div class="detail-record-toolbar">
               <div class="detail-record-filters" role="group" aria-label="文件状态筛选">
-                <button :aria-pressed="filter === 'all'" @click="filter = 'all'"
-                  >全部文件 <span v-if="records.loaded">{{ selectedTotal }}</span></button
-                >
-                <button :aria-pressed="filter === 'failed'" @click="filter = 'failed'"
-                  >最终失败 <span v-if="records.loaded">{{ selectedFailed }}</span></button
+                <button
+                  v-for="option in filters"
+                  :key="option.value"
+                  :aria-pressed="filter === option.value"
+                  @click="filter = option.value"
+                  >{{ option.label }} <span v-if="records.loaded">{{ option.count }}</span></button
                 >
               </div>
               <SelectField v-model="directory" :options="directoryOptions" label="记录目录筛选" />
             </div>
             <p class="detail-caption"
-              >按提交时的目录分组，包含排队文件；失败次数在文件内展开。{{
-                active ? '运行期间自动刷新。' : '批次已结束。'
-              }}</p
+              >{{ captions[filter] }}{{ active ? '运行期间自动刷新。' : '批次已结束。' }}</p
             >
+            <ul
+              v-if="filter === 'skipped' && records.skip_reasons.length"
+              class="detail-skip-reasons"
+              aria-label="跳过原因"
+            >
+              <li v-for="reason in records.skip_reasons" :key="reason.message"
+                >{{ reason.message || '未记录原因' }} <strong>{{ reason.count }}</strong></li
+              >
+            </ul>
             <div v-if="records.error" class="detail-record-error" role="alert"
               ><span
                 >运行记录读取失败：{{ records.error
                 }}{{ records.items.length ? '；保留上次读取的记录。' : '' }}</span
               ><button :disabled="records.busy" @click="refreshRecords()">重试</button></div
             >
+            <RunLiveRecords
+              v-if="filter === 'running'"
+              :items="records.items"
+              :recent="records.recent"
+              :task="run.task"
+              :active="active"
+              :loaded="records.loaded"
+              @copy="copyPath"
+            />
             <section
-              v-for="(group, groupIndex) in groups"
+              v-for="(group, groupIndex) in filter === 'running' ? [] : groups"
               :key="group.path"
               class="detail-directory"
             >
@@ -398,9 +447,8 @@
                 class="detail-directory-files"
               >
                 <p class="detail-caption"
-                  >本页 {{ group.items.length }} /
-                  {{ filter === 'failed' ? group.stats?.failed : group.stats?.total }} 个{{
-                    filter === 'failed' ? '失败' : ''
+                  >本页 {{ group.items.length }} / {{ groupCount(group.stats) }} 个{{
+                    filterNoun[filter]
                   }}文件</p
                 >
                 <article
@@ -474,17 +522,12 @@
                 </article>
               </div>
             </section>
-            <p v-if="!records.items.length" class="detail-empty" role="status">{{
-              records.busy
-                ? '正在读取运行记录…'
-                : records.error
-                  ? '暂时无法读取运行记录'
-                  : filter === 'failed'
-                    ? '当前范围没有最终失败的文件。'
-                    : active
-                      ? '发现文件后会显示在这里，排队文件也会保留。'
-                      : '当前范围没有文件任务。'
-            }}</p>
+            <p
+              v-if="!records.items.length && (filter !== 'running' || !records.loaded)"
+              class="detail-empty"
+              role="status"
+              >{{ emptyText }}</p
+            >
             <div class="pagination" aria-label="运行记录分页"
               ><span class="subtle">{{
                 records.loaded

@@ -94,6 +94,7 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.T
 	}
 	committed := false
 	extractionLogged := false
+	defer m.clearStage(it.ID)
 	finish := func(status, msg string) {
 		if err := m.finishItem(run, it.ID, status, msg); err != nil {
 			result = fmt.Errorf("保存文件处理结果失败: %w", err)
@@ -124,6 +125,9 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.T
 	}
 	if err == nil {
 		_, err = m.DB.Exec("UPDATE run_items SET status='running',started_ms=? WHERE id=?", time.Now().UnixMilli(), it.ID)
+		if err == nil {
+			m.setStage(it.ID, "extracting")
+		}
 	}
 	if err == nil {
 		err = m.Library.CheckAvailable(it.Entry)
@@ -153,6 +157,7 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.T
 					defer func() { lease.Release(committed) }()
 				}
 				if err == nil && ctx.Err() == nil {
+					m.setStage(it.ID, "committing")
 					if operation := batch.retry.RetryOperations[e.ID]; operation > 0 {
 						_, err = m.Library.RetryAutoCommit(e.ID, snap, title, fmt.Sprintf("run:%d:item:%d", run, it.ID), run, operation, exchange)
 					} else {
