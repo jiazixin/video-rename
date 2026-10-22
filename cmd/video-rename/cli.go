@@ -13,7 +13,7 @@ type cliOptions struct {
 const defaultConfigPath = "configs/config.local.yaml"
 const usageText = `video-rename — 视频命名工作台
 用法：video-rename [--config configs/config.local.yaml]
-  -f, --config  YAML 配置文件
+  -c, --config  YAML 配置文件
   -h, --help    显示帮助
       --version 显示版本
 媒体目录使用 YAML media-path；登录、手动运行与自动计划在 Web 页面操作。
@@ -38,8 +38,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 			}
 			o.Version = true
 			name = "version"
-		case name == "--config" || name == "-f" || strings.HasPrefix(name, "-f"):
-			if rest, ok := strings.CutPrefix(name, "-f"); ok && rest != "" {
+		case name == "--config" || name == "-c" || strings.HasPrefix(name, "-c"):
+			if rest, ok := strings.CutPrefix(name, "-c"); ok && rest != "" {
 				value = rest
 				has = true
 			}

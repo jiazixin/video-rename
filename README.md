@@ -129,7 +129,7 @@ go build -trimpath -o bin/video-rename ./cmd/video-rename
 
 完整字段、默认值和页面资源设置见 [配置参考](docs/configuration.md)。要点：
 
-- `-f <文件>` 与 `--config <文件>` 等价；默认读取工作目录下的 `configs/config.local.yaml`。不支持用环境变量覆盖配置项。
+- `-c <文件>` 与 `--config <文件>` 等价；默认读取工作目录下的 `configs/config.local.yaml`。不支持用环境变量覆盖配置项。
 - 配置中的相对路径以配置文件所在目录为基准。媒体目录必须已经存在；配置、数据和缓存目录必须位于媒体目录之外。
 - 媒体、配置和持久数据不能放入 `tmp-storage/video-rename-frames-v1/`，该目录由程序自动清理；危险的路径重叠会在启动前被拒绝。
 - 示例密码不能用于启动。模型、抽帧规则、提示词、通知和扫描都在 Web 页面设置。
@@ -202,7 +202,7 @@ coverage/ test-results/  忽略的覆盖率与测试输出
 | 基线规则 | 实际行为 | 原因与依据 | 适用范围 / 重新评估条件 |
 | --- | --- | --- | --- |
 | §3 根目录 README | 中文 `README.md` 为主入口，英文翻译为 `README.en.md` | 用户要求中英文 README | 两份同步维护；放弃英文版时评估 |
-| §7.1 配置入口与覆盖 | `-f` / `--config` 选择配置，默认工作目录下的 `configs/config.local.yaml`；不读取 `CONFIG_FILE`，无环境变量覆盖 | 已有 CLI 配置协议 | 本程序；仅用户要求改变时评估 |
+| §7.1 配置入口与覆盖 | `-c` / `--config` 选择配置，默认工作目录下的 `configs/config.local.yaml`；不读取 `CONFIG_FILE`，无环境变量覆盖 | 已有 CLI 配置协议 | 本程序；仅用户要求改变时评估 |
 | §11 工具必需路径 | `web/embed.go` 嵌入 `web/dist` | Go embed 与 Vite 的实际构建边界 | Web 资源；交付方式改变时评估 |
 | §4 `bin/` 只放可执行文件 | GoReleaser 输出（二进制、tar.gz、checksums、元数据）在 `bin/release/` | 默认根 `dist/` 未被忽略会让 Go 标记 dirty，且 `dist/` 保留给 Web 产物 | 发布构建；更换发布工具时评估 |
 

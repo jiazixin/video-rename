@@ -129,7 +129,7 @@ To cross-compile, keep the same Web build and set the target for `go build`: `GO
 
 See the [configuration reference](docs/configuration.md) for every field, default, and in-app resource setting. Key points:
 
-- `-f <file>` and `--config <file>` are equivalent; the default is `configs/config.local.yaml` under the working directory. Environment variables do not override configuration.
+- `-c <file>` and `--config <file>` are equivalent; the default is `configs/config.local.yaml` under the working directory. Environment variables do not override configuration.
 - Relative paths resolve against the configuration file's directory. The media directory must already exist, and configuration, storage, and cache must live outside it.
 - Keep media, configuration, and persistent data out of `tmp-storage/video-rename-frames-v1/`, which the application cleans automatically. Unsafe path overlaps are rejected before startup.
 - The example password cannot be used to start. Models, frame rules, prompts, notifications, and scans are configured in the Web interface.
@@ -204,7 +204,7 @@ The directory baseline is maintained only in [目录规范.md](目录规范.md),
 | Baseline rule | Actual behavior | Reason | Scope / re-evaluate when |
 | --- | --- | --- | --- |
 | §3 Root README | Chinese `README.md` is the primary entry; the English translation is `README.en.md` | Chinese and English READMEs were requested | Both kept in sync; re-evaluate if the English version is dropped |
-| §7.1 Config entry and overrides | `-f` / `--config` selects the file, defaulting to `configs/config.local.yaml` under the working directory; no `CONFIG_FILE`, no environment overrides | Existing CLI configuration protocol | This binary; only when the user asks to change it |
+| §7.1 Config entry and overrides | `-c` / `--config` selects the file, defaulting to `configs/config.local.yaml` under the working directory; no `CONFIG_FILE`, no environment overrides | Existing CLI configuration protocol | This binary; only when the user asks to change it |
 | §11 Tool-required paths | `web/embed.go` embeds `web/dist` | The real build boundary between Go embed and Vite | Web assets; when the delivery model changes |
 | §4 `bin/` holds executables only | GoReleaser output (binaries, tar.gz, checksums, metadata) goes to `bin/release/` | An unignored root `dist/` would mark Go builds dirty, and `dist/` is reserved for Web output | Release builds; when the release tool changes |
 
