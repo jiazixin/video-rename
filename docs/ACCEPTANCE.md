@@ -25,6 +25,12 @@
 | `npm --prefix web audit`、`govulncheck ./...` | 均未发现漏洞 |
 | staticcheck、deadcode（macOS / Linux 目标）、unparam、knip | 无死代码与未使用参数；staticcheck 剩余 6 条 ST1005 为 Anthropic、Claude、Bark、Cron 等专有名词开头的中文提示，保留 |
 
+## 补充：竞态模式下的偶发测试失败（2026-10-22）
+
+`92a6f78` 的 GitHub Actions 在 `go test -race` 中失败于 `TestDirectoryProcessingFiltersUseSubtreesBeforePaging`：游标报"目录已刷新，请返回第一页"，随后各子测试计数为 0。原因在测试夹具：它直接写入合成的目录索引，磁盘上的媒体根目录为空；`listOrdered` 遇到刷新时间超过 30 秒的目录会启动后台重扫，CI 竞态模式下该测试耗时 31.9 秒，重扫把空目录发布为新 generation。把根目录刷新时间回拨 31 秒后本机稳定复现同样报错，与产品行为无关。
+
+修正：测试把合成根目录的刷新时间写为未来时间，不再受 30 秒过期检查影响。验证：在列表断言前临时加入 31 秒等待后该测试通过（等待已移除）；`go test -race -count=1 ./internal/library` 通过。
+
 ## 验证边界
 
 未运行规模测试（`-tags=scale`、`scale_large`）。未在 Linux 实机运行二进制，交叉编译只证明可构建；Node.js 26 与 Go 1.27.3 的 GitHub Actions 结果以推送后的运行页面为准。`npm outdated` 列出的小版本更新（如 vite 8.3.5、vue 3.5.44、vue-tsc 3.3.13）本轮未升级。

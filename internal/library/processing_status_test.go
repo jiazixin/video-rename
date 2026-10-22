@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"video-rename/internal/domain"
 	"video-rename/internal/storage"
@@ -210,7 +211,12 @@ func TestDirectoryProcessingFiltersUseSubtreesBeforePaging(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec("INSERT INTO directory_state(dir,generation,refreshed) VALUES(1,1,?)", storage.Now()); err != nil {
+	// The index below is synthetic; the media root on disk is empty. Listing a
+	// directory refreshed over 30 seconds ago rescans it, and under -race this
+	// test runs longer than that, so a rescan would publish the empty disk
+	// state mid-test. Stamp the root as refreshed in the future instead.
+	refreshed := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339Nano)
+	if _, err := tx.Exec("INSERT INTO directory_state(dir,generation,refreshed) VALUES(1,1,?)", refreshed); err != nil {
 		t.Fatal(err)
 	}
 	want := map[string][]string{}
