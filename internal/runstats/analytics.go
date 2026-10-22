@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"video-rename/internal/storage"
+	"video-rename/internal/timebucket"
 )
 
 // AnalysisQuery scopes a performance report. From and To are epoch
@@ -151,7 +152,7 @@ type runRow struct {
 	profileID                 int64
 	profileTitle              string
 	model, provider, protocol string
-	source                    string
+	source                    string // manual or scheduled, see sourceKindSQL
 	task                      string
 	status, created           string
 	started, finished         string
@@ -161,6 +162,23 @@ type runRow struct {
 	done, skipped, failed     int64
 	errorText                 string
 }
+
+// itemRow is one item of a selected batch.
+type itemRow struct {
+	run                   int64
+	status, message       string
+	startedMs, finishedMs int64
+}
+
+// sourceKindSQL classifies a run as manual or scheduled. Filtering and the
+// selected column share it so the two can never disagree.
+const sourceKindSQL = `(CASE WHEN source='schedule' OR plan>0 THEN 'scheduled' ELSE 'manual' END)`
+
+// itemQueryChunk bounds the IN list of one item query.
+const itemQueryChunk = 500
+
+// maxScatterPoints caps the size/duration view to the most recent batches.
+const maxScatterPoints = 500
 
 func terminal(status string) bool {
 	switch status {
@@ -181,23 +199,21 @@ func parseMs(value string) int64 {
 	return parsed.UnixMilli()
 }
 
-func parseMeta(source string, plan int64, summary string, profileID int64, profileTitle string) (string, string, string, string) {
+// parseConfigSummary reads the model identity a run recorded at creation.
+// A malformed summary yields empty fields rather than failing the report.
+func parseConfigSummary(summary string) (model, provider, protocol string) {
 	var parsed struct {
 		Model    string `json:"model"`
 		Provider string `json:"provider"`
 		Protocol string `json:"protocol"`
 	}
-	if summary != "" && json.Unmarshal([]byte(summary), &parsed) != nil {
-		parsed.Model, parsed.Provider, parsed.Protocol = "", "", ""
+	if summary == "" || json.Unmarshal([]byte(summary), &parsed) != nil {
+		return "", "", ""
 	}
-	kind := "manual"
-	if source == "schedule" || plan > 0 {
-		kind = "scheduled"
-	}
-	return parsed.Model, parsed.Provider, parsed.Protocol, kind
+	return parsed.Model, parsed.Provider, parsed.Protocol
 }
 
-// durationLabels mirrors the fixed item-duration bands shown in the histogram.
+// durationBands mirrors the fixed item-duration bands shown in the histogram.
 var durationBands = []struct {
 	max   int64
 	label string
@@ -246,27 +262,42 @@ func average(values []int64) int64 {
 	return sum / int64(len(values))
 }
 
-// Analytics aggregates batch performance inside one read transaction so every
-// dimension of the report sees the same snapshot. Batches belong to the range
-// by their actual start (created as fallback); items are attributed to their
-// own recorded finish timestamp.
-func Analytics(ctx context.Context, db *storage.Store, q AnalysisQuery) (*Report, error) {
+// normalized fills defaults and clamps paging.
+func (q AnalysisQuery) normalized() AnalysisQuery {
 	if q.Location == nil {
 		q.Location = time.UTC
 	}
 	if q.Sort == "" {
 		q.Sort = "recent"
 	}
-	if q.Page < 1 {
-		q.Page = 1
+	q.Page = max(q.Page, 1)
+	if q.Size < 1 {
+		q.Size = 20
 	}
-	if q.Size < 1 || q.Size > 100 {
-		if q.Size < 1 {
-			q.Size = 20
-		} else {
-			q.Size = 100
-		}
+	q.Size = min(q.Size, 100)
+	return q
+}
+
+// cacheKey identifies a full report independent of the requested page.
+func (q AnalysisQuery) cacheKey() (string, error) {
+	scope := q
+	scope.Page, scope.Size, scope.Location = 0, 0, nil
+	raw, err := json.Marshal(struct {
+		Query    AnalysisQuery
+		Timezone string
+	}{scope, q.Location.String()})
+	if err != nil {
+		return "", err
 	}
+	return "runs:" + string(raw), nil
+}
+
+// Analytics aggregates batch performance inside one read transaction so every
+// dimension of the report sees the same snapshot. Batches belong to the range
+// by their actual start (created as fallback); items are attributed to their
+// own recorded finish timestamp.
+func Analytics(ctx context.Context, db *storage.Store, q AnalysisQuery) (*Report, error) {
+	q = q.normalized()
 	tx, err := db.Read().BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -276,16 +307,10 @@ func Analytics(ctx context.Context, db *storage.Store, q AnalysisQuery) (*Report
 	if err != nil {
 		return nil, err
 	}
-	cacheQuery := q
-	cacheQuery.Page, cacheQuery.Size, cacheQuery.Location = 0, 0, nil
-	keyRaw, err := json.Marshal(struct {
-		Query    AnalysisQuery
-		Timezone string
-	}{cacheQuery, q.Location.String()})
+	cacheKey, err := q.cacheKey()
 	if err != nil {
 		return nil, err
 	}
-	cacheKey := "runs:" + string(keyRaw)
 	var cached Report
 	if db.CachedReport(cacheKey, revision, &cached) {
 		if err = tx.Commit(); err != nil {
@@ -293,312 +318,29 @@ func Analytics(ctx context.Context, db *storage.Store, q AnalysisQuery) (*Report
 		}
 		return pageReport(ctx, &cached, q.Page, q.Size)
 	}
-	where := "analysis_start_ms>=? AND analysis_start_ms<?"
-	args := []any{q.From, q.To}
-	if q.ProfileSet || q.Profile > 0 {
-		where += " AND model_config_id=?"
-		args = append(args, q.Profile)
-	}
-	if q.Source != "" {
-		where += " AND (CASE WHEN source='schedule' OR plan>0 THEN 'scheduled' ELSE 'manual' END)=?"
-		args = append(args, q.Source)
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT id,task,source,plan,config_summary,model_config_id,model_config_title,status,created,started,finished,discovered,done,skipped,failed,error FROM runs WHERE `+where+` ORDER BY id`, args...)
+
+	selected, err := selectRuns(ctx, tx, q)
 	if err != nil {
 		return nil, err
 	}
-	var selected []*runRow
-	for rows.Next() {
-		var r runRow
-		var plan, profileID int64
-		var source, summary, title string
-		if err = rows.Scan(&r.id, &r.task, &source, &plan, &summary, &profileID, &title, &r.status, &r.created, &r.started, &r.finished, &r.discovered, &r.done, &r.skipped, &r.failed, &r.errorText); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		r.model, r.provider, r.protocol, r.source = parseMeta(source, plan, summary, profileID, title)
-		r.profileID, r.profileTitle = profileID, title
-		r.startMs = parseMs(r.started)
-		if r.startMs == 0 {
-			r.startMs = parseMs(r.created)
-		}
-		r.finishedMs = parseMs(r.finished)
-		if started := parseMs(r.started); started > 0 && r.finishedMs > started {
-			r.durationMs = r.finishedMs - started
-		}
-		selected = append(selected, &r)
-	}
-	if err = rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	rows.Close()
-
 	// "All history" starts at the first selected batch, mirroring the token
 	// report, so bucket granularity follows the data's real extent.
 	from := q.From
 	if from == 0 {
-		for _, r := range selected {
-			if from == 0 || r.startMs < from {
-				from = r.startMs
-			}
-		}
+		from = earliestStart(selected)
 	}
-	buckets := bucketingFor(q.To-from, q.Location)
-
+	acc := newAccumulator(selected, timebucket.For(q.To-from, q.Location))
+	for _, r := range selected {
+		acc.addRun(r)
+	}
 	// Item details for the selected batches only; large ranges stay cheap.
-	type itemRow struct {
-		run                       int64
-		status, message           string
-		startedMs, finishedMsItem int64
-	}
-	byRun := map[int64]*runRow{}
-	for _, r := range selected {
-		byRun[r.id] = r
-	}
-
-	var totals ReportTotals
-	var batchDurations []int64
-	var itemDurations []int64
-	type trendAcc struct {
-		batches, batchSum     int64
-		done, skipped, failed int64
-	}
-	trend := map[int64]*trendAcc{}
-	profileStats := map[int64]*ProfilePerf{}
-	profileDurations := map[int64][]int64{}
-	failures := map[string]*failureAcc{}
-	batchFailures := map[string]*failureAcc{}
-	avgPerRun := map[int64][2]int64{} // run id → [timed count, duration sum]
-
-	for _, r := range selected {
-		totals.Batches++
-		switch {
-		case r.status == "completed":
-			totals.Completed++
-		case r.status == "partial_failure":
-			totals.PartialFailure++
-		case r.status == "failed":
-			totals.FailedBatches++
-		case r.status == "cancelled":
-			totals.Cancelled++
-		case r.status == "interrupted":
-			totals.Interrupted++
-		case !terminal(r.status):
-			totals.Active++
-		}
-		totals.Done += r.done
-		totals.Skipped += r.skipped
-		totals.Failed += r.failed
-		if r.durationMs > 0 {
-			batchDurations = append(batchDurations, r.durationMs)
-			key := buckets.start(r.finishedMs)
-			acc := trend[key]
-			if acc == nil {
-				acc = &trendAcc{}
-				trend[key] = acc
-			}
-			acc.batches++
-			acc.batchSum += r.durationMs
-		}
-		if (r.status == "failed" || r.status == "interrupted") && r.errorText != "" {
-			key := normalizeMessage(r.errorText)
-			group := batchFailures[key]
-			if group == nil {
-				group = &failureAcc{message: key}
-				batchFailures[key] = group
-			}
-			group.count++
-			if r.finishedMs > group.lastMs {
-				group.lastMs = r.finishedMs
-			}
-		}
-		// Extraction contributes to run totals, but never to model comparisons.
-		if r.task != "rename" || r.profileID <= 0 {
-			continue
-		}
-		profile := profileStats[r.profileID]
-		if profile == nil {
-			profile = &ProfilePerf{ID: r.profileID, Title: r.profileTitle, Model: r.model, Provider: r.provider, Protocol: r.protocol}
-			profileStats[r.profileID] = profile
-		}
-		profile.Batches++
-		profile.Done += r.done
-		profile.Skipped += r.skipped
-		profile.Failed += r.failed
-	}
-
-	accumulate := func(it itemRow) {
-		r := byRun[it.run]
-		if r == nil {
-			return
-		}
-		if it.status == "done" || it.status == "failed" {
-			if it.startedMs > 0 && it.finishedMsItem > it.startedMs {
-				itemDurations = append(itemDurations, it.finishedMsItem-it.startedMs)
-				if r.task == "rename" && r.profileID > 0 {
-					profileDurations[r.profileID] = append(profileDurations[r.profileID], it.finishedMsItem-it.startedMs)
-				}
-				count, sum := avgPerRun[it.run][0], avgPerRun[it.run][1]
-				avgPerRun[it.run] = [2]int64{count + 1, sum + it.finishedMsItem - it.startedMs}
-				totals.TimedItems++
-			}
-		}
-		if it.status == "done" || it.status == "skipped" || it.status == "failed" {
-			at := it.finishedMsItem
-			if at > 0 {
-				key := buckets.start(at)
-				acc := trend[key]
-				if acc == nil {
-					acc = &trendAcc{}
-					trend[key] = acc
-				}
-				switch it.status {
-				case "done":
-					acc.done++
-				case "skipped":
-					acc.skipped++
-				case "failed":
-					acc.failed++
-				}
-			}
-		}
-		if it.status == "failed" && it.message != "" {
-			key := normalizeMessage(it.message)
-			group := failures[key]
-			if group == nil {
-				group = &failureAcc{message: key}
-				failures[key] = group
-			}
-			group.count++
-			if it.finishedMsItem > group.lastMs {
-				group.lastMs = it.finishedMsItem
-			}
-		}
-	}
-
-	ids := make([]int64, 0, len(selected))
-	for _, r := range selected {
-		ids = append(ids, r.id)
-	}
-	for start := 0; start < len(ids); start += 500 {
-		end := min(start+500, len(ids))
-		chunk := ids[start:end]
-		placeholders := strings.TrimRight(strings.Repeat("?,", len(chunk)), ",")
-		args := make([]any, len(chunk))
-		for i, id := range chunk {
-			args[i] = id
-		}
-		itemRows, err := tx.QueryContext(ctx, `SELECT run,status,message,started_ms,finished_ms FROM run_items WHERE run IN (`+placeholders+`)`, args...)
-		if err != nil {
-			return nil, err
-		}
-		for itemRows.Next() {
-			var it itemRow
-			if err = itemRows.Scan(&it.run, &it.status, &it.message, &it.startedMs, &it.finishedMsItem); err != nil {
-				itemRows.Close()
-				return nil, err
-			}
-			accumulate(it)
-		}
-		if err = itemRows.Err(); err != nil {
-			itemRows.Close()
-			return nil, err
-		}
-		itemRows.Close()
-	}
-
-	totals.AvgBatchMs = average(batchDurations)
-	totals.AvgItemMs = average(itemDurations)
-	slices.Sort(itemDurations)
-	totals.P50ItemMs = percentile(itemDurations, 0.50)
-	totals.P95ItemMs = percentile(itemDurations, 0.95)
-	hours := float64(q.To-from) / 3_600_000
-	if hours > 0 {
-		totals.ThroughputPerHour = float64(totals.Done+totals.Skipped+totals.Failed) / hours
-	}
-	for id, profile := range profileStats {
-		durations := profileDurations[id]
-		slices.Sort(durations)
-		profile.AvgItemMs = average(durations)
-		profile.P50ItemMs = percentile(durations, 0.50)
-		profile.P95ItemMs = percentile(durations, 0.95)
-		if hours > 0 {
-			profile.ThroughputPerHour = float64(profile.Done+profile.Skipped+profile.Failed) / hours
-		}
-	}
-
-	series := make([]TrendBucket, 0, len(trend))
-	end := buckets.start(q.To - 1)
-	for cursor, guard := buckets.start(from), 0; cursor <= end && guard < 2000; cursor, guard = buckets.next(cursor), guard+1 {
-		bucket := TrendBucket{From: time.UnixMilli(cursor).In(q.Location).Format(time.RFC3339), To: time.UnixMilli(buckets.next(cursor)).In(q.Location).Format(time.RFC3339)}
-		if acc := trend[cursor]; acc != nil {
-			bucket.FinishedBatches = acc.batches
-			if acc.batches > 0 {
-				bucket.AvgBatchMs = acc.batchSum / acc.batches
-			}
-			bucket.Done, bucket.Skipped, bucket.Failed = acc.done, acc.skipped, acc.failed
-		}
-		series = append(series, bucket)
-	}
-
-	distribution := make([]DistBucket, len(durationBands))
-	for i, band := range durationBands {
-		distribution[i] = DistBucket{Label: band.label}
-	}
-	for _, d := range itemDurations {
-		for i, band := range durationBands {
-			if band.max == 0 || d < band.max {
-				distribution[i].Count++
-				break
-			}
-		}
-	}
-
-	scatter := []ScatterPoint{}
-	for _, r := range selected {
-		if r.durationMs == 0 {
-			continue
-		}
-		scatter = append(scatter, ScatterPoint{Run: r.id, Task: r.task, Items: r.discovered, Ms: r.durationMs, Status: r.status, Source: r.source, ProfileTitle: r.profileTitle})
-	}
-	// Most recent batches matter most for the size/duration view; cap the payload.
-	slices.SortFunc(scatter, func(a, b ScatterPoint) int { return cmp.Compare(b.Run, a.Run) })
-	if len(scatter) > 500 {
-		scatter = scatter[:500]
-	}
-
-	report := &Report{
-		Range: ReportRange{
-			From:     time.UnixMilli(from).In(q.Location).Format(time.RFC3339),
-			To:       time.UnixMilli(q.To).In(q.Location).Format(time.RFC3339),
-			Timezone: q.Location.String(),
-			Interval: buckets.name,
-		},
-		Totals:        totals,
-		Trend:         series,
-		Distribution:  distribution,
-		Profiles:      sortedProfiles(profileStats),
-		Scatter:       scatter,
-		Failures:      sortedFailures(failures, 10),
-		BatchFailures: sortedFailures(batchFailures, 5),
-		Batches:       PagedBatches{Items: []BatchRow{}, Page: q.Page, Size: q.Size},
-	}
-	ordered := sortedRuns(selected, q.Sort)
-	report.Batches.Total = len(ordered)
-	for i := range ordered {
-		r := ordered[i]
-		var avg int64
-		if count, sum := avgPerRun[r.id][0], avgPerRun[r.id][1]; count > 0 {
-			avg = sum / count
-		}
-		report.Batches.Items = append(report.Batches.Items, BatchRow{ID: r.id, Task: r.task, Status: r.status, Source: r.source, ProfileID: r.profileID, ProfileTitle: r.profileTitle, Model: r.model, Provider: r.provider, Protocol: r.protocol, Created: r.created, Started: r.started, Finished: r.finished, Discovered: r.discovered, Done: r.done, Skipped: r.skipped, Failed: r.failed, DurationMs: r.durationMs, AvgItemMs: avg})
-	}
-	options, err := reportOptions(ctx, db, tx)
-	if err != nil {
+	if err = scanItems(ctx, tx, selected, acc.addItem); err != nil {
 		return nil, err
 	}
-	report.Options = options
+	report := acc.report(q, from)
+	if report.Options, err = reportOptions(ctx, db, tx); err != nil {
+		return nil, err
+	}
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -609,11 +351,344 @@ func Analytics(ctx context.Context, db *storage.Store, q AnalysisQuery) (*Report
 	return pageReport(ctx, report, q.Page, q.Size)
 }
 
+// selectRuns reads the batches in range that match the filters, in id order.
+func selectRuns(ctx context.Context, tx *sql.Tx, q AnalysisQuery) ([]*runRow, error) {
+	where := "analysis_start_ms>=? AND analysis_start_ms<?"
+	args := []any{q.From, q.To}
+	if q.ProfileSet || q.Profile > 0 {
+		where += " AND model_config_id=?"
+		args = append(args, q.Profile)
+	}
+	if q.Source != "" {
+		where += " AND " + sourceKindSQL + "=?"
+		args = append(args, q.Source)
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id,task,`+sourceKindSQL+`,config_summary,model_config_id,model_config_title,status,created,started,finished,discovered,done,skipped,failed,error FROM runs WHERE `+where+` ORDER BY id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var selected []*runRow
+	for rows.Next() {
+		var r runRow
+		var summary string
+		if err = rows.Scan(&r.id, &r.task, &r.source, &summary, &r.profileID, &r.profileTitle, &r.status, &r.created, &r.started, &r.finished, &r.discovered, &r.done, &r.skipped, &r.failed, &r.errorText); err != nil {
+			return nil, err
+		}
+		r.model, r.provider, r.protocol = parseConfigSummary(summary)
+		startedMs := parseMs(r.started)
+		r.startMs = startedMs
+		if r.startMs == 0 {
+			r.startMs = parseMs(r.created)
+		}
+		r.finishedMs = parseMs(r.finished)
+		if startedMs > 0 && r.finishedMs > startedMs {
+			r.durationMs = r.finishedMs - startedMs
+		}
+		selected = append(selected, &r)
+	}
+	return selected, rows.Err()
+}
+
+func earliestStart(runs []*runRow) int64 {
+	var earliest int64
+	for _, r := range runs {
+		if earliest == 0 || r.startMs < earliest {
+			earliest = r.startMs
+		}
+	}
+	return earliest
+}
+
+// scanItems streams the items of the given batches to visit.
+func scanItems(ctx context.Context, tx *sql.Tx, runs []*runRow, visit func(itemRow)) error {
+	for chunk := range slices.Chunk(runs, itemQueryChunk) {
+		placeholders := strings.TrimRight(strings.Repeat("?,", len(chunk)), ",")
+		args := make([]any, len(chunk))
+		for i, r := range chunk {
+			args[i] = r.id
+		}
+		if err := scanItemChunk(ctx, tx, `SELECT run,status,message,started_ms,finished_ms FROM run_items WHERE run IN (`+placeholders+`)`, args, visit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func scanItemChunk(ctx context.Context, tx *sql.Tx, query string, args []any, visit func(itemRow)) error {
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var it itemRow
+		if err = rows.Scan(&it.run, &it.status, &it.message, &it.startedMs, &it.finishedMs); err != nil {
+			return err
+		}
+		visit(it)
+	}
+	return rows.Err()
+}
+
+// trendAcc tallies one trend bucket.
+type trendAcc struct {
+	batches, batchSumMs   int64
+	done, skipped, failed int64
+}
+
+// itemTiming tallies the timed items of one batch.
+type itemTiming struct {
+	count, sumMs int64
+}
+
+func (t itemTiming) averageMs() int64 {
+	if t.count == 0 {
+		return 0
+	}
+	return t.sumMs / t.count
+}
+
 // failureAcc tallies one normalized failure message while scanning.
 type failureAcc struct {
 	message string
 	count   int64
 	lastMs  int64
+}
+
+type failureGroups map[string]*failureAcc
+
+func (groups failureGroups) add(message string, atMs int64) {
+	key := normalizeMessage(message)
+	group := groups[key]
+	if group == nil {
+		group = &failureAcc{message: key}
+		groups[key] = group
+	}
+	group.count++
+	group.lastMs = max(group.lastMs, atMs)
+}
+
+// accumulator folds selected batches and their items into report figures.
+type accumulator struct {
+	buckets          timebucket.Bucketing
+	runs             []*runRow
+	runByID          map[int64]*runRow
+	totals           ReportTotals
+	batchDurations   []int64
+	itemDurations    []int64
+	trend            map[int64]*trendAcc
+	profiles         map[int64]*ProfilePerf
+	profileDurations map[int64][]int64
+	itemFailures     failureGroups
+	batchFailures    failureGroups
+	timingByRun      map[int64]itemTiming
+}
+
+func newAccumulator(runs []*runRow, buckets timebucket.Bucketing) *accumulator {
+	acc := &accumulator{
+		buckets:          buckets,
+		runs:             runs,
+		runByID:          make(map[int64]*runRow, len(runs)),
+		trend:            map[int64]*trendAcc{},
+		profiles:         map[int64]*ProfilePerf{},
+		profileDurations: map[int64][]int64{},
+		itemFailures:     failureGroups{},
+		batchFailures:    failureGroups{},
+		timingByRun:      map[int64]itemTiming{},
+	}
+	for _, r := range runs {
+		acc.runByID[r.id] = r
+	}
+	return acc
+}
+
+// trendAt returns the trend bucket containing atMs.
+func (acc *accumulator) trendAt(atMs int64) *trendAcc {
+	key := acc.buckets.Start(atMs)
+	bucket := acc.trend[key]
+	if bucket == nil {
+		bucket = &trendAcc{}
+		acc.trend[key] = bucket
+	}
+	return bucket
+}
+
+// comparesModels reports whether a batch belongs in model comparisons.
+// Extraction contributes to run totals, but never to model comparisons.
+func comparesModels(r *runRow) bool {
+	return r.task == "rename" && r.profileID > 0
+}
+
+func (acc *accumulator) addRun(r *runRow) {
+	totals := &acc.totals
+	totals.Batches++
+	switch {
+	case r.status == "completed":
+		totals.Completed++
+	case r.status == "partial_failure":
+		totals.PartialFailure++
+	case r.status == "failed":
+		totals.FailedBatches++
+	case r.status == "cancelled":
+		totals.Cancelled++
+	case r.status == "interrupted":
+		totals.Interrupted++
+	case !terminal(r.status):
+		totals.Active++
+	}
+	totals.Done += r.done
+	totals.Skipped += r.skipped
+	totals.Failed += r.failed
+	if r.durationMs > 0 {
+		acc.batchDurations = append(acc.batchDurations, r.durationMs)
+		bucket := acc.trendAt(r.finishedMs)
+		bucket.batches++
+		bucket.batchSumMs += r.durationMs
+	}
+	if (r.status == "failed" || r.status == "interrupted") && r.errorText != "" {
+		acc.batchFailures.add(r.errorText, r.finishedMs)
+	}
+	if !comparesModels(r) {
+		return
+	}
+	profile := acc.profiles[r.profileID]
+	if profile == nil {
+		profile = &ProfilePerf{ID: r.profileID, Title: r.profileTitle, Model: r.model, Provider: r.provider, Protocol: r.protocol}
+		acc.profiles[r.profileID] = profile
+	}
+	profile.Batches++
+	profile.Done += r.done
+	profile.Skipped += r.skipped
+	profile.Failed += r.failed
+}
+
+func (acc *accumulator) addItem(it itemRow) {
+	r := acc.runByID[it.run]
+	if r == nil {
+		return
+	}
+	if (it.status == "done" || it.status == "failed") && it.startedMs > 0 && it.finishedMs > it.startedMs {
+		duration := it.finishedMs - it.startedMs
+		acc.itemDurations = append(acc.itemDurations, duration)
+		if comparesModels(r) {
+			acc.profileDurations[r.profileID] = append(acc.profileDurations[r.profileID], duration)
+		}
+		timing := acc.timingByRun[it.run]
+		acc.timingByRun[it.run] = itemTiming{count: timing.count + 1, sumMs: timing.sumMs + duration}
+		acc.totals.TimedItems++
+	}
+	if it.finishedMs > 0 {
+		switch it.status {
+		case "done":
+			acc.trendAt(it.finishedMs).done++
+		case "skipped":
+			acc.trendAt(it.finishedMs).skipped++
+		case "failed":
+			acc.trendAt(it.finishedMs).failed++
+		}
+	}
+	if it.status == "failed" && it.message != "" {
+		acc.itemFailures.add(it.message, it.finishedMs)
+	}
+}
+
+func (acc *accumulator) report(q AnalysisQuery, from int64) *Report {
+	totals := acc.totals
+	totals.AvgBatchMs = average(acc.batchDurations)
+	totals.AvgItemMs = average(acc.itemDurations)
+	slices.Sort(acc.itemDurations)
+	totals.P50ItemMs = percentile(acc.itemDurations, 0.50)
+	totals.P95ItemMs = percentile(acc.itemDurations, 0.95)
+	hours := float64(q.To-from) / 3_600_000
+	if hours > 0 {
+		totals.ThroughputPerHour = float64(totals.Done+totals.Skipped+totals.Failed) / hours
+	}
+	for id, profile := range acc.profiles {
+		durations := acc.profileDurations[id]
+		slices.Sort(durations)
+		profile.AvgItemMs = average(durations)
+		profile.P50ItemMs = percentile(durations, 0.50)
+		profile.P95ItemMs = percentile(durations, 0.95)
+		if hours > 0 {
+			profile.ThroughputPerHour = float64(profile.Done+profile.Skipped+profile.Failed) / hours
+		}
+	}
+	return &Report{
+		Range: ReportRange{
+			From:     time.UnixMilli(from).In(q.Location).Format(time.RFC3339),
+			To:       time.UnixMilli(q.To).In(q.Location).Format(time.RFC3339),
+			Timezone: q.Location.String(),
+			Interval: acc.buckets.Name,
+		},
+		Totals:        totals,
+		Trend:         acc.trendSeries(from, q.To),
+		Distribution:  durationDistribution(acc.itemDurations),
+		Profiles:      sortedProfiles(acc.profiles),
+		Scatter:       scatterPoints(acc.runs),
+		Failures:      sortedFailures(acc.itemFailures, 10),
+		BatchFailures: sortedFailures(acc.batchFailures, 5),
+		Batches:       acc.batchRows(q),
+	}
+}
+
+func (acc *accumulator) trendSeries(from, to int64) []TrendBucket {
+	series := make([]TrendBucket, 0, len(acc.trend))
+	for start, end := range acc.buckets.Spans(from, to) {
+		bucket := TrendBucket{From: acc.buckets.Format(start), To: acc.buckets.Format(end)}
+		if tally := acc.trend[start]; tally != nil {
+			bucket.FinishedBatches = tally.batches
+			if tally.batches > 0 {
+				bucket.AvgBatchMs = tally.batchSumMs / tally.batches
+			}
+			bucket.Done, bucket.Skipped, bucket.Failed = tally.done, tally.skipped, tally.failed
+		}
+		series = append(series, bucket)
+	}
+	return series
+}
+
+func durationDistribution(durations []int64) []DistBucket {
+	distribution := make([]DistBucket, len(durationBands))
+	for i, band := range durationBands {
+		distribution[i] = DistBucket{Label: band.label}
+	}
+	for _, d := range durations {
+		for i, band := range durationBands {
+			if band.max == 0 || d < band.max {
+				distribution[i].Count++
+				break
+			}
+		}
+	}
+	return distribution
+}
+
+// scatterPoints keeps the most recent timed batches for the size/duration view.
+func scatterPoints(runs []*runRow) []ScatterPoint {
+	scatter := []ScatterPoint{}
+	for _, r := range runs {
+		if r.durationMs == 0 {
+			continue
+		}
+		scatter = append(scatter, ScatterPoint{Run: r.id, Task: r.task, Items: r.discovered, Ms: r.durationMs, Status: r.status, Source: r.source, ProfileTitle: r.profileTitle})
+	}
+	slices.SortFunc(scatter, func(a, b ScatterPoint) int { return cmp.Compare(b.Run, a.Run) })
+	if len(scatter) > maxScatterPoints {
+		scatter = scatter[:maxScatterPoints]
+	}
+	return scatter
+}
+
+// batchRows lists every selected batch in the requested order; pageReport
+// slices out the requested page.
+func (acc *accumulator) batchRows(q AnalysisQuery) PagedBatches {
+	ordered := sortedRuns(acc.runs, q.Sort)
+	batches := PagedBatches{Items: make([]BatchRow, 0, len(ordered)), Total: len(ordered), Page: q.Page, Size: q.Size}
+	for _, r := range ordered {
+		batches.Items = append(batches.Items, BatchRow{ID: r.id, Task: r.task, Status: r.status, Source: r.source, ProfileID: r.profileID, ProfileTitle: r.profileTitle, Model: r.model, Provider: r.provider, Protocol: r.protocol, Created: r.created, Started: r.started, Finished: r.finished, Discovered: r.discovered, Done: r.done, Skipped: r.skipped, Failed: r.failed, DurationMs: r.durationMs, AvgItemMs: acc.timingByRun[r.id].averageMs()})
+	}
+	return batches
 }
 
 func sortedProfiles(profiles map[int64]*ProfilePerf) []ProfilePerf {
@@ -630,7 +705,7 @@ func sortedProfiles(profiles map[int64]*ProfilePerf) []ProfilePerf {
 	return out
 }
 
-func sortedFailures(groups map[string]*failureAcc, limit int) []FailureGroup {
+func sortedFailures(groups failureGroups, limit int) []FailureGroup {
 	out := make([]FailureGroup, 0, len(groups))
 	for group := range maps.Values(groups) {
 		out = append(out, FailureGroup{Message: group.message, Count: group.count, LastAt: time.UnixMilli(group.lastMs).UTC().Format(time.RFC3339)})
@@ -700,64 +775,6 @@ func reportOptions(ctx context.Context, db *storage.Store, tx *sql.Tx) (ReportOp
 	}
 	db.CacheReport("runs:options", revision, out)
 	return out, nil
-}
-
-// bucketing picks a trend granularity for the requested span. Calendar
-// buckets align to local midnights so day and month boundaries follow the
-// reader's timezone, including DST transitions; the mechanics mirror
-// internal/tokenusage.
-type bucketing struct {
-	name string
-	step int64 // fixed-step milliseconds; zero for calendar buckets
-	loc  *time.Location
-}
-
-func bucketingFor(span int64, loc *time.Location) bucketing {
-	const hour, day = int64(time.Hour / time.Millisecond), int64(24 * time.Hour / time.Millisecond)
-	switch {
-	case span <= 6*hour:
-		return bucketing{name: "15m", step: 15 * 60 * 1000, loc: loc}
-	case span <= 72*hour:
-		return bucketing{name: "hour", step: hour, loc: loc}
-	case span <= 120*day:
-		return bucketing{name: "day", loc: loc}
-	case span <= 10*365*day:
-		return bucketing{name: "month", loc: loc}
-	default:
-		return bucketing{name: "year", loc: loc}
-	}
-}
-
-func align(ms, size int64) int64 {
-	return ms - ms%size
-}
-
-func (b bucketing) start(ms int64) int64 {
-	t := time.UnixMilli(ms).In(b.loc)
-	switch b.name {
-	case "15m", "hour":
-		return align(ms, b.step)
-	case "day":
-		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, b.loc).UnixMilli()
-	case "month":
-		return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, b.loc).UnixMilli()
-	default:
-		return time.Date(t.Year(), time.January, 1, 0, 0, 0, 0, b.loc).UnixMilli()
-	}
-}
-
-func (b bucketing) next(ms int64) int64 {
-	t := time.UnixMilli(ms).In(b.loc)
-	switch b.name {
-	case "day":
-		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, b.loc).AddDate(0, 0, 1).UnixMilli()
-	case "month":
-		return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, b.loc).AddDate(0, 1, 0).UnixMilli()
-	case "year":
-		return time.Date(t.Year(), time.January, 1, 0, 0, 0, 0, b.loc).AddDate(1, 0, 0).UnixMilli()
-	default:
-		return ms + b.step
-	}
 }
 
 // The cached report includes the ordered batch rows; paging never re-reads items.

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"video-rename/internal/domain"
-	"video-rename/internal/rename"
 	"video-rename/internal/storage"
 )
 
@@ -162,7 +161,7 @@ func TestPreparedRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	id, _ := res.LastInsertId()
-	if er := rename.NoReplace(filepath.Join(root, "a.mp4"), filepath.Join(root, "b.mp4")); er != nil {
+	if er := os.Rename(filepath.Join(root, "a.mp4"), filepath.Join(root, "b.mp4")); er != nil {
 		t.Fatal(er)
 	}
 	l.DB.Close()
@@ -194,7 +193,7 @@ func TestKindFilterAudioAndOther(t *testing.T) {
 	}
 	refresh(t, l, 1)
 	names := func(kind string) string {
-		p, err := l.List(t.Context(), 1, 0, 100, 0, "", kind, false)
+		p, err := l.ListOrdered(t.Context(), 1, 0, 100, 0, "", kind, "", false, "name_asc")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -228,7 +227,7 @@ func TestPagedDirectoryDoesNotRecurse(t *testing.T) {
 	}
 	put(t, filepath.Join(root, "nested", "hidden.mp4"))
 	refresh(t, l, 1)
-	p, err := l.List(t.Context(), 1, 0, 100, 0, "", "", false)
+	p, err := l.ListOrdered(t.Context(), 1, 0, 100, 0, "", "", "", false, "name_asc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +241,7 @@ func TestPagedDirectoryDoesNotRecurse(t *testing.T) {
 	if count != 262 {
 		t.Fatalf("unexpected recursive index %d", count)
 	}
-	next, err := l.List(t.Context(), 1, p.Next, 100, p.Generation, "", "", false)
+	next, err := l.ListOrdered(t.Context(), 1, p.Next, 100, p.Generation, "", "", "", false, "name_asc")
 	if err != nil || len(next.Items) != 100 {
 		t.Fatalf("next %v", err)
 	}

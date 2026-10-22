@@ -3,7 +3,7 @@
   import { computed, onUnmounted, ref, watch } from 'vue';
   import { RefreshCw, RotateCcw, ChevronRight } from '@lucide/vue';
   import { api } from '../../app/api';
-  import { time } from '../../lib/date/format';
+  import { formatTime } from '../../lib/date/format';
   import { statusNames } from '../../app/labels';
   import { type UsageReport } from '../../app/contracts';
   import SelectField from '../../components/SelectField.vue';
@@ -169,7 +169,9 @@
     totals.value && totals.value.records ? totals.value.tokens / totals.value.records : 0
   );
   const rangeText = computed(() =>
-    report.value ? `${time(report.value.range.from)} 至 ${time(report.value.range.to)}` : ''
+    report.value
+      ? `${formatTime(report.value.range.from)} 至 ${formatTime(report.value.range.to)}`
+      : ''
   );
   const modelOptions = computed(() => [
     { value: '', label: '全部模型' },

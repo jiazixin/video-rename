@@ -87,85 +87,39 @@ func (m *Manager) scan(ctx context.Context, batch Run, id int64) error {
 		}
 	}
 }
+
+// unstableSkip is the skip reason of a file that changed since discovery.
+const unstableSkip = "文件尚不稳定，留待下次运行"
+
 func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.TaskConfig, extracted func()) (result error) {
 	run := batch.ID
 	if ctx.Err() != nil {
 		return
 	}
-	committed := false
-	extractionLogged := false
 	defer m.clearStage(it.ID)
 	finish := func(status, msg string) {
 		if err := m.finishItem(run, it.ID, status, msg); err != nil {
 			result = fmt.Errorf("保存文件处理结果失败: %w", err)
 		}
 	}
-	e, err := m.Library.Get(it.Entry)
-	if err == nil && e.Processed != "" && batch.Task != "extract" && batch.retry.RetryOperations[it.Entry] == 0 {
-		finish("skipped", "已处理，跳过")
-		return
-	}
-	if err == nil && batch.retry.RetryOperations[it.Entry] > 0 {
-		err = m.Library.CheckAutomaticRetry(it.Entry, batch.retry.RetryOperations[it.Entry])
-	}
-	var p string
-	if err == nil {
-		p, err = m.Library.Path(it.Entry)
-	}
-	var snap domain.Snapshot
-	if err == nil {
-		snap, err = domain.StatSnapshot(p)
-	}
-	if err == nil && (library.Identity(snap) != it.Identity || snap.Size != it.Size || snap.ModTime.UTC().Format(time.RFC3339Nano) != it.Mtime) {
-		if batch.Task == "extract" {
-			m.extractionFailure(batch, it.Entry, m.Library.DisplayPath(it.Entry), fmt.Errorf("文件尚不稳定，留待下次运行"))
+	e, p, snap, skip, err := m.checkItem(batch, it)
+	if skip != "" {
+		if skip == unstableSkip && batch.Task == "extract" {
+			m.extractionFailure(batch, it.Entry, m.Library.DisplayPath(it.Entry), errors.New(unstableSkip))
 		}
-		finish("skipped", "文件尚不稳定，留待下次运行")
+		finish("skipped", skip)
 		return
 	}
 	if err == nil {
-		_, err = m.DB.Exec("UPDATE run_items SET status='running',started_ms=? WHERE id=?", time.Now().UnixMilli(), it.ID)
-		if err == nil {
-			m.setStage(it.ID, "extracting")
-		}
+		err = m.startItem(it)
 	}
+	var committed, extractionLogged bool
 	if err == nil {
-		err = m.Library.CheckAvailable(it.Entry)
-	}
-	if err == nil {
-		probe, ffmpeg, te := m.Tools()
-		err = te
-		if te != nil {
-			m.extractionFailure(batch, it.Entry, m.Library.DisplayPath(it.Entry), te)
-			extractionLogged = true
-		}
-		if err == nil {
-			if batch.Task == "extract" {
-				var lease *framecache.Lease
-				lease, err = m.prepareFrames(ctx, batch, it.Entry, cfg, domain.VideoJob{Path: p, Snapshot: snap, JobID: fmt.Sprint(it.ID)}, probe, ffmpeg, extracted)
-				extractionLogged = true
-				extracted()
-				if lease != nil {
-					lease.Release(false)
-				}
-			} else {
-				var title string
-				var exchange domain.ModelDiagnostics
-				var lease *framecache.Lease
-				title, lease, err = m.analyze(domain.WithModelDiagnostics(ctx, &exchange), batch, it.Entry, cfg, domain.VideoJob{Path: p, Snapshot: snap, JobID: fmt.Sprint(it.ID)}, probe, ffmpeg, extracted)
-				if lease != nil {
-					defer func() { lease.Release(committed) }()
-				}
-				if err == nil && ctx.Err() == nil {
-					m.setStage(it.ID, "committing")
-					if operation := batch.retry.RetryOperations[e.ID]; operation > 0 {
-						_, err = m.Library.RetryAutoCommit(e.ID, snap, title, fmt.Sprintf("run:%d:item:%d", run, it.ID), run, operation, exchange)
-					} else {
-						_, err = m.Library.AutoCommit(e.ID, snap, title, fmt.Sprintf("run:%d:item:%d", run, it.ID), run, exchange)
-					}
-					committed = err == nil
-				}
-			}
+		var lease *framecache.Lease
+		lease, committed, extractionLogged, err = m.runItemTask(ctx, batch, it, e, p, snap, cfg, extracted)
+		if lease != nil {
+			// Released after the outcome is recorded; a committed title keeps its frames.
+			defer func() { lease.Release(committed) }()
 		}
 	}
 	if ctx.Err() != nil && !committed {
@@ -197,4 +151,70 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.T
 	}
 	finish("done", "")
 	return
+}
+
+// checkItem resolves an item's file and confirms it is unchanged since
+// discovery. A non-empty skip reason means the item is not processed.
+func (m *Manager) checkItem(batch Run, it item) (e library.Entry, path string, snap domain.Snapshot, skip string, err error) {
+	retryOperation := batch.retry.RetryOperations[it.Entry]
+	e, err = m.Library.Get(it.Entry)
+	if err == nil && e.Processed != "" && batch.Task != "extract" && retryOperation == 0 {
+		return e, "", snap, "已处理，跳过", nil
+	}
+	if err == nil && retryOperation > 0 {
+		err = m.Library.CheckAutomaticRetry(it.Entry, retryOperation)
+	}
+	if err == nil {
+		path, err = m.Library.Path(it.Entry)
+	}
+	if err == nil {
+		snap, err = domain.StatSnapshot(path)
+	}
+	if err == nil && (library.Identity(snap) != it.Identity || snap.Size != it.Size || snap.ModTime.UTC().Format(time.RFC3339Nano) != it.Mtime) {
+		return e, path, snap, unstableSkip, nil
+	}
+	return e, path, snap, "", err
+}
+
+// startItem marks the item running and confirms its file is not held by
+// another operation.
+func (m *Manager) startItem(it item) error {
+	if _, err := m.DB.Exec("UPDATE run_items SET status='running',started_ms=? WHERE id=?", time.Now().UnixMilli(), it.ID); err != nil {
+		return err
+	}
+	m.setStage(it.ID, "extracting")
+	return m.Library.CheckAvailable(it.Entry)
+}
+
+// runItemTask extracts frames, or names and commits the file. The caller
+// releases the returned lease once the outcome is recorded.
+func (m *Manager) runItemTask(ctx context.Context, batch Run, it item, e library.Entry, path string, snap domain.Snapshot, cfg *config.TaskConfig, extracted func()) (lease *framecache.Lease, committed, extractionLogged bool, err error) {
+	probe, ffmpeg, err := m.Tools()
+	if err != nil {
+		m.extractionFailure(batch, it.Entry, m.Library.DisplayPath(it.Entry), err)
+		return nil, false, true, err
+	}
+	job := domain.VideoJob{Path: path, Snapshot: snap, JobID: fmt.Sprint(it.ID)}
+	if batch.Task == "extract" {
+		lease, err = m.prepareFrames(ctx, batch, it.Entry, cfg, job, probe, ffmpeg, extracted)
+		extracted()
+		if lease != nil {
+			lease.Release(false)
+		}
+		return nil, false, true, err
+	}
+	var title string
+	var exchange domain.ModelDiagnostics
+	title, lease, err = m.analyze(domain.WithModelDiagnostics(ctx, &exchange), batch, it.Entry, cfg, job, probe, ffmpeg, extracted)
+	if err != nil || ctx.Err() != nil {
+		return lease, false, false, err
+	}
+	m.setStage(it.ID, "committing")
+	requestKey := fmt.Sprintf("run:%d:item:%d", batch.ID, it.ID)
+	if operation := batch.retry.RetryOperations[e.ID]; operation > 0 {
+		_, err = m.Library.RetryAutoCommit(e.ID, snap, title, requestKey, batch.ID, operation, exchange)
+	} else {
+		_, err = m.Library.AutoCommit(e.ID, snap, title, requestKey, batch.ID, exchange)
+	}
+	return lease, err == nil, false, err
 }

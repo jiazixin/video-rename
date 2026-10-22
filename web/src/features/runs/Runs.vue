@@ -22,10 +22,10 @@
     ChevronRight,
     Images
   } from '@lucide/vue';
-  import { api, key } from '../../app/api';
-  import { time, clockPart } from '../../lib/date/format';
+  import { api, newRequestKey } from '../../app/api';
+  import { formatTime, clockPart } from '../../lib/date/format';
   import { statusNames } from '../../app/labels';
-  import { type Plan, type Run } from '../../app/contracts';
+  import { isActiveRunStatus, type Plan, type Run } from '../../app/contracts';
   import { DirectoryPicker } from '../library';
   import { ModelPicker } from '../models';
   import StatusBadge from '../../components/StatusBadge.vue';
@@ -217,8 +217,7 @@
     return days;
   }
   const runDays = computed(() => groupDays(runs.value));
-  const active = (r: Run) =>
-    ['queued', 'scanning', 'running', 'paused', 'cancelling'].includes(r.status);
+  const active = (r: Run) => isActiveRunStatus(r.status);
   const pausable = (r: Run) => ['queued', 'scanning', 'running'].includes(r.status);
   const runStatusIcons = {
     queued: Clock3,
@@ -413,7 +412,7 @@
           model_config_id: extracting ? 0 : modelConfigID.value,
           targets: targets.value,
           recursive: recursive.value,
-          key: key()
+          key: newRequestKey()
         });
         toast.value?.show(
           `${extracting ? '抽帧' : '重命名'}批次 #${r.id} 已加入队列，可在批次记录查看进度。`
@@ -455,7 +454,7 @@
   }
   async function runPlan(p: Plan) {
     try {
-      const r = await api(`/schedules/${p.id}/run`, 'POST', { key: key() });
+      const r = await api(`/schedules/${p.id}/run`, 'POST', { key: newRequestKey() });
       toast.value?.show(`运行 #${r.id} 已加入队列`);
       await load();
     } catch (e) {
@@ -619,7 +618,8 @@
               }}</span
               ><span>{{ p.timezone }}</span></div
             ><div class="plan-next"
-              ><span>下次运行</span><strong>{{ p.enabled ? time(p.next) : '已暂停' }}</strong></div
+              ><span>下次运行</span
+              ><strong>{{ p.enabled ? formatTime(p.next) : '已暂停' }}</strong></div
             ><p v-if="p.last" class="help">上次：{{ p.last }}</p
             ><footer
               ><button :disabled="p.task !== 'extract' && !ready" @click="runPlan(p)"
@@ -725,7 +725,7 @@
             ><time
               class="run-time"
               :datetime="r.started || r.created"
-              :title="time(r.started || r.created || '')"
+              :title="formatTime(r.started || r.created || '')"
               >{{ runClock(r) }}</time
             ><span class="run-node" aria-hidden="true"><i class="run-node-dot" /></span
             ><div class="run-body">

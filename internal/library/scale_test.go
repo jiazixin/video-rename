@@ -41,7 +41,7 @@ func TestScaleDirectoryPagination(t *testing.T) {
 	var generation int64
 	for range 30 {
 		start = time.Now()
-		p, err := l.List(t.Context(), dir.ID, cursor, 100, generation, "", "", false)
+		p, err := l.ListOrdered(t.Context(), dir.ID, cursor, 100, generation, "", "", "", false, "name_asc")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -60,7 +60,7 @@ func TestScaleDirectoryPagination(t *testing.T) {
 	}
 	for _, page := range []int{1, 250, 500} {
 		start = time.Now()
-		p, err := l.ListPage(t.Context(), dir.ID, page, 100, "", "video", "name_asc")
+		p, err := l.ListPage(t.Context(), dir.ID, page, 100, "", "video", "", "name_asc")
 		elapsed := time.Since(start)
 		t.Logf("50,000-file numbered page %d: %s", page, elapsed)
 		if err != nil || p.Number != page || p.Total != 50000 || len(p.Items) != 100 || p.Items[0].Name != fmt.Sprintf("clip-%05d.mp4", (page-1)*100) {

@@ -80,10 +80,10 @@ func interruptRuns(db *storage.Store) error {
 	defer tx.Rollback()
 	now := time.Now()
 	if _, err = tx.Exec(`UPDATE run_items SET status='cancelled',message='服务重启，处理已中断',finished_ms=?
-WHERE status IN ('queued','running') AND run IN (SELECT id FROM runs WHERE status IN ('queued','scanning','running','paused','cancelling'))`, now.UnixMilli()); err != nil {
+WHERE status IN ('queued','running') AND run IN (SELECT id FROM runs WHERE status IN `+domain.ActiveRunStatusesSQL+`)`, now.UnixMilli()); err != nil {
 		return err
 	}
-	if _, err = tx.Exec("UPDATE runs SET status='interrupted',finished=?,error='服务重启，前次运行已中断' WHERE status IN ('queued','scanning','running','paused','cancelling')", now.UTC().Format(time.RFC3339Nano)); err != nil {
+	if _, err = tx.Exec("UPDATE runs SET status='interrupted',finished=?,error='服务重启，前次运行已中断' WHERE status IN "+domain.ActiveRunStatusesSQL, now.UTC().Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
 	return tx.Commit()

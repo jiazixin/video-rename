@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import { computed, onMounted, onUnmounted, ref } from 'vue';
-  export interface LineSeries {
+  interface LineSeries {
     name: string;
     color: string;
     values: number[];

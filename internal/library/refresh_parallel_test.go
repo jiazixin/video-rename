@@ -344,7 +344,7 @@ WHEN NEW.dir=1 AND NEW.name='new-02.mp4' BEGIN SELECT RAISE(ABORT,'injected dire
 		t.Fatal(err)
 	}
 	refresh(t, l, 1)
-	page, err := l.List(t.Context(), 1, 0, 50, 0, "", "", false)
+	page, err := l.ListOrdered(t.Context(), 1, 0, 50, 0, "", "", "", false, "name_asc")
 	if err != nil || len(page.Items) != 5 || page.Error != "" || page.Generation == generation {
 		t.Fatalf("retry did not publish rolled-back page: %+v %v", page, err)
 	}
@@ -424,7 +424,7 @@ func TestRefreshReplacementAllocatesEntryAndRejectsOldGeneration(t *testing.T) {
 	put(t, filepath.Join(root, "keep.mp4"))
 	refresh(t, l, 1)
 	old := entry(t, l, 1, "a.mp4")
-	page, err := l.List(t.Context(), 1, 0, 50, 0, "", "", false)
+	page, err := l.ListOrdered(t.Context(), 1, 0, 50, 0, "", "", "", false, "name_asc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +442,7 @@ func TestRefreshReplacementAllocatesEntryAndRejectsOldGeneration(t *testing.T) {
 	if err := l.DB.QueryRow("SELECT present FROM entries WHERE id=?", old.ID).Scan(&present); err != nil || present != 0 {
 		t.Fatalf("replaced entry remains present: %d %v", present, err)
 	}
-	if _, err := l.List(t.Context(), 1, 1, 50, page.Generation, "", "", false); err == nil {
+	if _, err := l.ListOrdered(t.Context(), 1, 1, 50, page.Generation, "", "", "", false, "name_asc"); err == nil {
 		t.Fatal("old generation accepted after replacement scan")
 	}
 }
@@ -488,7 +488,7 @@ WHEN OLD.dir=1 BEGIN SELECT RAISE(ABORT,'injected generation publication failure
 			if present != 1 || oldItems != 1 {
 				t.Fatalf("failed publication kept partial mutations: old present=%d old items=%d", present, oldItems)
 			}
-			page, err := l.List(t.Context(), 1, 0, 50, generation, "", "", false)
+			page, err := l.ListOrdered(t.Context(), 1, 0, 50, generation, "", "", "", false, "name_asc")
 			if err != nil || len(page.Items) != 1 || page.Items[0].Name != "old.mp4" || page.Error == "" {
 				t.Fatalf("previous complete generation is unavailable: %+v %v", page, err)
 			}
@@ -496,7 +496,7 @@ WHEN OLD.dir=1 BEGIN SELECT RAISE(ABORT,'injected generation publication failure
 				t.Fatal(err)
 			}
 			refresh(t, l, 1)
-			page, err = l.List(t.Context(), 1, 0, 50, 0, "", "", false)
+			page, err = l.ListOrdered(t.Context(), 1, 0, 50, 0, "", "", "", false, "name_asc")
 			if err != nil || page.Generation == generation || page.Error != "" || len(page.Items) != 1 || page.Items[0].Name != "new.mp4" {
 				t.Fatalf("retry did not publish complete replacement generation: %+v %v", page, err)
 			}

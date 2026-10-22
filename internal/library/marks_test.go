@@ -426,7 +426,7 @@ func TestRenameKeepsDirectoryPageAvailable(t *testing.T) {
 	put(t, filepath.Join(root, "a.mp4"))
 	put(t, filepath.Join(root, "b.mp4"))
 	refresh(t, l, 1)
-	before, err := l.List(t.Context(), 1, 0, 100, 0, "", "", false)
+	before, err := l.ListOrdered(t.Context(), 1, 0, 100, 0, "", "", "", false, "name_asc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -434,7 +434,7 @@ func TestRenameKeepsDirectoryPageAvailable(t *testing.T) {
 	if _, err = l.Rename(e.ID, e.Version, "z.mp4", "keep-index"); err != nil {
 		t.Fatal(err)
 	}
-	after, err := l.List(t.Context(), 1, 0, 100, before.Generation, "", "", false)
+	after, err := l.ListOrdered(t.Context(), 1, 0, 100, before.Generation, "", "", "", false, "name_asc")
 	if err != nil || len(after.Items) != 2 || after.Generation != before.Generation || after.Items[1].Name != "z.mp4" {
 		t.Fatalf("%+v %v", after, err)
 	}

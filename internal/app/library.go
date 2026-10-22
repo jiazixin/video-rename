@@ -12,9 +12,9 @@ func (a *App) libraryRoutes(api *http.ServeMux) {
 		var p library.Page
 		var err error
 		if q.Has("page") {
-			p, err = a.Library.ListPageFiltered(r.Context(), number(r.PathValue("id")), int(number(q.Get("page"))), int(number(q.Get("limit"))), q.Get("q"), q.Get("kind"), q.Get("status"), q.Get("sort"))
+			p, err = a.Library.ListPage(r.Context(), number(r.PathValue("id")), int(number(q.Get("page"))), int(number(q.Get("limit"))), q.Get("q"), q.Get("kind"), q.Get("status"), q.Get("sort"))
 		} else {
-			p, err = a.Library.ListOrderedFiltered(r.Context(), number(r.PathValue("id")), int(number(q.Get("offset"))), int(number(q.Get("limit"))), number(q.Get("generation")), q.Get("q"), q.Get("kind"), q.Get("status"), false, q.Get("sort"))
+			p, err = a.Library.ListOrdered(r.Context(), number(r.PathValue("id")), int(number(q.Get("offset"))), int(number(q.Get("limit"))), number(q.Get("generation")), q.Get("q"), q.Get("kind"), q.Get("status"), false, q.Get("sort"))
 		}
 		if err != nil {
 			failure(w, err)

@@ -15,20 +15,14 @@ import (
 	"video-rename/internal/domain"
 )
 
-// NoReplace 以 RENAME_NOREPLACE 语义重命名;目标已存在时不覆盖。
-func NoReplace(oldpath, newpath string) *domain.JobError {
-	return mapErrno(
-		unix.Renameat2(unix.AT_FDCWD, oldpath, unix.AT_FDCWD, newpath, unix.RENAME_NOREPLACE),
-		oldpath, newpath,
-	)
-}
-
-// NoReplaceAt renames two basenames within an already verified directory.
+// NoReplaceAt renames two basenames within an already verified directory and
+// never replaces an existing target. Callers open the directory first, so the
+// rename cannot follow a path component swapped for a symlink.
 func NoReplaceAt(dirfd int, oldname, newname string) *domain.JobError {
 	return mapErrno(unix.Renameat2(dirfd, oldname, dirfd, newname, unix.RENAME_NOREPLACE), oldname, newname)
 }
 
-func mapErrno(err error, oldpath, newpath string) *domain.JobError {
+func mapErrno(err error, oldname, newname string) *domain.JobError {
 	if err == nil {
 		return nil
 	}
@@ -49,7 +43,7 @@ func mapErrno(err error, oldpath, newpath string) *domain.JobError {
 	default:
 		return &domain.JobError{
 			Code:    domain.CodeRenameFailed,
-			Message: errno.Error() + " (" + oldpath + " → " + newpath + ")",
+			Message: errno.Error() + " (" + oldname + " → " + newname + ")",
 		}
 	}
 }

@@ -267,7 +267,7 @@ test('模型 URL 预设、检测模型、密钥保留与编辑参数',async({pag
 test('运行记录文件名分列、省略与操作颜色',async({page})=>{
  await login(page)
  const old='旧文件名'.repeat(35)+'.mp4',next='新文件名'.repeat(35)+'.mp4'
- await page.route('**/api/logs?*',route=>route.fulfill({json:['manual','automatic','restore','scan','run','schedule'].map((action,i)=>({id:100+i,category:'success',action,old_path:'测试目录/'+old,new_path:'测试目录/'+next,created:new Date().toISOString(),run:1,model:action==='automatic'?'fixture-model':'',model_config_title:action==='automatic'?'fixture profile':''}))}))
+ await page.route('**/api/logs?*',route=>route.fulfill({json:{items:['manual','automatic','restore','scan','run','schedule'].map((action,i)=>({id:100+i,category:'success',action,old_path:'测试目录/'+old,new_path:'测试目录/'+next,created:new Date().toISOString(),run:1,model:action==='automatic'?'fixture-model':'',model_config_title:action==='automatic'?'fixture profile':''})),total:6,page:1,next:0}}))
  await page.getByRole('button',{name:'运行记录',exact:true}).click();await expect(page.getByRole('columnheader',{name:'旧文件名',exact:true})).toBeVisible();await expect(page.getByRole('columnheader',{name:'新文件名',exact:true})).toBeVisible();await expect(page.getByRole('columnheader',{name:'模型配置',exact:true})).toBeVisible();await expect(page.locator('.history-table tbody tr').first().locator('.stacked-date-time span')).toHaveCount(2);await expect(page.locator('.history-table .table-model').nth(1)).toHaveText('fixture profile')
  const cell=page.locator('.history-filename').first();await expect(cell).toHaveAttribute('title',old);expect(await cell.evaluate(e=>e.scrollWidth>e.clientWidth&&getComputedStyle(e).textOverflow==='ellipsis')).toBeTruthy();await cell.hover()
  const colors=await page.locator('.action-badge').evaluateAll(elements=>elements.map(e=>getComputedStyle(e).color));expect(new Set(colors).size).toBe(6)
@@ -341,7 +341,7 @@ test('默认全部类型、视频和图片筛选与弹窗预览',async({page})=>
 
 test('失败记录诊断展开、收起与复制',async({page})=>{
  await login(page)
- await page.route('**/api/logs?*',r=>r.fulfill({json:[{id:999,category:'failure',action:'automatic',old_path:'clip.mp4',message:'MODEL_OUTPUT_TRUNCATED',created:new Date().toISOString()}]}))
+ await page.route('**/api/logs?*',r=>r.fulfill({json:{items:[{id:999,category:'failure',action:'automatic',old_path:'clip.mp4',message:'MODEL_OUTPUT_TRUNCATED',created:new Date().toISOString()}],total:1,page:1,next:0}}))
  await page.route('**/api/logs/999/diagnostics',r=>r.fulfill({json:{request:'{"model":"test","max_tokens":1024}',response:'{"finish_reason":"length","reasoning_content":"test"}'}}))
  await page.getByRole('button',{name:'运行记录',exact:true}).click();await page.getByRole('button',{name:'失败记录',exact:true}).click()
  await page.getByRole('button',{name:'原始请求',exact:true}).click();await expect(page.locator('.diagnostic-content pre')).toContainText('max_tokens')
@@ -625,7 +625,7 @@ test('运行详情显示目录文件清单与翻页、成功历史诊断',async(
  await expect(dialog.locator('.detail-record-file')).toHaveCount(1)
  await page.screenshot({path:'test-results/run-detail-files.png',fullPage:true})
  await dialog.locator(':scope > header').getByRole('button',{name:'关闭',exact:true}).click()
- await page.route('**/api/logs?*',r=>r.fulfill({json:[{id:9902,category:'success',action:'automatic',run:9901,created:'2026-09-21T01:00:00Z',old_path:'目录/a.mp4',new_path:'目录/新标题.mp4'}]}))
+ await page.route('**/api/logs?*',r=>r.fulfill({json:{items:[{id:9902,category:'success',action:'automatic',run:9901,created:'2026-09-21T01:00:00Z',old_path:'目录/a.mp4',new_path:'目录/新标题.mp4'}],total:1,page:1,next:0}}))
  await page.route('**/api/logs/9902/diagnostics',r=>r.fulfill({json:{request:'{"messages":["脱敏请求"]}',response:'{"choices":["新标题"],"usage":{"total_tokens":123}}'}}))
  await page.getByRole('button',{name:'运行记录',exact:true}).click()
  await page.getByRole('button',{name:'原始请求',exact:true}).click()
@@ -696,7 +696,8 @@ test('历史批次自绘筛选和失败批次列',async({page})=>{
   const params=new URL(route.request().url()).searchParams
   const category=params.get('category')
   const all=[208,7].map(run=>({id:run,category,action:'automatic',run,old_path:`目录/片段${run}.mp4`,new_path:category==='success'?`目录/新名称${run}.mp4`:'',message:category==='failure'?'命名失败':'',created:'2026-09-21T08:00:00Z'}))
-  return route.fulfill({json:all.filter(row=>!params.get('run')||String(row.run)===params.get('run'))})
+  const items=all.filter(row=>!params.get('run')||String(row.run)===params.get('run'))
+  return route.fulfill({json:{items,total:items.length,page:1,next:0}})
  })
  await page.getByRole('button',{name:'运行记录',exact:true}).click()
  const batch=page.getByRole('combobox',{name:'批次',exact:true})
@@ -729,7 +730,7 @@ test('历史统计分页和多选重试成功后刷新移除',async({page})=>{
   const category=q.get('category'),limit=Number(q.get('limit')),pageNumber=Number(q.get('page'))||1
   const all=Array.from({length:105},(_,i)=>({id:105-i,entry:105-i,category,action:'automatic',run:7,old_path:`目录/片段${105-i}.mp4`,created:'2026-09-21T08:00:00Z'})).filter(row=>!completed||category!=='failure'||row.id<104)
   const rest=all.slice((pageNumber-1)*limit),items=rest.slice(0,limit)
-  return r.fulfill({json:{items,total:all.length,next:rest.length>limit?items.at(-1)!.id:0}})
+  return r.fulfill({json:{items,total:all.length,page:pageNumber,next:rest.length>limit?items.at(-1)!.id:0}})
  })
  await page.route('**/api/logs/retry',async r=>{
   expect(r.request().postDataJSON().ids).toEqual([105,104])
@@ -763,7 +764,7 @@ test('通知同步浏览器时区和请求上下文统计',async({page})=>{
  const request=await synced
  expect(request.postDataJSON().timezone).toBe(await page.evaluate(()=>Intl.DateTimeFormat().resolvedOptions().timeZone))
  expect((await request.response())!.ok()).toBeTruthy()
- await page.route('**/api/logs?*',r=>r.fulfill({json:{items:[{id:999,category:'failure',action:'automatic',old_path:'clip.mp4',message:'Context size has been exceeded.',created:new Date().toISOString()}],total:1,next:0}}))
+ await page.route('**/api/logs?*',r=>r.fulfill({json:{items:[{id:999,category:'failure',action:'automatic',old_path:'clip.mp4',message:'Context size has been exceeded.',created:new Date().toISOString()}],total:1,page:1,next:0}}))
  await page.route('**/api/logs/999/diagnostics',r=>r.fulfill({json:{request:JSON.stringify({_local_context:{text_tokens_estimate:1200,images:8,request_bytes:1048576,max_output_tokens:4096},messages:[]}),response:JSON.stringify({usage:{prompt_tokens:15200}})}}))
  await page.getByRole('button',{name:'运行记录',exact:true}).click()
  await page.getByRole('button',{name:'失败记录',exact:true}).click()

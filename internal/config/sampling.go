@@ -111,43 +111,43 @@ func (s *FrameSettings) Validate() error {
 	return nil
 }
 
-func (c *FrameSettings) validateSampling() []string {
+func (s *FrameSettings) validateSampling() []string {
 	var errs []string
 	// sampling
-	switch c.Sampling.Strategy {
+	switch s.Sampling.Strategy {
 	case string(StrategyHybrid), string(StrategySize), string(StrategyDuration):
-		c.Sampling.ParsedStrategy = Strategy(c.Sampling.Strategy)
+		s.Sampling.ParsedStrategy = Strategy(s.Sampling.Strategy)
 	default:
-		errs = append(errs, fmt.Sprintf("sampling.strategy %q 必须是 hybrid/size/duration 之一", c.Sampling.Strategy))
-		c.Sampling.ParsedStrategy = StrategyHybrid
+		errs = append(errs, fmt.Sprintf("sampling.strategy %q 必须是 hybrid/size/duration 之一", s.Sampling.Strategy))
+		s.Sampling.ParsedStrategy = StrategyHybrid
 	}
-	if c.Sampling.MaxFrames < 1 || c.Sampling.MaxFrames > 32 {
+	if s.Sampling.MaxFrames < 1 || s.Sampling.MaxFrames > 32 {
 		errs = append(errs, "sampling.max_frames 必须在 1–32 之间")
 	}
-	if math.IsNaN(c.Sampling.SkipStart) || math.IsInf(c.Sampling.SkipStart, 0) ||
-		math.IsNaN(c.Sampling.SkipEnd) || math.IsInf(c.Sampling.SkipEnd, 0) {
+	if math.IsNaN(s.Sampling.SkipStart) || math.IsInf(s.Sampling.SkipStart, 0) ||
+		math.IsNaN(s.Sampling.SkipEnd) || math.IsInf(s.Sampling.SkipEnd, 0) {
 		errs = append(errs, "sampling 跳过比例不是有限数值")
 	} else {
-		if c.Sampling.SkipStart < 0 || c.Sampling.SkipEnd < 0 {
+		if s.Sampling.SkipStart < 0 || s.Sampling.SkipEnd < 0 {
 			errs = append(errs, "sampling 跳过比例必须为非负数")
 		}
-		if c.Sampling.SkipStart+c.Sampling.SkipEnd >= 1 {
+		if s.Sampling.SkipStart+s.Sampling.SkipEnd >= 1 {
 			errs = append(errs, "sampling.skip_start_ratio 与 skip_end_ratio 之和必须小于 1")
 		}
 	}
 
-	pd, derr := parseDurationRules(c.Sampling.DurationRules)
-	c.Sampling.ParsedDuration = pd
+	pd, derr := parseDurationRules(s.Sampling.DurationRules)
+	s.Sampling.ParsedDuration = pd
 	errs = append(errs, derr...)
-	ps, serr := parseSizeRules(c.Sampling.SizeRules)
-	c.Sampling.ParsedSize = ps
+	ps, serr := parseSizeRules(s.Sampling.SizeRules)
+	s.Sampling.ParsedSize = ps
 	errs = append(errs, serr...)
 
 	// images
-	if c.Images.MaxDimension < 128 || c.Images.MaxDimension > 2048 {
+	if s.Images.MaxDimension < 128 || s.Images.MaxDimension > 2048 {
 		errs = append(errs, "images.max_dimension 必须在 128–2048 之间")
 	}
-	if c.Images.JPEGQuality < 2 || c.Images.JPEGQuality > 15 {
+	if s.Images.JPEGQuality < 2 || s.Images.JPEGQuality > 15 {
 		errs = append(errs, "images.jpeg_quality 必须在 2–15 之间")
 	}
 

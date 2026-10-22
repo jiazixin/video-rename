@@ -274,31 +274,14 @@ type Page struct {
 	Breadcrumbs []Entry `json:"breadcrumbs"`
 }
 
-func (l *Library) List(ctx context.Context, id int64, offset, limit int, generation int64, q, kind string, force bool) (Page, error) {
-	return l.ListSorted(ctx, id, offset, limit, generation, q, kind, force, false)
-}
-func (l *Library) ListSorted(ctx context.Context, id int64, offset, limit int, generation int64, q, kind string, force, descending bool) (Page, error) {
-	sortBy := "name_asc"
-	if descending {
-		sortBy = "name_desc"
-	}
-	return l.ListOrdered(ctx, id, offset, limit, generation, q, kind, force, sortBy)
-}
-func (l *Library) ListOrdered(ctx context.Context, id int64, offset, limit int, generation int64, q, kind string, force bool, sortBy string) (Page, error) {
-	return l.ListOrderedFiltered(ctx, id, offset, limit, generation, q, kind, "", force, sortBy)
-}
-
-func (l *Library) ListOrderedFiltered(ctx context.Context, id int64, offset, limit int, generation int64, q, kind, status string, force bool, sortBy string) (Page, error) {
+// ListOrdered continues a cursor listing; a cursor from an older generation is rejected.
+func (l *Library) ListOrdered(ctx context.Context, id int64, offset, limit int, generation int64, q, kind, status string, force bool, sortBy string) (Page, error) {
 	return l.listOrdered(ctx, id, offset, limit, generation, q, kind, status, force, sortBy, 0)
 }
 
 // ListPage reads a fresh page without carrying a cursor from an older index.
 // Count and page boundaries come from one snapshot, even during a rescan.
-func (l *Library) ListPage(ctx context.Context, id int64, page, limit int, q, kind, sortBy string) (Page, error) {
-	return l.ListPageFiltered(ctx, id, page, limit, q, kind, "", sortBy)
-}
-
-func (l *Library) ListPageFiltered(ctx context.Context, id int64, page, limit int, q, kind, status, sortBy string) (Page, error) {
+func (l *Library) ListPage(ctx context.Context, id int64, page, limit int, q, kind, status, sortBy string) (Page, error) {
 	return l.listOrdered(ctx, id, 0, limit, 0, q, kind, status, false, sortBy, max(1, page))
 }
 

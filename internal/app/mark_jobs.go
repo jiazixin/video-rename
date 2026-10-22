@@ -32,7 +32,7 @@ type markJob struct {
 // HTTP request. While a result is cached, the same key returns its work and counts.
 // Clients retry existing requests through markStatus: a retired result must not
 // be mistaken for a new operation and replayed over a later opposite mark.
-func (a *App) startMark(w http.ResponseWriter, r *http.Request, key string, targets []int64, marked bool) {
+func (a *App) startMark(w http.ResponseWriter, key string, targets []int64, marked bool) {
 	if len(key) < 8 || len(key) > 128 || strings.ContainsAny(key, "/\\?#") {
 		send(w, 400, map[string]string{"message": "标记请求键无效"})
 		return

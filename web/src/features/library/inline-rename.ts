@@ -1,7 +1,7 @@
 import { ref, nextTick } from 'vue'
-import { api, key } from '../../app/api'
+import { api, newRequestKey } from '../../app/api'
 import type { Entry } from '../../app/contracts'
-import { normalizedExtension } from './entry-types'
+import { nameWithoutExtension, normalizedExtension } from './entry-types'
 
 export function useInlineRename(options: { beforeSave: () => void; onSaved: () => Promise<void> }) {
   const inlineFullName = ref(false)
@@ -27,7 +27,7 @@ export function useInlineRename(options: { beforeSave: () => void; onSaved: () =
     inlineVersion.value = e.version
     inlineError.value = ''
     inlineExtension.value = normalizedExtension(e.name)
-    inlineName.value = e.name.slice(0, e.name.length - (e.name.match(/\.[^.]+$/)?.[0].length || 0))
+    inlineName.value = nameWithoutExtension(e.name)
     await nextTick()
     inlineInput.value?.focus()
     inlineInput.value?.select()
@@ -71,7 +71,7 @@ export function useInlineRename(options: { beforeSave: () => void; onSaved: () =
       await api(`/entries/${e.id}/rename`, 'POST', {
         name,
         version: inlineVersion.value,
-        key: key()
+        key: newRequestKey()
       })
       await options.onSaved()
       inlineEntry.value = undefined

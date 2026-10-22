@@ -48,12 +48,12 @@ export interface RecentItem {
   finished_ms: number
   attempts: number
 }
-export interface SkipReason {
+interface SkipReason {
   message: string
   count: number
 }
 export type RecordFilter = 'all' | 'running' | 'done' | 'skipped' | 'failed'
-export interface RunDirectory {
+interface RunDirectory {
   path: string
   total: number
   done: number

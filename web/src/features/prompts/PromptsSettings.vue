@@ -3,7 +3,7 @@
   import { computed, nextTick, onMounted, ref } from 'vue';
   import { PenLine, Plus, RotateCcw, Save, Trash2, X } from '@lucide/vue';
   import { api } from '../../app/api';
-  import { time } from '../../lib/date/format';
+  import { formatTime } from '../../lib/date/format';
   import { type PromptProfile } from '../../app/contracts';
   import Modal from '../../components/Modal.vue';
   import ModalTransition from '../../components/ModalTransition.vue';
@@ -344,7 +344,7 @@
             ><header
               ><div class="prompt-card-heading"
                 ><h2>{{ p.title }}</h2
-                ><span class="subtle">更新于 {{ time(p.updated) }}</span></div
+                ><span class="subtle">更新于 {{ formatTime(p.updated) }}</span></div
               ><div class="prompt-card-actions"
                 ><button :aria-label="`编辑提示词 ${p.title}`" @click="open(p)"
                   ><PenLine :size="15" />编辑</button

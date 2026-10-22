@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"video-rename/internal/domain"
-	"video-rename/internal/rename"
 )
 
 func TestNumberingRules(t *testing.T) {
@@ -281,7 +280,7 @@ func TestNumberingCrossPageOrderAndSearch(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		p, err := l.ListOrdered(t.Context(), 1, 0, 200, 0, "photo", "image", false, sort)
+		p, err := l.ListOrdered(t.Context(), 1, 0, 200, 0, "photo", "image", "", false, sort)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -379,7 +378,7 @@ func TestNumberingCrashRecovery(t *testing.T) {
 					t.Fatal(err)
 				}
 				if stage == "move-not-recorded" {
-					if err := rename.NoReplace(filepath.Join(root, i.Old), filepath.Join(root, i.Temp)); err != nil {
+					if err := os.Rename(filepath.Join(root, i.Old), filepath.Join(root, i.Temp)); err != nil {
 						t.Fatal(err)
 					}
 				}

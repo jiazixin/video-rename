@@ -312,3 +312,73 @@ export interface AnalysisReport {
   batches: { items: AnalysisBatch[]; total: number; page: number; size: number }
   options: { profiles: { id: number; title: string }[] }
 }
+
+/** Run states that still own their targets; mirrors domain.ActiveRunStatus. */
+const activeRunStatuses: readonly string[] = [
+  'queued',
+  'scanning',
+  'running',
+  'paused',
+  'cancelling'
+]
+export const isActiveRunStatus = (status: string) => activeRunStatuses.includes(status)
+
+/** One rename operation of an entry, as listed by /entries/{id}/history. */
+export interface Operation {
+  id: number
+  entry: number
+  parent: number
+  old_name: string
+  new_name: string
+  kind: string
+  source: string
+  status: string
+  undo_of: number
+  undone: boolean
+  created: string
+  error: string
+  run: number
+}
+
+/** One success or failure record of /logs. */
+export interface LogRecord {
+  id: number
+  category: string
+  action: string
+  entry: number
+  operation: number
+  run: number
+  old_path: string
+  new_path: string
+  message: string
+  created: string
+  model: string
+  model_config_title: string
+  /** Empty for non-model actions; unknown when no model attempt was recorded. */
+  model_source: '' | 'unknown' | 'primary' | 'fallback'
+  tokens: number
+  token_estimated: boolean
+}
+export interface LogPage {
+  items: LogRecord[]
+  total: number
+  next: number
+  page: number
+}
+export interface LogRetryResult {
+  accepted: number[]
+  runs: number[]
+  errors: string[]
+  skipped: number
+}
+
+/** Result of the model configuration's image recognition test. */
+export interface ProbeResult {
+  status: string
+  answer: string
+  expected: string
+  message: string
+  code?: string
+  http_status?: number
+  elapsed_ms: number
+}

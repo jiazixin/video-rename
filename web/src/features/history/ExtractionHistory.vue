@@ -390,20 +390,6 @@
     margin-left: 8px;
     color: var(--ink);
   }
-  .extraction-heading {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 18px 22px;
-    border-bottom: 1px solid var(--line);
-  }
-  .extraction-heading h2 {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 0;
-    font-size: 15px;
-  }
   .extraction-group[aria-label='抽帧成功'] h2 {
     color: #0e8a5c;
   }
@@ -443,17 +429,11 @@
     font-size: 12px;
   }
   @media (max-width: 700px) {
-    .extraction-heading {
-      padding: 14px;
-    }
     .extraction-filters > * {
       min-width: 0;
     }
     .extraction-filters .search-input {
       flex-basis: 100%;
-    }
-    .extraction-heading > .subtle {
-      font-size: 11px;
     }
   }
 </style>

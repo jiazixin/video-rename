@@ -32,131 +32,152 @@ func (l *Library) SetProcessed(ctx context.Context, ids []int64, marked bool) Ma
 // SetProcessedWithProgress reports committed counts while walking the targets.
 // The callback runs synchronously and must not mutate the result's failure slice.
 func (l *Library) SetProcessedWithProgress(ctx context.Context, ids []int64, marked bool, progress func(MarkResult)) (result MarkResult) {
-	result = MarkResult{Failures: []MarkFailure{}}
-	report := func() {
-		if progress != nil {
-			progress(result)
-		}
-	}
+	w := &markWalk{l: l, ctx: ctx, marked: marked, progress: progress, result: MarkResult{Failures: []MarkFailure{}}, seen: map[int64]bool{}, pending: make([]int64, 0, markBatchSize)}
 	defer func() {
 		// Cancellation can happen between pages or targets, without a failed file.
 		// Never present that partial traversal as a completed operation.
-		result.Interrupted = ctx.Err() != nil
-		report()
+		w.result.Interrupted = ctx.Err() != nil
+		w.report()
+		result = w.result
 	}()
-	seen := map[int64]bool{}
-	addFailure := func(id int64, err error) {
-		result.Failed++
-		if len(result.Failures) < 100 {
-			result.Failures = append(result.Failures, MarkFailure{id, l.DisplayPath(id), err.Error()})
-		}
-	}
-	fail := func(id int64, err error) {
-		addFailure(id, err)
-		report()
-	}
-	pending := make([]int64, 0, markBatchSize)
-	flush := func() {
-		if len(pending) == 0 {
-			return
-		}
-		files := l.setFilesProcessed(ctx, pending, marked)
-		pending = pending[:0]
-		// The whole batch is durable before exposing any of its counts.
-		for _, file := range files {
-			if file.err != nil {
-				addFailure(file.id, file.err)
-			} else if file.changed > 0 {
-				result.Changed += file.changed
-			} else {
-				result.Unchanged++
-			}
-		}
-		report()
-	}
-	var walk func(Entry)
-	walk = func(e Entry) {
-		if seen[e.ID] {
-			return
-		}
-		seen[e.ID] = true
-		if err := ctx.Err(); err != nil {
-			fail(e.ID, err)
-			return
-		}
-		if e.Kind == "file" && (discovery.IsVideoExtension(e.Name) || IsImage(e.Name) || IsAudio(e.Name)) {
-			pending = append(pending, e.ID)
-			if len(pending) == markBatchSize {
-				flush()
-			}
-			return
-		}
-		if e.Kind != "directory" {
-			return
-		}
-		// Do not keep a partial batch waiting through another directory scan.
-		flush()
-		if ctx.Err() != nil {
-			return
-		}
-		if err := l.Refresh(ctx, e.ID); err != nil {
-			fail(e.ID, err)
-			return
-		}
-		var after int64
-		for ctx.Err() == nil {
-			rows, err := l.DB.Read().QueryContext(ctx, "SELECT id,parent,name,kind FROM entries WHERE parent=? AND present=1 AND id>? ORDER BY id LIMIT ?", e.ID, after, markBatchSize)
-			if err != nil {
-				fail(e.ID, err)
-				return
-			}
-			children := make([]Entry, 0, markBatchSize)
-			for rows.Next() {
-				var child Entry
-				if err = rows.Scan(&child.ID, &child.Parent, &child.Name, &child.Kind); err != nil {
-					break
-				}
-				children = append(children, child)
-			}
-			if err == nil {
-				err = rows.Err()
-			}
-			rows.Close()
-			if err != nil {
-				fail(e.ID, err)
-				return
-			}
-			if len(children) == 0 {
-				flush()
-				return
-			}
-			for _, child := range children {
-				walk(child)
-				after = child.ID
-				if ctx.Err() != nil {
-					return
-				}
-			}
-		}
-	}
 	for _, id := range ids {
-		if seen[id] {
+		if w.seen[id] {
 			continue
 		}
 		var e Entry
 		err := l.DB.Read().QueryRowContext(ctx, "SELECT id,parent,name,kind FROM entries WHERE id=? AND present=1", id).Scan(&e.ID, &e.Parent, &e.Name, &e.Kind)
 		if err != nil {
-			seen[id] = true
-			fail(id, err)
+			w.seen[id] = true
+			w.fail(id, err)
 		} else {
-			walk(e)
+			w.walk(e)
 		}
 		if ctx.Err() != nil {
 			break
 		}
 	}
-	flush()
-	return result
+	w.flush()
+	return w.result
+}
+
+// markWalk is one SetProcessed traversal. Media files collect into batches of
+// markBatchSize; each batch commits before its counts become visible.
+type markWalk struct {
+	l        *Library
+	ctx      context.Context
+	marked   bool
+	progress func(MarkResult)
+	result   MarkResult
+	seen     map[int64]bool
+	pending  []int64
+}
+
+func (w *markWalk) report() {
+	if w.progress != nil {
+		w.progress(w.result)
+	}
+}
+
+func (w *markWalk) addFailure(id int64, err error) {
+	w.result.Failed++
+	if len(w.result.Failures) < 100 {
+		w.result.Failures = append(w.result.Failures, MarkFailure{id, w.l.DisplayPath(id), err.Error()})
+	}
+}
+
+func (w *markWalk) fail(id int64, err error) {
+	w.addFailure(id, err)
+	w.report()
+}
+
+func (w *markWalk) flush() {
+	if len(w.pending) == 0 {
+		return
+	}
+	files := w.l.setFilesProcessed(w.ctx, w.pending, w.marked)
+	w.pending = w.pending[:0]
+	// The whole batch is durable before exposing any of its counts.
+	for _, file := range files {
+		if file.err != nil {
+			w.addFailure(file.id, file.err)
+		} else if file.changed > 0 {
+			w.result.Changed += file.changed
+		} else {
+			w.result.Unchanged++
+		}
+	}
+	w.report()
+}
+
+func (w *markWalk) walk(e Entry) {
+	if w.seen[e.ID] {
+		return
+	}
+	w.seen[e.ID] = true
+	if err := w.ctx.Err(); err != nil {
+		w.fail(e.ID, err)
+		return
+	}
+	if e.Kind == "file" && (discovery.IsVideoExtension(e.Name) || IsImage(e.Name) || IsAudio(e.Name)) {
+		w.pending = append(w.pending, e.ID)
+		if len(w.pending) == markBatchSize {
+			w.flush()
+		}
+		return
+	}
+	if e.Kind == "directory" {
+		w.walkDirectory(e)
+	}
+}
+
+// walkDirectory refreshes a directory from disk, then walks its children page
+// by page.
+func (w *markWalk) walkDirectory(e Entry) {
+	// Do not keep a partial batch waiting through another directory scan.
+	w.flush()
+	if w.ctx.Err() != nil {
+		return
+	}
+	if err := w.l.Refresh(w.ctx, e.ID); err != nil {
+		w.fail(e.ID, err)
+		return
+	}
+	var after int64
+	for w.ctx.Err() == nil {
+		children, err := w.childPage(e.ID, after)
+		if err != nil {
+			w.fail(e.ID, err)
+			return
+		}
+		if len(children) == 0 {
+			w.flush()
+			return
+		}
+		for _, child := range children {
+			w.walk(child)
+			after = child.ID
+			if w.ctx.Err() != nil {
+				return
+			}
+		}
+	}
+}
+
+func (w *markWalk) childPage(parent, after int64) ([]Entry, error) {
+	rows, err := w.l.DB.Read().QueryContext(w.ctx, "SELECT id,parent,name,kind FROM entries WHERE parent=? AND present=1 AND id>? ORDER BY id LIMIT ?", parent, after, markBatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	children := make([]Entry, 0, markBatchSize)
+	for rows.Next() {
+		var child Entry
+		if err = rows.Scan(&child.ID, &child.Parent, &child.Name, &child.Kind); err != nil {
+			return nil, err
+		}
+		children = append(children, child)
+	}
+	return children, rows.Err()
 }
 
 type fileMarkResult struct {

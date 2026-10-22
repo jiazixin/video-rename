@@ -1,9 +1,10 @@
 <script setup lang="ts">
+  import { formatPlaybackTime } from '../../lib/date/format';
   import { ref, onMounted, onBeforeUnmount, computed, nextTick } from 'vue';
   import { Play, Pause, Volume2, VolumeX, Music, SkipBack, SkipForward } from '@lucide/vue';
   import type { Entry } from '../../app/contracts';
   import type { MediaQueue } from './media-preview';
-  import { size } from '../../lib/bytes/format';
+  import { formatSize } from '../../lib/bytes/format';
   const props = defineProps<{
     entry: Entry;
     switching?: boolean;
@@ -82,10 +83,6 @@
       sync();
     }
   }
-  function time(n: number) {
-    const s = Math.floor(n || 0);
-    return `${Math.floor(s / 3600) ? `${Math.floor(s / 3600)}:` : ''}${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
-  }
   onMounted(() => {
     document.addEventListener('keydown', keyboard);
     void nextTick(revealCurrent);
@@ -138,7 +135,7 @@
           class="media-seek"
           type="range"
           aria-label="播放进度"
-          :aria-valuetext="`${time(current)} / ${time(duration)}`"
+          :aria-valuetext="`${formatPlaybackTime(current)} / ${formatPlaybackTime(duration)}`"
           min="0"
           :max="duration || 1"
           step="0.1"
@@ -147,8 +144,8 @@
           :style="{ '--progress': `${progress}%` }"
           @input="seek"
         /><span class="media-time"
-          ><span>{{ time(current) }}</span
-          ><span>{{ time(duration) }}</span></span
+          ><span>{{ formatPlaybackTime(current) }}</span
+          ><span>{{ formatPlaybackTime(duration) }}</span></span
         >
       </div>
       <div class="transport">
@@ -195,7 +192,7 @@
             ><span class="n">{{ String(index + 1).padStart(2, '0') }}</span
             ><span class="t" :title="item.name">{{ item.name }}</span
             ><span v-if="item.id === entry.id" class="eq" aria-hidden="true"><i /><i /><i /></span
-            ><span v-else class="d">{{ size(item.size) }}</span></button
+            ><span v-else class="d">{{ formatSize(item.size) }}</span></button
           ></li
         ></ol
       >

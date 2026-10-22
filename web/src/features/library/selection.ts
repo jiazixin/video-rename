@@ -1,17 +1,19 @@
 import { ref, computed } from 'vue'
 import type { Entry } from '../../app/contracts'
-import { video, selectable, markable } from './entry-types'
+import { isVideo, selectable, markable } from './entry-types'
 
 export function useLibrarySelection(rows: () => Entry[]) {
   const multi = ref(false),
     chosen = ref(new Map<number, Entry>())
   const autoEntries = computed(() =>
     [...chosen.value.values()].filter(
-      (e) => (e.kind === 'directory' || video(e)) && !e.processed && !e.task_status
+      (e) => (e.kind === 'directory' || isVideo(e)) && !e.processed && !e.task_status
     )
   )
   const extractEntries = computed(() =>
-    [...chosen.value.values()].filter((e) => (e.kind === 'directory' || video(e)) && !e.task_status)
+    [...chosen.value.values()].filter(
+      (e) => (e.kind === 'directory' || isVideo(e)) && !e.task_status
+    )
   )
   const markEntries = computed(() => [...chosen.value.values()].filter(markable))
   const restoreEntries = computed(() =>

@@ -53,7 +53,7 @@ func (a *App) markEntries(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if input.Key != "" {
-		a.startMark(w, r, input.Key, input.Targets, *input.Marked)
+		a.startMark(w, input.Key, input.Targets, *input.Marked)
 		return
 	}
 	send(w, 200, a.Library.SetProcessed(r.Context(), input.Targets, *input.Marked))

@@ -28,9 +28,6 @@ func (s *Sampler) Plan(duration time.Duration, sizeBytes int64) (plan domain.Fra
 	if duration <= 0 {
 		return plan, fmt.Errorf("时长必须大于 0: %v", duration)
 	}
-	if math.IsNaN(float64(duration)) || math.IsInf(float64(duration), 0) {
-		return plan, fmt.Errorf("时长不是有限值")
-	}
 	nd := pickDurationFrames(s.Cfg.ParsedDuration, duration)
 	ns := pickSizeFrames(s.Cfg.ParsedSize, sizeBytes)
 	var n0 int

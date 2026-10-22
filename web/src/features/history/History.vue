@@ -13,7 +13,14 @@
     Undo2,
     Trash2
   } from '@lucide/vue';
-  import { api, key } from '../../app/api';
+  import { api, newRequestKey } from '../../app/api';
+  import {
+    isActiveRunStatus,
+    type LogPage,
+    type LogRecord,
+    type LogRetryResult,
+    type Run
+  } from '../../app/contracts';
   import { actionNames } from '../../app/labels';
   import { copyText } from '../../lib/clipboard/clipboard';
   import { vTabIndicator } from '../../lib/motion/tab-indicator';
@@ -26,7 +33,7 @@
   import { ModelPicker } from '../models';
   const toast = ref<InstanceType<typeof ToastNotice>>();
   const category = ref('success'),
-    rows = ref<any[]>([]),
+    rows = ref<LogRecord[]>([]),
     busy = ref(false),
     error = ref(''),
     q = ref(''),
@@ -35,7 +42,7 @@
     from = ref(''),
     to = ref(''),
     pageNumber = ref(1),
-    selected = ref<any>(),
+    selected = ref<LogRecord>(),
     detailError = ref(''),
     copying = ref(false),
     copyError = ref('');
@@ -142,13 +149,13 @@
         to: to.value ? new Date(to.value + 'T23:59:59.999').toISOString() : ''
       });
       const [data, available] = await Promise.all([
-        api<any>(`/logs?${params}`),
+        api<LogPage>(`/logs?${params}`),
         api<number[]>('/logs/batches')
       ]);
       if (n === seq) {
-        rows.value = Array.isArray(data) ? data : data.items;
-        total.value = Array.isArray(data) ? data.length : data.total;
-        pageNumber.value = data.page ?? pageNumber.value;
+        rows.value = data.items;
+        total.value = data.total;
+        pageNumber.value = data.page;
         chosen.value = new Set(
           [...chosen.value].filter((id) => rows.value.some((r) => r.id === id))
         );
@@ -178,25 +185,25 @@
       name: path.slice(index + 1) || '媒体库'
     };
   }
-  function modelName(row: any) {
+  function modelName(row: LogRecord) {
     return row.model_config_title || row.model || '—';
   }
-  function modelHint(row: any) {
+  function modelHint(row: LogRecord) {
     return (
       [row.model_config_title, row.model, row.action === 'automatic' ? modelSourceHint(row) : '']
         .filter(Boolean)
         .join(' · ') || '未记录模型'
     );
   }
-  function modelSource(row: any) {
+  function modelSource(row: LogRecord) {
     return row.model_source === 'primary'
       ? '主模型'
       : row.model_source === 'fallback'
         ? '兜底模型'
         : '未记录';
   }
-  function modelSourceHint(row: any) {
-    if (!['primary', 'fallback'].includes(row.model_source))
+  function modelSourceHint(row: LogRecord) {
+    if (row.model_source !== 'primary' && row.model_source !== 'fallback')
       return '没有对应的模型请求记录，显示批次选定的配置，无法确认实际模型来源';
     return row.category === 'success'
       ? `本次标题由${modelSource(row)}生成`
@@ -239,7 +246,9 @@
     if (!selected.value) return;
     busy.value = true;
     try {
-      await api(`/operations/${selected.value.operation}/restore`, 'POST', { key: key() });
+      await api(`/operations/${selected.value.operation}/restore`, 'POST', {
+        key: newRequestKey()
+      });
       toast.value?.show('名称已还原');
       selected.value = undefined;
       reset();
@@ -249,14 +258,14 @@
       busy.value = false;
     }
   }
-  function canRetry(row: any) {
+  function canRetry(row: LogRecord) {
     return (
       row.action === 'automatic' &&
       row.entry > 0 &&
       (row.category === 'failure' || (row.category === 'success' && row.operation > 0))
     );
   }
-  function openRetry(all = false, row?: any) {
+  function openRetry(all = false, row?: LogRecord) {
     if (retrying.value) return;
     const ids = all ? [] : row ? [row.id] : retryable.value.map((r) => r.id);
     if (!all && !ids.length) return;
@@ -268,7 +277,7 @@
     };
     retryModel.value = 0;
     retryError.value = '';
-    retryKey = key();
+    retryKey = newRequestKey();
     if (row) selected.value = undefined;
   }
   async function retry() {
@@ -277,7 +286,7 @@
     retrying.value = true;
     retryError.value = '';
     try {
-      const result = await api('/logs/retry', 'POST', {
+      const result = await api<LogRetryResult>('/logs/retry', 'POST', {
         category: scope.category,
         ...(scope.all ? { all: true } : { ids: scope.ids }),
         model_config_id: retryModel.value,
@@ -294,7 +303,7 @@
         `已提交 ${result.accepted.length} 条${scope.category === 'success' ? '成功' : '失败'}记录重试，${scope.category === 'success' ? '原记录保留，完成后新增命名记录' : '成功后会自动移除'}。${result.skipped ? ` ${result.skipped} 条记录不支持自动重试，已保留。` : ''}`
       );
       error.value = result.errors.join('；');
-      result.accepted.forEach((id: number) => chosen.value.delete(id));
+      result.accepted.forEach((id) => chosen.value.delete(id));
       retryScope.value = undefined;
     } catch (e) {
       retryError.value = (e as Error).message;
@@ -310,12 +319,8 @@
     try {
       const hadRetries = retryRuns.value.length > 0;
       if (retryRuns.value.length) {
-        const results = await Promise.all(retryRuns.value.map((id) => api(`/runs/${id}`)));
-        retryRuns.value = results
-          .filter((r) =>
-            ['queued', 'scanning', 'running', 'paused', 'cancelling'].includes(r.status)
-          )
-          .map((r) => r.id);
+        const results = await Promise.all(retryRuns.value.map((id) => api<Run>(`/runs/${id}`)));
+        retryRuns.value = results.filter((r) => isActiveRunStatus(r.status)).map((r) => r.id);
       }
       if (category.value === 'failure' || hadRetries) {
         await load(true);

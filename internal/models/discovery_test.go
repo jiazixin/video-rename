@@ -38,7 +38,7 @@ func TestDiscoverProtocolsAndRedirectProtection(t *testing.T) {
 	hits := 0
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++ }))
 	defer target.Close()
-	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL, 302) }))
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL, http.StatusFound) }))
 	defer redirect.Close()
 	if _, err := Discover(t.Context(), config.ServerConfig{Provider: "custom", BaseURL: redirect.URL, APIKey: "secret"}, 5*time.Second); err == nil || hits != 0 {
 		t.Fatal("followed redirect", err, hits)

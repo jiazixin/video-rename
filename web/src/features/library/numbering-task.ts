@@ -1,7 +1,7 @@
 import { ref, onBeforeUnmount, onDeactivated } from 'vue'
-import { api, ApiError, key, session } from '../../app/api'
+import { api, ApiError, newRequestKey, session } from '../../app/api'
 
-export type NumberingTask = {
+type NumberingTask = {
   key: string
   status: string
   phase: string
@@ -38,7 +38,7 @@ export function useNumberingTask() {
     batches?: string[],
     preview?: string
   ) {
-    const task = { key: key(), controller: new AbortController() }
+    const task = { key: newRequestKey(), controller: new AbortController() }
     active = task
     const signal = task.controller.signal
     progress.value = action === 'preview' ? '正在扫描目录并生成预览…' : '正在核对文件并编号…'

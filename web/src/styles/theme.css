@@ -404,13 +404,6 @@ code {
   font-weight: 500;
   box-shadow: 0 1px 2px #00000003;
 }
-.nav-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #218a6f;
-  margin-left: auto;
-}
 .sidebar-footer {
   margin-top: auto;
 }
@@ -426,13 +419,6 @@ code {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.model-state {
-  font-size: 11px;
-  color: var(--ash);
-  display: flex;
-  align-items: center;
-  gap: 6px;
 }
 .account {
   border-top: 1px solid var(--line);
@@ -508,47 +494,6 @@ code {
   display: flex;
   gap: 10px;
   margin-top: 20px;
-}
-.workspace-footer {
-  display: flex;
-  justify-content: space-between;
-  font-size: 9px;
-  letter-spacing: 1.4px;
-  color: #a1a4ab;
-  border-top: 1px solid #f0f1f3;
-  padding: 19px 40px;
-}
-.workspace-footer span {
-  letter-spacing: 0;
-  font-size: 11px;
-}
-.library-note {
-  background: linear-gradient(95deg, #f4f9f6, #f6f9f8);
-  border: 1px solid #e2ebe5;
-  border-radius: 10px;
-  padding: 17px 20px;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 27px;
-}
-.note-icon {
-  color: #44806b;
-}
-.library-note strong {
-  font-size: 12px;
-  font-weight: 500;
-}
-.library-note p {
-  font-size: 11px;
-  color: #85958c;
-  margin-top: 3px;
-}
-.note-label {
-  margin-left: auto;
-  font-size: 10px;
-  color: #779083;
-  white-space: nowrap;
 }
 .panel {
   border: 1px solid var(--line);
@@ -731,9 +676,6 @@ tbody tr:hover {
   font-size: 11px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
-}
-.align-right {
-  text-align: right;
 }
 .row-actions {
   display: flex;
@@ -1223,27 +1165,6 @@ tbody tr:hover {
   padding: 7px;
   max-width: 140px;
 }
-.log-names {
-  max-width: 340px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-.log-names > span {
-  color: var(--ash);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.log-names strong {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 12px;
-  font-weight: 400;
-  overflow-wrap: anywhere;
-}
 .error-summary {
   max-width: 100%;
   display: -webkit-box;
@@ -1354,28 +1275,6 @@ tbody tr:hover {
   color: var(--ash);
   margin-top: 4px;
 }
-.run-summary {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  margin-bottom: 20px;
-}
-.run-summary > div {
-  display: flex;
-  flex-direction: column;
-  padding: 16px;
-  background: #f6f8f7;
-  border-radius: 8px;
-}
-.run-summary span {
-  font-size: 11px;
-  color: var(--ash);
-}
-.run-summary strong {
-  font-size: 25px;
-  font-weight: 500;
-  margin-top: 7px;
-}
 @media (min-width: 1600px) {
   .page-main {
     padding: 50px 60px;
@@ -1390,9 +1289,6 @@ tbody tr:hover {
   }
   .workspace-main {
     margin-left: 205px;
-  }
-  .note-label {
-    display: none;
   }
   .edition {
     display: none;
@@ -1464,13 +1360,6 @@ tbody tr:hover {
   .heading-actions {
     margin-top: 8px;
   }
-  .library-note {
-    padding: 15px;
-    gap: 10px;
-  }
-  .library-note p {
-    font-size: 10px;
-  }
   .page-heading p {
     font-size: 12px;
   }
@@ -1492,12 +1381,6 @@ tbody tr:hover {
     max-width: 170px;
   }
   .section-heading .subtle {
-    display: none;
-  }
-  .workspace-footer {
-    padding: 18px 20px;
-  }
-  .note-icon {
     display: none;
   }
   .page-footnote {
@@ -1726,42 +1609,6 @@ textarea:focus-visible {
   margin-top: 12px;
   max-height: 220px;
   overflow: auto;
-}
-.prompt-title {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-.prompt-title input[type='radio'] {
-  appearance: none;
-  width: 18px;
-  height: 18px;
-  min-height: 18px;
-  flex-shrink: 0;
-  margin: 3px 0 0;
-  padding: 0;
-  border: 1.5px solid #bcc8c1;
-  border-radius: 50%;
-  cursor: pointer;
-  background: white;
-}
-.prompt-title input[type='radio']:checked {
-  border-color: var(--tone-green-ink);
-  background: radial-gradient(circle, var(--tone-green-ink) 0 4px, white 4.5px);
-}
-.prompt-title input[type='radio']:disabled {
-  opacity: 0.5;
-}
-.prompt-title h2 .badge {
-  margin-left: 8px;
-  vertical-align: middle;
-}
-.request-params {
-  margin: 14px 0 0;
-  grid-template-columns: 100px minmax(0, 1fr);
-}
-.request-params dd {
-  font-variant-numeric: tabular-nums;
 }
 /* Status uses both text and a color signal. */
 .status-badge {

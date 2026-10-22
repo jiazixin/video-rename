@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+	"video-rename/internal/domain"
 )
 
 type RunPage struct {
@@ -91,7 +92,7 @@ func (m *Manager) ListPage(ctx context.Context, category, task string, page, siz
 			if !ok {
 				return out, fmt.Errorf("耗时范围无效")
 			}
-			expr := "MAX(0,unixepoch(CASE WHEN r.finished<>'' THEN r.finished WHEN r.status IN ('queued','scanning','running','paused','cancelling') THEN ? ELSE NULL END,'subsec')-unixepoch(r.started,'subsec'))"
+			expr := "MAX(0,unixepoch(CASE WHEN r.finished<>'' THEN r.finished WHEN r.status IN " + domain.ActiveRunStatusesSQL + " THEN ? ELSE NULL END,'subsec')-unixepoch(r.started,'subsec'))"
 			where += " AND r.started<>'' AND " + expr + ">=?"
 			stamp := time.Now().UTC().Format(time.RFC3339Nano)
 			args = append(args, stamp, span[0])

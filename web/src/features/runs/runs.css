@@ -5,47 +5,10 @@
   background: #fafcfb;
   margin-bottom: 28px;
 }
-.run-section-heading {
-  margin: 0 0 22px;
-  gap: 16px;
-}
-.run-section-heading p {
-  font-size: 12px;
-  color: var(--ash);
-  margin-top: 7px;
-  line-height: 1.7;
-}
-.run-section .recent-heading {
-  margin-top: 24px;
-}
-.run-section .recent-heading h3 {
-  font-size: 13px;
-  font-weight: 500;
-}
 @media (max-width: 800px) {
   .run-section {
     padding: 16px;
   }
-  .run-section-heading {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-}
-.run-targets {
-  padding: 14px 16px;
-  background: #f7f9f8;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  margin: 14px 0;
-}
-.run-targets h3 {
-  font-size: 13px;
-}
-.run-targets ul {
-  font-size: 12px;
-  line-height: 1.8;
-  padding-left: 18px;
-  overflow-wrap: anywhere;
 }
 .plan-config-row {
   display: grid;
@@ -495,18 +458,6 @@
 }
 
 @media (max-width: 600px) {
-  .run-tabs {
-    gap: 16px;
-  }
-  .run-tabs button {
-    flex: 1;
-    min-width: 0;
-    font-size: 12px;
-    line-height: 1.6;
-  }
-  .run-tabs button svg {
-    flex-shrink: 0;
-  }
   .run-entry {
     grid-template-columns: 32px 16px minmax(0, 1fr);
     padding: 10px 14px 9px 8px;

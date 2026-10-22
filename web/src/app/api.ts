@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 export const session = ref<{ username: string; csrf: string } | null>(null)
 // getRandomValues also works over HTTP on a LAN, where randomUUID is unavailable.
-export function key(): string {
+export function newRequestKey(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(16))
   bytes[6] = (bytes[6]! & 0x0f) | 0x40
   bytes[8] = (bytes[8]! & 0x3f) | 0x80

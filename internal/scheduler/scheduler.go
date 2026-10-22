@@ -11,6 +11,7 @@ import (
 	_ "time/tzdata"
 	"unicode/utf8"
 
+	"video-rename/internal/domain"
 	"video-rename/internal/jobs"
 	"video-rename/internal/models"
 	"video-rename/internal/storage"
@@ -290,7 +291,7 @@ func (s *Scheduler) Tick(now time.Time) error {
 			continue
 		}
 		var active int
-		if e = s.DB.QueryRow("SELECT count(*) FROM runs WHERE plan=? AND status IN ('queued','scanning','running','paused','cancelling')", p.ID).Scan(&active); e != nil {
+		if e = s.DB.QueryRow("SELECT count(*) FROM runs WHERE plan=? AND status IN "+domain.ActiveRunStatusesSQL, p.ID).Scan(&active); e != nil {
 			return e
 		}
 		message := "已触发"

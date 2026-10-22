@@ -141,7 +141,7 @@ func TestRefreshMetadataChangesPublishNewGeneration(t *testing.T) {
 			if current.ID != old.ID || current.Identity != old.Identity || current.Version != old.Version+1 {
 				t.Fatalf("content change lost identity or version: before=%+v after=%+v", old, current)
 			}
-			if _, err := l.List(t.Context(), 1, 0, 50, before.Generation, "", "", false); err == nil {
+			if _, err := l.ListOrdered(t.Context(), 1, 0, 50, before.Generation, "", "", "", false, "name_asc"); err == nil {
 				t.Fatal("metadata change accepted an old-generation cursor")
 			}
 		})

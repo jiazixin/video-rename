@@ -78,11 +78,11 @@ func TestProcessingStatusFiltersAndSortingAcrossPages(t *testing.T) {
 				cursor := 0
 				var generation int64
 				for page := 1; ; page++ {
-					p, err := l.ListPageFiltered(t.Context(), 1, page, 50, "", "video", status, "status_"+direction)
+					p, err := l.ListPage(t.Context(), 1, page, 50, "", "video", status, "status_"+direction)
 					if err != nil || p.Number != page || p.Total != len(expected) {
 						t.Fatalf("page %d: %+v, %v", page, p, err)
 					}
-					c, err := l.ListOrderedFiltered(t.Context(), 1, cursor, 50, generation, "", "video", status, false, "status_"+direction)
+					c, err := l.ListOrdered(t.Context(), 1, cursor, 50, generation, "", "video", status, false, "status_"+direction)
 					if err != nil || c.Total != p.Total || c.Next != p.Next || !slices.EqualFunc(c.Items, p.Items, func(a, b Entry) bool { return a.ID == b.ID }) {
 						t.Fatalf("cursor disagrees with page %d: %v", page, err)
 					}
@@ -100,15 +100,15 @@ func TestProcessingStatusFiltersAndSortingAcrossPages(t *testing.T) {
 			})
 		}
 	}
-	p, err := l.ListPageFiltered(t.Context(), 1, 99, 50, "clip12", "video", "manual", "status_asc")
+	p, err := l.ListPage(t.Context(), 1, 99, 50, "clip12", "video", "manual", "status_asc")
 	if err != nil || p.Number != 1 || p.Total != 3 || len(p.Items) != 3 || p.Items[0].Name != "clip12.mp4" || p.Items[1].Name != "clip122.mp4" || p.Items[2].Name != "clip127.mp4" {
 		t.Fatalf("combined filters and clamping: %+v, %v", p, err)
 	}
-	p, err = l.ListPageFiltered(t.Context(), 1, 1, 50, "", "image", "processed", "status_asc")
+	p, err = l.ListPage(t.Context(), 1, 1, 50, "", "image", "processed", "status_asc")
 	if err != nil || p.Total != 0 || len(p.Items) != 0 {
 		t.Fatalf("unknown directories incorrectly reported as processed: %+v, %v", p, err)
 	}
-	if _, err := l.ListPageFiltered(t.Context(), 1, 1, 50, "", "", "invalid' OR 1=1", "status_asc"); err == nil {
+	if _, err := l.ListPage(t.Context(), 1, 1, 50, "", "", "invalid' OR 1=1", "status_asc"); err == nil {
 		t.Fatal("invalid status accepted")
 	}
 }
@@ -129,7 +129,7 @@ func TestProcessingStatusUsesLiveTaskPrecedenceAndScope(t *testing.T) {
 	}
 	assertStatus := func(filter, task string, count int) {
 		t.Helper()
-		p, err := l.ListPageFiltered(t.Context(), dir.ID, 1, 50, "", "video", filter, "status_asc")
+		p, err := l.ListPage(t.Context(), dir.ID, 1, 50, "", "video", filter, "status_asc")
 		if err != nil || p.Total != count || len(p.Items) != count {
 			t.Fatalf("filter %s: %+v, %v", filter, p, err)
 		}
@@ -293,11 +293,11 @@ func TestDirectoryProcessingFiltersUseSubtreesBeforePaging(t *testing.T) {
 					var actual []string
 					cursor := 0
 					for page := 1; ; page++ {
-						p, err := l.ListPageFiltered(t.Context(), 1, page, 50, "", "video", status, field+"_"+direction)
+						p, err := l.ListPage(t.Context(), 1, page, 50, "", "video", status, field+"_"+direction)
 						if err != nil || p.Total != len(expected) {
 							t.Fatalf("page %d: total %d, want %d, error %v", page, p.Total, len(expected), err)
 						}
-						c, err := l.ListOrderedFiltered(t.Context(), 1, cursor, 50, p.Generation, "", "video", status, false, field+"_"+direction)
+						c, err := l.ListOrdered(t.Context(), 1, cursor, 50, p.Generation, "", "video", status, false, field+"_"+direction)
 						if err != nil || c.Total != p.Total || c.Next != p.Next || !slices.EqualFunc(c.Items, p.Items, func(a, b Entry) bool { return a.ID == b.ID }) {
 							t.Fatalf("cursor disagrees on page %d: %v", page, err)
 						}
@@ -317,7 +317,7 @@ func TestDirectoryProcessingFiltersUseSubtreesBeforePaging(t *testing.T) {
 		}
 	}
 	// Filtering removes later pages before clamping, and combines with search.
-	p, err := l.ListPageFiltered(t.Context(), 1, 100, 50, "folder20", "image", "unprocessed", "name_asc")
+	p, err := l.ListPage(t.Context(), 1, 100, 50, "folder20", "image", "unprocessed", "name_asc")
 	if err != nil || p.Number != 1 || p.Total != 5 {
 		t.Fatalf("search/media/clamping: page %d, total %d, error %v", p.Number, p.Total, err)
 	}
@@ -340,7 +340,7 @@ func TestDirectoryFiltersUseLiveTaskStateAndUnknownDescendants(t *testing.T) {
 	}
 	assertNames := func(status string, expected ...string) {
 		t.Helper()
-		p, err := l.ListPageFiltered(t.Context(), 1, 1, 50, "", "", status, "name_asc")
+		p, err := l.ListPage(t.Context(), 1, 1, 50, "", "", status, "name_asc")
 		if err != nil || p.Total != len(expected) {
 			t.Fatalf("%s: total %d, error %v", status, p.Total, err)
 		}

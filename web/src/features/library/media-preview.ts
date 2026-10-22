@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { api } from '../../app/api'
 import type { Entry, Page } from '../../app/contracts'
-import { video, isAudio, isImage } from './entry-types'
+import { isVideo, isAudio, isImage } from './entry-types'
 
 type MediaQuery = { directory: number; search: string; status: string; sort: string }
 type ListQuery = { q: string; status: string; sort: string }
@@ -139,7 +139,7 @@ export function useMediaPreview(query: () => MediaQuery) {
     status: query().status,
     sort: query().sort
   })
-  const videos = useMediaQueue('video', video, listFilters),
+  const videos = useMediaQueue('video', isVideo, listFilters),
     audios = useMediaQueue('audio', isAudio, listFilters)
   const videoPosition = computed(() => position(videos.queue.value, playing.value))
   const audioPosition = computed(() => position(audios.queue.value, audioPlaying.value))
@@ -157,7 +157,7 @@ export function useMediaPreview(query: () => MediaQuery) {
   const videoList: MediaList = {
     kind: 'video',
     unit: '集',
-    match: video,
+    match: isVideo,
     current: playing,
     notice: videoNotice,
     busy: videoBusy,

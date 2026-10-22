@@ -7,57 +7,21 @@ import (
 
 // ThinkingFields resolves provider-specific controls. Default deliberately sends nothing.
 func (s ServerConfig) ThinkingFields() (map[string]any, error) {
-	fields := map[string]any{}
 	if s.Thinking == "" || s.Thinking == "default" {
-		return fields, nil
+		return map[string]any{}, nil
 	}
 	if s.Thinking != "enabled" && s.Thinking != "disabled" {
 		return nil, fmt.Errorf("思考模式必须为默认、开启或关闭")
 	}
 	enabled := s.Thinking == "enabled"
 	adapter := s.ThinkingAdapter
-	model := strings.ToLower(s.Model)
 	if s.Provider != "custom" {
 		adapter = ""
 	}
 	if adapter == "" || adapter == "auto" {
-		switch s.Provider {
-		case "deepseek", "zhipu", "zhipu-coding":
-			adapter = "thinking"
-		case "ollama":
-			adapter = "effort"
-		case "openai":
-			switch {
-			case strings.HasPrefix(model, "gpt-5.1"), strings.HasPrefix(model, "gpt-5.2"), strings.HasPrefix(model, "gpt-5.4"), strings.HasPrefix(model, "gpt-5.5"):
-				if strings.Contains(model, "pro") || strings.Contains(model, "codex") || strings.Contains(model, "chat") {
-					return nil, fmt.Errorf("此 OpenAI 型号尚未适配思考控制，请选择跟随模型默认")
-				}
-				adapter = "effort"
-			case model == "gpt-5" || strings.HasPrefix(model, "gpt-5-"), strings.HasPrefix(model, "o1"), strings.HasPrefix(model, "o3"), strings.HasPrefix(model, "o4"):
-				if !enabled {
-					return nil, fmt.Errorf("该型号不支持关闭思考，请使用默认或开启低强度思考")
-				}
-				adapter = "effort"
-			default:
-				return nil, fmt.Errorf("该 OpenAI 型号尚未适配思考控制，请选择跟随模型默认")
-			}
-		case "claude":
-			if strings.Contains(model, "mythos") || strings.Contains(model, "fable") {
-				if !enabled {
-					return nil, fmt.Errorf("该 Claude 型号无法关闭思考")
-				}
-				adapter = "adaptive"
-			} else if strings.Contains(model, "4-6") || strings.Contains(model, "4.6") || strings.Contains(model, "4-7") || strings.Contains(model, "4.7") || strings.Contains(model, "4-8") || strings.Contains(model, "4.8") || strings.HasPrefix(model, "claude-opus-5") || strings.HasPrefix(model, "claude-sonnet-5") {
-				adapter = "adaptive"
-			} else if strings.Contains(model, "4-5") || strings.Contains(model, "4.5") || strings.Contains(model, "3-7") || strings.Contains(model, "3.7") || strings.HasPrefix(model, "claude-sonnet-4") || strings.HasPrefix(model, "claude-opus-4") {
-				adapter = "budget"
-			} else {
-				return nil, fmt.Errorf("该 Claude 型号尚未适配思考控制，请选择跟随模型默认")
-			}
-		case "custom":
-			return nil, fmt.Errorf("自定义服务开启或关闭思考前，请选择服务支持的思考参数类型")
-		default:
-			return nil, fmt.Errorf("该服务不支持思考控制")
+		var err error
+		if adapter, err = autoThinkingAdapter(s.Provider, strings.ToLower(s.Model), enabled); err != nil {
+			return nil, err
 		}
 	}
 	if s.Protocol == "anthropic" && adapter != "adaptive" && adapter != "budget" {
@@ -73,6 +37,72 @@ func (s ServerConfig) ThinkingFields() (map[string]any, error) {
 	if effort != "low" && effort != "medium" && effort != "high" {
 		return nil, fmt.Errorf("思考强度必须为低、中或高")
 	}
+	return s.thinkingRequestFields(adapter, enabled, effort)
+}
+
+// autoThinkingAdapter picks the request parameter family a known provider and
+// model accept. model is lower-cased.
+func autoThinkingAdapter(provider, model string, enabled bool) (string, error) {
+	switch provider {
+	case "deepseek", "zhipu", "zhipu-coding":
+		return "thinking", nil
+	case "ollama":
+		return "effort", nil
+	case "openai":
+		return openAIThinkingAdapter(model, enabled)
+	case "claude":
+		return claudeThinkingAdapter(model, enabled)
+	case "custom":
+		return "", fmt.Errorf("自定义服务开启或关闭思考前，请选择服务支持的思考参数类型")
+	default:
+		return "", fmt.Errorf("该服务不支持思考控制")
+	}
+}
+
+func openAIThinkingAdapter(model string, enabled bool) (string, error) {
+	switch {
+	case strings.HasPrefix(model, "gpt-5.1"), strings.HasPrefix(model, "gpt-5.2"), strings.HasPrefix(model, "gpt-5.4"), strings.HasPrefix(model, "gpt-5.5"):
+		if strings.Contains(model, "pro") || strings.Contains(model, "codex") || strings.Contains(model, "chat") {
+			return "", fmt.Errorf("此 OpenAI 型号尚未适配思考控制，请选择跟随模型默认")
+		}
+		return "effort", nil
+	case model == "gpt-5" || strings.HasPrefix(model, "gpt-5-"), strings.HasPrefix(model, "o1"), strings.HasPrefix(model, "o3"), strings.HasPrefix(model, "o4"):
+		if !enabled {
+			return "", fmt.Errorf("该型号不支持关闭思考，请使用默认或开启低强度思考")
+		}
+		return "effort", nil
+	default:
+		return "", fmt.Errorf("该 OpenAI 型号尚未适配思考控制，请选择跟随模型默认")
+	}
+}
+
+func claudeThinkingAdapter(model string, enabled bool) (string, error) {
+	containsAny := func(parts ...string) bool {
+		for _, part := range parts {
+			if strings.Contains(model, part) {
+				return true
+			}
+		}
+		return false
+	}
+	switch {
+	case containsAny("mythos", "fable"):
+		if !enabled {
+			return "", fmt.Errorf("该 Claude 型号无法关闭思考")
+		}
+		return "adaptive", nil
+	case containsAny("4-6", "4.6", "4-7", "4.7", "4-8", "4.8") || strings.HasPrefix(model, "claude-opus-5") || strings.HasPrefix(model, "claude-sonnet-5"):
+		return "adaptive", nil
+	case containsAny("4-5", "4.5", "3-7", "3.7") || strings.HasPrefix(model, "claude-sonnet-4") || strings.HasPrefix(model, "claude-opus-4"):
+		return "budget", nil
+	default:
+		return "", fmt.Errorf("该 Claude 型号尚未适配思考控制，请选择跟随模型默认")
+	}
+}
+
+// thinkingRequestFields renders the request body fields of one adapter.
+func (s ServerConfig) thinkingRequestFields(adapter string, enabled bool, effort string) (map[string]any, error) {
+	fields := map[string]any{}
 	switch adapter {
 	case "thinking":
 		fields["thinking"] = map[string]any{"type": s.Thinking}

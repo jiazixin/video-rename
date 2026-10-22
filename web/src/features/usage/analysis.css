@@ -1,7 +1,4 @@
 /* 数据分析：沿用用量分析的卡片与图表语言；新增双列布局、图例、直方图与散点。 */
-.usage-tabs {
-  margin-bottom: 22px;
-}
 .analysis-kpis {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));

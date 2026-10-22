@@ -12,8 +12,8 @@
     ScanEye
   } from '@lucide/vue';
   import { api } from '../../app/api';
-  import { time } from '../../lib/date/format';
-  import { type ModelProfile, type PromptProfile } from '../../app/contracts';
+  import { formatTime } from '../../lib/date/format';
+  import { type ModelProfile, type ProbeResult, type PromptProfile } from '../../app/contracts';
   import Modal from '../../components/Modal.vue';
   import ModalTransition from '../../components/ModalTransition.vue';
   import SelectField from '../../components/SelectField.vue';
@@ -90,7 +90,7 @@
     }
   }
   const probing = ref(false),
-    probeResult = ref<any>(),
+    probeResult = ref<ProbeResult>(),
     probeError = ref(''),
     probeTimeout = ref(5);
   let probeController: AbortController | undefined;
@@ -116,7 +116,7 @@
     probeError.value = '';
     probeResult.value = undefined;
     try {
-      const result = await api(
+      const result = await api<ProbeResult>(
         '/model-configs/test-vision',
         'POST',
         { ...payload(), probe_timeout_seconds: seconds },
@@ -384,7 +384,7 @@
           ><summary>命名提示词 · {{ p.prompt_title || '未选择' }}</summary
           ><p>{{ p.body }}</p></details
         ><footer class="model-card-footer"
-          ><span>更新于 {{ time(p.updated) }}</span
+          ><span>更新于 {{ formatTime(p.updated) }}</span
           ><div class="model-card-actions"
             ><button
               :disabled="actionBusy"

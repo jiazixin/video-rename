@@ -3,7 +3,7 @@
   import { computed, onUnmounted, ref, watch } from 'vue';
   import { RefreshCw, RotateCcw, ChevronRight } from '@lucide/vue';
   import { api } from '../../app/api';
-  import { time } from '../../lib/date/format';
+  import { formatTime } from '../../lib/date/format';
   import { statusNames } from '../../app/labels';
 
   function statusName(status: string): string {
@@ -197,7 +197,9 @@
     report.value ? report.value.trend.reduce((sum, b) => sum + b.finished_batches, 0) : 0
   );
   const rangeText = computed(() =>
-    report.value ? `${time(report.value.range.from)} 至 ${time(report.value.range.to)}` : ''
+    report.value
+      ? `${formatTime(report.value.range.from)} 至 ${formatTime(report.value.range.to)}`
+      : ''
   );
   const profileOptions = computed(() => [
     { value: -1, label: '全部配置' },
@@ -544,7 +546,7 @@
                     width: `${totalFailures ? Math.max(1.5, (f.count / totalFailures) * 100) : 0}%`
                   }"
               /></div>
-              <small class="subtle">最近发生 {{ time(f.last_at) }}</small>
+              <small class="subtle">最近发生 {{ formatTime(f.last_at) }}</small>
             </div>
             <template v-if="report.batch_failures.length">
               <h3 class="analysis-subhead">批次级失败原因</h3>
@@ -552,7 +554,7 @@
                 <div class="usage-model-head"
                   ><strong :title="f.message">{{ f.message }}</strong
                   ><span
-                    >{{ f.count.toLocaleString() }} 个批次 · 最近 {{ time(f.last_at) }}</span
+                    >{{ f.count.toLocaleString() }} 个批次 · 最近 {{ formatTime(f.last_at) }}</span
                   ></div
                 >
               </div>

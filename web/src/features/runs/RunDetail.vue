@@ -19,9 +19,9 @@
   import DateTime from '../../components/DateTime.vue';
   import SelectField from '../../components/SelectField.vue';
   import PageNavigation from '../../components/PageNavigation.vue';
-  import { clockPart, time } from '../../lib/date/format';
+  import { clockPart, formatTime } from '../../lib/date/format';
   import { statusNames } from '../../app/labels';
-  import { type Run } from '../../app/contracts';
+  import { isActiveRunStatus, type Run } from '../../app/contracts';
   import { copyText } from '../../lib/clipboard/clipboard';
   import { useRunRecords, type RecordFilter, type RunItem } from './use-run-records';
   import RunLiveRecords from './RunLiveRecords.vue';
@@ -37,9 +37,7 @@
     cancel: [];
     notice: [message: string];
   }>();
-  const active = computed(() =>
-    ['queued', 'scanning', 'running', 'paused', 'cancelling'].includes(props.run.status)
-  );
+  const active = computed(() => isActiveRunStatus(props.run.status));
   const sections = ref({ records: true, config: false });
   const {
     state: records,
@@ -256,7 +254,7 @@
         statusNames[run.status] || run.status
       }}</StatusBadge>
       <p class="detail-header-meta"
-        ><span>提交于 {{ time(run.created) }}</span
+        ><span>提交于 {{ formatTime(run.created) }}</span
         ><span><Clock3 :size="13" />{{ active ? '已耗时' : '总耗时' }} {{ elapsed }}</span></p
       >
     </template>
@@ -603,11 +601,11 @@
               <div
                 ><dt>包含子目录</dt><dd>{{ run.recursive ? '是' : '否' }}</dd></div
               ><div
-                ><dt>提交时间</dt><dd>{{ time(run.created) }}</dd></div
+                ><dt>提交时间</dt><dd>{{ formatTime(run.created) }}</dd></div
               ><div
-                ><dt>开始时间</dt><dd>{{ run.started ? time(run.started) : '—' }}</dd></div
+                ><dt>开始时间</dt><dd>{{ run.started ? formatTime(run.started) : '—' }}</dd></div
               ><div
-                ><dt>结束时间</dt><dd>{{ run.finished ? time(run.finished) : '—' }}</dd></div
+                ><dt>结束时间</dt><dd>{{ run.finished ? formatTime(run.finished) : '—' }}</dd></div
               ><div
                 ><dt>总耗时</dt><dd>{{ elapsed }}</dd></div
               > </dl

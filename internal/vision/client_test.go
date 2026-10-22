@@ -433,7 +433,7 @@ func TestValidateTitle(t *testing.T) {
 		"product demo 2024": "product demo 2024",
 	}
 	for in, want := range valid {
-		got, jerr := ValidateTitle(in)
+		got, jerr := ValidateTitle(in, nil)
 		if jerr != nil {
 			t.Errorf("%q 应合法: %v", in, jerr)
 			continue
@@ -450,12 +450,12 @@ func TestValidateTitle(t *testing.T) {
 		"1. 标题一\n2. 标题二",
 	}
 	for _, in := range invalid {
-		if _, jerr := ValidateTitle(in); jerr == nil {
+		if _, jerr := ValidateTitle(in, nil); jerr == nil {
 			t.Errorf("%q 应无效", in)
 		}
 	}
 	// 这是解释:标题 是单行,协议上允许(只做单行验证,不做语义判断)
-	if _, jerr := ValidateTitle("这是解释:标题"); jerr != nil {
+	if _, jerr := ValidateTitle("这是解释:标题", nil); jerr != nil {
 		t.Errorf("单行文本应通过(不猜测语义): %v", jerr)
 	}
 }

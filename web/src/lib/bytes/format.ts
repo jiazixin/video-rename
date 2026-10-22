@@ -1,4 +1,4 @@
-export const size = (v: number) =>
+export const formatSize = (v: number) =>
   v >= 1073741824
     ? `${(v / 1073741824).toFixed(1)} GB`
     : v >= 1048576

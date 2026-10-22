@@ -93,6 +93,11 @@ func retryWait(ctx context.Context, delay time.Duration) error {
 	}
 }
 
+// inferWithRetry calls the model for one item, retrying within the run's
+// frozen policy. The final slot goes to the fallback model when one is
+// configured, and an error the primary model cannot recover from skips
+// straight to it. leaseRef is shared with the caller because waiting for a
+// model slot or a retry may release the screenshot lease and acquire a new one.
 func (m *Manager) inferWithRetry(ctx context.Context, run Run, entry int64, cfg *config.TaskConfig, job domain.VideoJob, probe, ffmpeg string, leaseRef **framecache.Lease) (string, error) {
 	lease := *leaseRef
 	defer func() { *leaseRef = lease }()
@@ -100,21 +105,21 @@ func (m *Manager) inferWithRetry(ctx context.Context, run Run, entry int64, cfg 
 	if err := m.DB.QueryRow("SELECT id FROM run_items WHERE run=? AND entry=?", run.ID, entry).Scan(&itemID); err != nil {
 		return "", err
 	}
-	total := 1
+	lastSlot := 0
 	if run.retry.Enabled {
-		total += run.retry.Count
+		lastSlot = run.retry.Count
 	}
-	useFallback := false
-	attempt := 0
-	for slot := 0; slot < total; slot++ {
+	hasFallback := run.retry.FallbackID > 0
+	attempt := 0 // model calls made so far; slots that fail before calling do not count
+	for slot := 0; slot <= lastSlot; slot++ {
 		current := *cfg
-		id, title := run.ModelConfigID, run.ModelConfigTitle
-		fallback := run.retry.FallbackID > 0 && (useFallback || slot == total-1) && slot > 0
+		modelID, modelTitle := run.ModelConfigID, run.ModelConfigTitle
+		fallback := hasFallback && slot > 0 && slot == lastSlot
 		if fallback {
 			if err := (models.Store{DB: m.DB}).ApplySnapshot(run.retry.FallbackSnapshot, &current); err != nil {
 				return "", err
 			}
-			id, title = run.retry.FallbackID, run.retry.FallbackTitle
+			modelID, modelTitle = run.retry.FallbackID, run.retry.FallbackTitle
 		}
 		m.updateStage(itemID, func(s *LiveStage) {
 			s.Stage, s.Attempt, s.Fallback = "model_wait", attempt+1, fallback
@@ -123,24 +128,12 @@ func (m *Manager) inferWithRetry(ctx context.Context, run Run, entry int64, cfg 
 			}
 		})
 		waitStarted := time.Now()
-		release, n, err := m.inferenceSlot(ctx, run, entry, id, &current, job, probe, ffmpeg, &lease)
+		release, workers, err := m.inferenceSlot(ctx, run, entry, modelID, &current, job, probe, ffmpeg, &lease)
 		if err != nil {
 			return "", err
 		}
-		current.Workers, current.Server.Workers = n, n
-		snap, err := domain.StatSnapshot(job.Path)
-		if err == nil && !snap.Same(job.Snapshot) {
-			diagnostic := domain.SourceChangedError("视频在等待模型期间发生变化", "抽帧完成后、获取模型名额后、调用模型前", job.Path, job.Snapshot, snap)
-			diagnostic.ProcessingLog += fmt.Sprintf("批次：%d\n文件条目：%d\n模型排队时长：%s\n基准：本视频处理开始时的原文件快照；当前：取得模型名额后的原文件快照。\n本次尚未调用模型；校验对象不是截图目录或截图数量。\n", run.ID, entry, time.Since(waitStarted))
-			if lease != nil {
-				diagnostic.ProcessingLog += fmt.Sprintf("已准备截图：%d 张\n", len(lease.Set.Frames))
-			}
-			err = diagnostic
-		}
-		if err == nil {
-			err = ctx.Err()
-		}
-		if err != nil {
+		current.Workers, current.Server.Workers = workers, workers
+		if err = sourceUnchangedAfterWait(ctx, run, entry, job, lease, waitStarted); err != nil {
 			release()
 			return "", err
 		}
@@ -162,35 +155,14 @@ func (m *Manager) inferWithRetry(ctx context.Context, run Run, entry int64, cfg 
 		}
 		release()
 		if err == nil {
-			invalid := naming.FailureTitleError(result, current.FailureKeywords)
-			var cleaned string
-			if invalid == nil {
-				cleaned, invalid = naming.CleanTitle(result, filepath.Ext(job.Path))
-			}
-			if invalid == nil {
-				m.updateStage(itemID, func(s *LiveStage) { s.Title = cleaned + naming.NormalizeExtension(filepath.Ext(job.Path)) })
-			}
-			if invalid != nil {
-				invalid.RawRequest, invalid.RawResponse = exchange.Request, exchange.Response
-				err = invalid
-			}
+			err = m.checkTitle(itemID, result, &current, job, exchange)
 		}
-		status, message := "success", ""
-		if err != nil {
-			status, message = "failed", err.Error()
-			if diagnostic, ok := errors.AsType[*domain.JobError](err); ok {
-				exchange.Request, exchange.Response = diagnostic.RawRequest, diagnostic.RawResponse
-			}
+		if diagnostic, ok := errors.AsType[*domain.JobError](err); ok {
+			exchange.Request, exchange.Response = diagnostic.RawRequest, diagnostic.RawResponse
 		}
-		if ctx.Err() != nil {
-			status = "cancelled"
-		}
-		if _, recordErr := m.DB.Exec(`INSERT INTO model_attempts(item,attempt,model_config_id,model_config_title,model,fallback,started,duration_ms,status,message) VALUES(?,?,?,?,?,?,?,?,?,?)`, itemID, attempt, id, title, current.Server.Model, fallback, started.UTC().Format(time.RFC3339Nano), time.Since(started).Milliseconds(), status, message); recordErr != nil {
-			return "", fmt.Errorf("保存模型尝试记录：%w", recordErr)
-		}
-		summary, _ := json.Marshal(map[string]string{"model": current.Server.Model, "provider": current.Server.Provider, "protocol": current.Server.Protocol})
-		if recordErr := tokenusage.RecordAttempt(m.DB, run.ID, itemID, attempt, id, title, string(summary), exchange.Request, exchange.Response, time.Now()); recordErr != nil {
-			return "", fmt.Errorf("保存模型用量：%w", recordErr)
+		attemptRecord := modelAttemptRecord{item: itemID, number: attempt, modelID: modelID, modelTitle: modelTitle, fallback: fallback, started: started, err: err}
+		if recordErr := m.recordModelAttempt(ctx, run, attemptRecord, &current, exchange); recordErr != nil {
+			return "", recordErr
 		}
 		if err == nil {
 			domain.CaptureModelDiagnostics(ctx, domain.TitleResult{RawRequest: exchange.Request, RawResponse: exchange.Response})
@@ -199,33 +171,113 @@ func (m *Manager) inferWithRetry(ctx context.Context, run Run, entry int64, cfg 
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
-		again, canFallback, delay := retryKind(err)
-		if fallback || slot == total-1 || (!again && (!canFallback || run.retry.FallbackID == 0)) {
+		again, canFallback, retryAfter := retryKind(err)
+		if fallback || slot == lastSlot {
 			return "", err
 		}
 		if !again {
-			useFallback = true
-			slot = total - 2
+			if !canFallback || !hasFallback {
+				return "", err
+			}
+			slot = lastSlot - 1 // the loop increment moves to the fallback slot
 			continue
 		}
 		m.setStage(itemID, "retry_wait")
-		delay = max(delay, time.Duration(float64(min(15*time.Second, time.Second*2*time.Duration(1<<slot)))*(0.5+0.5*rand.Float64())))
-		// Preserve Retry-After across pause/resume, without pinning screenshots.
-		until := time.Now().Add(delay)
-		for time.Now().Before(until) {
-			if waitErr := retryWait(m.currentSchedule(ctx, run.ID), time.Until(until)); waitErr == nil {
-				break
-			}
-			if lease != nil {
-				lease.Release(false)
-				lease = nil
-			}
-			if _, waitErr := m.dispatchContext(ctx, run.ID); waitErr != nil {
-				return "", waitErr
-			}
+		if err = m.waitBeforeRetry(ctx, run, retryBackoff(slot, retryAfter), &lease); err != nil {
+			return "", err
 		}
 	}
 	return "", fmt.Errorf("模型请求未完成")
+}
+
+// sourceUnchangedAfterWait rejects a video that changed while the item waited
+// for a model slot, before any model is called.
+func sourceUnchangedAfterWait(ctx context.Context, run Run, entry int64, job domain.VideoJob, lease *framecache.Lease, waitStarted time.Time) error {
+	snap, err := domain.StatSnapshot(job.Path)
+	if err != nil {
+		return err
+	}
+	if !snap.Same(job.Snapshot) {
+		diagnostic := domain.SourceChangedError("视频在等待模型期间发生变化", "抽帧完成后、获取模型名额后、调用模型前", job.Path, job.Snapshot, snap)
+		diagnostic.ProcessingLog += fmt.Sprintf("批次：%d\n文件条目：%d\n模型排队时长：%s\n基准：本视频处理开始时的原文件快照；当前：取得模型名额后的原文件快照。\n本次尚未调用模型；校验对象不是截图目录或截图数量。\n", run.ID, entry, time.Since(waitStarted))
+		if lease != nil {
+			diagnostic.ProcessingLog += fmt.Sprintf("已准备截图：%d 张\n", len(lease.Set.Frames))
+		}
+		return diagnostic
+	}
+	return ctx.Err()
+}
+
+// checkTitle applies the run's failure rules and the naming rules to a model
+// reply, showing the accepted name as the item's live title.
+func (m *Manager) checkTitle(itemID int64, result string, current *config.TaskConfig, job domain.VideoJob, exchange domain.ModelDiagnostics) error {
+	invalid := naming.FailureTitleError(result, current.FailureKeywords)
+	var cleaned string
+	if invalid == nil {
+		cleaned, invalid = naming.CleanTitle(result, filepath.Ext(job.Path))
+	}
+	if invalid != nil {
+		invalid.RawRequest, invalid.RawResponse = exchange.Request, exchange.Response
+		return invalid
+	}
+	m.updateStage(itemID, func(s *LiveStage) { s.Title = cleaned + naming.NormalizeExtension(filepath.Ext(job.Path)) })
+	return nil
+}
+
+// modelAttemptRecord is one finished model call of an item.
+type modelAttemptRecord struct {
+	item       int64
+	number     int
+	modelID    int64
+	modelTitle string
+	fallback   bool
+	started    time.Time
+	err        error
+}
+
+// recordModelAttempt saves the attempt and its token usage.
+func (m *Manager) recordModelAttempt(ctx context.Context, run Run, a modelAttemptRecord, current *config.TaskConfig, exchange domain.ModelDiagnostics) error {
+	status, message := "success", ""
+	if a.err != nil {
+		status, message = "failed", a.err.Error()
+	}
+	if ctx.Err() != nil {
+		status = "cancelled"
+	}
+	if _, err := m.DB.Exec(`INSERT INTO model_attempts(item,attempt,model_config_id,model_config_title,model,fallback,started,duration_ms,status,message) VALUES(?,?,?,?,?,?,?,?,?,?)`, a.item, a.number, a.modelID, a.modelTitle, current.Server.Model, a.fallback, a.started.UTC().Format(time.RFC3339Nano), time.Since(a.started).Milliseconds(), status, message); err != nil {
+		return fmt.Errorf("保存模型尝试记录：%w", err)
+	}
+	summary, _ := json.Marshal(map[string]string{"model": current.Server.Model, "provider": current.Server.Provider, "protocol": current.Server.Protocol})
+	if err := tokenusage.RecordAttempt(m.DB, run.ID, a.item, a.number, a.modelID, a.modelTitle, string(summary), exchange.Request, exchange.Response, time.Now()); err != nil {
+		return fmt.Errorf("保存模型用量：%w", err)
+	}
+	return nil
+}
+
+// retryBackoff honours a server Retry-After and otherwise doubles from 2s per
+// slot up to 15s, with up to 50% jitter.
+func retryBackoff(slot int, retryAfter time.Duration) time.Duration {
+	base := min(15*time.Second, 2*time.Second*time.Duration(1<<slot))
+	return max(retryAfter, time.Duration(float64(base)*(0.5+0.5*rand.Float64())))
+}
+
+// waitBeforeRetry sleeps for delay across pause/resume. A pause releases the
+// screenshot lease so a long wait does not pin screenshots.
+func (m *Manager) waitBeforeRetry(ctx context.Context, run Run, delay time.Duration, lease **framecache.Lease) error {
+	until := time.Now().Add(delay)
+	for time.Now().Before(until) {
+		if retryWait(m.currentSchedule(ctx, run.ID), time.Until(until)) == nil {
+			return nil
+		}
+		if *lease != nil {
+			(*lease).Release(false)
+			*lease = nil
+		}
+		if _, err := m.dispatchContext(ctx, run.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Attempt is the public, credential-free record shown in batch details.

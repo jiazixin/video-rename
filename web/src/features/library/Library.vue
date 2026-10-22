@@ -27,13 +27,21 @@
     Image as ImageIcon,
     CircleCheck,
     CircleMinus,
-    Images
+    Images,
+    Trash2
   } from '@lucide/vue';
   import './library-actions.css';
-  import { api, ApiError, key } from '../../app/api';
-  import { time } from '../../lib/date/format';
-  import { size } from '../../lib/bytes/format';
-  import { type Entry, type Page, type DirectoryState, type Run } from '../../app/contracts';
+  import { api, newRequestKey } from '../../app/api';
+  import { formatTime } from '../../lib/date/format';
+  import { formatSize } from '../../lib/bytes/format';
+  import {
+    isActiveRunStatus,
+    type Entry,
+    type Page,
+    type DirectoryState,
+    type Operation,
+    type Run
+  } from '../../app/contracts';
   import { statusNames } from '../../app/labels';
   import { ModelPicker } from '../models';
   import StatusBadge from '../../components/StatusBadge.vue';
@@ -43,7 +51,6 @@
   import DateTime from '../../components/DateTime.vue';
   import Modal from '../../components/Modal.vue';
   import ModalTransition from '../../components/ModalTransition.vue';
-  import { Trash2 } from '@lucide/vue';
   import SelectField from '../../components/SelectField.vue';
   import VideoPlayer from './VideoPlayer.vue';
   import AudioPlayer from './AudioPlayer.vue';
@@ -53,19 +60,32 @@
   import ScanStatus from './ScanStatus.vue';
   import { useLibraryScan } from './library-scan';
   import {
-    video,
+    isVideo,
     isImage,
     isAudio,
     markable,
     protectedMedia,
-    marked,
+    isMarked,
     selectable,
+    nameWithoutExtension,
     normalizedExtension
   } from './entry-types';
   import { useMediaPreview } from './media-preview';
   import { useLibrarySelection } from './selection';
   import { useInlineRename } from './inline-rename';
+  import { useStickyHeader } from './sticky-header';
+  import { useMarkEntries } from './mark-entries';
   defineProps<{ ready: boolean }>();
+  type BatchAction = 'auto' | 'extract' | 'restore';
+  type EntryDialogMode = 'rename' | 'auto' | 'extract' | 'restore' | 'history';
+  interface LoadOptions {
+    /** Reload in the background without the busy state or resetting the selection anchor. */
+    quiet?: boolean;
+    /** During a quiet load, keep the visible rows in place and refresh them by ID. */
+    keepRows?: boolean;
+    /** Checked before applying the response; false defers it behind the update notice. */
+    canApply?: () => boolean;
+  }
   const emit = defineEmits<{ run: [] }>();
   const toast = ref<InstanceType<typeof ToastNotice>>();
   const {
@@ -80,7 +100,7 @@
     selectPage,
     resetSelectionAnchor
   } = useLibrarySelection(() => page.value?.items || []);
-  const batch = ref(''),
+  const batchAction = ref<BatchAction | ''>(''),
     batchError = ref(''),
     batchProgress = ref('');
   const deleting = ref<Entry>(),
@@ -90,13 +110,32 @@
     deleteBatchPath = ref(''),
     deleteBatchError = ref(''),
     deleteBatchProgress = ref('');
+  // Breadcrumb names below the library root, for confirmation dialogs.
+  function directoryNames() {
+    return page.value?.breadcrumbs.filter((c) => c.id !== 1).map((c) => c.name) || [];
+  }
+  function deleteRequest(e: Entry) {
+    return api(`/entries/${e.id}`, 'DELETE', { version: e.version, confirmed: true });
+  }
+  function restoreRequest(e: Entry) {
+    return api(`/operations/${e.restore_id}/restore`, 'POST', { key: newRequestKey() });
+  }
+  async function queueRun(task: 'rename' | 'extract', entries: Entry[]) {
+    const extracting = task === 'extract';
+    const run = await api<Run>('/runs', 'POST', {
+      task,
+      targets: entries.map((e) => e.id),
+      recursive: recursive.value,
+      model_config_id: extracting ? 0 : modelConfigID.value,
+      key: newRequestKey()
+    });
+    trackRun(run.id, entries);
+    toast.value?.show(`${extracting ? '抽帧' : '重命名'}批次 #${run.id} 已加入队列`);
+  }
   function confirmBatchDelete() {
     if (saving.value || !chosen.value.size) return;
     deletingBatch.value = [...chosen.value.values()].map((e) => ({ ...e }));
-    deleteBatchPath.value = [
-      '媒体库',
-      ...(page.value?.breadcrumbs.filter((c) => c.id !== 1).map((c) => c.name) || [])
-    ].join(' / ');
+    deleteBatchPath.value = ['媒体库', ...directoryNames()].join(' / ');
     deleteBatchError.value = '';
     deleteBatchProgress.value = '';
   }
@@ -107,14 +146,14 @@
       failed: Entry[] = [],
       errors: string[] = [];
     saving.value = true;
-    statusSeq++;
+    statusRequest++;
     clearTimeout(timer);
     deleteBatchError.value = '';
     try {
       for (const [index, e] of entries.entries()) {
         deleteBatchProgress.value = `正在删除 ${index + 1} / ${entries.length}：${e.name}`;
         try {
-          await api(`/entries/${e.id}`, 'DELETE', { version: e.version, confirmed: true });
+          await deleteRequest(e);
           chosen.value.delete(e.id);
         } catch (err) {
           failed.push(e);
@@ -136,19 +175,16 @@
     if (saving.value) return;
     deleting.value = { ...e };
     deleteError.value = '';
-    deletePath.value = [
-      ...(page.value?.breadcrumbs.filter((c) => c.id !== 1).map((c) => c.name) || []),
-      e.name
-    ].join('/');
+    deletePath.value = [...directoryNames(), e.name].join('/');
   }
   async function deleteEntry() {
     if (!deleting.value || saving.value) return;
     saving.value = true;
     deleteError.value = '';
-    statusSeq++;
+    statusRequest++;
     try {
       const e = deleting.value;
-      await api(`/entries/${e.id}`, 'DELETE', { version: e.version, confirmed: true });
+      await deleteRequest(e);
       chosen.value.delete(e.id);
       deleting.value = undefined;
       toast.value?.show(`已永久删除 ${e.name}`);
@@ -166,10 +202,10 @@
     if (!kind.value) return true;
     if (e.kind === 'directory') return kind.value !== 'other';
     if (kind.value === 'directory') return false;
-    if (kind.value === 'video') return e.kind === 'file' && video(e);
+    if (kind.value === 'video') return e.kind === 'file' && isVideo(e);
     if (kind.value === 'image') return isImage(e);
     if (kind.value === 'audio') return isAudio(e);
-    return e.kind === 'file' && !video(e) && !isImage(e) && !isAudio(e);
+    return e.kind === 'file' && !isVideo(e) && !isImage(e) && !isAudio(e);
   }
   function matchesProcessingStatus(e: Entry, matchingDirectories: Set<number>) {
     if (!processingStatus.value) return true;
@@ -177,15 +213,14 @@
     // snapshot as pagination. Never reinsert a directory excluded by that query.
     if (e.kind === 'directory') return matchingDirectories.has(e.id);
     const value = e.task_status || e.processed || 'unprocessed';
-    if (processingStatus.value === 'active')
-      return ['queued', 'scanning', 'running', 'paused', 'cancelling'].includes(value);
+    if (processingStatus.value === 'active') return isActiveRunStatus(value);
     if (processingStatus.value === 'processed')
       return ['marked', 'manual', 'automatic'].includes(value);
     return value === processingStatus.value;
   }
-  function startBatch(action: string) {
+  function startBatch(action: BatchAction) {
     if (saving.value) return;
-    batch.value = action;
+    batchAction.value = action;
     batchError.value = '';
     batchProgress.value = '';
     modelConfigID.value = 0;
@@ -193,23 +228,16 @@
   }
   async function submitBatch() {
     if (saving.value) return;
-    statusSeq++;
+    statusRequest++;
     saving.value = true;
     batchError.value = '';
     try {
-      if (batch.value === 'auto' || batch.value === 'extract') {
-        const extracting = batch.value === 'extract';
-        const entries = [...(extracting ? extractEntries.value : autoEntries.value)];
-        const run = await api('/runs', 'POST', {
-          task: extracting ? 'extract' : 'rename',
-          targets: entries.map((e) => e.id),
-          recursive: recursive.value,
-          model_config_id: extracting ? 0 : modelConfigID.value,
-          key: key()
-        });
-        trackRun(run.id, entries);
-        toast.value?.show(`${extracting ? '抽帧' : '重命名'}批次 #${run.id} 已加入队列`);
-        batch.value = '';
+      if (batchAction.value === 'auto' || batchAction.value === 'extract') {
+        const extracting = batchAction.value === 'extract';
+        await queueRun(extracting ? 'extract' : 'rename', [
+          ...(extracting ? extractEntries.value : autoEntries.value)
+        ]);
+        batchAction.value = '';
       } else {
         const entries = [...restoreEntries.value];
         let done = 0;
@@ -217,7 +245,7 @@
         for (const e of entries) {
           batchProgress.value = `正在还原 ${++done} / ${entries.length}`;
           try {
-            await api(`/operations/${e.restore_id}/restore`, 'POST', { key: key() });
+            await restoreRequest(e);
             chosen.value.delete(e.id);
           } catch (err) {
             failures.push(`${e.name}：${(err as Error).message}`);
@@ -228,7 +256,7 @@
         );
         batchProgress.value = '';
         if (failures.length) batchError.value = failures.join('\n');
-        else batch.value = '';
+        else batchAction.value = '';
       }
       void syncEntries();
     } catch (err) {
@@ -307,7 +335,7 @@
     saveInlineRename
   } = useInlineRename({
     beforeSave: () => {
-      statusSeq++;
+      statusRequest++;
     },
     onSaved: async () => {
       toast.value?.show('名称已更新，历史已保存');
@@ -321,22 +349,25 @@
     },
     { flush: 'sync' }
   );
-  const selected = ref<Entry>(),
-    mode = ref(''),
+  const dialogEntry = ref<Entry>(),
+    dialogMode = ref<EntryDialogMode | ''>(''),
     newName = ref(''),
     saving = ref(false),
     dialogError = ref(''),
     recursive = ref(true),
-    history = ref<any[]>([]);
-  let historySequence = 0;
+    history = ref<Operation[]>([]);
+  // Request counters: a response applies only while its counter is unchanged.
+  // historyRequest guards the dialog's history, statusRequest the lightweight
+  // status polls, and listRequest full page loads.
+  let historyRequest = 0;
   const trackedRuns = new Set<number>();
   let disposed = false,
-    statusSeq = 0;
-  let seq = 0,
+    statusRequest = 0;
+  let listRequest = 0,
     timer: ReturnType<typeof setTimeout> | undefined,
     searchTimer: ReturnType<typeof setTimeout> | undefined;
   const extension = computed(() =>
-    selected.value?.kind === 'file' ? normalizedExtension(selected.value.name) : ''
+    dialogEntry.value?.kind === 'file' ? normalizedExtension(dialogEntry.value.name) : ''
   );
   function scheduleSync() {
     clearTimeout(timer);
@@ -352,16 +383,14 @@
     scheduleSync();
   }
   async function syncEntries() {
-    const n = seq,
-      request = ++statusSeq;
+    const listAtStart = listRequest,
+      request = ++statusRequest;
     clearTimeout(timer);
     if (disposed || !active.value || busy.value || !page.value) return;
     try {
       const runs = await Promise.all([...trackedRuns].map((id) => api<Run>(`/runs/${id}`)));
-      if (n !== seq || request !== statusSeq || disposed) return;
-      for (const run of runs)
-        if (!['queued', 'scanning', 'running', 'paused', 'cancelling'].includes(run.status))
-          trackedRuns.delete(run.id);
+      if (listAtStart !== listRequest || request !== statusRequest || disposed) return;
+      for (const run of runs) if (!isActiveRunStatus(run.status)) trackedRuns.delete(run.id);
       const ids = [
         ...new Set([
           page.value.directory.id,
@@ -374,10 +403,10 @@
         entries.push(
           ...(await api<Entry[]>(`/entries/status?ids=${ids.slice(i, i + 300).join(',')}`))
         );
-      if (n !== seq || request !== statusSeq || disposed) return;
+      if (listAtStart !== listRequest || request !== statusRequest || disposed) return;
       // A queued/scanning run may not have populated run_items yet.
       for (const run of runs)
-        if (['queued', 'scanning', 'running', 'paused', 'cancelling'].includes(run.status))
+        if (isActiveRunStatus(run.status))
           for (const e of entries)
             if ((run.targets || []).includes(e.id) && !e.processed && !e.task_status)
               e.task_status = run.status;
@@ -395,21 +424,21 @@
       // Status and name changes can move an entry into or out of a filter.
       // Recount the whole directory while retaining matching rows and selections.
       if (q.value || kind.value || processingStatus.value) {
-        await load(true);
+        await load({ quiet: true });
         return;
       }
       if (trackedRuns.size || entries.some((e) => e.task_status || e.progress?.active))
         scheduleSync();
     } catch (e) {
-      if (n === seq && request === statusSeq && !disposed) {
+      if (listAtStart === listRequest && request === statusRequest && !disposed) {
         error.value = `状态更新失败：${(e as Error).message}`;
         scheduleSync();
       }
     }
   }
-  async function load(quiet = false, keepRows = true, canApply?: () => boolean) {
+  async function load({ quiet = false, keepRows = true, canApply }: LoadOptions = {}) {
     if (!quiet) resetSelectionAnchor();
-    const n = ++seq;
+    const request = ++listRequest;
     clearTimeout(timer);
     busy.value = !quiet;
     error.value = '';
@@ -424,7 +453,7 @@
         sort: sort.value
       });
       const p = await api<Page>(`/directories/${dir.value}/entries?${params}`);
-      if (n !== seq) return;
+      if (request !== listRequest) return;
       // Background scans must not move the rows being read or selected. Fetch by
       // ID as renamed entries can have moved outside this page's latest sort range.
       if (
@@ -436,7 +465,7 @@
         const entries = await api<Entry[]>(
           `/entries/status?ids=${page.value.items.map((e) => e.id).join(',')}`
         );
-        if (n !== seq) return;
+        if (request !== listRequest) return;
         const latest = new Map(entries.map((e) => [e.id, e]));
         const visible = new Set(page.value.items.map((e) => e.id));
         const matchingDirectories = new Set(
@@ -468,10 +497,10 @@
       directoryUpdateAvailable.value = false;
       if (inlineEntry.value && !p.items.some((e) => e.id === inlineEntry.value?.id))
         cancelInlineRename();
-      await restorePosition(n, p);
-      if (n !== seq) return;
+      await restorePosition(request, p);
+      if (request !== listRequest) return;
       for (const e of p.items) if (chosen.value.has(e.id)) chosen.value.set(e.id, e);
-      if (p.refreshing) timer = setTimeout(() => load(true, keepRows, canApply), 1500);
+      if (p.refreshing) timer = setTimeout(() => load({ quiet: true, keepRows, canApply }), 1500);
       else if (
         trackedRuns.size ||
         p.directory.task_status ||
@@ -480,13 +509,13 @@
       )
         scheduleSync();
     } catch (e) {
-      if (n === seq) {
+      if (request === listRequest) {
         error.value = (e as Error).message;
         if (canApply) directoryUpdateAvailable.value = true;
         if (quiet && (q.value || kind.value || processingStatus.value)) scheduleSync();
       }
     } finally {
-      if (n === seq) busy.value = false;
+      if (request === listRequest) busy.value = false;
     }
   }
   type DirectoryPosition = {
@@ -504,47 +533,16 @@
   const listRoot = ref<HTMLElement>(),
     returnAnchor = ref<number>();
   const fixedControls = ref<HTMLElement>(),
-    fileTable = ref<HTMLTableElement>();
-  const headerScroll = ref<HTMLElement>();
-  const headerColumns = ref<number[]>([]),
-    headerWidth = ref(0);
-  let layoutObserver: ResizeObserver | undefined,
-    headerFrame = 0;
-  // Keep the visible header in the sticky controls. Only column geometry changes
-  // need measuring; vertical scrolling is handled entirely by CSS.
-  function updateHeaderLayout() {
-    headerFrame = 0;
-    const table = fileTable.value,
-      head = table?.tHead;
-    if (!table || !head) return;
-    headerColumns.value = Array.from(
-      head.rows[0].cells,
-      (cell) => cell.getBoundingClientRect().width
-    );
-    headerWidth.value = table.getBoundingClientRect().width;
-    if (headerScroll.value) headerScroll.value.scrollLeft = table.parentElement!.scrollLeft;
-  }
-  function scheduleHeaderLayout() {
-    if (!headerFrame) headerFrame = requestAnimationFrame(updateHeaderLayout);
-  }
-  function syncTableScroll(event: Event) {
-    const source = event.currentTarget as HTMLElement;
-    const target =
-      source === headerScroll.value ? fileTable.value?.parentElement : headerScroll.value;
-    if (target && target.scrollLeft !== source.scrollLeft) target.scrollLeft = source.scrollLeft;
-  }
-  function observeLayout() {
-    layoutObserver = new ResizeObserver(scheduleHeaderLayout);
-    if (fixedControls.value) layoutObserver.observe(fixedControls.value);
-    if (fileTable.value) layoutObserver.observe(fileTable.value);
-    scheduleHeaderLayout();
-  }
-  function stopObservingLayout() {
-    layoutObserver?.disconnect();
-    layoutObserver = undefined;
-    cancelAnimationFrame(headerFrame);
-    headerFrame = 0;
-  }
+    fileTable = ref<HTMLTableElement>(),
+    headerScroll = ref<HTMLElement>();
+  const {
+    headerColumns,
+    headerWidth,
+    scheduleHeaderLayout,
+    syncTableScroll,
+    observeLayout,
+    stopObservingLayout
+  } = useStickyHeader({ fixedControls, fileTable, headerScroll });
   watch([multi, sort, page], () => {
     void nextTick(scheduleHeaderLayout);
   });
@@ -564,7 +562,7 @@
     scanning
   } = scan;
   // A closing dialog lingers for its fade-out marked aria-hidden; it no longer blocks updates.
-  const openDialog = '[role="dialog"]:not([aria-hidden="true"] *)';
+  const openDialogSelector = '[role="dialog"]:not([aria-hidden="true"] *)';
   // Never replace a list while the user is selecting, editing or viewing media.
   // The explicit update button keeps selected IDs and the current page intact.
   function listInUse(ignoreSelection = false) {
@@ -575,13 +573,13 @@
       playing.value ||
       audioPlaying.value ||
       preview.value ||
-      document.querySelector(openDialog) ||
+      document.querySelector(openDialogSelector) ||
       document.activeElement?.matches('input,textarea,[contenteditable="true"]')
     );
   }
   async function pollDirectoryState(signal: AbortSignal) {
     const directory = dir.value,
-      request = seq;
+      request = listRequest;
     if (!page.value || busy.value || !active.value) return;
     try {
       const state = await api<DirectoryState>(
@@ -590,7 +588,8 @@
         undefined,
         signal
       );
-      if (signal.aborted || !active.value || directory !== dir.value || request !== seq) return;
+      if (signal.aborted || !active.value || directory !== dir.value || request !== listRequest)
+        return;
       directoryPollError.value = state.error ? `目录扫描未完成：${state.error}` : '';
       if (state.generation === page.value?.generation) directoryUpdateAvailable.value = false;
       else if (listInUse()) directoryUpdateAvailable.value = true;
@@ -598,19 +597,28 @@
       // is deferred by an interaction, or if loading the new list fails.
       else await applyDirectoryUpdate();
     } catch (e) {
-      if (!signal.aborted && active.value && directory === dir.value && request === seq)
+      if (!signal.aborted && active.value && directory === dir.value && request === listRequest)
         directoryPollError.value = `目录更新检查失败：${(e as Error).message}`;
     }
   }
   async function applyDirectoryUpdate(manual = false) {
-    if (busy.value || saving.value || inlineEntry.value || document.querySelector(openDialog))
+    if (
+      busy.value ||
+      saving.value ||
+      inlineEntry.value ||
+      document.querySelector(openDialogSelector)
+    )
       return;
     const directory = dir.value,
       top = window.scrollY,
       position = positionSerial;
     // A quiet load keeps filters, page number and selected IDs. Request the
     // current sorted page so new files become visible without another disk scan.
-    await load(true, false, () => active.value && !document.hidden && !listInUse(manual));
+    await load({
+      quiet: true,
+      keepRows: false,
+      canApply: () => active.value && !document.hidden && !listInUse(manual)
+    });
     if (active.value && directory === dir.value && position === positionSerial) {
       await nextTick();
       window.scrollTo({ top, behavior: 'instant' });
@@ -624,7 +632,7 @@
     const saved = pendingPosition;
     if (!saved || (result.refreshing && !result.items.some((e) => e.id === saved.anchor))) return;
     await nextTick();
-    if (disposed || request !== seq || saved !== pendingPosition) return;
+    if (disposed || request !== listRequest || saved !== pendingPosition) return;
     pendingPosition = undefined;
     const row = saved.anchor
       ? listRoot.value?.querySelector<HTMLElement>(`[data-entry-id="${saved.anchor}"]`)
@@ -643,7 +651,7 @@
       // 行内异步内容(如目录状态)在滚动后才渲染会改变行高,半秒内多次复核并校正,保持锚定行精确居中。
       for (const delay of [0, 60, 180, 400]) {
         setTimeout(() => {
-          if (disposed || request !== seq || pendingPosition || !returnAnchor.value) return;
+          if (disposed || request !== listRequest || pendingPosition || !returnAnchor.value) return;
           const r = listRoot.value?.querySelector<HTMLElement>(`[data-entry-id="${saved.anchor}"]`);
           if (!r) return;
           const rect = r.getBoundingClientRect(),
@@ -709,81 +717,68 @@
     sort.value = saved?.sort ?? sort.value;
     limit.value = saved?.limit ?? limit.value;
     page.value = snapshots.get(id);
-    void load(!!page.value);
-    if (page.value) void restorePosition(seq, page.value);
+    void load({ quiet: !!page.value });
+    if (page.value) void restorePosition(listRequest, page.value);
   }
   function search() {
     pageNumber.value = 1;
-    seq++;
+    listRequest++;
     clearTimeout(timer);
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(load, 250);
+    searchTimer = setTimeout(() => load(), 250);
   }
   async function refresh() {
     const directory = dir.value;
     try {
       await api(`/directories/${directory}/refresh`, 'POST', {});
-      if (directory === dir.value) await load(false, false);
+      if (directory === dir.value) await load({ keepRows: false });
     } catch (e) {
       if (directory === dir.value) error.value = (e as Error).message;
     }
   }
-  async function open(e: Entry, m: string) {
+  async function openEntryDialog(e: Entry, nextMode: EntryDialogMode) {
     if (saving.value) return;
-    const request = ++historySequence;
-    if (m === 'auto') modelConfigID.value = 0;
-    if (m === 'extract') recursive.value = true;
-    selected.value = e;
-    mode.value = m;
+    const request = ++historyRequest;
+    if (nextMode === 'auto') modelConfigID.value = 0;
+    if (nextMode === 'extract') recursive.value = true;
+    dialogEntry.value = e;
+    dialogMode.value = nextMode;
     dialogError.value = '';
-    newName.value =
-      e.kind === 'file'
-        ? e.name.slice(0, e.name.length - (e.name.match(/\.[^.]+$/)?.[0].length || 0))
-        : e.name;
+    newName.value = e.kind === 'file' ? nameWithoutExtension(e.name) : e.name;
     history.value = [];
-    if (m === 'restore' || m === 'history') {
-      try {
-        const records = await api(`/entries/${e.id}/history`);
-        if (request === historySequence && mode.value === m && selected.value?.id === e.id)
-          history.value = records;
-      } catch (err) {
-        if (request === historySequence && mode.value === m && selected.value?.id === e.id)
-          dialogError.value = (err as Error).message;
-      }
+    if (nextMode !== 'restore' && nextMode !== 'history') return;
+    const current = () =>
+      request === historyRequest && dialogMode.value === nextMode && dialogEntry.value?.id === e.id;
+    try {
+      const records = await api<Operation[]>(`/entries/${e.id}/history`);
+      if (current()) history.value = records;
+    } catch (err) {
+      if (current()) dialogError.value = (err as Error).message;
     }
   }
   function closeDialog() {
-    historySequence++;
-    mode.value = '';
+    historyRequest++;
+    dialogMode.value = '';
   }
   async function submit() {
-    if (!selected.value) return;
-    statusSeq++;
+    if (!dialogEntry.value) return;
+    statusRequest++;
     saving.value = true;
     dialogError.value = '';
     try {
-      const e = selected.value;
-      if (mode.value === 'rename') {
+      const e = dialogEntry.value;
+      if (dialogMode.value === 'rename') {
         await api(`/entries/${e.id}/rename`, 'POST', {
           name: newName.value + extension.value,
           version: e.version,
-          key: key()
+          key: newRequestKey()
         });
         toast.value?.show('名称已更新，历史已保存');
-      } else if (mode.value === 'restore') {
-        await api(`/operations/${e.restore_id}/restore`, 'POST', { key: key() });
+      } else if (dialogMode.value === 'restore') {
+        await restoreRequest(e);
         toast.value?.show('名称已还原，可以再次自动命名');
       } else {
-        const extracting = mode.value === 'extract';
-        const run = await api('/runs', 'POST', {
-          task: extracting ? 'extract' : 'rename',
-          model_config_id: extracting ? 0 : modelConfigID.value,
-          targets: [e.id],
-          recursive: recursive.value,
-          key: key()
-        });
-        trackRun(run.id, [e]);
-        toast.value?.show(`${extracting ? '抽帧' : '重命名'}批次 #${run.id} 已加入队列`);
+        await queueRun(dialogMode.value === 'extract' ? 'extract' : 'rename', [e]);
       }
       closeDialog();
       await syncEntries();
@@ -793,122 +788,23 @@
       saving.value = false;
     }
   }
-  const marking = ref<Entry[]>([]),
-    markValue = ref(true),
-    markError = ref(''),
-    markProgress = ref(''),
-    markRetryUnavailable = ref(false);
-  interface MarkResult {
-    key: string;
-    status: string;
-    changed: number;
-    unchanged: number;
-    failed: number;
-    interrupted: boolean;
-    failures: { name: string; message: string }[];
-  }
-  let markKeys: string[] = [];
-  function openMark(entries: Entry[], value: boolean) {
-    if (saving.value) return;
-    marking.value = [...entries];
-    markValue.value = value;
-    markError.value = '';
-    markProgress.value = '';
-    markRetryUnavailable.value = false;
-    markKeys = [];
-  }
-  async function submitMark() {
-    if (saving.value || markRetryUnavailable.value || !marking.value.length) return;
-    const entries = [...marking.value],
-      markedValue = markValue.value;
-    statusSeq++;
-    saving.value = true;
-    markError.value = '';
-    let changed = 0,
-      unchanged = 0,
-      failed = 0,
-      confirmed = 0;
-    let stage: 'submit' | 'query' | 'interrupted' = 'submit',
-      rejected = false;
-    const failures: string[] = [];
-    try {
-      for (let i = 0; i < entries.length; i += 100) {
-        const batchIndex = i / 100,
-          existingKey = markKeys[batchIndex],
-          requestKey = existingKey ?? (markKeys[batchIndex] = key());
-        markProgress.value = `正在处理第 ${i + 1}–${Math.min(i + 100, entries.length)} 个目标…`;
-        stage = existingKey ? 'query' : 'submit';
-        let result: MarkResult;
-        if (existingKey) {
-          result = await api<MarkResult>(
-            `/entries/processed/status/${encodeURIComponent(requestKey)}`
-          );
-        } else {
-          try {
-            result = await api<MarkResult>('/entries/processed', 'POST', {
-              targets: entries.slice(i, i + 100).map((e) => e.id),
-              marked: markedValue,
-              key: requestKey
-            });
-          } catch (e) {
-            // A proxy or a lost response may fail after the task has started.
-            // Only an explicit application rejection permits a new submission.
-            if (e instanceof ApiError && [400, 401, 403, 409, 429].includes(e.status)) {
-              delete markKeys[batchIndex];
-              rejected = true;
-            }
-            throw e;
-          }
-        }
-        while (result.status === 'running') {
-          confirmed = changed + result.changed;
-          markProgress.value = `后台处理中：已变更 ${changed + result.changed} 个文件，未变更 ${unchanged + result.unchanged} 个，失败 ${failed + result.failed} 项…`;
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          if (disposed) return;
-          stage = 'query';
-          result = await api<MarkResult>(
-            `/entries/processed/status/${encodeURIComponent(requestKey)}`
-          );
-        }
-        changed += result.changed;
-        unchanged += result.unchanged;
-        failed += result.failed;
-        confirmed = changed;
-        failures.push(...result.failures.map((e) => `${e.name}：${e.message}`));
-        if (result.interrupted) {
-          stage = 'interrupted';
-          markRetryUnavailable.value = true;
-          throw new Error('标记任务已中断，仍有目标未处理');
-        }
-      }
-      markKeys = [];
-      toast.value?.show(
-        `${markedValue ? '已标记' : '已取消标记'} ${changed} 个文件，未变更 ${unchanged} 个，失败 ${failed} 项`
-      );
-      if (failed) {
-        markRetryUnavailable.value = true;
-        markError.value = [
-          `已变更 ${changed} 个文件，未变更 ${unchanged} 个，失败 ${failed} 项；已完成的标记会保留。请关闭弹窗，重新选择失败目标后再操作。`,
-          ...failures
-        ].join('\n');
-      } else marking.value = [];
-    } catch (e) {
-      if (stage === 'query' && e instanceof ApiError && e.status === 404) {
-        markRetryUnavailable.value = true;
-        markError.value = `已确认变更 ${confirmed} 个文件；标记任务结果已不可查询（可能已回收、过期或服务重启）；已完成的标记会保留。请关闭弹窗，重新选择目标后再操作。`;
-      } else if (stage === 'interrupted') {
-        markError.value = `已确认变更 ${confirmed} 个文件；${(e as Error).message}；已完成的标记会保留。请关闭弹窗，重新选择未处理目标后再操作。`;
-      } else if (rejected) {
-        markError.value = `已确认变更 ${confirmed} 个文件；${(e as Error).message}；本批次未启动，可再次确认提交；已完成的标记会保留。`;
-      } else {
-        markError.value = `已确认变更 ${confirmed} 个文件；${stage === 'query' ? '查询中断' : '提交结果未确认'}：${(e as Error).message}。后台任务可能仍在执行，可再次确认查询原任务；已完成的标记会保留。`;
-      }
-    } finally {
-      markProgress.value = '';
-      saving.value = false;
-      await syncEntries();
-    }
-  }
+  const {
+    marking,
+    markValue,
+    markError,
+    markProgress,
+    markRetryUnavailable,
+    openMark,
+    submitMark
+  } = useMarkEntries({
+    saving,
+    beforeSubmit: () => {
+      statusRequest++;
+    },
+    afterSubmit: syncEntries,
+    notify: (message) => toast.value?.show(message),
+    disposed: () => disposed
+  });
   function status(e: Entry) {
     if (e.task_status) return statusNames[e.task_status] || e.task_status;
     return e.processed === 'marked'
@@ -946,7 +842,7 @@
       window.scrollTo({ top: parkedScrollY, behavior: 'instant' });
       if (location.hash.startsWith('#library') && routeDirectory() !== dir.value)
         enter(routeDirectory(), false);
-      else void load(!!page.value);
+      else void load({ quiet: !!page.value });
     });
   }
   function deactivate() {
@@ -955,10 +851,10 @@
     stopObservingLayout();
     active.value = false;
     scan.stopPolling();
-    seq++;
-    statusSeq++;
+    listRequest++;
+    statusRequest++;
     closeDialog();
-    batch.value = '';
+    batchAction.value = '';
     marking.value = [];
     deleting.value = undefined;
     deletingBatch.value = [];
@@ -993,13 +889,13 @@
             class="library-action action-extract"
             aria-label="抽帧当前目录"
             :disabled="busy || !page || !!page.directory.task_status"
-            @click="open(page!.directory, 'extract')"
+            @click="openEntryDialog(page!.directory, 'extract')"
             ><Images :size="16" />抽帧</button
           ><button
             class="library-action action-name"
             aria-label="重命名当前目录"
             :disabled="!ready || !page || !!page.directory.task_status"
-            @click="open(page!.directory, 'auto')"
+            @click="openEntryDialog(page!.directory, 'auto')"
             ><Sparkles :size="16" />重命名</button
           ><DirectoryNumbering
             @notice="toast?.show($event)"
@@ -1202,7 +1098,7 @@
         <div v-if="page?.error" class="notice error">目录同步失败：{{ page.error }}</div
         ><div class="pagination"
           ><span class="subtle">{{
-            page?.refreshed ? `更新于 ${time(page.refreshed)}` : '等待首次同步'
+            page?.refreshed ? `更新于 ${formatTime(page.refreshed)}` : '等待首次同步'
           }}</span
           ><SelectField
             v-model="limit"
@@ -1261,7 +1157,7 @@
               <td class="filename-cell"
                 ><div class="file-name"
                   ><button
-                    v-if="e.kind === 'file' && video(e)"
+                    v-if="e.kind === 'file' && isVideo(e)"
                     class="file-symbol video-symbol"
                     :aria-label="`播放视频 ${e.name}`"
                     @click="play(e)"
@@ -1281,7 +1177,7 @@
                   ><span v-else class="file-symbol" :class="{ directory: e.kind === 'directory' }"
                     ><Folder v-if="e.kind === 'directory'" :size="21" /><Link
                       v-else-if="e.kind === 'symlink'"
-                      :size="21" /><FileVideo v-else-if="video(e)" :size="21" /><File
+                      :size="21" /><FileVideo v-else-if="isVideo(e)" :size="21" /><File
                       v-else
                       :size="21" /></span
                   ><div v-if="inlineEntry?.id === e.id" class="inline-rename"
@@ -1328,7 +1224,7 @@
                   ><span v-else class="name-text" :title="e.name">{{ e.name }}</span></div
                 ></td
               >
-              <td class="subtle mono">{{ e.kind === 'directory' ? '—' : size(e.size) }}</td
+              <td class="subtle mono">{{ e.kind === 'directory' ? '—' : formatSize(e.size) }}</td
               ><td class="subtle contents-cell"
                 ><DirectoryContents v-if="e.kind === 'directory'" :contents="e.contents" /><span
                   v-else
@@ -1354,19 +1250,19 @@
                     v-if="e.kind === 'directory'"
                     title="重命名"
                     :aria-label="`重命名 ${e.name}`"
-                    @click="open(e, 'rename')"
+                    @click="openEntryDialog(e, 'rename')"
                     ><PenLine :size="15" /></button
                   ><button
                     class="library-action action-name"
-                    v-if="e.kind === 'directory' || video(e)"
+                    v-if="e.kind === 'directory' || isVideo(e)"
                     :disabled="!ready || !!e.processed || !!e.task_status"
                     :aria-label="`自动命名 ${e.name}`"
                     :title="e.processed ? '已处理，自动任务将跳过' : '自动命名'"
-                    @click="open(e, 'auto')"
+                    @click="openEntryDialog(e, 'auto')"
                     ><Sparkles :size="15" /></button
                   ><button
                     class="library-action action-mark"
-                    v-if="markable(e) && (e.kind === 'directory' || !marked(e))"
+                    v-if="markable(e) && (e.kind === 'directory' || !isMarked(e))"
                     :aria-label="`标记已处理 ${e.name}`"
                     :title="isImage(e) || isAudio(e) ? '标记跳过编号' : '标记已处理'"
                     :disabled="!!e.task_status"
@@ -1374,7 +1270,7 @@
                     ><CircleCheck :size="15" /></button
                   ><button
                     class="library-action action-unmark"
-                    v-if="markable(e) && (e.kind === 'directory' || marked(e))"
+                    v-if="markable(e) && (e.kind === 'directory' || isMarked(e))"
                     :aria-label="`取消已处理标记 ${e.name}`"
                     title="取消已处理标记"
                     :disabled="!!e.task_status"
@@ -1384,12 +1280,12 @@
                     v-if="e.restore_id"
                     :aria-label="`还原 ${e.name}`"
                     title="还原"
-                    @click="open(e, 'restore')"
+                    @click="openEntryDialog(e, 'restore')"
                     ><Undo2 :size="15" /></button
                   ><button
                     title="命名历史"
                     :aria-label="`历史 ${e.name}`"
-                    @click="open(e, 'history')"
+                    @click="openEntryDialog(e, 'history')"
                     ><History :size="15" /></button
                   ><button
                     class="delete-action"
@@ -1475,27 +1371,27 @@
     >
     <ModalTransition
       ><Modal
-        v-if="mode"
+        v-if="dialogMode"
         :title="
-          mode === 'extract'
+          dialogMode === 'extract'
             ? '目录抽帧'
-            : mode === 'rename'
+            : dialogMode === 'rename'
               ? '重命名'
-              : mode === 'restore'
+              : dialogMode === 'restore'
                 ? '还原名称'
-                : mode === 'history'
+                : dialogMode === 'history'
                   ? '命名历史'
                   : '自动命名'
         "
         @close="!saving && closeDialog()"
         ><form @submit.prevent="submit">
           <div class="selection-summary"
-            ><Folder v-if="selected?.kind === 'directory'" :size="23" /><FileVideo
+            ><Folder v-if="dialogEntry?.kind === 'directory'" :size="23" /><FileVideo
               v-else
               :size="23"
-            /><strong>{{ selected?.name || '整个媒体库' }}</strong></div
+            /><strong>{{ dialogEntry?.name || '整个媒体库' }}</strong></div
           >
-          <template v-if="mode === 'rename'"
+          <template v-if="dialogMode === 'rename'"
             ><label
               >新名称<div class="extension-input"
                 ><input v-model="newName" aria-label="新名称" required maxlength="240" /><span>{{
@@ -1504,26 +1400,26 @@
               ></label
             ><p class="help">只修改名称，文件保留在原目录。成功后可以还原。</p></template
           >
-          <template v-else-if="mode === 'restore'"
+          <template v-else-if="dialogMode === 'restore'"
             ><p>将恢复到最近一次改名前的名称：</p
             ><div class="restore-target"
               ><Undo2 :size="18" />{{
-                history.find((x) => x.id === selected?.restore_id)?.old_name || '正在读取…'
+                history.find((x) => x.id === dialogEntry?.restore_id)?.old_name || '正在读取…'
               }}</div
             ><p class="help"
               >还原后可再次自动命名，也会被后续计划重新处理。不会覆盖同名文件。</p
             ></template
           >
-          <template v-else-if="mode === 'auto' || mode === 'extract'"
-            ><ModelPicker v-if="mode === 'auto'" v-model="modelConfigID" /><p>{{
-              mode === 'extract'
+          <template v-else-if="dialogMode === 'auto' || dialogMode === 'extract'"
+            ><ModelPicker v-if="dialogMode === 'auto'" v-model="modelConfigID" /><p>{{
+              dialogMode === 'extract'
                 ? '为当前目录内的视频预先生成截图，之后重命名可直接复用缓存。'
                 : '后台将抽取视频画面，由指定模型生成名称并自动修改。'
             }}</p
-            ><label v-if="selected?.kind === 'directory'" class="check-label"
+            ><label v-if="dialogEntry?.kind === 'directory'" class="check-label"
               ><input type="checkbox" role="switch" v-model="recursive" />包含子目录</label
             ><p class="help">{{
-              mode === 'extract'
+              dialogMode === 'extract'
                 ? '覆盖目录内全部分页的视频，包括已处理视频；已有有效截图直接复用。进度见“批次记录”，结果见“抽帧记录”。'
                 : '已命名的视频自动跳过。进度见“批次记录”，命名结果见“运行记录”。'
             }}</p></template
@@ -1542,24 +1438,24 @@
           <div v-if="dialogError" class="notice error" role="alert">{{ dialogError }}</div
           ><div class="modal-actions"
             ><button type="button" :disabled="saving" @click="closeDialog()">{{
-              mode === 'history' ? '关闭' : '取消'
+              dialogMode === 'history' ? '关闭' : '取消'
             }}</button
             ><button
-              v-if="mode !== 'history'"
+              v-if="dialogMode !== 'history'"
               class="primary"
               :disabled="
                 saving ||
-                (mode === 'restore' && !history.length) ||
-                (mode === 'auto' && !modelConfigID)
+                (dialogMode === 'restore' && !history.length) ||
+                (dialogMode === 'auto' && !modelConfigID)
               "
               >{{
                 saving
                   ? '正在提交…'
-                  : mode === 'rename'
+                  : dialogMode === 'rename'
                     ? '保存名称'
-                    : mode === 'restore'
+                    : dialogMode === 'restore'
                       ? '确认还原'
-                      : mode === 'extract'
+                      : dialogMode === 'extract'
                         ? '抽帧'
                         : '重命名'
               }}</button
@@ -1570,20 +1466,26 @@
     >
     <ModalTransition
       ><Modal
-        v-if="batch"
-        :title="batch === 'extract' ? '批量抽帧' : batch === 'auto' ? '批量自动命名' : '批量还原'"
-        @close="!saving && (batch = '')"
+        v-if="batchAction"
+        :title="
+          batchAction === 'extract'
+            ? '批量抽帧'
+            : batchAction === 'auto'
+              ? '批量自动命名'
+              : '批量还原'
+        "
+        @close="!saving && (batchAction = '')"
         ><form @submit.prevent="submitBatch">
-          <template v-if="batch === 'auto' || batch === 'extract'"
+          <template v-if="batchAction === 'auto' || batchAction === 'extract'"
             ><p
               >处理选中的
-              {{ batch === 'extract' ? extractEntries.length : autoEntries.length }}
+              {{ batchAction === 'extract' ? extractEntries.length : autoEntries.length }}
               个条目，创建一个批次。</p
-            ><ModelPicker v-if="batch === 'auto'" v-model="modelConfigID" /><label
+            ><ModelPicker v-if="batchAction === 'auto'" v-model="modelConfigID" /><label
               class="check-label"
               ><input type="checkbox" role="switch" v-model="recursive" />包含子目录</label
             ><p class="help">{{
-              batch === 'extract'
+              batchAction === 'extract'
                 ? '预先生成截图供后续重命名使用，已有有效截图直接复用。结果见“抽帧记录”。'
                 : '已命名和正在处理的视频会跳过。'
             }}</p></template
@@ -1598,23 +1500,23 @@
             batchError
           }}</div
           ><div class="modal-actions"
-            ><button type="button" :disabled="saving" @click="batch = ''">关闭</button
+            ><button type="button" :disabled="saving" @click="batchAction = ''">关闭</button
             ><button
               class="primary"
               :disabled="
                 saving ||
-                (batch === 'extract'
+                (batchAction === 'extract'
                   ? !extractEntries.length
-                  : batch === 'auto'
+                  : batchAction === 'auto'
                     ? !modelConfigID || !autoEntries.length
                     : !restoreEntries.length)
               "
               >{{
                 saving
                   ? '正在处理…'
-                  : batch === 'extract'
+                  : batchAction === 'extract'
                     ? '抽帧'
-                    : batch === 'auto'
+                    : batchAction === 'auto'
                       ? '重命名'
                       : '确认批量还原'
               }}</button

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"video-rename/internal/storage"
+	"video-rename/internal/timebucket"
 )
 
 // AnalyticsQuery scopes a usage report. From and To are epoch milliseconds in
@@ -229,7 +230,7 @@ WHERE `+where+` ORDER BY r.recorded_at,r.id`, args...)
 	if err != nil {
 		return nil, err
 	}
-	buckets := bucketingFor(q.To-q.From, q.Location)
+	buckets := timebucket.For(q.To-q.From, q.Location)
 	trend := map[int64]*TrendBucket{}
 	models := map[string]*ModelGroup{}
 	profiles := map[int64]*ProfileGroup{}
@@ -254,11 +255,11 @@ WHERE `+where+` ORDER BY r.recorded_at,r.id`, args...)
 		totals.Records += counted
 		totals.EstimatedRecords += estimated
 		if first && q.From == 0 {
-			buckets = bucketingFor(q.To-recordedAt, q.Location)
-			from = buckets.start(recordedAt)
+			buckets = timebucket.For(q.To-recordedAt, q.Location)
+			from = buckets.Start(recordedAt)
 		}
 		first = false
-		key := buckets.start(recordedAt)
+		key := buckets.Start(recordedAt)
 		bucket := trend[key]
 		if bucket == nil {
 			bucket = &TrendBucket{}
@@ -333,10 +334,10 @@ WHERE `+where+` ORDER BY r.recorded_at,r.id`, args...)
 			From:     time.UnixMilli(from).In(q.Location).Format(time.RFC3339),
 			To:       time.UnixMilli(q.To).In(q.Location).Format(time.RFC3339),
 			Timezone: q.Location.String(),
-			Interval: buckets.name,
+			Interval: buckets.Name,
 		},
 		Totals:     totals,
-		Trend:      buckets.series(from, q.To, trend),
+		Trend:      trendSeries(buckets, from, q.To, trend),
 		Models:     sortedModels(models),
 		Profiles:   sortedProfiles(profiles),
 		Sources:    sortedSources(sources),
@@ -536,73 +537,13 @@ func sortedBatches(batches map[int64]*batchAcc, sortKey string) []*batchAcc {
 	return out
 }
 
-// bucketing picks a trend granularity for the requested span. Calendar
-// buckets align to local midnths so day and month boundaries follow the
-// reader's timezone, including DST transitions.
-type bucketing struct {
-	name string
-	step int64 // fixed-step milliseconds; zero for calendar buckets
-	loc  *time.Location
-}
-
-func bucketingFor(span int64, loc *time.Location) bucketing {
-	const hour, day = int64(time.Hour / time.Millisecond), int64(24 * time.Hour / time.Millisecond)
-	switch {
-	case span <= 6*hour:
-		return bucketing{name: "15m", step: 15 * 60 * 1000, loc: loc}
-	case span <= 72*hour:
-		return bucketing{name: "hour", step: hour, loc: loc}
-	case span <= 120*day:
-		return bucketing{name: "day", loc: loc}
-	case span <= 10*365*day:
-		return bucketing{name: "month", loc: loc}
-	default:
-		return bucketing{name: "year", loc: loc}
-	}
-}
-
-func align(ms, size int64) int64 {
-	return ms - ms%size
-}
-
-func (b bucketing) start(ms int64) int64 {
-	t := time.UnixMilli(ms).In(b.loc)
-	switch b.name {
-	case "15m":
-		return align(ms, b.step)
-	case "hour":
-		return align(ms, b.step)
-	case "day":
-		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, b.loc).UnixMilli()
-	case "month":
-		return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, b.loc).UnixMilli()
-	default:
-		return time.Date(t.Year(), time.January, 1, 0, 0, 0, 0, b.loc).UnixMilli()
-	}
-}
-
-func (b bucketing) next(ms int64) int64 {
-	t := time.UnixMilli(ms).In(b.loc)
-	switch b.name {
-	case "day":
-		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, b.loc).AddDate(0, 0, 1).UnixMilli()
-	case "month":
-		return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, b.loc).AddDate(0, 1, 0).UnixMilli()
-	case "year":
-		return time.Date(t.Year(), time.January, 1, 0, 0, 0, 0, b.loc).AddDate(1, 0, 0).UnixMilli()
-	default:
-		return ms + b.step
-	}
-}
-
-// series renders the trend across the effective range, keeping zero buckets
-// for quiet stretches instead of collapsing them.
-func (b bucketing) series(from, to int64, trend map[int64]*TrendBucket) []TrendBucket {
+// trendSeries renders the trend across the effective range, keeping zero
+// buckets for quiet stretches instead of collapsing them.
+func trendSeries(buckets timebucket.Bucketing, from, to int64, trend map[int64]*TrendBucket) []TrendBucket {
 	out := []TrendBucket{}
-	end := b.start(to - 1)
-	for cursor, guard := b.start(from), 0; cursor <= end && guard < 2000; cursor, guard = b.next(cursor), guard+1 {
-		bucket := TrendBucket{From: time.UnixMilli(cursor).In(b.loc).Format(time.RFC3339), To: time.UnixMilli(b.next(cursor)).In(b.loc).Format(time.RFC3339)}
-		if filled, ok := trend[cursor]; ok {
+	for start, end := range buckets.Spans(from, to) {
+		bucket := TrendBucket{From: buckets.Format(start), To: buckets.Format(end)}
+		if filled, ok := trend[start]; ok {
 			bucket.Tokens, bucket.Records, bucket.EstimatedRecords = filled.Tokens, filled.Records, filled.EstimatedRecords
 		}
 		out = append(out, bucket)

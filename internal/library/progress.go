@@ -10,6 +10,7 @@ import (
 
 	"modernc.org/sqlite"
 	"video-rename/internal/discovery"
+	"video-rename/internal/domain"
 )
 
 func init() {
@@ -120,7 +121,7 @@ func readDirectoryProcessing(ctx context.Context, tx *sql.Tx, ids []int64, statu
  ), counts AS (
  SELECT e.parent,COUNT(*) AS total,
  SUM(COALESCE(m.source IN ('marked','manual','automatic'),0)) AS processed,
- SUM(EXISTS(SELECT 1 FROM run_items i JOIN runs r ON r.id=i.run WHERE i.entry=e.id AND i.status IN ('queued','running') AND r.status IN ('queued','scanning','running','paused','cancelling'))) AS active,
+ SUM(EXISTS(SELECT 1 FROM run_items i JOIN runs r ON r.id=i.run WHERE i.entry=e.id AND i.status IN ('queued','running') AND r.status IN `+domain.ActiveRunStatusesSQL+`)) AS active,
  SUM(`+match+`) AS matches
  FROM dirs d JOIN entries e ON e.parent=d.id LEFT JOIN marks m ON m.identity=e.identity AND m.size=e.size AND m.mtime=e.mtime WHERE e.present=1 AND e.kind='file' AND video_rename_media_kind(e.name)=1 GROUP BY e.parent
  ) SELECT d.id,d.parent,COALESCE(c.total,0),COALESCE(c.processed,0),COALESCE(c.active,0),

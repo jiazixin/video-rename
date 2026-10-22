@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import { formatPlaybackTime } from '../../lib/date/format';
   import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
   import {
     Play,
@@ -87,10 +88,6 @@
       sync();
     }
   }
-  function time(n: number) {
-    const s = Math.floor(n || 0);
-    return `${Math.floor(s / 3600) ? `${Math.floor(s / 3600)}:` : ''}${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
-  }
   async function expand() {
     try {
       if (document.fullscreenElement === shell.value) await document.exitFullscreen();
@@ -168,7 +165,7 @@
         class="media-seek"
         type="range"
         aria-label="播放进度"
-        :aria-valuetext="`${time(current)} / ${time(duration)}`"
+        :aria-valuetext="`${formatPlaybackTime(current)} / ${formatPlaybackTime(duration)}`"
         min="0"
         :max="duration || 1"
         step="0.1"
@@ -182,7 +179,7 @@
           ><Play v-if="paused" :size="19" /><Pause v-else :size="19"
         /></button>
         <span class="media-time"
-          >{{ time(current) }} <span>/ {{ time(duration) }}</span></span
+          >{{ formatPlaybackTime(current) }} <span>/ {{ formatPlaybackTime(duration) }}</span></span
         >
         <p class="bar-status" role="status">
           <span v-if="error" class="bar-error">{{ error }}</span

@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import { computed, onMounted, onUnmounted, ref } from 'vue';
-  export interface ScatterPoint {
+  interface ScatterPoint {
     task: 'rename' | 'extract';
     run: number;
     items: number;

@@ -1,7 +1,7 @@
 <script setup lang="ts">
   import { computed, onUnmounted, ref, watch } from 'vue';
   import { RefreshCw, CircleStop, Folder } from '@lucide/vue';
-  import { time } from '../../lib/date/format';
+  import { formatTime } from '../../lib/date/format';
   import { type LibraryScanStatus } from '../../app/contracts';
   const props = defineProps<{
     status: LibraryScanStatus;
@@ -105,8 +105,8 @@
       }}</span>
     </div>
     <div class="scan-timing">
-      <span v-if="status.finished">上次完成 {{ time(status.finished) }}</span>
-      <span v-if="status.next_scan">下次扫描 {{ time(status.next_scan) }}</span>
+      <span v-if="status.finished">上次完成 {{ formatTime(status.finished) }}</span>
+      <span v-if="status.next_scan">下次扫描 {{ formatTime(status.next_scan) }}</span>
       <span v-else-if="!active && !status.finished">可随时手动扫描目录及子目录。</span>
       <span v-if="active" class="scan-phase">{{
         status.status === 'cancelling' ? '停止后保留已同步的目录' : '正在读取并同步目录索引'

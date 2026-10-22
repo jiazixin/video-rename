@@ -12,13 +12,10 @@ import (
 //   - 只移除首尾空白及成对包裹引号;
 //   - 要求仅一个非空逻辑行;
 //   - 代码围栏、多标题列表、解释段落、空标题均为 TITLE_INVALID。
-func ValidateTitle(raw string) (string, *domain.JobError) {
-	return ValidateTitleWithKeywords(raw, nil)
-}
-
-// ValidateTitleWithKeywords applies the run's failure rules before checking the
-// single-line protocol. Empty rules disable matching, while nil uses defaults.
-func ValidateTitleWithKeywords(raw string, keywords []string) (string, *domain.JobError) {
+//
+// The run's failure rules are applied first. Empty rules disable matching,
+// while nil uses defaults.
+func ValidateTitle(raw string, keywords []string) (string, *domain.JobError) {
 	s := strings.TrimSpace(raw)
 	s = stripPairedQuotes(s)
 	if err := naming.FailureTitleError(s, keywords); err != nil {
