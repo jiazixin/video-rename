@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/jiazixin/video-rename/actions/workflows/ci.yml"><img src="https://github.com/jiazixin/video-rename/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="https://github.com/jiazixin/video-rename/releases/latest"><img src="https://img.shields.io/github/v/release/jiazixin/video-rename?sort=semver" alt="Release"></a>
-  <img src="https://img.shields.io/badge/Go-1.27.2-00ADD8?logo=go&logoColor=white" alt="Go 1.27.2">
+  <img src="https://img.shields.io/badge/Go-1.27.3-00ADD8?logo=go&logoColor=white" alt="Go 1.27.3">
   <img src="https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white" alt="Vue 3">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-4c8b3f" alt="Linux | macOS">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
@@ -50,7 +50,7 @@ video-rename combines a Go server, an embedded Vue 3 interface, and SQLite in a 
 | FFmpeg | `ffmpeg` and `ffprobe` on PATH for frame extraction and automatic naming; not needed for browsing and manual renaming |
 | Model service (optional) | An image-capable OpenAI-compatible or Anthropic service; not needed without automatic naming |
 | Data directory | Local disk; media may reside on a network mount |
-| Building from source | Go 1.27.2, Node.js ≥ 22.12, npm; Git when building from a Git checkout |
+| Building from source | Go 1.27.3, Node.js ≥ 22.12, npm; Git when building from a Git checkout |
 
 ## Quick start
 

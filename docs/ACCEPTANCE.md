@@ -1,25 +1,30 @@
-# 最新验收：媒体预览留边窗口与还原断言时序（2026-10-20）
+# 最新验收：代码质量整理与 Go 1.27.3 升级（2026-10-22）
 
-范围：基线 `c72e658` 加两轮变更（`cdbbc3b` 与本轮）。`cdbbc3b` 将图片、视频预览改为四周留边的深色大窗（最大 1440×960），点击边距关闭，打开时焦点落在窗口本身；本轮只修正浏览器测试断言的时序问题，未修改前端、接口、数据库或配置协议。上一轮记录见 [历史验收](archive/2026-10-20-run-live-records-acceptance.md)，不用于证明本轮通过。
+范围：基线 `92a6f78` 加本轮变更。本轮按代码质量检查结果清理死代码、未使用参数与样式，合并重复逻辑，改善命名并拆分过长函数；Go 升级至 1.27.3，GitHub Actions 改用 Node.js 26 并取最新补丁。未修改数据库结构、接口字段、配置协议或界面文案。上一轮记录见 [历史验收](archive/2026-10-20-preview-window-acceptance.md)，不用于证明本轮通过。
 
-## 问题与原因
+## 变更要点
 
-`cdbbc3b` 推送后 GitHub Actions 的 E2E 失败 2 项：`清除已选和全部历史不影响还原`、`目录大小和时间排序按钮、重命名时间展示`，均为 `getByText('VID_20260920_001.mp4')` 严格模式命中 2 个元素。确认还原后弹窗先进入 0.12 秒退出动画再移除，列表同时刷新；列表在动画结束前完成刷新时，文件行与仍在退场的弹窗内 `.restore-target` 同时匹配。列表尚未刷新时，旧断言会直接命中弹窗文字而通过，并未检查列表。本机在确认还原后加 1 秒等待并把退出动画临时设为 3 秒，旧断言稳定复现同一报错；该问题与预览改动无关。
-
-修正：`workspace.spec.ts` 中三处还原后的断言（含同样写法的 `登录、目录、手动改名、冲突保护和还原`）限定在 `tbody` 内，只检查文件列表行。
+- 删除仅测试使用的 `Library.List`/`ListSorted`/旧 `ListOrdered`/旧 `ListPage` 包装，原 `*Filtered` 方法改名为 `ListOrdered`、`ListPage`；删除按路径改名的 `rename.NoReplace`（绕过逐层打开父目录的约定），测试改用 `NoReplaceAt`；`ValidateTitleWithKeywords` 改名为 `ValidateTitle`。
+- 删除 18 个无引用的 CSS 选择器（约 230 行）、5 个多余的类型导出、`parseMeta`/`startMark` 未使用参数、对整数时长的 NaN/Inf 判断，以及 History 页从未触发的数组响应分支（前端始终请求分页结果）；相应 E2E 模拟响应改为真实的分页结构。
+- 新增 `internal/timebucket`，供运行分析与用量分析共用趋势分桶；新增 `domain.ActiveRunStatusesSQL`/`ActiveRunStatus` 与前端 `isActiveRunStatus`，替代 11 处 SQL 与 6 处前端硬编码列表（SQL 文本与 `run_active` 部分索引保持逐字一致）。
+- 拆分 `runstats.Analytics`、`jobs.inferWithRetry`、`jobs.Create`、`jobs.process`、`SetProcessedWithProgress`、`ThinkingFields`、`retryHistory`，认知复杂度均降至 60 以下；运行来源分类只保留 SQL 一处定义。
+- Library.vue：标记流程与吸顶表头移入 `mark-entries.ts`、`sticky-header.ts`；合并批次创建、还原、删除请求与面包屑路径；请求计数器、弹窗模式、`load` 参数改为有含义的名称与类型；`any` 改为 `Operation`、`LogRecord`、`ProbeResult` 等契约类型。通用函数改名为 `formatSize`、`formatTime`、`newRequestKey`、`isVideo`、`isMarked`，两个播放器共用 `formatPlaybackTime`。
 
 ## 已执行验证
 
-本机 macOS / arm64，Go 1.27.2，Node.js 26.12.0。浏览器测试使用隔离服务器 18790、临时数据库、合成媒体、真实 FFmpeg 和本地假模型。
+本机 macOS / arm64，Go 1.27.3，Node.js 26.12.0。浏览器测试使用隔离服务器 18790、临时数据库、合成媒体、真实 FFmpeg 和本地假模型。
 
 | 命令或检查 | 结果 |
 | --- | --- |
-| `npm --prefix web run format:check`、`npm --prefix web run build` | 通过 |
-| 退出动画临时设为 3 秒后运行三项还原用例（新断言） | 3 通过 |
-| `go build -o bin/video-rename ./cmd/video-rename` 后全量 `npx playwright test` | 183 通过、0 失败（10.0 分钟） |
-
-预览改动的浏览器断言：打开图片后对话框获得焦点，方向键切换后焦点仍在对话框；1440×1000 下窗口左、上边距不小于 40px；点击边距关闭；视频窗口宽度大于 1000px，390px 窄屏不超出视口。
+| `npm --prefix web ci`、`format:check`、`check`、`build` | 通过 |
+| `go mod verify`、gofmt、`go vet ./...`（本机、darwin/arm64、linux/amd64） | 通过 |
+| `go test -count=1 ./...`、`go test -race -count=1 ./...` | 通过 |
+| `go test -tags=integration -count=1 ./internal/media ./cmd/video-rename` | 通过 |
+| `go build -buildvcs=true` 本机与 linux/amd64 交叉编译 | 通过 |
+| 全量 `npm --prefix web run test:e2e` | 183 通过、0 失败（9.9 分钟） |
+| `npm --prefix web audit`、`govulncheck ./...` | 均未发现漏洞 |
+| staticcheck、deadcode（macOS / Linux 目标）、unparam、knip | 无死代码与未使用参数；staticcheck 剩余 6 条 ST1005 为 Anthropic、Claude、Bark、Cron 等专有名词开头的中文提示，保留 |
 
 ## 验证边界
 
-未执行 Go 单元、竞态与集成测试（本轮未改 Go 代码）。未在 Linux 实机运行二进制；GitHub Actions 结果以推送后的运行页面为准。
+未运行规模测试（`-tags=scale`、`scale_large`）。未在 Linux 实机运行二进制，交叉编译只证明可构建；Node.js 26 与 Go 1.27.3 的 GitHub Actions 结果以推送后的运行页面为准。`npm outdated` 列出的小版本更新（如 vite 8.3.5、vue 3.5.44、vue-tsc 3.3.13）本轮未升级。

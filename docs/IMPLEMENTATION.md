@@ -1,6 +1,6 @@
 # 开发与测试
 
-应用是 Go 1.27.2 + Vue 3 / TypeScript + SQLite 的单实例服务。安装入口见 [中文 README](../README.md) / [English README](../README.en.md)，行为约定见 [当前设计](DESIGN.md)，文件归属见 [目录规范](../目录规范.md)。
+应用是 Go 1.27.3 + Vue 3 / TypeScript + SQLite 的单实例服务。安装入口见 [中文 README](../README.md) / [English README](../README.en.md)，行为约定见 [当前设计](DESIGN.md)，文件归属见 [目录规范](../目录规范.md)。
 
 ## 模块入口
 
@@ -13,7 +13,7 @@
 | internal/libraryscan | 独立后台目录扫描、范围规范化、调度与停止 |
 | internal/media、framecache、sampling | ffprobe/FFmpeg、采样、截图租约与容量控制 |
 | internal/models、vision、prompts、systemsettings | 模型配置与协议、提示词及运行设置 |
-| internal/notifications、tokenusage、runstats | 通知队列、请求账本、运行分析 |
+| internal/notifications、tokenusage、runstats、timebucket | 通知队列、请求账本、运行分析及两类分析共用的趋势分桶 |
 | web/src | Vue 应用装配、业务页面、共享组件、技术模块及样式 |
 
 部署 Config 与处理 TaskConfig 分离，任务快照不包含登录、部署路径或监听设置。HTTP 入口只负责装配，领域行为留在所属包。Web 的 API、契约与标签位于 app；日期、大小与剪贴板位于 lib；业务状态靠近所属 features。
@@ -104,7 +104,9 @@ go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
 版本与安全检查需要联网，结果仅代表执行时的公告数据库。依据：[YAML 维护声明](https://github.com/yaml/go-yaml)、[Vite 支持范围](https://vite.dev/releases)、[Vue 类型工具](https://github.com/vuejs/language-tools/tree/master/packages/tsc)。
 
-Go 最低版本为 **1.27.2**。这是 1.27 系列的补丁升级，包含工具链与标准库安全修复；部署时需要重新构建并替换旧二进制，单独修改 `go.mod` 不会更新已经运行的程序。版本背景见 [Go 发布记录](https://go.dev/doc/devel/release#go1.27.0)。
+Go 最低版本为 **1.27.3**。这是 1.27 系列的补丁升级，包含 crypto/x509 安全修复；部署时需要重新构建并替换旧二进制，单独修改 `go.mod` 不会更新已经运行的程序。版本背景见 [Go 发布记录](https://go.dev/doc/devel/release#go1.27.minor)。
+
+GitHub Actions 使用 Node.js **26**（2026-10-28 起为 LTS；24 已于 2026-10-20 进入维护期），并设置 `check-latest: true`，每次运行取该主版本最新补丁（如 2026-10-21 的 26.12.1 安全版本），不使用 runner 预装缓存中可能落后的版本。本地构建仍只要求 `web/package.json` 声明的 Node.js ≥ 22.12。依据：[Node.js 发布计划](https://github.com/nodejs/Release)、[setup-node check-latest](https://github.com/actions/setup-node#check-latest-version)。
 
 构建版本按以下优先级确定：有效的 `-ldflags '-X main.version=…'` 显式注入 > Go 构建信息中的主模块版本 > 12 位提交号 > `dev`。覆盖值和模块版本先去除首尾空白，空值、`dev`、`(devel)` 不覆盖可用信息。版本输出与启动日志保留可取得的提交号和 `modified` 标记；缺少 VCS 信息不代表已核验干净状态。运行时不调用 Git，`--version` 不读取配置、不打开业务数据库或启动服务。
 

@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/jiazixin/video-rename/actions/workflows/ci.yml"><img src="https://github.com/jiazixin/video-rename/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="https://github.com/jiazixin/video-rename/releases/latest"><img src="https://img.shields.io/github/v/release/jiazixin/video-rename?sort=semver" alt="Release"></a>
-  <img src="https://img.shields.io/badge/Go-1.27.2-00ADD8?logo=go&logoColor=white" alt="Go 1.27.2">
+  <img src="https://img.shields.io/badge/Go-1.27.3-00ADD8?logo=go&logoColor=white" alt="Go 1.27.3">
   <img src="https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white" alt="Vue 3">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-4c8b3f" alt="Linux | macOS">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
@@ -50,7 +50,7 @@ video-rename 由 Go 服务、内嵌的 Vue 3 页面和 SQLite 组成，构建后
 | FFmpeg | 抽帧与自动命名需要 `ffmpeg`、`ffprobe` 在 PATH 中；只浏览和手动改名可不安装 |
 | 模型服务（可选） | 支持图片输入的 OpenAI 兼容或 Anthropic 服务；不使用自动命名时无需配置 |
 | 数据目录 | 本机磁盘；媒体目录可以是网络挂载 |
-| 从源码构建 | Go 1.27.2、Node.js ≥ 22.12、npm；从 Git 检出构建还需要 Git |
+| 从源码构建 | Go 1.27.3、Node.js ≥ 22.12、npm；从 Git 检出构建还需要 Git |
 
 ## 快速开始
 
