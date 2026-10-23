@@ -95,7 +95,7 @@ auth:
 ./video-rename --config configs/config.local.yaml
 ```
 
-Open [http://127.0.0.1:8790](http://127.0.0.1:8790) and sign in with your configured credentials. Without arguments the binary reads `configs/config.local.yaml` under the working directory; see `--help` for other options.
+Open [http://127.0.0.1:8790](http://127.0.0.1:8790) and sign in with your configured credentials. Without arguments the binary reads the file named by the `CONFIG_FILE` environment variable, or else `configs/config.local.yaml` under the working directory; see `--help` for other options.
 
 ### 3. Build from source
 
@@ -129,7 +129,7 @@ To cross-compile, keep the same Web build and set the target for `go build`: `GO
 
 See the [configuration reference](docs/configuration.md) for every field, default, and in-app resource setting. Key points:
 
-- `-c <file>` and `--config <file>` are equivalent; the default is `configs/config.local.yaml` under the working directory. Environment variables do not override configuration.
+- `-c <file>` and `--config <file>` are equivalent; naming different files with both is an error. The file is chosen as `--config` > `CONFIG_FILE` > `configs/config.local.yaml` under the working directory, and it must exist. Apart from `CONFIG_FILE`, environment variables do not override configuration.
 - Relative paths resolve against the configuration file's directory. The media directory must already exist, and configuration, storage, and cache must live outside it.
 - Keep media, configuration, and persistent data out of `tmp-storage/video-rename-frames-v1/`, which the application cleans automatically. Unsafe path overlaps are rejected before startup.
 - The example password cannot be used to start. Models, frame rules, prompts, notifications, and scans are configured in the Web interface.
@@ -164,7 +164,8 @@ On pushes to `main` and on pull requests, [CI](.github/workflows/ci.yml) runs We
 ## Versions and releases
 
 - Versions come from Git tags in the form `vMAJOR.MINOR.PATCH` (pre-releases such as `v1.2.0-rc.1`). Go stamps the module version at build time; untagged commits show a pseudo-version, and uncommitted changes add `+dirty`.
-- Query the version with `video-rename --version`. It reads no configuration and starts no service.
+- Query the version with `video-rename --version`, which prints e.g. `video-rename v1.2.0 (revision=0123456789ab)`. It and `--help` (in English) print to stdout, read no configuration and start no service.
+- Exit codes: 0 success, 2 usage error, 1 configuration, startup or runtime failure. Errors before startup are written to stderr as plain text `video-rename: <error>`; usage errors add `Run 'video-rename --help' for usage.`.
 - Source archives without `.git` report `dev`; inject a version matching the source explicitly: `go build -trimpath -ldflags='-X main.version=v1.0.0' -o bin/video-rename ./cmd/video-rename`.
 - Pushing a standard tag triggers the [Release workflow](.github/workflows/release.yml): it checks that `--version` matches the tag, then GoReleaser builds every target and uploads the tar.gz archives and `checksums.txt`.
 
@@ -204,7 +205,7 @@ The directory baseline is maintained only in [目录规范.md](目录规范.md),
 | Baseline rule | Actual behavior | Reason | Scope / re-evaluate when |
 | --- | --- | --- | --- |
 | §3 Root README | Chinese `README.md` is the primary entry; the English translation is `README.en.md` | Chinese and English READMEs were requested | Both kept in sync; re-evaluate if the English version is dropped |
-| §7.1 Config entry and overrides | `-c` / `--config` selects the file, defaulting to `configs/config.local.yaml` under the working directory; no `CONFIG_FILE`, no environment overrides | Existing CLI configuration protocol | This binary; only when the user asks to change it |
+| §7.1 Config entry and overrides | `-c` / `--config` > `CONFIG_FILE` > `configs/config.local.yaml` under the working directory; no per-field environment overrides | Existing CLI configuration protocol | This binary; only when the user asks to change it |
 | §11 Tool-required paths | `web/embed.go` embeds `web/dist` | The real build boundary between Go embed and Vite | Web assets; when the delivery model changes |
 | §4 `bin/` holds executables only | GoReleaser output (binaries, tar.gz, checksums, metadata) goes to `bin/release/` | An unignored root `dist/` would mark Go builds dirty, and `dist/` is reserved for Web output | Release builds; when the release tool changes |
 

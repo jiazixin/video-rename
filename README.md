@@ -95,7 +95,7 @@ auth:
 ./video-rename --config configs/config.local.yaml
 ```
 
-打开 [http://127.0.0.1:8790](http://127.0.0.1:8790)，用配置中的账号登录。不带参数时读取工作目录下的 `configs/config.local.yaml`；其他参数见 `--help`。
+打开 [http://127.0.0.1:8790](http://127.0.0.1:8790)，用配置中的账号登录。不带参数时读取环境变量 `CONFIG_FILE` 指定的文件，未设置时读取工作目录下的 `configs/config.local.yaml`；其他参数见 `--help`。
 
 ### 3. 从源码构建
 
@@ -129,7 +129,7 @@ go build -trimpath -o bin/video-rename ./cmd/video-rename
 
 完整字段、默认值和页面资源设置见 [配置参考](docs/configuration.md)。要点：
 
-- `-c <文件>` 与 `--config <文件>` 等价；默认读取工作目录下的 `configs/config.local.yaml`。不支持用环境变量覆盖配置项。
+- `-c <文件>` 与 `--config <文件>` 等价，同时指定不同文件报错。选择顺序为 `--config` > `CONFIG_FILE` > 工作目录下的 `configs/config.local.yaml`，所选文件必须存在。除 `CONFIG_FILE` 外，不支持用环境变量覆盖配置项。
 - 配置中的相对路径以配置文件所在目录为基准。媒体目录必须已经存在；配置、数据和缓存目录必须位于媒体目录之外。
 - 媒体、配置和持久数据不能放入 `tmp-storage/video-rename-frames-v1/`，该目录由程序自动清理；危险的路径重叠会在启动前被拒绝。
 - 示例密码不能用于启动。模型、抽帧规则、提示词、通知和扫描都在 Web 页面设置。
@@ -164,7 +164,8 @@ npm --prefix web run test:e2e
 ## 版本与发布
 
 - 版本号来自 Git tag，格式为 `v主版本.次版本.修订版本`（预发布如 `v1.2.0-rc.1`）。Go 构建时自动写入模块版本，非 tag 提交显示伪版本，有未提交修改时带 `+dirty`。
-- 查询版本：`video-rename --version`。该命令不读取配置，也不启动服务。
+- 查询版本：`video-rename --version`，输出形如 `video-rename v1.2.0 (revision=0123456789ab)`。该命令与 `--help`（英文）输出到 stdout，不读取配置，也不启动服务。
+- 退出码：0 成功，2 参数错误，1 配置、启动或运行失败。启动前的错误以 `video-rename: <错误>` 纯文本写入 stderr，参数错误另附 `Run 'video-rename --help' for usage.`。
 - 源码包没有 `.git` 时默认显示 `dev`，可显式注入与源码一致的版本：`go build -trimpath -ldflags='-X main.version=v1.0.0' -o bin/video-rename ./cmd/video-rename`。
 - 推送标准 tag 会触发 [Release 工作流](.github/workflows/release.yml)：先核对 `--version` 与 tag 一致，再由 GoReleaser 构建全部目标，并上传 tar.gz 与 `checksums.txt`。
 
@@ -202,7 +203,7 @@ coverage/ test-results/  忽略的覆盖率与测试输出
 | 基线规则 | 实际行为 | 原因与依据 | 适用范围 / 重新评估条件 |
 | --- | --- | --- | --- |
 | §3 根目录 README | 中文 `README.md` 为主入口，英文翻译为 `README.en.md` | 用户要求中英文 README | 两份同步维护；放弃英文版时评估 |
-| §7.1 配置入口与覆盖 | `-c` / `--config` 选择配置，默认工作目录下的 `configs/config.local.yaml`；不读取 `CONFIG_FILE`，无环境变量覆盖 | 已有 CLI 配置协议 | 本程序；仅用户要求改变时评估 |
+| §7.1 配置入口与覆盖 | `-c` / `--config` > `CONFIG_FILE` > 工作目录下的 `configs/config.local.yaml`；无字段环境变量覆盖 | 已有 CLI 配置协议 | 本程序；仅用户要求改变时评估 |
 | §11 工具必需路径 | `web/embed.go` 嵌入 `web/dist` | Go embed 与 Vite 的实际构建边界 | Web 资源；交付方式改变时评估 |
 | §4 `bin/` 只放可执行文件 | GoReleaser 输出（二进制、tar.gz、checksums、元数据）在 `bin/release/` | 默认根 `dist/` 未被忽略会让 Go 标记 dirty，且 `dist/` 保留给 Web 产物 | 发布构建；更换发布工具时评估 |
 

@@ -1,6 +1,6 @@
 # Web 服务配置
 
-完整可复制示例在 [configs/config.example.yaml](../configs/config.example.yaml)。所有 YAML 配置路径相对于配置文件所在目录；默认读取 `configs/config.local.yaml`，也可通过 `--config/-c` 显式指定。不读取环境变量覆盖，未知字段、重复 key、多个 YAML 文档和非法配置类型报错。
+完整可复制示例在 [configs/config.example.yaml](../configs/config.example.yaml)。所有 YAML 配置路径相对于配置文件所在目录；选择顺序为 `--config/-c` > 环境变量 `CONFIG_FILE` > 工作目录下的 `configs/config.local.yaml`，文件必须存在。除 `CONFIG_FILE` 外不读取环境变量覆盖，未知字段、重复 key、多个 YAML 文档和非法配置类型报错。
 
 | 字段 | 默认 / 要求 | 作用 |
 | --- | --- | --- |

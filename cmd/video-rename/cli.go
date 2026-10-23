@@ -1,67 +1,75 @@
 package main
 
 import (
+	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"strings"
 )
 
-type cliOptions struct {
-	ConfigPath    string
-	Help, Version bool
-}
+const usage = `video-rename - workspace for organizing local media
 
-const defaultConfigPath = "configs/config.local.yaml"
-const usageText = `video-rename — 视频命名工作台
-用法：video-rename [--config configs/config.local.yaml]
-  -c, --config  YAML 配置文件
-  -h, --help    显示帮助
-      --version 显示版本
-媒体目录使用 YAML media-path；登录、手动运行与自动计划在 Web 页面操作。
+Usage:
+  video-rename [options]
+
+Options:
+  -c, --config <file>  Configuration file (default: configs/config.local.yaml)
+  -h, --help           Print this help and exit
+      --version        Print version information and exit
+
+Environment:
+  CONFIG_FILE          Configuration file, used when --config is not given
+
+Set the media directory with media-path in the configuration file; sign-in,
+manual runs and schedules are in the web UI.
 `
 
-func parseArgs(args []string) (*cliOptions, error) {
-	o := &cliOptions{ConfigPath: defaultConfigPath}
-	seen := map[string]bool{}
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		name, value, has := strings.Cut(arg, "=")
-		switch {
-		case name == "--help" || name == "-h":
-			if has {
-				return nil, fmt.Errorf("帮助参数不接受值")
-			}
-			o.Help = true
-			name = "help"
-		case name == "--version":
-			if has {
-				return nil, fmt.Errorf("版本参数不接受值")
-			}
-			o.Version = true
-			name = "version"
-		case name == "--config" || name == "-c" || strings.HasPrefix(name, "-c"):
-			if rest, ok := strings.CutPrefix(name, "-c"); ok && rest != "" {
-				value = rest
-				has = true
-			}
-			if !has {
-				i++
-				if i >= len(args) {
-					return nil, fmt.Errorf("--config 缺少路径")
-				}
-				value = args[i]
-			}
-			if strings.TrimSpace(value) == "" || strings.HasPrefix(value, "-") {
-				return nil, fmt.Errorf("配置路径无效")
-			}
-			o.ConfigPath = value
-			name = "config"
-		default:
-			return nil, fmt.Errorf("不支持参数 %s；媒体目录请写入 YAML media-path，处理选项请使用 Web 页面", arg)
+type options struct {
+	configFile string // empty: CONFIG_FILE or the default file
+	help       bool
+	version    bool
+}
+
+// parseArgs accepts -x and --x spellings, "--config file" and "--config=file".
+func parseArgs(args []string) (options, error) {
+	var o options
+	flags := flag.NewFlagSet("video-rename", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	setConfig := func(v string) error {
+		if strings.TrimSpace(v) == "" {
+			return errors.New("configuration path must not be empty")
 		}
-		if seen[name] {
-			return nil, fmt.Errorf("参数 %s 重复", name)
+		if o.configFile != "" && o.configFile != v {
+			return errors.New("-c and --config name different files")
 		}
-		seen[name] = true
+		o.configFile = v
+		return nil
+	}
+	flags.Func("c", "", setConfig)
+	flags.Func("config", "", setConfig)
+	flags.BoolVar(&o.help, "h", false, "")
+	flags.BoolVar(&o.help, "help", false, "")
+	flags.BoolVar(&o.version, "version", false, "")
+	if err := flags.Parse(args); err != nil {
+		return options{}, err
+	}
+	if flags.NArg() > 0 {
+		return options{}, fmt.Errorf("unexpected argument %q", flags.Arg(0))
 	}
 	return o, nil
+}
+
+// configPath returns --config, then CONFIG_FILE, then the default file.
+func (o options) configPath(lookupEnv func(string) (string, bool)) (string, error) {
+	if o.configFile != "" {
+		return o.configFile, nil
+	}
+	if path, ok := lookupEnv("CONFIG_FILE"); ok {
+		if strings.TrimSpace(path) == "" {
+			return "", errors.New("CONFIG_FILE is set but empty")
+		}
+		return path, nil
+	}
+	return "configs/config.local.yaml", nil
 }

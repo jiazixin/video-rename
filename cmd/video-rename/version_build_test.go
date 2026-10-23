@@ -29,9 +29,9 @@ func TestBuildVersion(t *testing.T) {
 			t.Fatal(err)
 		}
 		for name, data := range map[string][]byte{
-			"go.mod":     []byte("module video-rename\n\ngo 1.24\n"),
+			"go.mod":     []byte("module fixture\n\ngo 1.24\n"),
 			"version.go": code,
-			"main.go":    []byte("package main\nimport \"fmt\"\nfunc main() { fmt.Println(versionString()) }\n"),
+			"main.go":    []byte("package main\nimport \"fmt\"\nfunc main() { fmt.Println(currentBuild()) }\n"),
 		} {
 			if err := os.WriteFile(filepath.Join(dir, name), data, 0o600); err != nil {
 				t.Fatal(err)
@@ -82,9 +82,9 @@ func TestBuildVersion(t *testing.T) {
 		})
 	}
 	clean := " (revision=" + revision + ")"
-	check("no tag", repo, "v0.0.0-", clean)
+	check("no tag", repo, "v0.0.0-", "-"+revision)
 	git("tag", "1.1")
-	check("legacy tag ignored", repo, "v0.0.0-", clean)
+	check("legacy tag ignored", repo, "v0.0.0-", "-"+revision)
 	git("tag", "v1.2.3")
 	check("standard tag", repo, "v1.2.3"+clean, "")
 	for _, value := range []string{"", "dev", "(devel)"} {
@@ -100,7 +100,7 @@ func TestBuildVersion(t *testing.T) {
 	git("add", ".")
 	git("commit", "-qm", "after tag")
 	revision = git("rev-parse", "--short=12", "HEAD")
-	check("after tag", repo, "v1.2.4-0.", " (revision="+revision+")")
+	check("after tag", repo, "v1.2.4-0.", "-"+revision)
 	check("disabled VCS", repo, "dev", "dev", "-buildvcs=false")
 	check("source archive", archive, "dev", "dev")
 	check("archive override", archive, "v1.2.3", "v1.2.3", "-ldflags", "-X main.version=v1.2.3")

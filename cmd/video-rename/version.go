@@ -6,48 +6,66 @@ import (
 	"strings"
 )
 
-// Builds may override the Go module version with -ldflags '-X main.version=<release>'.
-// Ordinary Git builds use the module version embedded by Go.
-var version string
+// version may be set for builds without VCS metadata, such as Docker builds:
+//
+//	go build -ldflags "-X main.version=v1.0.0" ./cmd/video-rename
+//
+// Otherwise the module version Go stamps from VCS is used, then the revision.
+var version = "dev"
 
-func versionString() string {
-	info, _ := debug.ReadBuildInfo()
-	return formatVersion(version, info)
+// buildInfo describes the running binary.
+type buildInfo struct {
+	Version  string // release, module version, short revision or "dev"
+	Revision string // short VCS revision; empty when unknown
+	Time     string // VCS commit time in RFC 3339; empty when unknown
+	Modified bool   // built from a working tree with uncommitted changes
 }
 
-func formatVersion(release string, info *debug.BuildInfo) string {
-	var moduleVersion, revision string
-	var modified bool
+func currentBuild() buildInfo {
+	info, _ := debug.ReadBuildInfo()
+	return readBuild(version, info)
+}
+
+func readBuild(release string, info *debug.BuildInfo) buildInfo {
+	var b buildInfo
+	var moduleVersion string
 	if info != nil {
 		moduleVersion = info.Main.Version
-		for _, setting := range info.Settings {
-			switch setting.Key {
+		for _, s := range info.Settings {
+			switch s.Key {
 			case "vcs.revision":
-				revision = setting.Value
+				b.Revision = s.Value[:min(12, len(s.Value))]
+			case "vcs.time":
+				b.Time = s.Value
 			case "vcs.modified":
-				modified = setting.Value == "true"
+				b.Modified = s.Value == "true"
 			}
 		}
 	}
-	revision = revision[:min(12, len(revision))]
-	release = cmp.Or(usableVersion(release), usableVersion(moduleVersion), revision, "dev")
-	var details []string
-	if revision != "" {
-		details = append(details, "revision="+revision)
+	b.Version = cmp.Or(usableVersion(release), usableVersion(moduleVersion), b.Revision, "dev")
+	return b
+}
+
+func usableVersion(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "dev" || v == "(devel)" {
+		return ""
 	}
-	if modified {
+	return v
+}
+
+// String formats the version as "v1.0.0 (revision=0123456789ab, modified)".
+func (b buildInfo) String() string {
+	var details []string
+	// A VCS-derived module version already embeds the revision.
+	if b.Revision != "" && !strings.Contains(b.Version, b.Revision) {
+		details = append(details, "revision="+b.Revision)
+	}
+	if b.Modified {
 		details = append(details, "modified")
 	}
 	if len(details) == 0 {
-		return release
+		return b.Version
 	}
-	return release + " (" + strings.Join(details, ", ") + ")"
-}
-
-func usableVersion(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "dev" || value == "(devel)" {
-		return ""
-	}
-	return value
+	return b.Version + " (" + strings.Join(details, ", ") + ")"
 }
