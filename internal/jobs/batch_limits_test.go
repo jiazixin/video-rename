@@ -49,7 +49,7 @@ func TestWaitingBatchCapacityAndPauseClassification(t *testing.T) {
 	settings := systemsettings.Default()
 	settings.WaitingBatchLimit = 25
 	store := systemsettings.Store{DB: m.DB}
-	if err := store.Save(settings); err != nil {
+	if err := store.Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	var ids []int64
@@ -60,7 +60,7 @@ func TestWaitingBatchCapacityAndPauseClassification(t *testing.T) {
 		}
 		ids = append(ids, id)
 	}
-	if err := m.Pause(ids[0]); err != nil {
+	if err := m.Pause(t.Context(), ids[0]); err != nil {
 		t.Fatal(err)
 	}
 	request := Request{Targets: []int64{targets[25]}, Key: "capacity-extra"}
@@ -77,7 +77,7 @@ func TestWaitingBatchCapacityAndPauseClassification(t *testing.T) {
 	}
 	// Lowering the limit preserves the queue and request-key idempotency.
 	settings.WaitingBatchLimit = 1
-	if err := store.Save(settings); err != nil {
+	if err := store.Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	same, err := m.Create(t.Context(), request, "manual", 0)
@@ -87,11 +87,11 @@ func TestWaitingBatchCapacityAndPauseClassification(t *testing.T) {
 	if _, err := m.Create(t.Context(), Request{Targets: []int64{targets[26]}, Key: "capacity-new"}, "schedule", 1); err == nil {
 		t.Fatal("new submission accepted over lowered capacity")
 	}
-	if err := m.Cancel(extra); err != nil {
+	if err := m.Cancel(t.Context(), extra); err != nil {
 		t.Fatal(err)
 	}
 	settings.WaitingBatchLimit = 25
-	if err := store.Save(settings); err != nil {
+	if err := store.Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.Create(t.Context(), Request{Targets: []int64{targets[26]}, Key: "capacity-new"}, "manual", 0); err != nil {
@@ -107,15 +107,15 @@ func TestLoopDynamicBatchCapacityAndShutdown(t *testing.T) {
 	settings.StabilitySeconds = 0
 	settings.RunningBatchLimit = 1
 	settings.ExtractWorkers = 32
-	if err := store.Save(settings); err != nil {
+	if err := store.Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
-	profile, err := (models.Store{DB: m.DB}).Get(1)
+	profile, err := (models.Store{DB: m.DB}).Get(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	profile.Workers = 32
-	if _, err := (models.Store{DB: m.DB}).Save(profile); err != nil {
+	if _, err := (models.Store{DB: m.DB}).Save(t.Context(), profile); err != nil {
 		t.Fatal(err)
 	}
 	started := make(chan string, 35)
@@ -134,7 +134,12 @@ func TestLoopDynamicBatchCapacityAndShutdown(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
-	go func() { defer close(done); m.Loop(ctx) }()
+	go func() {
+		defer close(done)
+		if err := m.Run(ctx); err != nil {
+			t.Error(err)
+		}
+	}()
 	defer func() {
 		cancel()
 		select {
@@ -168,14 +173,14 @@ func TestLoopDynamicBatchCapacityAndShutdown(t *testing.T) {
 	}
 	noStart()
 	// Started pauses retain their execution slot.
-	if err := m.Pause(ids[0]); err != nil {
+	if err := m.Pause(ctx, ids[0]); err != nil {
 		t.Fatal(err)
 	}
 	noStart()
-	if err := m.Resume(ids[0]); err != nil {
+	if err := m.Resume(ctx, ids[0]); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Cancel(ids[0]); err != nil {
+	if err := m.Cancel(ctx, ids[0]); err != nil {
 		t.Fatal(err)
 	}
 	if got := next(1); got != filepath.Join(root, "clip-001.mp4") {
@@ -183,16 +188,16 @@ func TestLoopDynamicBatchCapacityAndShutdown(t *testing.T) {
 	}
 	noStart()
 	settings.RunningBatchLimit = 32
-	if err := store.Save(settings); err != nil {
+	if err := store.Save(ctx, settings); err != nil {
 		t.Fatal(err)
 	}
 	next(31)
 	noStart()
 	settings.RunningBatchLimit = 1
-	if err := store.Save(settings); err != nil {
+	if err := store.Save(ctx, settings); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Cancel(ids[1]); err != nil {
+	if err := m.Cancel(ctx, ids[1]); err != nil {
 		t.Fatal(err)
 	}
 	noStart()

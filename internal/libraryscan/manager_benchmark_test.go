@@ -32,11 +32,11 @@ func BenchmarkRecursiveDirectoryScan(b *testing.B) {
 					}
 				}
 				newManager := func() (*Manager, *storage.Store) {
-					db, err := storage.Open(filepath.Join(base, "state", "library.sqlite"))
+					db, err := storage.Open(b.Context(), filepath.Join(base, "state", "library.sqlite"))
 					if err != nil {
 						b.Fatal(err)
 					}
-					l, err := library.New(db, root)
+					l, err := library.New(b.Context(), db, root)
 					if err != nil {
 						b.Fatal(err)
 					}

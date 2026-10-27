@@ -15,21 +15,21 @@ import (
 )
 
 func TestModelReadsWhileWriterBusy(t *testing.T) {
-	db, err := storage.Open(filepath.Join(t.TempDir(), "models.sqlite"))
+	db, err := storage.Open(t.Context(), filepath.Join(t.TempDir(), "models.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 	s := Store{DB: db}
-	if err := s.Seed(); err != nil {
+	if err := s.Seed(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	p, err := s.Get(1)
+	p, err := s.Get(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	p.BaseURL, p.Model, p.APIKey, p.Workers = "http://localhost/v1", "test-model", "test-secret", 4
-	p, err = s.Save(p)
+	p, err = s.Save(t.Context(), p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,22 +53,22 @@ func TestModelReadsWhileWriterBusy(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- func() error {
-			got, err := s.Get(p.ID)
+			got, err := s.Get(t.Context(), p.ID)
 			if err != nil || !reflect.DeepEqual(got, p) {
 				return fmt.Errorf("Get did not read committed profile: got=%+v err=%v", got, err)
 			}
-			profiles, err := s.List()
+			profiles, err := s.List(t.Context())
 			if err != nil || len(profiles) != 1 || !reflect.DeepEqual(profiles[0], p) {
 				return fmt.Errorf("List did not read committed profiles: count=%d err=%v", len(profiles), err)
 			}
-			if id, err := s.DefaultID(); err != nil || id != p.ID {
+			if id, err := s.DefaultID(t.Context()); err != nil || id != p.ID {
 				return fmt.Errorf("DefaultID=%d err=%v, want %d", id, err, p.ID)
 			}
 			if workers, err := s.Workers(t.Context(), p.ID); err != nil || workers != p.Workers {
 				return fmt.Errorf("Workers=%d err=%v, want %d", workers, err, p.Workers)
 			}
 			resolved := Profile{PromptID: p.PromptID}
-			if err := s.resolve(&resolved); err != nil || resolved.PromptTitle != p.PromptTitle || resolved.Body != p.Body {
+			if err := s.resolve(t.Context(), &resolved); err != nil || resolved.PromptTitle != p.PromptTitle || resolved.Body != p.Body {
 				return fmt.Errorf("resolve did not read committed prompt: title=%q body=%q err=%v", resolved.PromptTitle, resolved.Body, err)
 			}
 			return nil
@@ -85,7 +85,7 @@ func TestModelReadsWhileWriterBusy(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Get(p.ID)
+	got, err := s.Get(t.Context(), p.ID)
 	if err != nil || got.Title != "uncommitted model" || got.Body != "uncommitted body" || got.Workers != 9 || got.Default {
 		t.Fatalf("Get did not observe committed update: got=%+v err=%v", got, err)
 	}
@@ -94,7 +94,7 @@ func TestModelReadsWhileWriterBusy(t *testing.T) {
 // newPrompt creates a library entry so profiles have a reference to carry.
 func newPrompt(t *testing.T, s Store, title, body string) prompts.Profile {
 	t.Helper()
-	p, err := prompts.Store{DB: s.DB}.Save(prompts.Profile{Title: title, Body: body})
+	p, err := prompts.Store{DB: s.DB}.Save(t.Context(), prompts.Profile{Title: title, Body: body})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,77 +103,77 @@ func newPrompt(t *testing.T, s Store, title, body string) prompts.Profile {
 
 func TestDefaultSaveConflictAndRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.sqlite")
-	db, err := storage.Open(path)
+	db, err := storage.Open(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := Store{db}
-	if err = s.Seed(); err != nil {
+	if err = s.Seed(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	p, err := s.Get(1)
+	p, err := s.Get(t.Context(), 1)
 	if err != nil || p.Body != DefaultBody {
 		t.Fatal(p, err)
 	}
 	p.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}
 	old := p
 	lib := prompts.Store{DB: db}
-	seedPrompt, err := lib.Get(p.PromptID)
+	seedPrompt, err := lib.Get(t.Context(), p.PromptID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	seedPrompt.Body = "页面更新要求"
-	if _, err = lib.Save(seedPrompt); err != nil {
+	if _, err = lib.Save(t.Context(), seedPrompt); err != nil {
 		t.Fatal(err)
 	}
-	p, err = s.Save(p)
+	p, err = s.Save(t.Context(), p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Save(old); err == nil {
+	if _, err = s.Save(t.Context(), old); err == nil {
 		t.Fatal("stale edit accepted")
 	}
-	if _, err = s.Save(Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: " ", Body: "x"}); err == nil {
+	if _, err = s.Save(t.Context(), Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: " ", Body: "x"}); err == nil {
 		t.Fatal("blank title accepted")
 	}
-	if _, err = s.Save(Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: "x"}); err == nil {
+	if _, err = s.Save(t.Context(), Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: "x"}); err == nil {
 		t.Fatal("missing prompt accepted")
 	}
-	second, err := s.Save(Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: "旅行", PromptID: newPrompt(t, s, "风景提示词", "描述风景").ID})
+	second, err := s.Save(t.Context(), Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: "旅行", PromptID: newPrompt(t, s, "风景提示词", "描述风景").ID})
 	if err != nil || second.ID == 1 {
 		t.Fatal(second, err)
 	}
-	if err = s.SetDefault(second.ID); err != nil {
+	if err = s.SetDefault(t.Context(), second.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.SetDefault(99999); err == nil {
+	if err = s.SetDefault(t.Context(), 99999); err == nil {
 		t.Fatal("missing default accepted")
 	}
 	db.Close()
-	db, err = storage.Open(path)
+	db, err = storage.Open(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 	s = Store{db}
-	if err = s.Seed(); err != nil {
+	if err = s.Seed(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	p, err = s.Get(1)
+	p, err = s.Get(t.Context(), 1)
 	if err != nil || p.Body != "页面更新要求" {
 		t.Fatal(p, err)
 	}
-	if id, err := s.DefaultID(); err != nil || id != second.ID {
+	if id, err := s.DefaultID(t.Context()); err != nil || id != second.ID {
 		t.Fatal("default did not survive restart", id, err)
 	}
-	rows, err := s.List()
+	rows, err := s.List(t.Context())
 	if err != nil || len(rows) != 2 {
 		t.Fatal(rows, err)
 	}
 }
 
 func TestCredentialsHiddenEncryptedAndSnapshotIndependent(t *testing.T) {
-	db, err := storage.Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	db, err := storage.Open(t.Context(), filepath.Join(t.TempDir(), "state.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,11 +184,11 @@ func TestCredentialsHiddenEncryptedAndSnapshotIndependent(t *testing.T) {
 	settings.Model = "vision-a"
 	settings.APIKey = "private-key-only-for-test"
 	lib := prompts.Store{DB: db}
-	libraryPrompt, err := lib.Save(prompts.Profile{Title: "测试提示词", Body: "旧提示词"})
+	libraryPrompt, err := lib.Save(t.Context(), prompts.Profile{Title: "测试提示词", Body: "旧提示词"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := s.Save(Profile{ServerConfig: settings, Title: "测试", PromptID: libraryPrompt.ID})
+	p, err := s.Save(t.Context(), Profile{ServerConfig: settings, Title: "测试", PromptID: libraryPrompt.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,21 +208,21 @@ func TestCredentialsHiddenEncryptedAndSnapshotIndependent(t *testing.T) {
 	changed := p
 	changed.BaseURL = "http://localhost:9999/v1"
 	changed.APIKey = ""
-	if s.ResolveKey(&changed, nil) == nil {
+	if s.ResolveKey(t.Context(), &changed, nil) == nil {
 		t.Fatal("stored key forwarded to another URL")
 	}
 	empty := ""
-	if err = s.ResolveKey(&changed, &empty); err != nil || changed.APIKey != "" {
+	if err = s.ResolveKey(t.Context(), &changed, &empty); err != nil || changed.APIKey != "" {
 		t.Fatal("explicit key clear failed")
 	}
 	p.Body = "新提示词"
 	p.Model = "vision-b"
 	p.APIKey = "updated-key"
-	if _, err = s.Save(p); err != nil {
+	if _, err = s.Save(t.Context(), p); err != nil {
 		t.Fatal(err)
 	}
 	libraryPrompt.Body = "新提示词"
-	if _, err = lib.Save(libraryPrompt); err != nil {
+	if _, err = lib.Save(t.Context(), libraryPrompt); err != nil {
 		t.Fatal(err)
 	}
 	var cfg config.TaskConfig
@@ -232,7 +232,7 @@ func TestCredentialsHiddenEncryptedAndSnapshotIndependent(t *testing.T) {
 	if cfg.Server.Model != "vision-a" || cfg.Server.APIKey != settings.APIKey || cfg.Prompt != "旧提示词" {
 		t.Fatal("snapshot mutated")
 	}
-	rows, err := s.List()
+	rows, err := s.List(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,22 +243,22 @@ func TestCredentialsHiddenEncryptedAndSnapshotIndependent(t *testing.T) {
 }
 
 func TestCopyAndDelete(t *testing.T) {
-	db, err := storage.Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	db, err := storage.Open(t.Context(), filepath.Join(t.TempDir(), "state.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 	s := Store{db}
-	if err = s.Seed(); err != nil {
+	if err = s.Seed(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	p, _ := s.Get(1)
+	p, _ := s.Get(t.Context(), 1)
 	p.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://localhost/v1", APIKey: "secret", Model: "test", Timeout: "2s", MaxTokens: 1024, Workers: 4, Thinking: "disabled", ThinkingAdapter: "template"}
-	p, err = s.Save(p)
+	p, err = s.Save(t.Context(), p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	copy, err := s.Duplicate(p.ID)
+	copy, err := s.Duplicate(t.Context(), p.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,24 +269,24 @@ func TestCopyAndDelete(t *testing.T) {
 	if strings.Contains(string(raw), "secret") {
 		t.Fatal("key leaked")
 	}
-	if err = s.Delete(p.ID, p.Version); err == nil {
+	if err = s.Delete(t.Context(), p.ID, p.Version); err == nil {
 		t.Fatal("deleted default")
 	}
-	if err = s.Delete(copy.ID, copy.Version+1); err == nil {
+	if err = s.Delete(t.Context(), copy.ID, copy.Version+1); err == nil {
 		t.Fatal("stale delete")
 	}
 	_, err = db.Exec("INSERT INTO schedules(name,targets,recursive,kind,expression,timezone,enabled,next,model_config_id) VALUES('test','[1]',0,'daily','0 1 * * *','UTC',0,'',?)", copy.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Delete(copy.ID, copy.Version); err == nil {
+	if err = s.Delete(t.Context(), copy.ID, copy.Version); err == nil {
 		t.Fatal("deleted bound profile")
 	}
 	db.Exec("DELETE FROM schedules")
-	if err = s.Delete(copy.ID, copy.Version); err != nil {
+	if err = s.Delete(t.Context(), copy.ID, copy.Version); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Get(copy.ID); err == nil {
+	if _, err = s.Get(t.Context(), copy.ID); err == nil {
 		t.Fatal("still exists")
 	}
 }

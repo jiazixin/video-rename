@@ -17,7 +17,7 @@ import (
 
 func requestAuth(t *testing.T) (*Auth, http.Handler) {
 	t.Helper()
-	db, err := storage.Open(filepath.Join(t.TempDir(), "sessions.sqlite"))
+	db, err := storage.Open(t.Context(), filepath.Join(t.TempDir(), "sessions.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

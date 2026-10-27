@@ -391,7 +391,7 @@ func (l *Library) captureScanBaseline(ctx context.Context, id int64, stage *sql.
 	if l.broken != nil {
 		err = errHalted.Wrap(l.broken)
 	} else {
-		err = l.CheckAvailable(id)
+		err = l.CheckAvailable(ctx, id)
 	}
 	baseline.epoch = l.indexEpoch.Load()
 	l.mu.Unlock()
@@ -683,7 +683,7 @@ func (l *Library) publishDirectoryScan(ctx context.Context, id, gen int64, marke
 	if l.broken != nil {
 		return errHalted.Wrap(l.broken)
 	}
-	if err := l.CheckAvailable(id); err != nil {
+	if err := l.CheckAvailable(ctx, id); err != nil {
 		return err
 	}
 	conn, err := l.DB.Conn(ctx)

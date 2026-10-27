@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"maps"
 	"net/http"
 	"slices"
@@ -26,12 +27,12 @@ type markJob struct {
 	targets  []int64
 	marked   bool
 	status   markStatus
+	cancel   context.CancelFunc
 	finished time.Time
 }
 
-// startMark keeps the worker on the application's lifetime, independent of the
-// HTTP request. While a result is cached, the same key returns its work and counts.
-// Clients retry existing requests through markStatus: a retired result must not
+// startMark detaches the worker from the HTTP request; Shutdown cancels it.
+// While a result is cached, the same key returns its work and counts. Clients retry existing requests through markStatus: a retired result must not
 // be mistaken for a new operation and replayed over a later opposite mark.
 func (a *App) startMark(w http.ResponseWriter, r *http.Request, key string, targets []int64, marked bool) {
 	if len(key) < 8 || len(key) > 128 || strings.ContainsAny(key, "/\\?#") {
@@ -47,7 +48,7 @@ func (a *App) startMark(w http.ResponseWriter, r *http.Request, key string, targ
 		a.markMu.Unlock()
 		writeError(w, r, err)
 	}
-	if a.markClosed || a.ctx.Err() != nil {
+	if a.markClosed {
 		fail(errShuttingDown)
 		return
 	}
@@ -84,13 +85,15 @@ func (a *App) startMark(w http.ResponseWriter, r *http.Request, key string, targ
 	if a.markJobs == nil {
 		a.markJobs = make(map[string]*markJob)
 	}
-	job := &markJob{targets: slices.Clone(targets), marked: marked, status: markStatus{
+	ctx, cancel := context.WithCancel(context.WithoutCancel(r.Context()))
+	job := &markJob{targets: slices.Clone(targets), marked: marked, cancel: cancel, status: markStatus{
 		Key: key, Status: "running", Failures: []library.MarkFailure{},
 	}}
 	a.markJobs[key] = job
 	a.markWG.Go(func() {
+		defer cancel()
 		var last time.Time
-		result := a.Library.SetProcessedWithProgress(a.ctx, job.targets, job.marked, func(result library.MarkResult) {
+		result := a.Library.SetProcessedWithProgress(ctx, job.targets, job.marked, func(result library.MarkResult) {
 			if time.Since(last) < 200*time.Millisecond {
 				return
 			}

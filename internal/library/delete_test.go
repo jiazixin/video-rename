@@ -1,6 +1,7 @@
 package library
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -56,7 +57,7 @@ func TestDeleteRejectsChangedAndProtectedEntries(t *testing.T) {
 	if err := l.Delete(t.Context(), e.ID, e.Version+1); err == nil {
 		t.Fatal("allowed stale version")
 	}
-	l.Busy = func(int64) bool { return true }
+	l.Busy = func(context.Context, int64) bool { return true }
 	if err := l.Delete(t.Context(), e.ID, e.Version); err == nil {
 		t.Fatal("allowed busy deletion")
 	}

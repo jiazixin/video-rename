@@ -36,7 +36,7 @@ func TestReportCacheBoundedAndIsolated(t *testing.T) {
 }
 
 func TestReportRevisionCommitsAtomically(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "revision.sqlite"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "revision.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

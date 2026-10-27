@@ -37,7 +37,7 @@ func (m *Manager) Create(ctx context.Context, r Request, source string, plan int
 	}
 	// Normalize scopes without scanning them. Overlapping recursive targets are redundant.
 	index := newScopeIndex(m.DB)
-	normalized, err := index.normalize(r.Targets, r.Recursive)
+	normalized, err := index.normalize(ctx, r.Targets, r.Recursive)
 	if err != nil {
 		return 0, err
 	}
@@ -46,14 +46,14 @@ func (m *Manager) Create(ctx context.Context, r Request, source string, plan int
 		return 0, err
 	}
 	if r.Task == "rename" && r.ModelConfigID == 0 {
-		if r.ModelConfigID, err = (models.Store{DB: m.DB}).DefaultID(); err != nil {
+		if r.ModelConfigID, err = (models.Store{DB: m.DB}).DefaultID(ctx); err != nil {
 			return 0, err
 		}
 	}
-	if existing, found, err := m.existingRun(r); err != nil || found {
+	if existing, found, err := m.existingRun(ctx, r); err != nil || found {
 		return existing, err
 	}
-	if err = m.checkOverlap(r, index); err != nil {
+	if err = m.checkOverlap(ctx, r, index); err != nil {
 		return 0, err
 	}
 	for entry, operation := range r.RetryOperations {
@@ -65,7 +65,7 @@ func (m *Manager) Create(ctx context.Context, r Request, source string, plan int
 		return 0, err
 	}
 	for _, id := range r.Targets {
-		e, err := index.get(id)
+		e, err := index.get(ctx, id)
 		if err != nil {
 			return 0, err
 		}
@@ -73,7 +73,7 @@ func (m *Manager) Create(ctx context.Context, r Request, source string, plan int
 			return 0, domain.Fail(domain.KindInvalid, "target_not_runnable", "only directories and video files can run")
 		}
 	}
-	frames, err := (sampling.Store{DB: m.DB}).Get()
+	frames, err := (sampling.Store{DB: m.DB}).Get(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -86,11 +86,11 @@ func (m *Manager) Create(ctx context.Context, r Request, source string, plan int
 	var prompt models.Profile
 	var modelSnapshot string
 	if r.Task == "rename" {
-		if prompt, modelSnapshot, err = m.freezeModel(r.ModelConfigID, &cfg); err != nil {
+		if prompt, modelSnapshot, err = m.freezeModel(ctx, r.ModelConfigID, &cfg); err != nil {
 			return 0, err
 		}
 	}
-	retry, err := m.freezeRetry(r.Task, r.ModelConfigID)
+	retry, err := m.freezeRetry(ctx, r.Task, r.ModelConfigID)
 	if err != nil {
 		return 0, err
 	}
@@ -101,23 +101,23 @@ func (m *Manager) Create(ctx context.Context, r Request, source string, plan int
 	}
 	targets, _ := json.Marshal(r.Targets)
 	summary := runConfigSummary(r.Task, &cfg, retry)
-	tx, err := m.DB.Begin()
+	tx, err := m.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
-	limits, err := systemsettings.ReadBatchLimits(tx.QueryRow("SELECT policy FROM system_settings WHERE id=1"))
+	limits, err := systemsettings.ReadBatchLimits(tx.QueryRowContext(ctx, "SELECT policy FROM system_settings WHERE id=1"))
 	if err != nil {
 		return 0, err
 	}
 	var waiting int
-	if err = tx.QueryRow("SELECT count(*) FROM runs WHERE status='queued' OR (status='paused' AND started='')").Scan(&waiting); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM runs WHERE status='queued' OR (status='paused' AND started='')").Scan(&waiting); err != nil {
 		return 0, err
 	}
 	if waiting >= limits.WaitingBatchLimit {
 		return 0, domain.Fail(domain.KindTooMany, "waiting_runs_full", "waiting run limit reached", "limit", limits.WaitingBatchLimit)
 	}
-	res, err := tx.Exec("INSERT INTO runs(source,targets,recursive,status,created,request_key,plan,config_summary,model_config_id,model_config_title,prompt_body,model_snapshot,sampling_snapshot,task,retry_snapshot) VALUES(?,?,?,'queued',?,?,?,?,?,?,?,?,?,?,?)", source, string(targets), r.Recursive, storage.Now(), r.Key, plan, summary, prompt.ID, prompt.Title, prompt.Body, modelSnapshot, string(frameSnapshot), r.Task, string(retryRaw))
+	res, err := tx.ExecContext(ctx, "INSERT INTO runs(source,targets,recursive,status,created,request_key,plan,config_summary,model_config_id,model_config_title,prompt_body,model_snapshot,sampling_snapshot,task,retry_snapshot) VALUES(?,?,?,'queued',?,?,?,?,?,?,?,?,?,?,?)", source, string(targets), r.Recursive, storage.Now(), r.Key, plan, summary, prompt.ID, prompt.Title, prompt.Body, modelSnapshot, string(frameSnapshot), r.Task, string(retryRaw))
 	if err != nil {
 		return 0, err
 	}
@@ -144,11 +144,11 @@ func validateRetryOperations(r Request, source string, plan int64) error {
 
 // existingRun finds the run created earlier with r's request key. Reusing a key
 // for a different request is an error rather than a second run.
-func (m *Manager) existingRun(r Request) (id int64, found bool, err error) {
+func (m *Manager) existingRun(ctx context.Context, r Request) (id int64, found bool, err error) {
 	var oldTargets, oldTask, oldRetryRaw string
 	var oldRecursive bool
 	var oldModelConfigID int64
-	err = m.DB.QueryRow("SELECT id,targets,recursive,model_config_id,task,retry_snapshot FROM runs WHERE request_key=?", r.Key).Scan(&id, &oldTargets, &oldRecursive, &oldModelConfigID, &oldTask, &oldRetryRaw)
+	err = m.DB.QueryRowContext(ctx, "SELECT id,targets,recursive,model_config_id,task,retry_snapshot FROM runs WHERE request_key=?", r.Key).Scan(&id, &oldTargets, &oldRecursive, &oldModelConfigID, &oldTask, &oldRetryRaw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
@@ -170,8 +170,8 @@ func (m *Manager) existingRun(r Request) (id int64, found bool, err error) {
 
 // freezeModel loads the chosen model configuration into cfg and returns the
 // snapshot the run replays.
-func (m *Manager) freezeModel(id int64, cfg *config.TaskConfig) (models.Profile, string, error) {
-	prompt, err := (models.Store{DB: m.DB}).Get(id)
+func (m *Manager) freezeModel(ctx context.Context, id int64, cfg *config.TaskConfig) (models.Profile, string, error) {
+	prompt, err := (models.Store{DB: m.DB}).Get(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return prompt, "", domain.Fail(domain.KindNotFound, "model_config_not_found", "model configuration does not exist")
@@ -181,7 +181,7 @@ func (m *Manager) freezeModel(id int64, cfg *config.TaskConfig) (models.Profile,
 	if err = prompt.Validate(); err != nil {
 		return prompt, "", err
 	}
-	fixed, err := (systemsettings.Store{DB: m.DB}).FixedPrompt()
+	fixed, err := (systemsettings.Store{DB: m.DB}).FixedPrompt(ctx)
 	if err != nil {
 		return prompt, "", err
 	}

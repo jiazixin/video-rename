@@ -2,6 +2,7 @@ package notifications
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -54,11 +55,11 @@ func request(c Credentials, kind, title, body string) (string, any) {
 		return endpoint, map[string]string{"event": "batch.finished", "title": title, "body": body}
 	}
 }
-func sendMessage(c Credentials, kind, title, body string) error {
+func sendMessage(ctx context.Context, c Credentials, kind, title, body string) error {
 	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return deliver(client, c, kind, title, body)
+	return deliver(ctx, client, c, kind, title, body)
 }
-func deliver(client *http.Client, c Credentials, kind, title, body string) error {
+func deliver(ctx context.Context, client *http.Client, c Credentials, kind, title, body string) error {
 	if kind == "bark" {
 		if err := validate(kind, c); err != nil {
 			return err
@@ -69,7 +70,7 @@ func deliver(client *http.Client, c Credentials, kind, title, body string) error
 	if err != nil {
 		return domain.Fail(domain.KindInternal, "notification_failed", "encode notification", "reason", "encode")
 	}
-	req, err := http.NewRequest("POST", endpoint, bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(raw))
 	if err != nil {
 		return domain.Fail(domain.KindInvalid, "notification_failed", "notification endpoint is invalid", "reason", "invalid_endpoint")
 	}

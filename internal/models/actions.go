@@ -1,25 +1,27 @@
 package models
 
 import (
+	"context"
+
 	"video-rename/internal/domain"
 	"video-rename/internal/storage"
 )
 
 // Duplicate keeps credentials server-side and never copies the global default flag.
-func (s Store) Duplicate(id int64) (Profile, error) {
-	tx, err := s.DB.Begin()
+func (s Store) Duplicate(ctx context.Context, id int64) (Profile, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return Profile{}, err
 	}
 	defer tx.Rollback()
 	var count int
-	if err = tx.QueryRow("SELECT count(*) FROM model_configs").Scan(&count); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM model_configs").Scan(&count); err != nil {
 		return Profile{}, err
 	}
 	if count >= 200 {
 		return Profile{}, domain.Fail(domain.KindTooMany, "model_configs_full", "at most 200 model configurations")
 	}
-	res, err := tx.Exec(`INSERT INTO model_configs(title,prompt_id,created,updated,settings,api_key) SELECT substr(title,1,75)||' 副本',prompt_id,?,?,settings,api_key FROM model_configs WHERE id=?`, storage.Now(), storage.Now(), id)
+	res, err := tx.ExecContext(ctx, `INSERT INTO model_configs(title,prompt_id,created,updated,settings,api_key) SELECT substr(title,1,75)||' 副本',prompt_id,?,?,settings,api_key FROM model_configs WHERE id=?`, storage.Now(), storage.Now(), id)
 	if err != nil {
 		return Profile{}, err
 	}
@@ -34,18 +36,18 @@ func (s Store) Duplicate(id int64) (Profile, error) {
 	if err = tx.Commit(); err != nil {
 		return Profile{}, err
 	}
-	return s.Get(next)
+	return s.Get(ctx, next)
 }
 
 // Delete deletes model profile id if its version is still version.
-func (s Store) Delete(id, version int64) error {
-	tx, err := s.DB.Begin()
+func (s Store) Delete(ctx context.Context, id, version int64) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	var current, selected int64
-	if err = tx.QueryRow("SELECT version,is_default FROM model_configs WHERE id=?", id).Scan(&current, &selected); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT version,is_default FROM model_configs WHERE id=?", id).Scan(&current, &selected); err != nil {
 		return domain.Fail(domain.KindNotFound, "model_config_not_found", "model configuration does not exist")
 	}
 	if current != version {
@@ -55,20 +57,20 @@ func (s Store) Delete(id, version int64) error {
 		return domain.Fail(domain.KindConflict, "model_config_is_default", "the default model configuration cannot be deleted")
 	}
 	var fallback int
-	if err = tx.QueryRow("SELECT count(*) FROM system_settings WHERE json_extract(NULLIF(policy,''),'$.fallback_model_id')=?", id).Scan(&fallback); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM system_settings WHERE json_extract(NULLIF(policy,''),'$.fallback_model_id')=?", id).Scan(&fallback); err != nil {
 		return err
 	}
 	if fallback > 0 {
 		return domain.Fail(domain.KindConflict, "model_config_is_fallback", "the fallback model configuration cannot be deleted")
 	}
 	var plans int
-	if err = tx.QueryRow("SELECT count(*) FROM schedules WHERE model_config_id=?", id).Scan(&plans); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM schedules WHERE model_config_id=?", id).Scan(&plans); err != nil {
 		return err
 	}
 	if plans > 0 {
 		return domain.Fail(domain.KindConflict, "model_config_in_use", "model configuration is used by schedules", "plans", plans)
 	}
-	if _, err = tx.Exec("DELETE FROM model_configs WHERE id=?", id); err != nil {
+	if _, err = tx.ExecContext(ctx, "DELETE FROM model_configs WHERE id=?", id); err != nil {
 		return err
 	}
 	return tx.Commit()

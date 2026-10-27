@@ -18,7 +18,7 @@ func TestDatabaseFilesArePrivate(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "private.sqlite")
-	db, err := Open(path)
+	db, err := Open(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,11 +39,11 @@ func TestDatabaseFilesArePrivate(t *testing.T) {
 
 func TestExclusiveInstanceAndForeignKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.sqlite")
-	a, err := Open(path)
+	a, err := Open(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b, e := Open(path); e == nil {
+	if b, e := Open(t.Context(), path); e == nil {
 		b.Close()
 		t.Fatal("second writer instance allowed")
 	}
@@ -52,7 +52,7 @@ func TestExclusiveInstanceAndForeignKeys(t *testing.T) {
 		t.Fatal(mode, err)
 	}
 	a.Close()
-	b, err := Open(path)
+	b, err := Open(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestExclusiveInstanceAndForeignKeys(t *testing.T) {
 func TestDatabaseAliasesShareInstanceLockAndKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.sqlite")
-	first, err := Open(path)
+	first, err := Open(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,14 +75,14 @@ func TestDatabaseAliasesShareInstanceLockAndKey(t *testing.T) {
 	if err := os.Symlink(path, alias); err != nil {
 		t.Fatal(err)
 	}
-	if second, err := Open(alias); err == nil {
+	if second, err := Open(t.Context(), alias); err == nil {
 		second.Close()
 		t.Fatal("database symlink bypassed the exclusive instance lock")
 	}
 	if err := first.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(alias)
+	reopened, err := Open(t.Context(), alias)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestDatabaseAliasesShareInstanceLockAndKey(t *testing.T) {
 func TestDatabaseHardLinksAreRejectedWithoutChangingData(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.sqlite")
-	first, err := Open(path)
+	first, err := Open(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestDatabaseHardLinksAreRejectedWithoutChangingData(t *testing.T) {
 	}
 	reject := func(candidate string) {
 		t.Helper()
-		if second, err := Open(candidate); err == nil {
+		if second, err := Open(t.Context(), candidate); err == nil {
 			second.Close()
 			t.Fatal("database hardlink allowed another owner")
 		} else if !strings.Contains(err.Error(), "hard links") {
@@ -155,7 +155,7 @@ func TestDatabaseHardLinksAreRejectedWithoutChangingData(t *testing.T) {
 	if err := os.Remove(alias); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(path)
+	reopened, err := Open(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestDatabaseHardLinksAreRejectedWithoutChangingData(t *testing.T) {
 
 func TestMissingEncryptionKeyNeverSilentlyReplacesCredentials(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.sqlite")
-	db, err := Open(path)
+	db, err := Open(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestMissingEncryptionKeyNeverSilentlyReplacesCredentials(t *testing.T) {
 	if err = os.Remove(path + ".key"); err != nil {
 		t.Fatal(err)
 	}
-	if reopened, err := Open(path); err == nil {
+	if reopened, err := Open(t.Context(), path); err == nil {
 		reopened.Close()
 		t.Fatal("generated replacement key for encrypted data")
 	}
@@ -190,7 +190,7 @@ func TestMissingEncryptionKeyNeverSilentlyReplacesCredentials(t *testing.T) {
 
 func TestCurrentSchemaReopensWithoutChangingData(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "current.sqlite")
-	db, err := Open(path)
+	db, err := Open(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestCurrentSchemaReopensWithoutChangingData(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Close()
-	db, err = Open(path)
+	db, err = Open(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestUnsupportedDatabaseRemainsIntact(t *testing.T) {
 				t.Fatal(err)
 			}
 			db.Close()
-			if s, err := Open(path); err == nil {
+			if s, err := Open(t.Context(), path); err == nil {
 				s.Close()
 				t.Fatal("accepted unsupported schema")
 			}
@@ -269,7 +269,7 @@ func TestUnsupportedDatabaseRemainsIntact(t *testing.T) {
 }
 
 func TestForeignKeysSurviveConnectionReplacement(t *testing.T) {
-	db, err := Open(filepath.Join(t.TempDir(), "space # and ?.sqlite"))
+	db, err := Open(t.Context(), filepath.Join(t.TempDir(), "space # and ?.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +285,7 @@ func TestForeignKeysSurviveConnectionReplacement(t *testing.T) {
 }
 
 func TestDeletedEntityIDsAreNeverReused(t *testing.T) {
-	db, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	db, err := Open(t.Context(), filepath.Join(t.TempDir(), "state.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

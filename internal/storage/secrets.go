@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -12,11 +13,11 @@ import (
 	"video-rename/internal/domain"
 )
 
-func (s *Store) initSecret(path string) error {
+func (s *Store) initSecret(ctx context.Context, path string) error {
 	key, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		var n int
-		if err = s.QueryRow("SELECT (SELECT count(*) FROM model_configs WHERE api_key<>'')+(SELECT count(*) FROM runs WHERE model_snapshot<>'')+(SELECT count(*) FROM notification_channels WHERE credentials<>'')").Scan(&n); err != nil {
+		if err = s.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM model_configs WHERE api_key<>'')+(SELECT count(*) FROM runs WHERE model_snapshot<>'')+(SELECT count(*) FROM notification_channels WHERE credentials<>'')").Scan(&n); err != nil {
 			return err
 		}
 		if n > 0 {

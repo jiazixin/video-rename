@@ -18,11 +18,11 @@ func fixture(t *testing.T) (*Library, string, string) {
 		t.Fatal(err)
 	}
 	dbpath := filepath.Join(base, "state", "library.sqlite")
-	db, err := storage.Open(dbpath)
+	db, err := storage.Open(t.Context(), dbpath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	l, err := New(db, root)
+	l, err := New(t.Context(), db, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,12 +77,12 @@ func TestRenameRestoreParentAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	l.DB.Close()
-	db, err := storage.Open(dbpath)
+	db, err := storage.Open(t.Context(), dbpath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	l, err = New(db, root)
+	l, err = New(t.Context(), db, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestSymlinkBlocked(t *testing.T) {
 	}
 	refresh(t, l, 1)
 	e := entry(t, l, 1, "link")
-	if _, err := l.Path(e.ID); err == nil {
+	if _, err := l.Path(t.Context(), e.ID); err == nil {
 		t.Fatal("symlink followed")
 	}
 }
@@ -165,16 +165,16 @@ func TestPreparedRecovery(t *testing.T) {
 		t.Fatal(er)
 	}
 	l.DB.Close()
-	db, err := storage.Open(dbpath)
+	db, err := storage.Open(t.Context(), dbpath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	l, err = New(db, root)
+	l, err = New(t.Context(), db, root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	o, _ := l.Operation(id)
+	o, _ := l.Operation(t.Context(), id)
 	if o.Status != "committed" {
 		t.Fatal(o.Status)
 	}
@@ -284,7 +284,7 @@ func TestPostRenameDatabaseFailureRecovers(t *testing.T) {
 	if _, err = l.DB.Exec("DROP TRIGGER reject_commit"); err != nil {
 		t.Fatal(err)
 	}
-	if err = l.Recover(); err != nil {
+	if err = l.Recover(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	e, err = l.Get(t.Context(), e.ID)
@@ -305,10 +305,10 @@ func TestAmbiguousRecoveryBlocksRelatedDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = l.Recover(); err != nil {
+	if err = l.Recover(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err = l.CheckAvailable(e.ID); err == nil {
+	if err = l.CheckAvailable(t.Context(), e.ID); err == nil {
 		t.Fatal("ambiguous file allowed")
 	}
 	if _, err = l.Rename(t.Context(), d.ID, d.Version, "other", "blocked-parent"); err == nil {
@@ -406,7 +406,7 @@ func TestAutomaticSuccessResolvesOnlyMatchingFailures(t *testing.T) {
 		action string
 		entry  int64
 	}{{"automatic", e.ID}, {"automatic", e.ID}, {"scan", e.ID}, {"automatic", 999}} {
-		if err := l.Event("failure", record.action, record.entry, 0, 0, "retry.mp4", "", "failed"); err != nil {
+		if err := l.Event(t.Context(), "failure", record.action, record.entry, 0, 0, "retry.mp4", "", "failed"); err != nil {
 			t.Fatal(err)
 		}
 	}

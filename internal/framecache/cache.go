@@ -207,14 +207,14 @@ func (c *Cache) Sweep(now time.Time) error {
 	return c.pruneLocked(now, 0)
 }
 
-// Loop sweeps the cache every minute until ctx ends.
-func (c *Cache) Loop(ctx context.Context) {
+// Run sweeps the cache every minute until ctx ends.
+func (c *Cache) Run(ctx context.Context) error {
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case now := <-t.C:
 			if err := c.Sweep(now); err != nil {
 				c.logger.Error("frame_cache_clean_failed", "error", err)

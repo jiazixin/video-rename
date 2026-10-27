@@ -52,7 +52,7 @@ func TestDirectoryScanFailurePersistsDiagnostics(t *testing.T) {
 func TestRunFailurePreservesWrappedDiagnostics(t *testing.T) {
 	m, _ := setup(t)
 	cause := &domain.JobError{Code: domain.CodeSourceChanged, Message: "changed", ProcessingLog: "source evidence", RawRequest: "request", RawResponse: "response", StderrTail: "stderr"}
-	if err := m.recordFailure("run", 0, 0, "", fmt.Errorf("scan failed: %w", cause)); err != nil {
+	if err := m.recordFailure(t.Context(), "run", 0, 0, "", fmt.Errorf("scan failed: %w", cause)); err != nil {
 		t.Fatal(err)
 	}
 	var message, detail, request, response string

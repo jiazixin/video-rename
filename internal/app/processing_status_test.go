@@ -20,11 +20,11 @@ func TestDirectoryProcessingStatusAPI(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	if err = a.Library.Refresh(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
@@ -99,11 +99,11 @@ func TestDirectoryStatusAPIFiltersCompletedSubtrees(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	for _, name := range []string{"", "completed", "nested", "partial"} {
 		var id int64
 		if err := a.DB.Read().QueryRow("SELECT id FROM entries WHERE name=? AND present=1", name).Scan(&id); err != nil {

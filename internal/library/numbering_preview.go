@@ -51,7 +51,7 @@ func (l *Library) PreviewNumbering(ctx context.Context, req NumberingRequest) (N
 		rules, peerRules = settings.Audio, settings.Image
 		peer = numberingMedia["image"]
 	}
-	if err = l.CheckAvailable(parent); err != nil {
+	if err = l.CheckAvailable(ctx, parent); err != nil {
 		return Numbering{}, err
 	}
 	dir, err := l.Get(ctx, parent)
@@ -61,10 +61,10 @@ func (l *Library) PreviewNumbering(ctx context.Context, req NumberingRequest) (N
 	if dir.Kind != "directory" {
 		return Numbering{}, errNotDirectory
 	}
-	if l.Busy != nil && l.Busy(parent) {
+	if l.Busy != nil && l.Busy(ctx, parent) {
 		return Numbering{}, domain.Fail(domain.KindConflict, "descendant_busy", "a descendant has an active job")
 	}
-	path, err := l.Path(parent)
+	path, err := l.Path(ctx, parent)
 	if err != nil {
 		return Numbering{}, err
 	}

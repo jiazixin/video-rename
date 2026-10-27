@@ -1,6 +1,7 @@
 package library
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,7 +10,7 @@ import (
 )
 
 // Resolve a crash between filesystem rename and journal completion without guessing.
-func (l *Library) reconcileNumbering(b *Numbering, path string) error {
+func (l *Library) reconcileNumbering(ctx context.Context, b *Numbering, path string) error {
 	names, err := os.ReadDir(path)
 	if err != nil {
 		return err
@@ -29,7 +30,7 @@ func (l *Library) reconcileNumbering(b *Numbering, path string) error {
 			if pending {
 				i.Current = i.Pending
 			}
-			if _, err = l.DB.Exec("UPDATE image_numbering_items SET current_name=?,pending_name='' WHERE batch=? AND entry=?", i.Current, b.ID, i.Entry); err != nil {
+			if _, err = l.DB.ExecContext(ctx, "UPDATE image_numbering_items SET current_name=?,pending_name='' WHERE batch=? AND entry=?", i.Current, b.ID, i.Entry); err != nil {
 				return err
 			}
 			i.Pending = ""
@@ -39,19 +40,19 @@ func (l *Library) reconcileNumbering(b *Numbering, path string) error {
 	}
 	return syncNumberingDir(path)
 }
-func (l *Library) rollbackNumbering(b *Numbering, path string) error {
-	if _, err := l.DB.Exec("UPDATE image_numberings SET status='rollback' WHERE id=?", b.ID); err != nil {
+func (l *Library) rollbackNumbering(ctx context.Context, b *Numbering, path string) error {
+	if _, err := l.DB.ExecContext(ctx, "UPDATE image_numberings SET status='rollback' WHERE id=?", b.ID); err != nil {
 		return err
 	}
 	b.Status = "rollback"
-	if err := l.reconcileNumbering(b, path); err != nil {
+	if err := l.reconcileNumbering(ctx, b, path); err != nil {
 		return err
 	}
 	// Stage first, including final names that may occupy another item's original name.
 	for idx := range b.Items {
 		i := &b.Items[idx]
 		if i.Current != i.Old {
-			if err := l.moveNumbering(b, i, path, i.Temp); err != nil {
+			if err := l.moveNumbering(ctx, b, i, path, i.Temp); err != nil {
 				return err
 			}
 		}
@@ -59,15 +60,15 @@ func (l *Library) rollbackNumbering(b *Numbering, path string) error {
 	for idx := range b.Items {
 		i := &b.Items[idx]
 		if i.Current != i.Old {
-			if err := l.moveNumbering(b, i, path, i.Old); err != nil {
+			if err := l.moveNumbering(ctx, b, i, path, i.Old); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
 }
-func (l *Library) recoverNumberings() error {
-	rows, err := l.DB.Query("SELECT id FROM image_numberings WHERE status IN ('running','rollback','review') ORDER BY created")
+func (l *Library) recoverNumberings(ctx context.Context) error {
+	rows, err := l.DB.QueryContext(ctx, "SELECT id FROM image_numberings WHERE status IN ('running','rollback','review') ORDER BY created")
 	if err != nil {
 		return err
 	}
@@ -86,7 +87,7 @@ func (l *Library) recoverNumberings() error {
 		return err
 	}
 	for _, id := range ids {
-		if _, err = l.recoverNumbering(id); err != nil {
+		if _, err = l.recoverNumbering(ctx, id); err != nil {
 			return err
 		}
 	}
@@ -94,22 +95,22 @@ func (l *Library) recoverNumberings() error {
 }
 
 // RecoverNumbering resumes or rolls back the interrupted numbering id.
-func (l *Library) RecoverNumbering(id string) (Numbering, error) {
+func (l *Library) RecoverNumbering(ctx context.Context, id string) (Numbering, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.recoverNumbering(id)
+	return l.recoverNumbering(ctx, id)
 }
-func (l *Library) recoverNumbering(id string) (Numbering, error) {
-	b, err := l.Numbering(id)
+func (l *Library) recoverNumbering(ctx context.Context, id string) (Numbering, error) {
+	b, err := l.Numbering(ctx, id)
 	if err != nil {
 		return b, err
 	}
 	if b.Status != "running" && b.Status != "rollback" && b.Status != "review" {
 		return b, nil
 	}
-	path, err := l.Path(b.Parent)
+	path, err := l.Path(ctx, b.Parent)
 	if err == nil {
-		err = l.rollbackNumbering(&b, path)
+		err = l.rollbackNumbering(ctx, &b, path)
 	}
 	b.Status = "rolled_back"
 	b.Error = domain.Record{Code: "numbering_interrupted_restored", Message: "interrupted numbering was rolled back", Details: map[string]any{"media": b.Media}}
@@ -120,6 +121,6 @@ func (l *Library) recoverNumbering(id string) (Numbering, error) {
 			b.ProcessingLog += "\nrecovery failure:\n" + diagnostic.ProcessingLog
 		}
 	}
-	_, dbErr := l.DB.Exec("UPDATE image_numberings SET status=?,error=? WHERE id=?", b.Status, b.numberingErrorRecord(), id)
+	_, dbErr := l.DB.ExecContext(ctx, "UPDATE image_numberings SET status=?,error=? WHERE id=?", b.Status, b.numberingErrorRecord(), id)
 	return b, dbErr
 }

@@ -71,11 +71,11 @@ func TestProviderPayloadsAndBusinessErrors(t *testing.T) {
 				r.URL.Host = target.Host
 				return http.DefaultTransport.RoundTrip(r)
 			})}
-			if err := deliver(client, c, kind, "title", "body"); err != nil {
+			if err := deliver(t.Context(), client, c, kind, "title", "body"); err != nil {
 				t.Fatal(err)
 			}
 			rejected = true
-			if err := deliver(client, c, kind, "title", "body"); kind != "webhook" && (err == nil || strings.Contains(err.Error(), "private")) {
+			if err := deliver(t.Context(), client, c, kind, "title", "body"); kind != "webhook" && (err == nil || strings.Contains(err.Error(), "private")) {
 				t.Fatal("bad error handling", err)
 			}
 		})
@@ -83,7 +83,7 @@ func TestProviderPayloadsAndBusinessErrors(t *testing.T) {
 }
 func service(t *testing.T) *Service {
 	t.Helper()
-	db, err := storage.Open(filepath.Join(t.TempDir(), "db.sqlite"))
+	db, err := storage.Open(t.Context(), filepath.Join(t.TempDir(), "db.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,10 +102,10 @@ func addRun(t *testing.T, s *Service, status string, failed int) int64 {
 func TestQueueFilteringRetriesAndSecretPreservation(t *testing.T) {
 	s := service(t)
 	addRun(t, s, "completed", 0)
-	if err := s.Save(Input{Kind: "webhook", Enabled: true, Endpoint: "http://127.0.0.1/push?key=private"}); err != nil {
+	if err := s.Save(t.Context(), Input{Kind: "webhook", Enabled: true, Endpoint: "http://127.0.0.1/push?key=private"}); err != nil {
 		t.Fatal(err)
 	}
-	list, err := s.List()
+	list, err := s.List(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,13 +118,13 @@ func TestQueueFilteringRetriesAndSecretPreservation(t *testing.T) {
 	if strings.Contains(encrypted, "private") {
 		t.Fatal("secret stored as plaintext")
 	}
-	if err = s.Save(Input{Kind: "webhook", Enabled: true, FailureOnly: true}); err != nil {
+	if err = s.Save(t.Context(), Input{Kind: "webhook", Enabled: true, FailureOnly: true}); err != nil {
 		t.Fatal(err)
 	}
 	addRun(t, s, "completed", 0)
 	id := addRun(t, s, "partial_failure", 1)
 	calls := 0
-	s.Send = func(c Credentials, kind, title, body string) error {
+	s.Send = func(_ context.Context, c Credentials, kind, title, body string) error {
 		calls++
 		if c.Endpoint != "http://127.0.0.1/push?key=private" {
 			t.Error("blank edit lost secret")
@@ -140,7 +140,7 @@ func TestQueueFilteringRetriesAndSecretPreservation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	history, err := s.History()
+	history, err := s.History(t.Context())
 	if err != nil || len(history) != 1 || history[0].Run != id || history[0].Status != "failed" || calls != 3 {
 		t.Fatal(history, calls, err)
 	}
@@ -149,7 +149,7 @@ func TestQueueFilteringRetriesAndSecretPreservation(t *testing.T) {
 	if status != "partial_failure" {
 		t.Fatal("notification changed run")
 	}
-	if err = s.Save(Input{Kind: "webhook", Enabled: false}); err != nil {
+	if err = s.Save(t.Context(), Input{Kind: "webhook", Enabled: false}); err != nil {
 		t.Fatal(err)
 	}
 	addRun(t, s, "failed", 1)
@@ -160,12 +160,12 @@ func TestQueueFilteringRetriesAndSecretPreservation(t *testing.T) {
 }
 func TestQueueSuccessIsDeduplicated(t *testing.T) {
 	s := service(t)
-	if err := s.Save(Input{Kind: "bark", Enabled: true, Endpoint: "http://127.0.0.1/device"}); err != nil {
+	if err := s.Save(t.Context(), Input{Kind: "bark", Enabled: true, Endpoint: "http://127.0.0.1/device"}); err != nil {
 		t.Fatal(err)
 	}
 	addRun(t, s, "completed", 0)
 	calls := 0
-	s.Send = func(Credentials, string, string, string) error { calls++; return nil }
+	s.Send = func(context.Context, Credentials, string, string, string) error { calls++; return nil }
 	for range 3 {
 		if err := s.tick(t.Context()); err != nil {
 			t.Fatal(err)
@@ -178,7 +178,7 @@ func TestQueueSuccessIsDeduplicated(t *testing.T) {
 
 func TestNotificationRecoveryAttemptLimit(t *testing.T) {
 	s := service(t)
-	if err := s.Save(Input{Kind: "bark", Enabled: true, Endpoint: "http://127.0.0.1/device"}); err != nil {
+	if err := s.Save(t.Context(), Input{Kind: "bark", Enabled: true, Endpoint: "http://127.0.0.1/device"}); err != nil {
 		t.Fatal(err)
 	}
 	addRun(t, s, "completed", 0)
@@ -189,11 +189,22 @@ func TestNotificationRecoveryAttemptLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		history, err := s.History(t.Context())
+		if err == nil && history[0].Status == "failed" && history[0].Attempts == 3 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal(history, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	cancel()
-	s.Loop(ctx)
-	history, err := s.History()
-	if err != nil || history[0].Status != "failed" || history[0].Attempts != 3 {
-		t.Fatal(history, err)
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -221,14 +232,14 @@ func TestBarkBatchBodyThroughJSONEndpoint(t *testing.T) {
 		fmt.Fprint(w, `{"code":200}`)
 	}))
 	defer server.Close()
-	if err := s.Save(Input{Kind: "bark", Enabled: true, Endpoint: server.URL + "/bark/test-key/"}); err != nil {
+	if err := s.Save(t.Context(), Input{Kind: "bark", Enabled: true, Endpoint: server.URL + "/bark/test-key/"}); err != nil {
 		t.Fatal(err)
 	}
 	addRun(t, s, "partial_failure", 1)
 	if err := s.tick(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	history, err := s.History()
+	history, err := s.History(t.Context())
 	if err != nil || len(history) != 1 || history[0].Status != "sent" {
 		t.Fatalf("delivery: %v %v", history, err)
 	}
@@ -236,7 +247,7 @@ func TestBarkBatchBodyThroughJSONEndpoint(t *testing.T) {
 
 func TestNotificationTimezoneUsesDST(t *testing.T) {
 	s := service(t)
-	if err := s.Save(Input{Kind: "bark", Enabled: true, Endpoint: "http://127.0.0.1/device"}); err != nil {
+	if err := s.Save(t.Context(), Input{Kind: "bark", Enabled: true, Endpoint: "http://127.0.0.1/device"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.DB.Exec("UPDATE notification_preferences SET timezone='America/New_York'"); err != nil {

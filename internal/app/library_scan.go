@@ -11,7 +11,7 @@ import (
 func (a *App) libraryScanRoutes(mux *router) {
 	store := systemsettings.Store{DB: a.DB}
 	mux.HandleFunc("GET /api/library/scan", func(w http.ResponseWriter, r *http.Request) {
-		settings, err := store.Scan()
+		settings, err := store.Scan(r.Context())
 		if err != nil {
 			writeError(w, r, err)
 			return
@@ -47,7 +47,7 @@ func (a *App) libraryScanRoutes(mux *router) {
 			settings.ExcludedTargets = excluded
 		}
 		a.settingsMu.Lock()
-		err = store.SaveScan(settings)
+		err = store.SaveScan(r.Context(), settings)
 		a.settingsMu.Unlock()
 		if err != nil {
 			writeError(w, r, err)
@@ -63,7 +63,7 @@ func (a *App) libraryScanRoutes(mux *router) {
 		if !decode(w, r, &body) {
 			return
 		}
-		status, err := a.Scanner.Start(a.ctx, body.Targets, "manual")
+		status, err := a.Scanner.Start(r.Context(), body.Targets, "manual")
 		if err != nil {
 			writeError(w, r, err)
 			return

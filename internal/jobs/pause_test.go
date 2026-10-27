@@ -50,14 +50,14 @@ func TestPauseReleasesQueuedFramesAndLetsOtherBatchFinish(t *testing.T) {
 	var firstEntry, secondEntry int64
 	m.DB.QueryRow("SELECT id FROM entries WHERE name='first'").Scan(&firstEntry)
 	m.DB.QueryRow("SELECT id FROM entries WHERE name='second'").Scan(&secondEntry)
-	profile, _ := (models.Store{DB: m.DB}).Get(1)
+	profile, _ := (models.Store{DB: m.DB}).Get(t.Context(), 1)
 	profile.Workers = 1
-	if _, err := (models.Store{DB: m.DB}).Save(profile); err != nil {
+	if _, err := (models.Store{DB: m.DB}).Save(t.Context(), profile); err != nil {
 		t.Fatal(err)
 	}
 	settings := systemsettings.Default()
 	settings.StabilitySeconds, settings.ExtractWorkers = 0, 1
-	if err := (systemsettings.Store{DB: m.DB}).Save(settings); err != nil {
+	if err := (systemsettings.Store{DB: m.DB}).Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	reserve := int64(config.DefaultFrameSettings().Sampling.MaxFrames)*(1<<20) + (32 << 20) + 65536
@@ -99,10 +99,10 @@ func TestPauseReleasesQueuedFramesAndLetsOtherBatchFinish(t *testing.T) {
 		t.Fatal("no model request")
 	}
 	waitPauseTest(t, func() bool { return extracted.Load() == 2 })
-	if err = m.Pause(first); err != nil {
+	if err = m.Pause(ctx, first); err != nil {
 		t.Fatal(err)
 	}
-	if err = m.Pause(first); err != nil {
+	if err = m.Pause(ctx, first); err != nil {
 		t.Fatal("pause must be idempotent", err)
 	}
 	if _, err = m.Create(t.Context(), Request{Targets: []int64{firstEntry}, Recursive: true, Key: "pause-overlap"}, "manual", 0); err == nil {
@@ -128,7 +128,7 @@ func TestPauseReleasesQueuedFramesAndLetsOtherBatchFinish(t *testing.T) {
 		t.Fatal(directory, err)
 	}
 	started := r.Started
-	if err = m.Resume(first); err != nil {
+	if err = m.Resume(ctx, first); err != nil {
 		t.Fatal(err)
 	}
 	waitPauseTest(t, func() bool { r, _ := m.Get(t.Context(), first); return r.Status == "completed" })
@@ -145,7 +145,7 @@ func TestQueuedPauseResumeCancelAndRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = m.Pause(id); err != nil {
+	if err = m.Pause(t.Context(), id); err != nil {
 		t.Fatal(err)
 	}
 	m.Execute(t.Context(), id)
@@ -153,33 +153,33 @@ func TestQueuedPauseResumeCancelAndRecovery(t *testing.T) {
 	if r.Status != "paused" || r.Started != "" {
 		t.Fatal(r)
 	}
-	if err = m.Resume(id); err != nil {
+	if err = m.Resume(t.Context(), id); err != nil {
 		t.Fatal(err)
 	}
 	r, _ = m.Get(t.Context(), id)
 	if r.Status != "queued" {
 		t.Fatal(r)
 	}
-	m.Pause(id)
-	if err = m.Cancel(id); err != nil {
+	m.Pause(t.Context(), id)
+	if err = m.Cancel(t.Context(), id); err != nil {
 		t.Fatal(err)
 	}
 	r, _ = m.Get(t.Context(), id)
 	if r.Status != "cancelled" || r.Finished == "" {
 		t.Fatal(r)
 	}
-	if err = m.Resume(id); err == nil {
+	if err = m.Resume(t.Context(), id); err == nil {
 		t.Fatal("resumed a cancelled run")
 	}
-	if err = m.Pause(id); err == nil {
+	if err = m.Pause(t.Context(), id); err == nil {
 		t.Fatal("paused a cancelled run")
 	}
 	id, err = m.Create(t.Context(), Request{Targets: []int64{1}, Key: "paused-recovery"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.Pause(id)
-	if err = interruptRuns(m.DB); err != nil {
+	m.Pause(t.Context(), id)
+	if err = interruptRuns(t.Context(), m.DB); err != nil {
 		t.Fatal(err)
 	}
 	r, _ = m.Get(t.Context(), id)
@@ -196,7 +196,7 @@ func TestPauseExtractionAndCancelWhilePaused(t *testing.T) {
 	settings := systemsettings.Default()
 	settings.StabilitySeconds = 0
 	settings.ExtractWorkers = 1
-	if err := (systemsettings.Store{DB: m.DB}).Save(settings); err != nil {
+	if err := (systemsettings.Store{DB: m.DB}).Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
@@ -225,12 +225,12 @@ func TestPauseExtractionAndCancelWhilePaused(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("no extraction")
 	}
-	if err = m.Pause(id); err != nil {
+	if err = m.Pause(ctx, id); err != nil {
 		t.Fatal(err)
 	}
 	close(allow)
 	waitPauseTest(t, func() bool { r, _ := m.Get(t.Context(), id); return r.Done == 1 })
-	if err = m.Cancel(id); err != nil {
+	if err = m.Cancel(ctx, id); err != nil {
 		t.Fatal(err)
 	}
 	waitPauseTest(t, func() bool { r, _ := m.Get(t.Context(), id); return r.Status == "cancelled" })
@@ -270,13 +270,13 @@ func TestPausePreservesRetrySequence(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("no model")
 	}
-	m.Pause(id)
+	m.Pause(ctx, id)
 	close(allow)
 	waitPauseTest(t, func() bool { var n int; m.DB.QueryRow("SELECT COUNT(*) FROM model_attempts").Scan(&n); return n == 1 })
 	if calls.Load() != 1 {
 		t.Fatal("retry ran while paused")
 	}
-	if err = m.Resume(id); err != nil {
+	if err = m.Resume(ctx, id); err != nil {
 		t.Fatal(err)
 	}
 	waitPauseTest(t, func() bool { r, _ := m.Get(t.Context(), id); return r.Status == "completed" })
@@ -295,7 +295,7 @@ func TestPauseDuringStabilityKeepsFrozenCandidates(t *testing.T) {
 	}
 	settings := systemsettings.Default()
 	settings.StabilitySeconds = 1
-	if err := (systemsettings.Store{DB: m.DB}).Save(settings); err != nil {
+	if err := (systemsettings.Store{DB: m.DB}).Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
@@ -317,7 +317,7 @@ func TestPauseDuringStabilityKeepsFrozenCandidates(t *testing.T) {
 	go func() { defer close(done); m.Execute(ctx, id) }()
 	defer func() { cancel(); <-done }()
 	<-waiting
-	if err = m.Pause(id); err != nil {
+	if err = m.Pause(ctx, id); err != nil {
 		t.Fatal(err)
 	}
 	stable <- time.Now()
@@ -335,7 +335,7 @@ func TestPauseDuringStabilityKeepsFrozenCandidates(t *testing.T) {
 	if err = os.WriteFile(path, []byte("video changed while paused"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err = m.Resume(id); err != nil {
+	if err = m.Resume(ctx, id); err != nil {
 		t.Fatal(err)
 	}
 	waitPauseTest(t, func() bool { r, _ := m.Get(t.Context(), id); return r.Status == "completed" })

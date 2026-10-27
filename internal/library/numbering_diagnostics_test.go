@@ -45,15 +45,15 @@ func TestNumberingExecutionDiagnosticSurvivesRollbackAndHistory(t *testing.T) {
 	if err != nil || string(data) != "external occupant" {
 		t.Fatalf("occupant changed: %q %v", data, err)
 	}
-	saved, err := l.Numbering(preview.ID)
+	saved, err := l.Numbering(t.Context(), preview.ID)
 	if err != nil || saved.ProcessingLog != diagnostic.ProcessingLog || saved.Error.Code != batch.Error.Code || saved.Error.Message != batch.Error.Message {
 		t.Fatalf("saved=%+v err=%v", saved, err)
 	}
-	history, err := l.NumberingHistory(1, "image")
+	history, err := l.NumberingHistory(t.Context(), 1, "image")
 	if err != nil || len(history) != 1 || history[0].ProcessingLog != diagnostic.ProcessingLog {
 		t.Fatalf("history=%+v err=%v", history, err)
 	}
-	tree, err := l.NumberingTreeHistory(1)
+	tree, err := l.NumberingTreeHistory(t.Context(), 1)
 	if err != nil || len(tree) != 1 || tree[0].ProcessingLog != diagnostic.ProcessingLog {
 		t.Fatalf("tree=%+v err=%v", tree, err)
 	}
@@ -71,7 +71,7 @@ func TestNumberingTemporaryMoveDiagnostic(t *testing.T) {
 	}
 	item := &batch.Items[0]
 	put(t, filepath.Join(root, item.Temp))
-	err = l.moveNumbering(&batch, item, root, item.Temp)
+	err = l.moveNumbering(t.Context(), &batch, item, root, item.Temp)
 	diagnostic, ok := errors.AsType[*domain.JobError](err)
 	if !ok || !strings.Contains(diagnostic.ProcessingLog, "phase: temporary_rename") || !strings.Contains(diagnostic.ProcessingLog, item.Temp) {
 		t.Fatalf("%v", err)

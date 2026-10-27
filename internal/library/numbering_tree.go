@@ -41,7 +41,7 @@ func (l *Library) PreviewNumberingTreeWithProgress(ctx context.Context, parent i
 		if err := l.Refresh(ctx, id); err != nil {
 			return nil, err
 		}
-		path, err := l.Path(id)
+		path, err := l.Path(ctx, id)
 		if err != nil {
 			return nil, err
 		}
@@ -90,11 +90,11 @@ func (l *Library) PreviewNumberingTreeWithProgress(ctx context.Context, parent i
 }
 
 // NumberingTreeHistory returns the tree numberings recorded under parent.
-func (l *Library) NumberingTreeHistory(parent int64) ([]DirectoryNumbering, error) {
-	if _, err := l.Path(parent); err != nil {
+func (l *Library) NumberingTreeHistory(ctx context.Context, parent int64) ([]DirectoryNumbering, error) {
+	if _, err := l.Path(ctx, parent); err != nil {
 		return nil, err
 	}
-	rows, err := l.DB.Query(`WITH RECURSIVE dirs(id) AS (SELECT ? UNION ALL SELECT e.id FROM entries e JOIN dirs d ON e.parent=d.id WHERE e.present=1 AND e.kind='directory')
+	rows, err := l.DB.QueryContext(ctx, `WITH RECURSIVE dirs(id) AS (SELECT ? UNION ALL SELECT e.id FROM entries e JOIN dirs d ON e.parent=d.id WHERE e.present=1 AND e.kind='directory')
 	SELECT b.id FROM image_numberings b WHERE b.parent IN (SELECT id FROM dirs) AND b.status<>'preview' ORDER BY b.created DESC,b.id DESC LIMIT 100`, parent)
 	if err != nil {
 		return nil, err
@@ -115,11 +115,11 @@ func (l *Library) NumberingTreeHistory(parent int64) ([]DirectoryNumbering, erro
 	}
 	result := []DirectoryNumbering{}
 	for _, id := range ids {
-		b, err := l.Numbering(id)
+		b, err := l.Numbering(ctx, id)
 		if err != nil {
 			return nil, err
 		}
-		path, err := l.Path(b.Parent)
+		path, err := l.Path(ctx, b.Parent)
 		if err != nil {
 			return nil, err
 		}

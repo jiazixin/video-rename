@@ -20,7 +20,7 @@ func (l *Library) OpenPlayback(ctx context.Context, id int64) (*os.File, error) 
 	if e.Kind != "file" {
 		return nil, errNotRegular
 	}
-	p, err := l.Path(id)
+	p, err := l.Path(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +48,7 @@ func (l *Library) OpenPlayback(ctx context.Context, id int64) (*os.File, error) 
 		return nil, errIdentityChanged
 	}
 	// Recheck ancestors after opening, including root mount and symlink changes.
-	if _, err = l.Path(id); err != nil {
+	if _, err = l.Path(ctx, id); err != nil {
 		f.Close()
 		return nil, err
 	}

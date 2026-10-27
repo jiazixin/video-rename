@@ -71,7 +71,7 @@ func TestRenameParentReplacementDoesNotRedirectCommit(t *testing.T) {
 			if err != nil || len(files) != 1 || files[0].Name() != name {
 				t.Fatalf("outside directory mutated: %v, %v", files, err)
 			}
-			if _, err := l.openDirectory(dir.ID); err == nil {
+			if _, err := l.openDirectory(t.Context(), dir.ID); err == nil {
 				t.Fatal("accepted replacement symlink")
 			}
 		})

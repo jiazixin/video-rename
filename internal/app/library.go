@@ -31,7 +31,7 @@ func (a *App) libraryRoutes(api *router) {
 		send(w, http.StatusOK, p)
 	})
 	api.HandleFunc("POST /api/directories/{id}/refresh", func(w http.ResponseWriter, r *http.Request) {
-		a.Library.StartRefresh(a.ctx, number(r.PathValue("id")))
+		a.Library.StartRefresh(r.Context(), number(r.PathValue("id")))
 		w.WriteHeader(http.StatusAccepted)
 	})
 	api.HandleFunc("DELETE /api/entries/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +64,7 @@ func (a *App) libraryRoutes(api *router) {
 		id := number(r.PathValue("id"))
 		o, err := a.Library.Rename(r.Context(), id, v.Version, v.Name, v.Key)
 		if err != nil {
-			_ = a.Library.Event("failure", "manual", id, 0, 0, a.Library.Relative(id), "", domain.RecordText(err))
+			_ = a.Library.Event(r.Context(), "failure", "manual", id, 0, 0, a.Library.Relative(r.Context(), id), "", domain.RecordText(err))
 			writeError(w, r, err)
 			return
 		}
@@ -87,7 +87,7 @@ func (a *App) libraryRoutes(api *router) {
 		}
 		o, err := a.Library.Restore(r.Context(), number(r.PathValue("id")), v.Key)
 		if err != nil {
-			_ = a.Library.Event("failure", "restore", 0, number(r.PathValue("id")), 0, "", "", domain.RecordText(err))
+			_ = a.Library.Event(r.Context(), "failure", "restore", 0, number(r.PathValue("id")), 0, "", "", domain.RecordText(err))
 			writeError(w, r, err)
 			return
 		}

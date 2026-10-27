@@ -239,7 +239,7 @@ func TestNumberingApplyRestoreAndIdempotence(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The saved journal survives a service restart and remains restorable.
-	restarted, err := New(l.DB, root)
+	restarted, err := New(t.Context(), l.DB, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestNumberingApplyRestoreAndIdempotence(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertOriginals(t, root, b)
-	original, err := l.Numbering(b.ID)
+	original, err := l.Numbering(t.Context(), b.ID)
 	if err != nil || original.Status != "restored" {
 		t.Fatal(original, err)
 	}
@@ -314,7 +314,7 @@ func TestNumberingPreflightProtection(t *testing.T) {
 	})
 	t.Run("busy", func(t *testing.T) {
 		l, root, b := numberedFixture(t)
-		l.Busy = func(int64) bool { return true }
+		l.Busy = func(context.Context, int64) bool { return true }
 		if _, err := l.ApplyNumbering(t.Context(), b.ID, nil); err == nil {
 			t.Fatal("busy accepted")
 		}
@@ -385,31 +385,31 @@ func TestNumberingCrashRecovery(t *testing.T) {
 				}
 			} else {
 				for idx := range b.Items {
-					if err := l.moveNumbering(&b, &b.Items[idx], root, b.Items[idx].Temp); err != nil {
+					if err := l.moveNumbering(t.Context(), &b, &b.Items[idx], root, b.Items[idx].Temp); err != nil {
 						t.Fatal(err)
 					}
 				}
 				if stage != "staged" {
-					if err := l.moveNumbering(&b, &b.Items[0], root, b.Items[0].New); err != nil {
+					if err := l.moveNumbering(t.Context(), &b, &b.Items[0], root, b.Items[0].New); err != nil {
 						t.Fatal(err)
 					}
 				}
 				if stage == "rollback-partial" {
-					if err := l.moveNumbering(&b, &b.Items[0], root, b.Items[0].Temp); err != nil {
+					if err := l.moveNumbering(t.Context(), &b, &b.Items[0], root, b.Items[0].Temp); err != nil {
 						t.Fatal(err)
 					}
-					if err := l.moveNumbering(&b, &b.Items[0], root, b.Items[0].Old); err != nil {
+					if err := l.moveNumbering(t.Context(), &b, &b.Items[0], root, b.Items[0].Old); err != nil {
 						t.Fatal(err)
 					}
 					l.DB.Exec("UPDATE image_numberings SET status='rollback' WHERE id=?", b.ID)
 				}
 			}
-			restarted, err := New(l.DB, root)
+			restarted, err := New(t.Context(), l.DB, root)
 			if err != nil {
 				t.Fatal(err)
 			}
 			assertOriginals(t, root, b)
-			recovered, err := restarted.Numbering(b.ID)
+			recovered, err := restarted.Numbering(t.Context(), b.ID)
 			if err != nil || recovered.Status != "rolled_back" {
 				t.Fatal(recovered.Status, err)
 			}
@@ -420,17 +420,17 @@ func TestNumberingRecoveryNeverOverwritesExternalFile(t *testing.T) {
 	l, root, b := numberedFixture(t)
 	l.DB.Exec("UPDATE image_numberings SET status='running' WHERE id=?", b.ID)
 	i := &b.Items[0]
-	if err := l.moveNumbering(&b, i, root, i.Temp); err != nil {
+	if err := l.moveNumbering(t.Context(), &b, i, root, i.Temp); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, i.Old), []byte("external"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := New(l.DB, root)
+	restarted, err := New(t.Context(), l.DB, root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovered, _ := restarted.Numbering(b.ID)
+	recovered, _ := restarted.Numbering(t.Context(), b.ID)
 	if recovered.Status != "review" {
 		t.Fatal(recovered)
 	}
@@ -438,7 +438,7 @@ func TestNumberingRecoveryNeverOverwritesExternalFile(t *testing.T) {
 	if string(raw) != "external" {
 		t.Fatal("external overwritten")
 	}
-	if err = restarted.CheckAvailable(1); err == nil {
+	if err = restarted.CheckAvailable(t.Context(), 1); err == nil {
 		t.Fatal("uncertain directory available")
 	}
 	if err = restarted.Refresh(t.Context(), 1); err == nil {
@@ -447,7 +447,7 @@ func TestNumberingRecoveryNeverOverwritesExternalFile(t *testing.T) {
 	if err = os.Remove(filepath.Join(root, i.Old)); err != nil {
 		t.Fatal(err)
 	}
-	recovered, err = restarted.RecoverNumbering(b.ID)
+	recovered, err = restarted.RecoverNumbering(t.Context(), b.ID)
 	if err != nil || recovered.Status != "rolled_back" {
 		t.Fatal(recovered, err)
 	}
@@ -511,7 +511,7 @@ func TestNumberingPreviewChecksActualCaseSourceSnapshot(t *testing.T) {
 				t.Fatalf("stale %s accepted: %v", field, err)
 			}
 			assertOriginals(t, root, batch)
-			if _, err := l.Numbering(batch.ID); err == nil {
+			if _, err := l.Numbering(t.Context(), batch.ID); err == nil {
 				t.Fatal("failed preview was persisted")
 			}
 		})
@@ -562,7 +562,7 @@ func TestNumberingCompactUppercaseFromTwoStagesAllFilesAndRestores(t *testing.T)
 					if total != 41 {
 						t.Fatalf("unexpected total: %d", total)
 					}
-					journal, err := l.Numbering(batch.ID)
+					journal, err := l.Numbering(t.Context(), batch.ID)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -647,7 +647,7 @@ func TestNumberingCancelledDuringMovesRestoresCurrentDirectory(t *testing.T) {
 			t.Fatal("temporary file remains", item.Temp, err)
 		}
 	}
-	persisted, err := l.Numbering(batch.ID)
+	persisted, err := l.Numbering(t.Context(), batch.ID)
 	if err != nil || persisted.Status != "rolled_back" {
 		t.Fatal(persisted, err)
 	}
@@ -713,7 +713,7 @@ func TestNumberingFingerprintFailureExplainsSourceDifference(t *testing.T) {
 	if diagnostic.Details["path"] != root {
 		t.Fatal("missing failed directory", diagnostic)
 	}
-	saved, err := l.Numbering(b.ID)
+	saved, err := l.Numbering(t.Context(), b.ID)
 	if err != nil || saved.Status != "preview" {
 		t.Fatal(saved, err)
 	}

@@ -11,21 +11,25 @@ import (
 )
 
 // Protected by Manager.mu. Pausing cancels only scheduling waits; work already
-// admitted to a stage keeps the run's parent context and can finish normally.
+// admitted to a stage keeps the run's context and can finish normally.
+// waits holds the cancel of every schedule context handed out since the last
+// pause, keyed by a token that its holder releases.
 type runControl struct {
-	phase    string
-	parent   context.Context
-	schedule context.Context
-	stop     context.CancelFunc
-	paused   bool
-	changed  chan struct{}
+	phase   string
+	paused  bool
+	waits   map[*byte]context.CancelFunc
+	changed chan struct{}
+}
+
+func newRunControl() *runControl {
+	return &runControl{phase: "scanning", waits: map[*byte]context.CancelFunc{}, changed: make(chan struct{})}
 }
 
 // Pause pauses batch id.
-func (m *Manager) Pause(id int64) error {
+func (m *Manager) Pause(ctx context.Context, id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	result, err := m.DB.Exec("UPDATE runs SET status='paused' WHERE id=? AND status IN ('queued','scanning','running','paused')", id)
+	result, err := m.DB.ExecContext(ctx, "UPDATE runs SET status='paused' WHERE id=? AND status IN ('queued','scanning','running','paused')", id)
 	if err != nil {
 		return err
 	}
@@ -34,13 +38,16 @@ func (m *Manager) Pause(id int64) error {
 	}
 	if active, ok := m.active[id]; ok && !active.control.paused {
 		active.control.paused = true
-		active.control.stop()
+		for _, cancel := range active.control.waits {
+			cancel()
+		}
+		clear(active.control.waits)
 	}
 	return nil
 }
 
 // Resume resumes paused batch id.
-func (m *Manager) Resume(id int64) error {
+func (m *Manager) Resume(ctx context.Context, id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	phase := "queued"
@@ -48,7 +55,7 @@ func (m *Manager) Resume(id int64) error {
 	if ok {
 		phase = active.control.phase
 	}
-	result, err := m.DB.Exec("UPDATE runs SET status=? WHERE id=? AND status='paused'", phase, id)
+	result, err := m.DB.ExecContext(ctx, "UPDATE runs SET status=? WHERE id=? AND status='paused'", phase, id)
 	if err != nil {
 		return err
 	}
@@ -57,7 +64,6 @@ func (m *Manager) Resume(id int64) error {
 	}
 	if ok {
 		c := active.control
-		c.schedule, c.stop = context.WithCancel(c.parent)
 		c.paused = false
 		close(c.changed)
 		c.changed = make(chan struct{})
@@ -65,38 +71,33 @@ func (m *Manager) Resume(id int64) error {
 	return nil
 }
 
-func (m *Manager) setPhase(id int64, phase string) error {
+func (m *Manager) setPhase(ctx context.Context, id int64, phase string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if active, ok := m.active[id]; ok {
 		active.control.phase = phase
 	}
-	_, err := m.DB.Exec("UPDATE runs SET status=? WHERE id=? AND status NOT IN ('paused','cancelling')", phase, id)
+	_, err := m.DB.ExecContext(ctx, "UPDATE runs SET status=? WHERE id=? AND status NOT IN ('paused','cancelling')", phase, id)
 	return err
 }
 
-func (m *Manager) dispatchContext(ctx context.Context, id int64) (context.Context, error) {
+// waitDispatch blocks while run id is paused.
+func (m *Manager) waitDispatch(ctx context.Context, id int64) error {
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return err
 		}
 		m.mu.Lock()
 		active, ok := m.active[id]
-		if !ok || active.control == nil {
+		if !ok || active.control == nil || !active.control.paused {
 			m.mu.Unlock()
-			return ctx, nil
+			return nil
 		}
-		c := active.control
-		if !c.paused {
-			schedule := c.schedule
-			m.mu.Unlock()
-			return schedule, nil
-		}
-		changed := c.changed
+		changed := active.control.changed
 		m.mu.Unlock()
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return ctx.Err()
 		case <-changed:
 		}
 	}
@@ -104,15 +105,17 @@ func (m *Manager) dispatchContext(ctx context.Context, id int64) (context.Contex
 
 func (m *Manager) extractionSlot(ctx context.Context, run int64) (func(), error) {
 	for {
-		schedule, err := m.dispatchContext(ctx, run)
-		if err != nil {
+		if err := m.waitDispatch(ctx, run); err != nil {
 			return nil, err
 		}
+		schedule, done := m.scheduleContext(ctx, run)
 		release, _, err := m.extractSlots.acquire(schedule, 0, 8, func() (int, error) {
-			settings, err := (systemsettings.Store{DB: m.DB}).Get()
+			settings, err := (systemsettings.Store{DB: m.DB}).Get(ctx)
 			return settings.ExtractWorkers, err
 		})
-		if schedule.Err() != nil && ctx.Err() == nil {
+		paused := schedule.Err() != nil
+		done()
+		if paused && ctx.Err() == nil {
 			if release != nil {
 				release()
 			}
@@ -122,31 +125,49 @@ func (m *Manager) extractionSlot(ctx context.Context, run int64) (func(), error)
 	}
 }
 
-func (m *Manager) currentSchedule(ctx context.Context, id int64) context.Context {
+// scheduleContext returns a context derived from ctx that also ends when run
+// id is paused; it is already done while the run is paused. Call done once the
+// scheduling wait is over.
+func (m *Manager) scheduleContext(ctx context.Context, id int64) (schedule context.Context, done func()) {
+	schedule, cancel := context.WithCancel(ctx)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if active, ok := m.active[id]; ok && active.control != nil {
-		return active.control.schedule
+	active, ok := m.active[id]
+	if !ok || active.control == nil {
+		return schedule, cancel
 	}
-	return ctx
+	if active.control.paused {
+		cancel()
+		return schedule, cancel
+	}
+	token := new(byte)
+	active.control.waits[token] = cancel
+	return schedule, func() {
+		m.mu.Lock()
+		delete(active.control.waits, token)
+		m.mu.Unlock()
+		cancel()
+	}
 }
 
 // Release queued screenshots on pause so another batch can use cache capacity.
 // Resume reacquires the same cache key, rebuilding only if idle cleanup evicted it.
 func (m *Manager) inferenceSlot(ctx context.Context, run Run, entry, model int64, cfg *config.TaskConfig, job domain.VideoJob, probe, ffmpeg string, lease **framecache.Lease) (func(), int, error) {
 	for {
-		schedule := m.currentSchedule(ctx, run.ID)
+		schedule, done := m.scheduleContext(ctx, run.ID)
 		if schedule.Err() != nil {
+			done()
 			if *lease != nil {
 				(*lease).Release(false)
 				*lease = nil
 			}
-			if _, err := m.dispatchContext(ctx, run.ID); err != nil {
+			if err := m.waitDispatch(ctx, run.ID); err != nil {
 				return nil, 0, err
 			}
 			continue
 		}
 		if *lease == nil && m.Analyze == nil {
+			done()
 			release, err := m.extractionSlot(ctx, run.ID)
 			if err != nil {
 				return nil, 0, err
@@ -160,7 +181,9 @@ func (m *Manager) inferenceSlot(ctx context.Context, run Run, entry, model int64
 			continue
 		}
 		release, n, err := m.modelSlot(schedule, model, cfg.Workers)
-		if schedule.Err() != nil && ctx.Err() == nil {
+		paused := schedule.Err() != nil
+		done()
+		if paused && ctx.Err() == nil {
 			if release != nil {
 				release()
 			}

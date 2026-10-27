@@ -71,7 +71,7 @@ func (a *App) startNumberingJob(w http.ResponseWriter, r *http.Request) {
 	}
 	a.numberingMu.Lock()
 	defer a.numberingMu.Unlock()
-	if a.numberingClosed || a.ctx.Err() != nil {
+	if a.numberingClosed {
 		writeError(w, r, errShuttingDown)
 		return
 	}
@@ -119,7 +119,8 @@ func (a *App) startNumberingJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	ctx, cancel := context.WithCancel(a.ctx)
+	// Detached from the request; cancel, the lease watchdog and Shutdown stop it.
+	ctx, cancel := context.WithCancel(context.WithoutCancel(r.Context()))
 	job := &numberingJob{request: req, batches: batchIDs, cancel: cancel, lease: time.Now(), status: numberingStatus{Key: req.Key, Status: "running", Phase: req.Action}}
 	if a.numberingJobs == nil {
 		a.numberingJobs = map[string]*numberingJob{}
@@ -152,7 +153,7 @@ func (a *App) runNumberingJob(ctx context.Context, job *numberingJob) {
 	var err error
 	if job.request.Action == "preview" {
 		var settings domain.NumberingSettings
-		settings, err = (systemsettings.Store{DB: a.DB}).Numbering()
+		settings, err = (systemsettings.Store{DB: a.DB}).Numbering(ctx)
 		if err == nil {
 			result, err = a.Library.PreviewNumberingTreeWithProgress(ctx, job.request.Parent, settings, func(id int64, dirs, files int) {
 				update(func(s *numberingStatus) {

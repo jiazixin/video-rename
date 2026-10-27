@@ -10,7 +10,7 @@ import (
 
 func (a *App) scheduleRoutes(api *router) {
 	api.HandleFunc("GET /api/schedules", func(w http.ResponseWriter, r *http.Request) {
-		v, err := a.Scheduler.List()
+		v, err := a.Scheduler.List(r.Context())
 		if err != nil {
 			writeError(w, r, err)
 			return
@@ -37,7 +37,7 @@ func (a *App) scheduleRoutes(api *router) {
 	api.HandleFunc("POST /api/schedules", save)
 	api.HandleFunc("PATCH /api/schedules/{id}", save)
 	api.HandleFunc("DELETE /api/schedules/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if err := a.Scheduler.Delete(number(r.PathValue("id"))); err != nil {
+		if err := a.Scheduler.Delete(r.Context(), number(r.PathValue("id"))); err != nil {
 			writeError(w, r, err)
 			return
 		}
@@ -65,7 +65,7 @@ func (a *App) scheduleRoutes(api *router) {
 		if !decode(w, r, &v) {
 			return
 		}
-		p, err := a.Scheduler.Get(number(r.PathValue("id")))
+		p, err := a.Scheduler.Get(r.Context(), number(r.PathValue("id")))
 		if err != nil {
 			writeError(w, r, err)
 			return

@@ -1,6 +1,7 @@
 package systemsettings
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
@@ -77,8 +78,8 @@ func loadPolicy(row interface{ Scan(...any) error }) (storedPolicy, error) {
 }
 
 // Scan returns the stored background scan settings.
-func (s Store) Scan() (ScanSettings, error) {
-	policy, err := loadPolicy(s.DB.Read().QueryRow("SELECT policy FROM system_settings WHERE id=1"))
+func (s Store) Scan(ctx context.Context) (ScanSettings, error) {
+	policy, err := loadPolicy(s.DB.Read().QueryRowContext(ctx, "SELECT policy FROM system_settings WHERE id=1"))
 	if err != nil {
 		return ScanSettings{}, err
 	}
@@ -92,16 +93,16 @@ func (s Store) Scan() (ScanSettings, error) {
 }
 
 // SaveScan validates and stores v.
-func (s Store) SaveScan(v ScanSettings) error {
+func (s Store) SaveScan(ctx context.Context, v ScanSettings) error {
 	if err := v.Validate(); err != nil {
 		return err
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	policy, err := loadPolicy(tx.QueryRow("SELECT policy FROM system_settings WHERE id=1"))
+	policy, err := loadPolicy(tx.QueryRowContext(ctx, "SELECT policy FROM system_settings WHERE id=1"))
 	if err != nil {
 		return err
 	}
@@ -111,7 +112,7 @@ func (s Store) SaveScan(v ScanSettings) error {
 		return err
 	}
 	d := Default()
-	if _, err = tx.Exec("INSERT INTO system_settings(id,extract_workers,cache_gb,stability_seconds,policy) VALUES(1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET policy=excluded.policy", d.ExtractWorkers, d.CacheGB, d.StabilitySeconds, string(raw)); err != nil {
+	if _, err = tx.ExecContext(ctx, "INSERT INTO system_settings(id,extract_workers,cache_gb,stability_seconds,policy) VALUES(1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET policy=excluded.policy", d.ExtractWorkers, d.CacheGB, d.StabilitySeconds, string(raw)); err != nil {
 		return err
 	}
 	return tx.Commit()

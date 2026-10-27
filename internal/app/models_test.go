@@ -14,11 +14,11 @@ import (
 
 func TestModelAPISecretsAndCrossOrigin(t *testing.T) {
 	cfg := &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}
-	a, err := New(cfg, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), cfg, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	h := a.Handler()
 	var cookie *http.Cookie
 	call := func(method, path string, payload any, sameSite bool) *httptest.ResponseRecorder {

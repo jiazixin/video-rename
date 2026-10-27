@@ -12,11 +12,11 @@ import (
 )
 
 func TestNumberedHistoryExtractionAndItemPages(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	if _, err = a.DB.Exec(`INSERT INTO runs(id,source,targets,recursive,status,created,request_key) VALUES(1,'manual','[]',0,'completed','now','pages')`); err != nil {
 		t.Fatal(err)
 	}

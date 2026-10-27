@@ -15,7 +15,7 @@ import (
 )
 
 func TestHistoryModelSourceSeeksByEntry(t *testing.T) {
-	db, err := storage.Open(filepath.Join(t.TempDir(), "history.sqlite"))
+	db, err := storage.Open(t.Context(), filepath.Join(t.TempDir(), "history.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestHistoryModelSourceSeeksByEntry(t *testing.T) {
 }
 
 func TestHistoryTokenTotalsSeekByItem(t *testing.T) {
-	db, err := storage.Open(filepath.Join(t.TempDir(), "history.sqlite"))
+	db, err := storage.Open(t.Context(), filepath.Join(t.TempDir(), "history.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,11 +89,11 @@ func TestHistoryTokenTotalsSeekByItem(t *testing.T) {
 }
 
 func TestHistoryBatchFiltering(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	for _, category := range []string{"success", "failure"} {
 		for range 105 {
 			if _, err := a.DB.Exec(`INSERT INTO events(category,action,run,old_path,message,created) VALUES(?,'automatic',7,'clip.mp4','{"code":"internal","message":"test"}','2026-09-21')`, category); err != nil {
@@ -179,11 +179,11 @@ func TestHistoryBatchFiltering(t *testing.T) {
 }
 
 func TestHistoryShowsBatchModelSnapshot(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	result, err := a.DB.Exec(`INSERT INTO runs(source,targets,recursive,status,created,request_key,model_config_title,config_summary)
 VALUES('manual','[]',1,'completed','now','history-model-run','旅行模型配置','{"model":"glm-4.6v"}')`)
 	if err != nil {
@@ -211,11 +211,11 @@ VALUES('manual','[]',1,'completed','now','history-model-run','旅行模型配置
 }
 
 func TestHistoryUsesActualModelAttempt(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	for _, query := range []string{
 		`INSERT INTO entries(id,name,kind,identity,size,mtime,observed) VALUES
 		(2,'fallback.mp4','file','file-2',0,'now','now'),

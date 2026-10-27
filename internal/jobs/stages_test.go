@@ -55,7 +55,7 @@ func TestStagedFailureAndCancellationReuseUntilCommit(t *testing.T) {
 				t.Fatal("model not reached")
 			}
 			if cancelled {
-				if err = m.Cancel(id); err != nil {
+				if err = m.Cancel(t.Context(), id); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -100,15 +100,15 @@ func TestCrossBatchExtractionWhileModelBlockedAndSharedLimit(t *testing.T) {
 	}
 	rows.Close()
 	store := models.Store{DB: m.DB}
-	profile, _ := store.Get(1)
+	profile, _ := store.Get(t.Context(), 1)
 	profile.Workers = 1
-	if _, err = store.Save(profile); err != nil {
+	if _, err = store.Save(t.Context(), profile); err != nil {
 		t.Fatal(err)
 	}
 	settings := systemsettings.Default()
 	settings.ExtractWorkers, settings.CacheGB = 2, 1
 	settings.StabilitySeconds = 0
-	if err = (systemsettings.Store{DB: m.DB}).Save(settings); err != nil {
+	if err = (systemsettings.Store{DB: m.DB}).Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	var activeExtract, maxExtract, activeModel, maxModel atomic.Int32
@@ -152,7 +152,12 @@ func TestCrossBatchExtractionWhileModelBlockedAndSharedLimit(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
-	go func() { defer close(done); m.Loop(ctx) }()
+	go func() {
+		defer close(done)
+		if err := m.Run(ctx); err != nil {
+			t.Error(err)
+		}
+	}()
 	defer func() {
 		cancel()
 		select {
@@ -269,7 +274,7 @@ func TestCancelStopsExtractionAndLeavesOtherBatchRunning(t *testing.T) {
 	}
 	wait(started)
 	wait(modelStarted)
-	if e = m.Cancel(first); e != nil {
+	if e = m.Cancel(ctx, first); e != nil {
 		t.Fatal(e)
 	}
 	wait(stopped)
@@ -301,18 +306,18 @@ func TestBatchPrefetchUsesCapacityInsteadOfVideoCount(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			profile, err := (models.Store{DB: m.DB}).Get(1)
+			profile, err := (models.Store{DB: m.DB}).Get(t.Context(), 1)
 			if err != nil {
 				t.Fatal(err)
 			}
 			profile.Workers = 1
-			if _, err = (models.Store{DB: m.DB}).Save(profile); err != nil {
+			if _, err = (models.Store{DB: m.DB}).Save(t.Context(), profile); err != nil {
 				t.Fatal(err)
 			}
 			settings := systemsettings.Default()
 			settings.StabilitySeconds = 0
 			settings.ExtractWorkers = 1
-			if err = (systemsettings.Store{DB: m.DB}).Save(settings); err != nil {
+			if err = (systemsettings.Store{DB: m.DB}).Save(t.Context(), settings); err != nil {
 				t.Fatal(err)
 			}
 			if limited {
@@ -387,7 +392,7 @@ func TestBatchPrefetchUsesCapacityInsteadOfVideoCount(t *testing.T) {
 					t.Fatal("capacity not enforced after refill")
 				case <-time.After(150 * time.Millisecond):
 				}
-				if err = m.Cancel(id); err != nil {
+				if err = m.Cancel(ctx, id); err != nil {
 					t.Fatal(err)
 				}
 			} else {

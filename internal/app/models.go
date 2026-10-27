@@ -22,7 +22,7 @@ func (a *App) modelRoutes(api *router) {
 		if !decode(w, r, &input) {
 			return
 		}
-		if err := store.ResolveKey(&input.Profile, input.APIKeyInput); err != nil {
+		if err := store.ResolveKey(r.Context(), &input.Profile, input.APIKeyInput); err != nil {
 			writeError(w, r, err)
 			return
 		}
@@ -35,7 +35,7 @@ func (a *App) modelRoutes(api *router) {
 		send(w, http.StatusOK, result)
 	})
 	api.HandleFunc("POST /api/model-configs/{id}/copy", func(w http.ResponseWriter, r *http.Request) {
-		p, err := store.Duplicate(number(r.PathValue("id")))
+		p, err := store.Duplicate(r.Context(), number(r.PathValue("id")))
 		if err != nil {
 			writeError(w, r, err)
 			return
@@ -49,14 +49,14 @@ func (a *App) modelRoutes(api *router) {
 		if !decode(w, r, &input) {
 			return
 		}
-		if err := store.Delete(number(r.PathValue("id")), input.Version); err != nil {
+		if err := store.Delete(r.Context(), number(r.PathValue("id")), input.Version); err != nil {
 			writeError(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 	api.HandleFunc("GET /api/model-configs", func(w http.ResponseWriter, r *http.Request) {
-		out, err := store.List()
+		out, err := store.List(r.Context())
 		if err != nil {
 			writeError(w, r, err)
 			return
@@ -67,7 +67,7 @@ func (a *App) modelRoutes(api *router) {
 		send(w, http.StatusOK, map[string]any{"presets": models.Presets})
 	})
 	api.HandleFunc("POST /api/model-configs/{id}/default", func(w http.ResponseWriter, r *http.Request) {
-		if err := store.SetDefault(number(r.PathValue("id"))); err != nil {
+		if err := store.SetDefault(r.Context(), number(r.PathValue("id"))); err != nil {
 			writeError(w, r, err)
 			return
 		}
@@ -87,11 +87,11 @@ func (a *App) modelRoutes(api *router) {
 			return
 		}
 		input.ID = id
-		if err := store.ResolveKey(&input.Profile, input.APIKeyInput); err != nil {
+		if err := store.ResolveKey(r.Context(), &input.Profile, input.APIKeyInput); err != nil {
 			writeError(w, r, err)
 			return
 		}
-		out, err := store.Save(input.Profile)
+		out, err := store.Save(r.Context(), input.Profile)
 		if err != nil {
 			writeError(w, r, err)
 			return
@@ -105,7 +105,7 @@ func (a *App) modelRoutes(api *router) {
 		if !decode(w, r, &input) {
 			return
 		}
-		if err := store.ResolveKey(&input.Profile, input.APIKeyInput); err != nil {
+		if err := store.ResolveKey(r.Context(), &input.Profile, input.APIKeyInput); err != nil {
 			writeError(w, r, err)
 			return
 		}

@@ -103,7 +103,7 @@ func TestRecoveryPreservesTerminalBatches(t *testing.T) {
 		}
 	}
 	for range 2 {
-		if err := interruptRuns(m.DB); err != nil {
+		if err := interruptRuns(t.Context(), m.DB); err != nil {
 			t.Fatal(err)
 		}
 		for i, tc := range cases {
@@ -169,7 +169,7 @@ func TestCompletionWriteFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 			for range 2 {
-				if err := interruptRuns(m.DB); err != nil {
+				if err := interruptRuns(t.Context(), m.DB); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -204,13 +204,13 @@ func TestCompletionRejectsUnfinishedAndRollsBackCancellation(t *testing.T) {
 	if err := m.scan(t.Context(), r, 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.completeRun(id, false); err == nil {
+	if err := m.completeRun(t.Context(), id, false); err == nil {
 		t.Fatal("completed with unfinished files")
 	}
 	if _, err := m.DB.Exec("CREATE TRIGGER reject_cancel BEFORE UPDATE OF status ON runs WHEN NEW.status='cancelled' BEGIN SELECT RAISE(ABORT,'cancel write failed'); END"); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.completeRun(id, true); err == nil {
+	if err := m.completeRun(t.Context(), id, true); err == nil {
 		t.Fatal("ignored cancellation persistence error")
 	}
 	var status string
@@ -220,7 +220,7 @@ func TestCompletionRejectsUnfinishedAndRollsBackCancellation(t *testing.T) {
 	if _, err := m.DB.Exec("DROP TRIGGER reject_cancel"); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.completeRun(id, true); err != nil {
+	if err := m.completeRun(t.Context(), id, true); err != nil {
 		t.Fatal(err)
 	}
 	r, err = m.Get(t.Context(), id)
@@ -253,7 +253,9 @@ func TestCompletionFailureCancelsOtherWorkers(t *testing.T) {
 			close(secondStarted)
 		}
 		// Slot waits use the active run scheduling context, not the request context.
-		<-m.currentSchedule(ctx, runID).Done()
+		schedule, done := m.scheduleContext(ctx, runID)
+		<-schedule.Done()
+		done()
 		stopped.Add(1)
 		return "", ctx.Err()
 	}

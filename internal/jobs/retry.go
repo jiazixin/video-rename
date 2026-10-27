@@ -30,15 +30,15 @@ type retryPolicy struct {
 	FailureKeywords  []string
 }
 
-func (m *Manager) freezeRetry(task string, primary int64) (retryPolicy, error) {
+func (m *Manager) freezeRetry(ctx context.Context, task string, primary int64) (retryPolicy, error) {
 	if task == "extract" {
 		return retryPolicy{}, nil
 	}
-	settings, err := (systemsettings.Store{DB: m.DB}).Get()
+	settings, err := (systemsettings.Store{DB: m.DB}).Get(ctx)
 	if err != nil {
 		return retryPolicy{}, err
 	}
-	keywords, err := (systemsettings.Store{DB: m.DB}).FailureKeywords()
+	keywords, err := (systemsettings.Store{DB: m.DB}).FailureKeywords(ctx)
 	if err != nil {
 		return retryPolicy{}, err
 	}
@@ -46,14 +46,14 @@ func (m *Manager) freezeRetry(task string, primary int64) (retryPolicy, error) {
 	if !p.Enabled || settings.FallbackModelID == 0 || settings.FallbackModelID == primary {
 		return p, nil
 	}
-	model, err := (models.Store{DB: m.DB}).Get(settings.FallbackModelID)
+	model, err := (models.Store{DB: m.DB}).Get(ctx, settings.FallbackModelID)
 	if err != nil {
 		return p, domain.Fail(domain.KindConflict, "fallback_model_unavailable", "fallback model is unavailable").Wrap(err)
 	}
 	if err = model.Validate(); err != nil {
 		return p, domain.Fail(domain.KindInvalid, "fallback_model_invalid", "fallback model configuration is invalid").Wrap(err)
 	}
-	fixed, err := (systemsettings.Store{DB: m.DB}).FixedPrompt()
+	fixed, err := (systemsettings.Store{DB: m.DB}).FixedPrompt(ctx)
 	if err != nil {
 		return p, err
 	}
@@ -102,7 +102,7 @@ func (m *Manager) inferWithRetry(ctx context.Context, run Run, entry int64, cfg 
 	lease := *leaseRef
 	defer func() { *leaseRef = lease }()
 	var itemID int64
-	if err := m.DB.QueryRow("SELECT id FROM run_items WHERE run=? AND entry=?", run.ID, entry).Scan(&itemID); err != nil {
+	if err := m.DB.QueryRowContext(ctx, "SELECT id FROM run_items WHERE run=? AND entry=?", run.ID, entry).Scan(&itemID); err != nil {
 		return "", err
 	}
 	lastSlot := 0
@@ -244,11 +244,13 @@ func (m *Manager) recordModelAttempt(ctx context.Context, run Run, a modelAttemp
 	if ctx.Err() != nil {
 		status = "cancelled"
 	}
-	if _, err := m.DB.Exec(`INSERT INTO model_attempts(item,attempt,model_config_id,model_config_title,model,fallback,started,duration_ms,status,message) VALUES(?,?,?,?,?,?,?,?,?,?)`, a.item, a.number, a.modelID, a.modelTitle, current.Server.Model, a.fallback, a.started.UTC().Format(time.RFC3339Nano), time.Since(a.started).Milliseconds(), status, message); err != nil {
+	ctx, cancel := storage.Detach(ctx)
+	defer cancel()
+	if _, err := m.DB.ExecContext(ctx, `INSERT INTO model_attempts(item,attempt,model_config_id,model_config_title,model,fallback,started,duration_ms,status,message) VALUES(?,?,?,?,?,?,?,?,?,?)`, a.item, a.number, a.modelID, a.modelTitle, current.Server.Model, a.fallback, a.started.UTC().Format(time.RFC3339Nano), time.Since(a.started).Milliseconds(), status, message); err != nil {
 		return fmt.Errorf("save model attempt: %w", err)
 	}
 	summary, _ := json.Marshal(map[string]string{"model": current.Server.Model, "provider": current.Server.Provider, "protocol": current.Server.Protocol})
-	if err := tokenusage.RecordAttempt(m.DB, run.ID, a.item, a.number, a.modelID, a.modelTitle, string(summary), exchange.Request, exchange.Response, time.Now()); err != nil {
+	if err := tokenusage.RecordAttempt(ctx, m.DB, run.ID, a.item, a.number, a.modelID, a.modelTitle, string(summary), exchange.Request, exchange.Response, time.Now()); err != nil {
 		return fmt.Errorf("save model usage: %w", err)
 	}
 	return nil
@@ -266,14 +268,17 @@ func retryBackoff(slot int, retryAfter time.Duration) time.Duration {
 func (m *Manager) waitBeforeRetry(ctx context.Context, run Run, delay time.Duration, lease **framecache.Lease) error {
 	until := time.Now().Add(delay)
 	for time.Now().Before(until) {
-		if retryWait(m.currentSchedule(ctx, run.ID), time.Until(until)) == nil {
+		schedule, done := m.scheduleContext(ctx, run.ID)
+		err := retryWait(schedule, time.Until(until))
+		done()
+		if err == nil {
 			return nil
 		}
 		if *lease != nil {
 			(*lease).Release(false)
 			*lease = nil
 		}
-		if _, err := m.dispatchContext(ctx, run.ID); err != nil {
+		if err := m.waitDispatch(ctx, run.ID); err != nil {
 			return err
 		}
 	}

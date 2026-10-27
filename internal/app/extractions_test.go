@@ -12,11 +12,11 @@ import (
 )
 
 func TestExtractionHistoryGroupsFiltersPaginationAndClear(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	for _, status := range []string{"success", "failure", "running"} {
 		for i := range 53 {
 			if _, err = a.DB.Exec(`INSERT INTO extraction_records(run,path,source,status,started,finished,duration_ms,processing_log) VALUES(7,?,'manual',?,'2026-09-26T01:00:00Z','2026-09-26T01:00:02Z',2000,'decoder detail')`, fmt.Sprintf("clip%d.mp4", i), status); err != nil {

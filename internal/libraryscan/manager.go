@@ -19,6 +19,8 @@ import (
 // ErrClosed reports that the scan manager is closed.
 var ErrClosed = domain.Fail(domain.KindUnavailable, "scan_closed", "directory scan is closed")
 
+var errRunning = errors.New("directory scan manager is already running")
+
 // ScanError is a directory that failed to scan. Scope replaces Path for
 // failures of the scan settings ("settings") or the scan targets ("targets").
 type ScanError struct {
@@ -142,12 +144,12 @@ func (m *Manager) ValidateTargets(ctx context.Context, targets []int64) ([]int64
 		if selected[id] {
 			continue
 		}
-		e, err := m.library.IndexedEntry(id)
+		e, err := m.library.IndexedEntry(ctx, id)
 		if err != nil || id <= 0 || e.Kind != "directory" {
 			return nil, domain.InvalidField("targets", "not_directory")
 		}
-		if _, err = m.library.Path(id); err != nil {
-			return nil, domain.Fail(domain.KindUnavailable, "scan_target_unavailable", "scan target is unavailable", "path", m.library.DisplayPath(id)).Wrap(err)
+		if _, err = m.library.Path(ctx, id); err != nil {
+			return nil, domain.Fail(domain.KindUnavailable, "scan_target_unavailable", "scan target is unavailable", "path", m.library.DisplayPath(ctx, id)).Wrap(err)
 		}
 		seen := map[int64]bool{id: true}
 		for parent := e.Parent; parent > 0; {
@@ -159,7 +161,7 @@ func (m *Manager) ValidateTargets(ctx context.Context, targets []int64) ([]int64
 			}
 			seen[parent] = true
 			ancestors[id] = append(ancestors[id], parent)
-			e, err = m.library.IndexedEntry(parent)
+			e, err = m.library.IndexedEntry(ctx, parent)
 			if err != nil || e.Kind != "directory" {
 				return nil, domain.Fail(domain.KindConflict, "scan_hierarchy_changed", "scan directory hierarchy changed; refresh")
 			}
@@ -178,8 +180,8 @@ func (m *Manager) ValidateTargets(ctx context.Context, targets []int64) ([]int64
 	}), ctx.Err()
 }
 
-// Start runs under the supplied application lifecycle context. HTTP callers
-// should pass that context so client disconnection does not stop discovery.
+// Start runs a scan round in the background. The round is detached from ctx
+// cancellation so a manual scan outlives its request; Cancel and Close stop it.
 func (m *Manager) Start(ctx context.Context, targets []int64, source string) (Status, error) {
 	m.mu.Lock()
 	if m.closed || m.active {
@@ -194,7 +196,7 @@ func (m *Manager) Start(ctx context.Context, targets []int64, source string) (St
 	if err := ctx.Err(); err != nil {
 		return m.Snapshot(), err
 	}
-	settings, err := m.settings.Scan()
+	settings, err := m.settings.Scan(ctx)
 	if err != nil {
 		m.mu.Lock()
 		m.settingsError = err
@@ -224,7 +226,7 @@ func (m *Manager) Start(ctx context.Context, targets []int64, source string) (St
 	if err := ctx.Err(); err != nil {
 		return m.snapshotLocked(), err
 	}
-	runCtx, cancel := context.WithCancel(ctx)
+	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	m.cancel, m.active = cancel, true
 	m.status = Status{ID: uuid.New().String(), Status: "scanning", Source: source,
 		Targets: slices.Clone(targets), Started: m.now().UTC().Format(time.RFC3339Nano), Errors: []ScanError{}}
@@ -267,15 +269,21 @@ func nextScanAt(anchor time.Time, settings systemsettings.ScanSettings) time.Tim
 	return anchor.Add(time.Duration(settings.IntervalMinutes) * time.Minute)
 }
 
-// Loop waits a full configured interval on startup and after every completed
+// Run waits a full configured interval on startup and after every completed
 // round. Settings and completion notifications replan one timer; no polling of
 // the NAS is needed while waiting. Failed settings reads suspend automatic work
-// until a saved configuration change, and remain visible in Snapshot.
-func (m *Manager) Loop(ctx context.Context) {
+// until a saved configuration change, and remain visible in Snapshot. Run
+// returns when ctx ends or Close is called; scans it started belong to the
+// manager and Close waits for them.
+func (m *Manager) Run(ctx context.Context) error {
 	m.mu.Lock()
-	if m.closed || m.loopStarted {
+	if m.closed {
 		m.mu.Unlock()
-		return
+		return ErrClosed
+	}
+	if m.loopStarted {
+		m.mu.Unlock()
+		return errRunning
 	}
 	m.loopStarted = true
 	if m.anchor.IsZero() {
@@ -301,7 +309,7 @@ func (m *Manager) Loop(ctx context.Context) {
 			timer.Stop()
 			timer = nil
 		}
-		settings, err := m.settings.Scan()
+		settings, err := m.settings.Scan(ctx)
 		m.mu.Lock()
 		m.status.NextScan = ""
 		var at time.Time
@@ -325,14 +333,14 @@ func (m *Manager) Loop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			m.Cancel()
-			return
+			return nil
 		case <-m.closedCh:
-			return
+			return nil
 		case <-m.wake:
 			continue
 		case <-timerCh:
 			// A save may race the expired timer; honor its new interval/enablement.
-			settings, err = m.settings.Scan()
+			settings, err = m.settings.Scan(ctx)
 			if err != nil {
 				continue
 			}
@@ -402,8 +410,8 @@ func (m *Manager) nextChild(ctx context.Context, cursor *directoryCursor) (int64
 	return id, nil
 }
 
-func (m *Manager) addError(id int64, err error) {
-	path := m.library.DisplayPath(id)
+func (m *Manager) addError(ctx context.Context, id int64, err error) {
+	path := m.library.DisplayPath(context.WithoutCancel(ctx), id)
 	m.mu.Lock()
 	m.status.Errors = append(m.status.Errors, ScanError{Path: path, Error: domain.RecordOf(err)})
 	m.mu.Unlock()
@@ -416,11 +424,11 @@ func (m *Manager) scanOne(ctx context.Context, id int64, scan func(context.Conte
 	if ctx.Err() != nil {
 		return false, false
 	}
-	if _, err := m.library.Path(1); err != nil {
-		m.addError(1, err)
+	if _, err := m.library.Path(ctx, 1); err != nil {
+		m.addError(ctx, 1, err)
 		return false, true
 	}
-	path := m.library.DisplayPath(id)
+	path := m.library.DisplayPath(context.WithoutCancel(ctx), id)
 	m.mu.Lock()
 	m.status.CurrentPath = path
 	m.mu.Unlock()
@@ -428,7 +436,7 @@ func (m *Manager) scanOne(ctx context.Context, id int64, scan func(context.Conte
 	if errors.Is(err, library.ErrDirectoryScanChanged) && ctx.Err() == nil {
 		// Retry the complete scan once so a transient NAS observation can settle.
 		// A missing or replaced root must stop the round before another read.
-		if _, rootErr := m.library.Path(1); rootErr == nil && ctx.Err() == nil {
+		if _, rootErr := m.library.Path(ctx, 1); rootErr == nil && ctx.Err() == nil {
 			firstErr := err
 			result, err = scan(ctx, id)
 			if err != nil {
@@ -440,10 +448,10 @@ func (m *Manager) scanOne(ctx context.Context, id int64, scan func(context.Conte
 		return false, false
 	}
 	if err != nil {
-		m.addError(id, err)
-		if _, rootErr := m.library.Path(1); rootErr != nil {
+		m.addError(ctx, id, err)
+		if _, rootErr := m.library.Path(ctx, 1); rootErr != nil {
 			if id != 1 {
-				m.addError(1, rootErr)
+				m.addError(ctx, 1, rootErr)
 			}
 			return false, true
 		}
@@ -485,7 +493,7 @@ func (m *Manager) run(ctx context.Context, targets, excluded []int64) {
 	if scan == nil {
 		scanner, err := m.library.NewDirectoryScanner(ctx)
 		if err != nil {
-			m.addError(targets[0], err)
+			m.addError(ctx, targets[0], err)
 			return
 		}
 		defer scanner.Close()
@@ -494,7 +502,7 @@ func (m *Manager) run(ctx context.Context, targets, excluded []int64) {
 	for _, target := range targets {
 		skip, err := m.excluded(ctx, target, excluded)
 		if err != nil {
-			m.addError(target, err)
+			m.addError(ctx, target, err)
 			continue
 		}
 		if skip {
@@ -523,18 +531,18 @@ func (m *Manager) run(ctx context.Context, targets, excluded []int64) {
 					return
 				}
 				if !errors.Is(err, sql.ErrNoRows) {
-					m.addError(cursor.id, err)
+					m.addError(ctx, cursor.id, err)
 				}
 				stack = stack[:len(stack)-1]
 				continue
 			}
 			if len(stack) >= 1024 {
-				m.addError(child, domain.Fail(domain.KindInvalid, "scan_too_deep", "directory tree deeper than 1024 levels"))
+				m.addError(ctx, child, domain.Fail(domain.KindInvalid, "scan_too_deep", "directory tree deeper than 1024 levels"))
 				continue
 			}
 			skip, err := m.excluded(ctx, child, excluded)
 			if err != nil {
-				m.addError(child, err)
+				m.addError(ctx, child, err)
 				continue
 			}
 			if skip {
@@ -569,7 +577,7 @@ func (m *Manager) excluded(ctx context.Context, id int64, excluded []int64) (boo
 			return false, domain.Fail(domain.KindConflict, "invalid_hierarchy", "directory hierarchy is invalid")
 		}
 		seen[id] = true
-		e, err := m.library.IndexedEntry(id)
+		e, err := m.library.IndexedEntry(ctx, id)
 		if err != nil {
 			return false, err
 		}

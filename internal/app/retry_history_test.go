@@ -21,11 +21,11 @@ import (
 )
 
 func TestRetryHistoryRejectsUnsupportedAndKeepsFailures(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	if _, err = a.DB.Exec("INSERT INTO events(id,category,action,entry,message,created) VALUES(1,'failure','scan',1,'failed','now'),(2,'failure','automatic',999,'failed','now')"); err != nil {
 		t.Fatal(err)
 	}
@@ -56,11 +56,11 @@ func TestRetryHistoryRejectsUnsupportedAndKeepsFailures(t *testing.T) {
 
 func TestRetryHistoryBatchesAndRemovesOnlyAfterSuccess(t *testing.T) {
 	root := t.TempDir()
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	tools := t.TempDir()
 	for _, name := range []string{"ffmpeg", "ffprobe"} {
 		if err = os.WriteFile(filepath.Join(tools, name), []byte(`#!/bin/sh
@@ -70,12 +70,12 @@ exit 0
 		}
 	}
 	t.Setenv("PATH", tools)
-	profile, err := (models.Store{DB: a.DB}).Get(1)
+	profile, err := (models.Store{DB: a.DB}).Get(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	profile.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test", Timeout: "2s", MaxTokens: 128}
-	if _, err = (models.Store{DB: a.DB}).Save(profile); err != nil {
+	if _, err = (models.Store{DB: a.DB}).Save(t.Context(), profile); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"a.mp4", "b.mp4"} {
@@ -111,7 +111,7 @@ exit 0
 	}
 	settings := systemsettings.Default()
 	settings.StabilitySeconds = 0
-	if err = (systemsettings.Store{DB: a.DB}).Save(settings); err != nil {
+	if err = (systemsettings.Store{DB: a.DB}).Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	a.Jobs.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
@@ -128,23 +128,23 @@ exit 0
 
 func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 	root := t.TempDir()
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
-	profile, err := (models.Store{DB: a.DB}).Get(1)
+	defer shutdown(t, a)
+	profile, err := (models.Store{DB: a.DB}).Get(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	profile.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test", Timeout: "2s", MaxTokens: 128}
-	if _, err = (models.Store{DB: a.DB}).Save(profile); err != nil {
+	if _, err = (models.Store{DB: a.DB}).Save(t.Context(), profile); err != nil {
 		t.Fatal(err)
 	}
 	profile.ID = 0
 	profile.Title = "重试备用模型"
 	profile.Model = "alternative"
-	alternative, err := (models.Store{DB: a.DB}).Save(profile)
+	alternative, err := (models.Store{DB: a.DB}).Save(t.Context(), profile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,11 +273,11 @@ func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 }
 
 func TestRetryAllHistoryEmptyAndInvalidScope(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	for _, tc := range []struct {
 		body string
 		code int
@@ -302,17 +302,17 @@ func TestRetryHistoryMissingFilesDoNotBlockValidTargets(t *testing.T) {
 	for _, all := range []bool{true, false} {
 		t.Run(fmt.Sprintf("all=%t", all), func(t *testing.T) {
 			root := t.TempDir()
-			a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+			a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer a.Close()
-			profile, err := (models.Store{DB: a.DB}).Get(1)
+			defer shutdown(t, a)
+			profile, err := (models.Store{DB: a.DB}).Get(t.Context(), 1)
 			if err != nil {
 				t.Fatal(err)
 			}
 			profile.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test", Timeout: "2s", MaxTokens: 128}
-			if _, err = (models.Store{DB: a.DB}).Save(profile); err != nil {
+			if _, err = (models.Store{DB: a.DB}).Save(t.Context(), profile); err != nil {
 				t.Fatal(err)
 			}
 			if err = os.Mkdir(filepath.Join(root, "parent"), 0o700); err != nil {
@@ -396,11 +396,11 @@ func TestRetryHistoryMissingFilesDoNotBlockValidTargets(t *testing.T) {
 func setupSuccessfulHistoryRetry(t *testing.T) (*App, int64, int64, int64) {
 	t.Helper()
 	root := t.TempDir()
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { a.Close() })
+	t.Cleanup(func() { shutdown(t, a) })
 	tools := t.TempDir()
 	for _, name := range []string{"ffmpeg", "ffprobe"} {
 		if err := os.WriteFile(filepath.Join(tools, name), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
@@ -409,17 +409,17 @@ func setupSuccessfulHistoryRetry(t *testing.T) (*App, int64, int64, int64) {
 	}
 	t.Setenv("PATH", tools)
 	store := models.Store{DB: a.DB}
-	profile, err := store.Get(1)
+	profile, err := store.Get(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	profile.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "retry-model", Timeout: "2s", MaxTokens: 128}
-	if _, err := store.Save(profile); err != nil {
+	if _, err := store.Save(t.Context(), profile); err != nil {
 		t.Fatal(err)
 	}
 	settings := systemsettings.Default()
 	settings.StabilitySeconds, settings.RetryEnabled = 0, false
-	if err := (systemsettings.Store{DB: a.DB}).Save(settings); err != nil {
+	if err := (systemsettings.Store{DB: a.DB}).Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "original.mp4")

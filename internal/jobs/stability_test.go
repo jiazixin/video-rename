@@ -44,7 +44,7 @@ func TestStabilityWaitProtectsChangedFileAndCanBeCancelled(t *testing.T) {
 			settings := systemsettings.Default()
 			settings.StabilitySeconds = 1
 			store := systemsettings.Store{DB: m.DB}
-			if err := store.Save(settings); err != nil {
+			if err := store.Save(t.Context(), settings); err != nil {
 				t.Fatal(err)
 			}
 			calls := make(chan struct{}, 1)
@@ -77,13 +77,13 @@ func TestStabilityWaitProtectsChangedFileAndCanBeCancelled(t *testing.T) {
 				}
 			}
 			if cancelled {
-				if err = m.Cancel(id); err != nil {
+				if err = m.Cancel(ctx, id); err != nil {
 					t.Fatal(err)
 				}
 			} else {
 				// Updating the setting must not shorten this run's captured wait.
 				settings.StabilitySeconds = 0
-				if err = store.Save(settings); err != nil {
+				if err = store.Save(ctx, settings); err != nil {
 					t.Fatal(err)
 				}
 				if err = os.WriteFile(path, []byte("still writing more video"), 0o600); err != nil {

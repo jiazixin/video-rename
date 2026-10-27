@@ -18,7 +18,7 @@ func TestFrameSettingsFrozenForEachBatch(t *testing.T) {
 	settings.Sampling.Strategy = "duration"
 	settings.Sampling.MaxFrames = 7
 	settings.Images.MaxDimension = 512
-	if err := store.Save(settings); err != nil {
+	if err := store.Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600); err != nil {
@@ -30,7 +30,7 @@ func TestFrameSettingsFrozenForEachBatch(t *testing.T) {
 	}
 	settings.Sampling.MaxFrames = 20
 	settings.Images.MaxDimension = 1024
-	if err = store.Save(settings); err != nil {
+	if err = store.Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	calls := 0

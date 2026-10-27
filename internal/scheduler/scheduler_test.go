@@ -58,26 +58,26 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 		os.WriteFile(filepath.Join(base, name), []byte("#!/bin/sh\nexit 0\n"), 0o700)
 	}
 	t.Setenv("PATH", base)
-	db, err := storage.Open(filepath.Join(base, "db.sqlite"))
+	db, err := storage.Open(t.Context(), filepath.Join(base, "db.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	l, err := library.New(db, root)
+	l, err := library.New(t.Context(), db, root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := jobs.New(db, l, &config.Config{}, slog.New(slog.DiscardHandler))
+	m, err := jobs.New(t.Context(), db, l, &config.Config{}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer m.Cache.Close()
 	s := &Scheduler{DB: db, Jobs: m}
-	libraryPrompt, err := (prompts.Store{DB: db}).Save(prompts.Profile{Title: "计划提示词", Body: "计划专属要求"})
+	libraryPrompt, err := (prompts.Store{DB: db}).Save(t.Context(), prompts.Profile{Title: "计划提示词", Body: "计划专属要求"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	prompt, err := (models.Store{DB: db}).Save(models.Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: "计划配置", PromptID: libraryPrompt.ID})
+	prompt, err := (models.Store{DB: db}).Save(t.Context(), models.Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: "计划配置", PromptID: libraryPrompt.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,11 +117,11 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("overlapping trigger %d", n)
 	}
-	p, _ = s.Get(p.ID)
+	p, _ = s.Get(t.Context(), p.ID)
 	if p.Last.Code != "schedule_skipped_active" {
 		t.Fatal(p.Last)
 	}
-	if err = s.ResetNext(at.Add(24 * time.Hour)); err != nil {
+	if err = s.ResetNext(t.Context(), at.Add(24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	db.QueryRow("SELECT count(*) FROM runs").Scan(&n)
@@ -137,7 +137,7 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 	}
 	// Switching a persisted plan to extraction must bypass model validation,
 	// survive reload, and pass the task type through the automatic trigger.
-	p, _ = s.Get(p.ID)
+	p, _ = s.Get(t.Context(), p.ID)
 	p.Task, p.ModelConfigID, p.Enabled = "extract", 999999, true
 	p, err = s.Save(t.Context(), p)
 	if err != nil || p.Task != "extract" || p.ModelConfigID != 0 {
@@ -151,7 +151,7 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The prior wall-clock tick can already be deduplicated; trigger the next one.
-	p, _ = s.Get(p.ID)
+	p, _ = s.Get(t.Context(), p.ID)
 	at, _ = time.Parse(time.RFC3339, p.Next)
 	if err = s.Tick(t.Context(), at); err != nil {
 		t.Fatal(err)

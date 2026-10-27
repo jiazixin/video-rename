@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"fmt"
@@ -35,11 +36,11 @@ func TestMissingRecordFailureUsesReadableMessage(t *testing.T) {
 }
 
 func TestHistoryDateFiltersCompareInstants(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	for _, stamp := range []string{"2026-10-02T00:00:00Z", "2026-10-02T00:00:01.5Z", "2026-10-02T00:00:02Z"} {
 		if _, err := a.DB.Exec("INSERT INTO events(category,action,created) VALUES('success','manual',?)", stamp); err != nil {
 			t.Fatal(err)
@@ -76,11 +77,11 @@ func TestStaticSPAAndProtectedAPI(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "media")
 	os.Mkdir(root, 0o700)
 	cfg := &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}
-	a, err := New(cfg, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), cfg, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	h := a.Handler()
 	for _, p := range []string{"/", "/login", "/library"} {
 		w := httptest.NewRecorder()
@@ -101,33 +102,33 @@ func TestStaticSPAAndProtectedAPI(t *testing.T) {
 
 func TestDataDirectoryPersistenceAndShortPasswordLogin(t *testing.T) {
 	cfg := &config.Config{Path: t.TempDir(), Storage: filepath.Join(t.TempDir(), "state", "nested"), Auth: config.AuthConfig{Username: "admin", Password: "x"}}
-	a, err := New(cfg, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), cfg, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"data.sqlite", "data.sqlite.key"} {
 		if _, err := os.Stat(filepath.Join(cfg.Storage, name)); err != nil {
-			a.Close()
+			shutdown(t, a)
 			t.Fatal(err)
 		}
 	}
 	if _, err = a.DB.Exec("INSERT INTO events(category,action,message,created) VALUES('success','manual','retained','now')"); err != nil {
-		a.Close()
+		shutdown(t, a)
 		t.Fatal(err)
 	}
 	secret, err := a.DB.Seal("retained-key")
 	if err != nil {
-		a.Close()
+		shutdown(t, a)
 		t.Fatal(err)
 	}
-	if err = a.Close(); err != nil {
+	if err = a.Shutdown(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	a, err = New(cfg, slog.New(slog.DiscardHandler))
+	a, err = New(t.Context(), cfg, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	plain, err := a.DB.Unseal(secret)
 	if err != nil || plain != "retained-key" {
 		t.Fatal("key not preserved", err)
@@ -142,5 +143,14 @@ func TestDataDirectoryPersistenceAndShortPasswordLogin(t *testing.T) {
 	a.Handler().ServeHTTP(w, r)
 	if w.Code != 200 {
 		t.Fatalf("short password login: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// shutdown stops a test app. Cleanup runs after t.Context is cancelled, so it
+// waits without a deadline.
+func shutdown(t testing.TB, a *App) {
+	t.Helper()
+	if err := a.Shutdown(context.Background()); err != nil {
+		t.Error(err)
 	}
 }

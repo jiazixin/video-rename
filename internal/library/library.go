@@ -45,16 +45,15 @@ type Library struct {
 	Root            string
 	mu              sync.Mutex
 	refreshMu       sync.Mutex
-	refreshing      map[int64]bool
+	refreshing      map[int64]context.CancelFunc
 	scanning        map[int64]bool
 	dirScans        map[int64]*directoryScanLock
 	indexEpoch      atomic.Uint64
 	scanSlots       chan struct{}
-	Busy            func(int64) bool
+	Busy            func(context.Context, int64) bool
 	broken          error
 	refreshWG       sync.WaitGroup
 	closed          bool
-	RefreshContext  context.Context
 }
 
 // Identity returns the device and inode identity of s.
@@ -62,30 +61,30 @@ func Identity(s domain.Snapshot) string { return fmt.Sprintf("%d:%d", s.Dev, s.I
 func stamp(s domain.Snapshot) string    { return s.ModTime.UTC().Format(time.RFC3339Nano) }
 
 // New opens the library rooted at root.
-func New(db *storage.Store, root string) (*Library, error) {
+func New(ctx context.Context, db *storage.Store, root string) (*Library, error) {
 	snap, err := domain.StatSnapshot(root)
 	if err != nil {
 		return nil, err
 	}
 	var old, ident string
-	err = db.QueryRow("SELECT root,identity FROM library WHERE id=1").Scan(&old, &ident)
+	err = db.QueryRowContext(ctx, "SELECT root,identity FROM library WHERE id=1").Scan(&old, &ident)
 	if err == nil && (old != root || ident != Identity(snap)) {
 		return nil, errors.New("media root bound to the database changed; check the mount and configuration")
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	if _, err = db.Exec("INSERT OR IGNORE INTO library VALUES(1,?,?)", root, Identity(snap)); err != nil {
+	if _, err = db.ExecContext(ctx, "INSERT OR IGNORE INTO library VALUES(1,?,?)", root, Identity(snap)); err != nil {
 		return nil, err
 	}
-	if _, err = db.Exec("INSERT OR IGNORE INTO entries(id,parent,name,kind,identity,size,mtime,observed) VALUES(1,0,'','directory',?,?,?,?)", Identity(snap), snap.Size, stamp(snap), storage.Now()); err != nil {
+	if _, err = db.ExecContext(ctx, "INSERT OR IGNORE INTO entries(id,parent,name,kind,identity,size,mtime,observed) VALUES(1,0,'','directory',?,?,?,?)", Identity(snap), snap.Size, stamp(snap), storage.Now()); err != nil {
 		return nil, err
 	}
-	l := &Library{DB: db, Root: root, refreshing: map[int64]bool{}, scanSlots: make(chan struct{}, 2)}
-	if err = l.recoverNumberings(); err != nil {
+	l := &Library{DB: db, Root: root, refreshing: map[int64]context.CancelFunc{}, scanSlots: make(chan struct{}, 2)}
+	if err = l.recoverNumberings(ctx); err != nil {
 		return nil, err
 	}
-	if err = l.Recover(); err != nil {
+	if err = l.Recover(ctx); err != nil {
 		return nil, err
 	}
 	return l, nil
@@ -144,37 +143,37 @@ func (l *Library) GetBatch(ctx context.Context, ids []int64) ([]Entry, error) {
 
 // IndexedEntry loads only the indexed file snapshot and its processed mark.
 // Workers and path validation do not need UI history or running-scope summaries.
-func (l *Library) IndexedEntry(id int64) (Entry, error) {
+func (l *Library) IndexedEntry(ctx context.Context, id int64) (Entry, error) {
 	var e Entry
-	err := l.DB.Read().QueryRow(`SELECT e.id,e.parent,e.name,e.kind,e.identity,e.size,e.mtime,e.version,
+	err := l.DB.Read().QueryRowContext(ctx, `SELECT e.id,e.parent,e.name,e.kind,e.identity,e.size,e.mtime,e.version,
  COALESCE((SELECT source FROM marks m WHERE m.identity=e.identity AND m.size=e.size AND m.mtime=e.mtime),'')
  FROM entries e WHERE e.id=? AND e.present=1`, id).Scan(&e.ID, &e.Parent, &e.Name, &e.Kind, &e.Identity, &e.Size, &e.Mtime, &e.Version, &e.Processed)
 	return e, err
 }
 
 // indexedSnapshot omits processing state when only filesystem evidence is needed.
-func (l *Library) indexedSnapshot(id int64) (Entry, error) {
+func (l *Library) indexedSnapshot(ctx context.Context, id int64) (Entry, error) {
 	var e Entry
-	err := l.DB.Read().QueryRow(`SELECT id,parent,name,kind,identity,size,mtime,version
+	err := l.DB.Read().QueryRowContext(ctx, `SELECT id,parent,name,kind,identity,size,mtime,version
  FROM entries WHERE id=? AND present=1`, id).Scan(&e.ID, &e.Parent, &e.Name, &e.Kind, &e.Identity, &e.Size, &e.Mtime, &e.Version)
 	return e, err
 }
 
 // Path checks every ancestor, including mount identity; symlinks are never followed.
-func (l *Library) Path(id int64) (string, error) {
+func (l *Library) Path(ctx context.Context, id int64) (string, error) {
 	if id <= 0 {
 		return "", errBadHierarchy
 	}
-	e, err := l.indexedSnapshot(id)
+	e, err := l.indexedSnapshot(ctx, id)
 	if err != nil {
 		return "", err
 	}
-	return l.pathForEntry(e)
+	return l.pathForEntry(ctx, e)
 }
 
 // pathForEntry reuses only the caller's freshly read entry. Every ancestor is
 // still loaded and checked against disk on this call; no path evidence is cached.
-func (l *Library) pathForEntry(e Entry) (string, error) {
+func (l *Library) pathForEntry(ctx context.Context, e Entry) (string, error) {
 	chain := []Entry{}
 	seen := map[int64]bool{}
 	for e.ID != 1 {
@@ -190,7 +189,7 @@ func (l *Library) pathForEntry(e Entry) (string, error) {
 			return "", errBadHierarchy
 		}
 		var err error
-		e, err = l.indexedSnapshot(e.Parent)
+		e, err = l.indexedSnapshot(ctx, e.Parent)
 		if err != nil {
 			return "", err
 		}
@@ -227,8 +226,8 @@ func (l *Library) pathForEntry(e Entry) (string, error) {
 }
 
 // Relative returns the path of entry id relative to the library root.
-func (l *Library) Relative(id int64) string {
-	p, e := l.Path(id)
+func (l *Library) Relative(ctx context.Context, id int64) string {
+	p, e := l.Path(ctx, id)
 	if e != nil {
 		return ""
 	}
@@ -249,16 +248,23 @@ func kindOf(st os.FileInfo) string {
 }
 
 // StartRefresh rescans directory id in the background unless it is already
-// being refreshed or scanned.
+// being refreshed or scanned. The refresh is detached from ctx cancellation so
+// it outlives the request that noticed the stale index; Close cancels it.
 func (l *Library) StartRefresh(ctx context.Context, id int64) {
 	l.refreshMu.Lock()
-	if l.refreshing[id] || l.scanning[id] || l.closed || ctx.Err() != nil {
-		l.refreshMu.Unlock()
+	defer l.refreshMu.Unlock()
+	if l.refreshing[id] != nil || l.scanning[id] || l.closed {
 		return
 	}
-	l.refreshing[id] = true
+	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	l.refreshing[id] = cancel
 	l.refreshWG.Go(func() {
-		defer func() { l.refreshMu.Lock(); delete(l.refreshing, id); l.refreshMu.Unlock() }()
+		defer func() {
+			l.refreshMu.Lock()
+			delete(l.refreshing, id)
+			l.refreshMu.Unlock()
+			cancel()
+		}()
 		select {
 		case l.scanSlots <- struct{}{}:
 			defer func() { <-l.scanSlots }()
@@ -267,7 +273,6 @@ func (l *Library) StartRefresh(ctx context.Context, id int64) {
 		}
 		_ = l.Refresh(ctx, id)
 	})
-	l.refreshMu.Unlock()
 }
 
 // Page is a page of directory entries.
@@ -321,14 +326,10 @@ func (l *Library) listOrdered(ctx context.Context, id int64, offset, limit int, 
 	p.Refreshed = refreshed.String
 	at, _ := time.Parse(time.RFC3339Nano, p.Refreshed)
 	if force || time.Since(at) > 30*time.Second {
-		refreshCtx := l.RefreshContext
-		if refreshCtx == nil {
-			refreshCtx = ctx
-		}
-		l.StartRefresh(refreshCtx, id)
+		l.StartRefresh(ctx, id)
 	}
 	l.refreshMu.Lock()
-	p.Refreshing = l.refreshing[id] || l.scanning[id]
+	p.Refreshing = l.refreshing[id] != nil || l.scanning[id]
 	l.refreshMu.Unlock()
 	if generation != 0 && p.Generation != generation {
 		return p, errDirectoryRefresh
@@ -454,21 +455,26 @@ func (l *Library) listOrdered(ctx context.Context, id int64, offset, limit int, 
 	return p, nil
 }
 
-// Close stops background refreshes and waits for them to finish.
+// Close cancels background refreshes and waits for them to finish.
 func (l *Library) Close() {
 	l.refreshMu.Lock()
 	l.closed = true
+	for _, cancel := range l.refreshing {
+		cancel()
+	}
 	l.refreshMu.Unlock()
 	l.refreshWG.Wait()
 }
 
 // DisplayPath uses the cached hierarchy only; callers must use Path before mutation.
-func (l *Library) DisplayPath(id int64) string {
+// Failure records pass a context without cancellation so cancelled work still
+// names its file.
+func (l *Library) DisplayPath(ctx context.Context, id int64) string {
 	parts := []string{}
 	for i := 0; id > 1 && i < 1024; i++ {
 		var parent int64
 		var name string
-		if err := l.DB.Read().QueryRow("SELECT parent,name FROM entries WHERE id=?", id).Scan(&parent, &name); err != nil {
+		if err := l.DB.Read().QueryRowContext(ctx, "SELECT parent,name FROM entries WHERE id=?", id).Scan(&parent, &name); err != nil {
 			return MissingDisplayPath
 		}
 		parts = append([]string{name}, parts...)

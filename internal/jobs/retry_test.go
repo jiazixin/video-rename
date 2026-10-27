@@ -40,12 +40,12 @@ func TestRetryFallbackSnapshotAndActualRequests(t *testing.T) {
 	}))
 	defer server.Close()
 	store := models.Store{DB: m.DB}
-	primary, err := store.Get(1)
+	primary, err := store.Get(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	primary.BaseURL = server.URL + "/primary"
-	if _, err = store.Save(primary); err != nil {
+	if _, err = store.Save(t.Context(), primary); err != nil {
 		t.Fatal(err)
 	}
 	fallback := primary
@@ -53,14 +53,14 @@ func TestRetryFallbackSnapshotAndActualRequests(t *testing.T) {
 	fallback.Title = "备用配置"
 	fallback.Model = "fallback-model"
 	fallback.BaseURL = server.URL + "/fallback"
-	fallback, err = store.Save(fallback)
+	fallback, err = store.Save(t.Context(), fallback)
 	if err != nil {
 		t.Fatal(err)
 	}
 	settings := systemsettings.Default()
 	settings.StabilitySeconds = 0
 	settings.FallbackModelID = fallback.ID
-	if err = (systemsettings.Store{DB: m.DB}).Save(settings); err != nil {
+	if err = (systemsettings.Store{DB: m.DB}).Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	if err = os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600); err != nil {
@@ -77,11 +77,11 @@ func TestRetryFallbackSnapshotAndActualRequests(t *testing.T) {
 	// Later edits cannot change a queued batch's retry rules, destination or prompt.
 	settings.RetryEnabled = false
 	settings.FallbackModelID = 0
-	if err = (systemsettings.Store{DB: m.DB}).Save(settings); err != nil {
+	if err = (systemsettings.Store{DB: m.DB}).Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	fallback.BaseURL = "http://127.0.0.1:1"
-	if _, err = store.Save(fallback); err != nil {
+	if _, err = store.Save(t.Context(), fallback); err != nil {
 		t.Fatal(err)
 	}
 	m.Execute(t.Context(), id)
@@ -113,21 +113,21 @@ func TestRetryFallbackSnapshotAndActualRequests(t *testing.T) {
 func TestPermanentErrorGoesDirectlyToFallback(t *testing.T) {
 	m, root := setup(t)
 	store := models.Store{DB: m.DB}
-	profile, err := store.Get(1)
+	profile, err := store.Get(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	profile.ID = 0
 	profile.Title = "fallback"
 	profile.Model = "fallback"
-	profile, err = store.Save(profile)
+	profile, err = store.Save(t.Context(), profile)
 	if err != nil {
 		t.Fatal(err)
 	}
 	settings := systemsettings.Default()
 	settings.StabilitySeconds = 0
 	settings.FallbackModelID = profile.ID
-	if err = (systemsettings.Store{DB: m.DB}).Save(settings); err != nil {
+	if err = (systemsettings.Store{DB: m.DB}).Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	if err = os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600); err != nil {
@@ -201,12 +201,12 @@ func TestRetainedFramesSurviveRenameRestoreAndModelChange(t *testing.T) {
 	if err != nil || result.Restored != 1 {
 		t.Fatal(result, err)
 	}
-	profile, err := (models.Store{DB: m.DB}).Get(1)
+	profile, err := (models.Store{DB: m.DB}).Get(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	profile.Model = "another-model"
-	if _, err = (models.Store{DB: m.DB}).Save(profile); err != nil {
+	if _, err = (models.Store{DB: m.DB}).Save(t.Context(), profile); err != nil {
 		t.Fatal(err)
 	}
 	m.Infer = func(context.Context, *config.TaskConfig, []domain.Frame) (string, error) {
@@ -234,7 +234,7 @@ func TestRetryDisabledExhaustionAndCancel(t *testing.T) {
 			settings.StabilitySeconds = 0
 			settings.RetryCount = 1
 			settings.RetryEnabled = mode != "disabled"
-			if err := (systemsettings.Store{DB: m.DB}).Save(settings); err != nil {
+			if err := (systemsettings.Store{DB: m.DB}).Save(t.Context(), settings); err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithCancel(t.Context())
@@ -275,7 +275,7 @@ func TestUnusableFilenameRetriesBeforeCommit(t *testing.T) {
 	settings := systemsettings.Default()
 	settings.StabilitySeconds = 0
 	settings.RetryCount = 1
-	if err := (systemsettings.Store{DB: m.DB}).Save(settings); err != nil {
+	if err := (systemsettings.Store{DB: m.DB}).Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	calls := 0

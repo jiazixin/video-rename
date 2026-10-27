@@ -13,11 +13,11 @@ import (
 )
 
 func TestSystemSettingsAPI(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	var cookies []*http.Cookie
 	request := func(method, path, body string, sameSite bool) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()

@@ -26,7 +26,7 @@ func TestAncestorIdentityDiagnostic(t *testing.T) {
 	if _, err := l.DB.Exec("UPDATE entries SET identity='999:888' WHERE id=?", parent.ID); err != nil {
 		t.Fatal(err)
 	}
-	_, err := l.Path(file.ID)
+	_, err := l.Path(t.Context(), file.ID)
 	diagnostic, ok := errors.AsType[*domain.JobError](err)
 	if !ok {
 		t.Fatalf("expected source diagnostic, got %v", err)

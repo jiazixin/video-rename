@@ -15,17 +15,17 @@ func (a *App) promptRoutes(api *router) {
 	store := prompts.Store{DB: a.DB}
 	settings := systemsettings.Store{DB: a.DB}
 	api.HandleFunc("GET /api/prompts", func(w http.ResponseWriter, r *http.Request) {
-		fixed, err := settings.FixedPrompt()
+		fixed, err := settings.FixedPrompt(r.Context())
 		if err != nil {
 			writeError(w, r, err)
 			return
 		}
-		list, err := store.List()
+		list, err := store.List(r.Context())
 		if err != nil {
 			writeError(w, r, err)
 			return
 		}
-		keywords, err := settings.FailureKeywords()
+		keywords, err := settings.FailureKeywords(r.Context())
 		if err != nil {
 			writeError(w, r, err)
 			return
@@ -44,7 +44,7 @@ func (a *App) promptRoutes(api *router) {
 			invalid(w, r, "failure_keywords", "required")
 			return
 		}
-		keywords, err := settings.SaveFailureKeywords(*input.FailureKeywords)
+		keywords, err := settings.SaveFailureKeywords(r.Context(), *input.FailureKeywords)
 		if err != nil {
 			writeError(w, r, err)
 			return
@@ -58,7 +58,7 @@ func (a *App) promptRoutes(api *router) {
 		if !decode(w, r, &input) {
 			return
 		}
-		fixed, err := settings.SaveFixedPrompt(input.FixedPrompt)
+		fixed, err := settings.SaveFixedPrompt(r.Context(), input.FixedPrompt)
 		if err != nil {
 			writeError(w, r, err)
 			return
@@ -75,7 +75,7 @@ func (a *App) promptRoutes(api *router) {
 			return
 		}
 		p.ID = id
-		out, err := store.Save(p)
+		out, err := store.Save(r.Context(), p)
 		if err != nil {
 			writeError(w, r, err)
 			return
@@ -91,7 +91,7 @@ func (a *App) promptRoutes(api *router) {
 		if !decode(w, r, &input) {
 			return
 		}
-		if err := store.Delete(number(r.PathValue("id")), input.Version); err != nil {
+		if err := store.Delete(r.Context(), number(r.PathValue("id")), input.Version); err != nil {
 			writeError(w, r, err)
 			return
 		}

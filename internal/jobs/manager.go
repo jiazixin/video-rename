@@ -45,17 +45,17 @@ type activeRun struct {
 }
 
 // New creates the batch manager and seeds the default model settings.
-func New(db *storage.Store, l *library.Library, cfg *config.Config, logger *slog.Logger) (*Manager, error) {
-	if err := (models.Store{DB: db}).Seed(); err != nil {
+func New(ctx context.Context, db *storage.Store, l *library.Library, cfg *config.Config, logger *slog.Logger) (*Manager, error) {
+	if err := (models.Store{DB: db}).Seed(ctx); err != nil {
 		return nil, err
 	}
-	if err := interruptRuns(db); err != nil {
+	if err := interruptRuns(ctx, db); err != nil {
 		return nil, err
 	}
-	if err := recoverExtractions(db); err != nil {
+	if err := recoverExtractions(ctx, db); err != nil {
 		return nil, err
 	}
-	settings, err := (systemsettings.Store{DB: db}).Get()
+	settings, err := (systemsettings.Store{DB: db}).Get(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func New(db *storage.Store, l *library.Library, cfg *config.Config, logger *slog
 	if temp == "" {
 		var seq int
 		var name, path string
-		if err = db.QueryRow("PRAGMA database_list").Scan(&seq, &name, &path); err != nil {
+		if err = db.QueryRowContext(ctx, "PRAGMA database_list").Scan(&seq, &name, &path); err != nil {
 			return nil, err
 		}
 		temp = filepath.Join(filepath.Dir(path), ".cache")
@@ -77,30 +77,30 @@ func New(db *storage.Store, l *library.Library, cfg *config.Config, logger *slog
 	return m, nil
 }
 
-func interruptRuns(db *storage.Store) error {
-	tx, err := db.Begin()
+func interruptRuns(ctx context.Context, db *storage.Store) error {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	now := time.Now()
-	if _, err = tx.Exec(`UPDATE run_items SET status='cancelled',message=?,finished_ms=?
+	if _, err = tx.ExecContext(ctx, `UPDATE run_items SET status='cancelled',message=?,finished_ms=?
 WHERE status IN ('queued','running') AND run IN (SELECT id FROM runs WHERE status IN `+domain.ActiveRunStatusesSQL+`)`, recordItemInterrupted, now.UnixMilli()); err != nil {
 		return err
 	}
-	if _, err = tx.Exec("UPDATE runs SET status='interrupted',finished=?,error=? WHERE status IN "+domain.ActiveRunStatusesSQL, now.UTC().Format(time.RFC3339Nano), recordRunInterrupted); err != nil {
+	if _, err = tx.ExecContext(ctx, "UPDATE runs SET status='interrupted',finished=?,error=? WHERE status IN "+domain.ActiveRunStatusesSQL, now.UTC().Format(time.RFC3339Nano), recordRunInterrupted); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 // Busy reports whether entry id lies within the scope of an unfinished batch.
-func (m *Manager) Busy(id int64) bool {
+func (m *Manager) Busy(ctx context.Context, id int64) bool {
 	// Mutations affect the entry's entire subtree. Reuse the persistent scope
 	// check so queued runs, paused runs, hard links and nonrecursive targets
 	// follow the same occupancy rules as another batch submission. Do not take
 	// createMu: callers may already hold Library.mu while a worker is scanning.
-	return m.checkOverlap(Request{Targets: []int64{id}, Recursive: true}, newScopeIndex(m.DB)) != nil
+	return m.checkOverlap(ctx, Request{Targets: []int64{id}, Recursive: true}, newScopeIndex(m.DB)) != nil
 }
 
 // Tools returns the paths of ffprobe and ffmpeg.
@@ -117,7 +117,7 @@ func (m *Manager) Tools() (string, string, error) {
 }
 
 // Cancel cancels batch id.
-func (m *Manager) Cancel(id int64) error {
+func (m *Manager) Cancel(ctx context.Context, id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	_, running := m.active[id]
@@ -125,7 +125,7 @@ func (m *Manager) Cancel(id int64) error {
 	if running {
 		status, finished = "cancelling", ""
 	}
-	_, err := m.DB.Exec("UPDATE runs SET status=?,finished=? WHERE id=? AND status IN ('queued','scanning','running','paused')", status, finished, id)
+	_, err := m.DB.ExecContext(ctx, "UPDATE runs SET status=?,finished=? WHERE id=? AND status IN ('queued','scanning','running','paused')", status, finished, id)
 	if err == nil {
 		if r, ok := m.active[id]; ok {
 			r.cancel()
@@ -134,23 +134,24 @@ func (m *Manager) Cancel(id int64) error {
 	return err
 }
 
-// Loop starts queued batches every second until ctx ends.
-func (m *Manager) Loop(ctx context.Context) {
+// Run starts queued batches every second until ctx ends, then waits for
+// running batches and the cache sweeper to stop.
+func (m *Manager) Run(ctx context.Context) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	var wg sync.WaitGroup
 	defer wg.Wait()
-	wg.Go(func() { m.Cache.Loop(ctx) })
+	wg.Go(func() { _ = m.Cache.Run(ctx) })
 	launched := map[int64]bool{}
 	finished := make(chan int64)
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case id := <-finished:
 			delete(launched, id)
 		case <-ticker.C:
-			limits, err := (systemsettings.Store{DB: m.DB}).BatchLimits()
+			limits, err := (systemsettings.Store{DB: m.DB}).BatchLimits(ctx)
 			if err != nil || len(launched) >= limits.RunningBatchLimit {
 				continue
 			}

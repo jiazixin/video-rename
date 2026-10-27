@@ -19,7 +19,7 @@ func (a *App) numberingRoutes(api *router) {
 	a.numberingJobRoutes(api)
 	store := systemsettings.Store{DB: a.DB}
 	api.HandleFunc("POST /api/directories/{id}/numberings/tree-preview", func(w http.ResponseWriter, r *http.Request) {
-		settings, err := store.Numbering()
+		settings, err := store.Numbering(r.Context())
 		if err != nil {
 			numberingFailure(w, r, err)
 			return
@@ -32,7 +32,7 @@ func (a *App) numberingRoutes(api *router) {
 		send(w, http.StatusOK, batches)
 	})
 	api.HandleFunc("GET /api/directories/{id}/numberings/tree", func(w http.ResponseWriter, r *http.Request) {
-		batches, err := a.Library.NumberingTreeHistory(number(r.PathValue("id")))
+		batches, err := a.Library.NumberingTreeHistory(r.Context(), number(r.PathValue("id")))
 		if err != nil {
 			numberingFailure(w, r, err)
 			return
@@ -40,7 +40,7 @@ func (a *App) numberingRoutes(api *router) {
 		send(w, http.StatusOK, batches)
 	})
 	api.HandleFunc("GET /api/numbering/settings", func(w http.ResponseWriter, r *http.Request) {
-		s, err := store.Numbering()
+		s, err := store.Numbering(r.Context())
 		if err != nil {
 			numberingFailure(w, r, err)
 			return
@@ -52,7 +52,7 @@ func (a *App) numberingRoutes(api *router) {
 		if !decode(w, r, &s) {
 			return
 		}
-		if err := store.SaveNumbering(s); err != nil {
+		if err := store.SaveNumbering(r.Context(), s); err != nil {
 			numberingFailure(w, r, err)
 			return
 		}
@@ -72,7 +72,7 @@ func (a *App) numberingRoutes(api *router) {
 			invalid(w, r, "media", "invalid_choice")
 			return
 		}
-		settings, err := store.Numbering()
+		settings, err := store.Numbering(r.Context())
 		if err != nil {
 			numberingFailure(w, r, err)
 			return
@@ -97,7 +97,7 @@ func (a *App) numberingRoutes(api *router) {
 			invalid(w, r, "media", "invalid_choice")
 			return
 		}
-		b, err := a.Library.NumberingHistory(number(r.PathValue("id")), media)
+		b, err := a.Library.NumberingHistory(r.Context(), number(r.PathValue("id")), media)
 		if err != nil {
 			numberingFailure(w, r, err)
 			return
@@ -122,7 +122,7 @@ func (a *App) numberingRoutes(api *router) {
 		send(w, http.StatusOK, b)
 	})
 	api.HandleFunc("POST /api/numberings/{id}/recover", func(w http.ResponseWriter, r *http.Request) {
-		b, err := a.Library.RecoverNumbering(r.PathValue("id"))
+		b, err := a.Library.RecoverNumbering(r.Context(), r.PathValue("id"))
 		if err != nil {
 			numberingFailure(w, r, err)
 			return

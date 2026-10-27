@@ -27,11 +27,11 @@ func fixture(t *testing.T) (*Manager, *library.Library, string, systemsettings.S
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	db, err := storage.Open(filepath.Join(base, "state", "library.sqlite"))
+	db, err := storage.Open(t.Context(), filepath.Join(base, "state", "library.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	l, err := library.New(db, root)
+	l, err := library.New(t.Context(), db, root)
 	if err != nil {
 		db.Close()
 		t.Fatal(err)
@@ -418,7 +418,7 @@ func TestAutomaticScheduleWaitsOneHourAndReplansFromCompletion(t *testing.T) {
 	m, _, _, settings := fixture(t)
 	clock := &fakeClock{now: time.Date(2026, 10, 3, 1, 0, 0, 0, time.UTC)}
 	m.now, m.newTimer = clock.Now, clock.NewTimer
-	go m.Loop(t.Context())
+	go m.Run(t.Context())
 	await(t, func() bool { return clock.Timer() != nil })
 	if timer := clock.Timer(); timer.delay != time.Hour || m.Snapshot().Status != "idle" {
 		t.Fatalf("startup timer=%s status=%+v", timer.delay, m.Snapshot())
@@ -426,7 +426,7 @@ func TestAutomaticScheduleWaitsOneHourAndReplansFromCompletion(t *testing.T) {
 	clock.Advance(10 * time.Minute)
 	config := systemsettings.DefaultScanSettings()
 	config.IntervalMinutes = 120
-	if err := settings.SaveScan(config); err != nil {
+	if err := settings.SaveScan(t.Context(), config); err != nil {
 		t.Fatal(err)
 	}
 	m.SettingsChanged()
@@ -445,7 +445,7 @@ func TestAutomaticScheduleWaitsOneHourAndReplansFromCompletion(t *testing.T) {
 		t.Fatalf("completion timer=%s", timer.delay)
 	}
 	config.Enabled = false
-	if err := settings.SaveScan(config); err != nil {
+	if err := settings.SaveScan(t.Context(), config); err != nil {
 		t.Fatal(err)
 	}
 	m.SettingsChanged()
@@ -471,7 +471,7 @@ func TestLongManualRoundWaitsNewIntervalFromCompletion(t *testing.T) {
 		<-release
 		return actual(ctx, id)
 	}
-	go m.Loop(t.Context())
+	go m.Run(t.Context())
 	await(t, func() bool { return clock.Timer() != nil })
 	clock.Advance(20 * time.Minute)
 	if _, err := m.Start(t.Context(), []int64{1}, "manual"); err != nil {
@@ -481,7 +481,7 @@ func TestLongManualRoundWaitsNewIntervalFromCompletion(t *testing.T) {
 	await(t, func() bool { return m.Snapshot().NextScan == "" && clock.Timer().stopped.Load() })
 	config := systemsettings.DefaultScanSettings()
 	config.IntervalMinutes = 90
-	if err := settings.SaveScan(config); err != nil {
+	if err := settings.SaveScan(t.Context(), config); err != nil {
 		t.Fatal(err)
 	}
 	m.SettingsChanged()
@@ -508,7 +508,7 @@ func TestSettingsReadFailureIsVisibleAndDoesNotScan(t *testing.T) {
 		calls.Add(1)
 		return actual(ctx, id)
 	}
-	go m.Loop(t.Context())
+	go m.Run(t.Context())
 	await(t, func() bool { return len(m.Snapshot().Errors) == 1 })
 	if s := m.Snapshot(); s.Status != "failed" || s.NextScan != "" || calls.Load() != 0 {
 		t.Fatalf("invalid settings=%+v calls=%d", s, calls.Load())
@@ -519,7 +519,7 @@ func TestSettingsReadFailureIsVisibleAndDoesNotScan(t *testing.T) {
 	if _, err := l.DB.Exec("UPDATE system_settings SET policy='' WHERE id=1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := settings.SaveScan(systemsettings.DefaultScanSettings()); err != nil {
+	if err := settings.SaveScan(t.Context(), systemsettings.DefaultScanSettings()); err != nil {
 		t.Fatal(err)
 	}
 	m.SettingsChanged()
@@ -558,7 +558,7 @@ func TestExcludedDirectoriesApplyToManualAndAutomaticScans(t *testing.T) {
 			keep := entryID(t, l, 1, "keep")
 			settings := systemsettings.DefaultScanSettings()
 			settings.ExcludedTargets = []int64{skip}
-			if err := store.SaveScan(settings); err != nil {
+			if err := store.SaveScan(t.Context(), settings); err != nil {
 				t.Fatal(err)
 			}
 			put(t, filepath.Join(root, "skip", "new.mp4"))
@@ -586,7 +586,7 @@ func TestExcludedDirectoriesApplyToManualAndAutomaticScans(t *testing.T) {
 				}
 			}
 			settings.ExcludedTargets = nil
-			if err := store.SaveScan(settings); err != nil {
+			if err := store.SaveScan(t.Context(), settings); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := m.Start(t.Context(), []int64{skip}, source); err != nil {
@@ -626,7 +626,7 @@ func TestScanExclusionsFrozenUntilNextRound(t *testing.T) {
 	<-entered
 	settings := systemsettings.DefaultScanSettings()
 	settings.ExcludedTargets = []int64{skip}
-	if err := store.SaveScan(settings); err != nil {
+	if err := store.SaveScan(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	m.SettingsChanged()

@@ -28,7 +28,7 @@ func TestNumberingSnapshotDiagnosesNonParticipatingEntries(t *testing.T) {
 	if err := os.Remove(filepath.Join(root, "added.txt")); err != nil {
 		t.Fatal(err)
 	}
-	persisted, err := l.Numbering(b.ID)
+	persisted, err := l.Numbering(t.Context(), b.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestNumberingRejectsInvalidPreviewFormat(t *testing.T) {
 			if err != nil || after != before {
 				t.Fatal("invalid preview changed files", err)
 			}
-			saved, err := l.Numbering(b.ID)
+			saved, err := l.Numbering(t.Context(), b.ID)
 			if err != nil || saved.Status != "preview" || saved.Fingerprint != tc.raw {
 				t.Fatal("invalid preview was rewritten", saved, err)
 			}

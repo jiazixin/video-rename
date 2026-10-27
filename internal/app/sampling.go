@@ -10,7 +10,7 @@ import (
 func (a *App) samplingRoutes(mux *router) {
 	store := sampling.Store{DB: a.DB}
 	mux.HandleFunc("GET /api/sampling", func(w http.ResponseWriter, r *http.Request) {
-		value, err := store.Get()
+		value, err := store.Get(r.Context())
 		if err != nil {
 			writeError(w, r, err)
 			return
@@ -22,7 +22,7 @@ func (a *App) samplingRoutes(mux *router) {
 		if !decode(w, r, &value) {
 			return
 		}
-		if err := store.Save(value); err != nil {
+		if err := store.Save(r.Context(), value); err != nil {
 			writeError(w, r, err)
 			return
 		}

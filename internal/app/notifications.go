@@ -25,14 +25,14 @@ func (a *App) notificationRoutes(mux *router) {
 			invalid(w, r, "timezone", "invalid_timezone")
 			return
 		}
-		if _, err := a.DB.Exec("UPDATE notification_preferences SET timezone=? WHERE id=1 AND timezone<>?", input.Timezone, input.Timezone); err != nil {
+		if _, err := a.DB.ExecContext(r.Context(), "UPDATE notification_preferences SET timezone=? WHERE id=1 AND timezone<>?", input.Timezone, input.Timezone); err != nil {
 			writeError(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("GET /api/notifications", func(w http.ResponseWriter, r *http.Request) {
-		v, err := a.Notifications.List()
+		v, err := a.Notifications.List(r.Context())
 		if err != nil {
 			writeError(w, r, err)
 			return
@@ -45,14 +45,14 @@ func (a *App) notificationRoutes(mux *router) {
 			return
 		}
 		v.Kind = r.PathValue("kind")
-		if err := a.Notifications.Save(v); err != nil {
+		if err := a.Notifications.Save(r.Context(), v); err != nil {
 			writeError(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("POST /api/notifications/{kind}/test", func(w http.ResponseWriter, r *http.Request) {
-		if err := a.Notifications.Test(r.PathValue("kind")); err != nil {
+		if err := a.Notifications.Test(r.Context(), r.PathValue("kind")); err != nil {
 			writeError(w, r, err)
 			return
 		}
@@ -70,7 +70,7 @@ func (a *App) notificationRoutes(mux *router) {
 			send(w, http.StatusOK, v)
 			return
 		}
-		v, err := a.Notifications.History()
+		v, err := a.Notifications.History(r.Context())
 		if err != nil {
 			writeError(w, r, err)
 			return

@@ -2,6 +2,7 @@
 package systemsettings
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
@@ -68,8 +69,8 @@ func ReadBatchLimits(row interface{ Scan(...any) error }) (BatchLimits, error) {
 }
 
 // BatchLimits returns the stored batch limits.
-func (s Store) BatchLimits() (BatchLimits, error) {
-	return ReadBatchLimits(s.DB.Read().QueryRow("SELECT policy FROM system_settings WHERE id=1"))
+func (s Store) BatchLimits(ctx context.Context) (BatchLimits, error) {
+	return ReadBatchLimits(s.DB.Read().QueryRowContext(ctx, "SELECT policy FROM system_settings WHERE id=1"))
 }
 
 // Default returns the default settings.
@@ -116,10 +117,10 @@ func (s Settings) Bytes() int64 { return s.CacheGB * 1000000000 }
 type Store struct{ DB *storage.Store }
 
 // Get returns the stored settings.
-func (s Store) Get() (Settings, error) {
+func (s Store) Get(ctx context.Context) (Settings, error) {
 	v := Default()
 	var policy string
-	err := s.DB.Read().QueryRow("SELECT extract_workers,cache_gb,stability_seconds,policy FROM system_settings WHERE id=1").Scan(&v.ExtractWorkers, &v.CacheGB, &v.StabilitySeconds, &policy)
+	err := s.DB.Read().QueryRowContext(ctx, "SELECT extract_workers,cache_gb,stability_seconds,policy FROM system_settings WHERE id=1").Scan(&v.ExtractWorkers, &v.CacheGB, &v.StabilitySeconds, &policy)
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, nil
 	}
@@ -135,16 +136,16 @@ func (s Store) Get() (Settings, error) {
 }
 
 // Save validates and stores v.
-func (s Store) Save(v Settings) error {
+func (s Store) Save(ctx context.Context, v Settings) error {
 	if err := v.Validate(); err != nil {
 		return err
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	policy, err := loadPolicy(tx.QueryRow("SELECT policy FROM system_settings WHERE id=1"))
+	policy, err := loadPolicy(tx.QueryRowContext(ctx, "SELECT policy FROM system_settings WHERE id=1"))
 	if err != nil {
 		return err
 	}
@@ -154,7 +155,7 @@ func (s Store) Save(v Settings) error {
 	if err != nil {
 		return err
 	}
-	if _, err = tx.Exec("INSERT INTO system_settings(id,extract_workers,cache_gb,stability_seconds,policy) VALUES(1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET extract_workers=excluded.extract_workers,cache_gb=excluded.cache_gb,stability_seconds=excluded.stability_seconds,policy=excluded.policy", v.ExtractWorkers, v.CacheGB, v.StabilitySeconds, string(raw)); err != nil {
+	if _, err = tx.ExecContext(ctx, "INSERT INTO system_settings(id,extract_workers,cache_gb,stability_seconds,policy) VALUES(1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET extract_workers=excluded.extract_workers,cache_gb=excluded.cache_gb,stability_seconds=excluded.stability_seconds,policy=excluded.policy", v.ExtractWorkers, v.CacheGB, v.StabilitySeconds, string(raw)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -162,10 +163,10 @@ func (s Store) Save(v Settings) error {
 
 // Numbering returns the persisted numbering rules; empty or missing values
 // use the defaults until the user saves rules.
-func (s Store) Numbering() (domain.NumberingSettings, error) {
+func (s Store) Numbering(ctx context.Context) (domain.NumberingSettings, error) {
 	v := domain.DefaultNumberingSettings()
 	var raw string
-	err := s.DB.Read().QueryRow("SELECT numbering FROM system_settings WHERE id=1").Scan(&raw)
+	err := s.DB.Read().QueryRowContext(ctx, "SELECT numbering FROM system_settings WHERE id=1").Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, nil
 	}
@@ -182,7 +183,7 @@ func (s Store) Numbering() (domain.NumberingSettings, error) {
 }
 
 // SaveNumbering validates and stores the numbering settings v.
-func (s Store) SaveNumbering(v domain.NumberingSettings) error {
+func (s Store) SaveNumbering(ctx context.Context, v domain.NumberingSettings) error {
 	if err := domain.ValidateNumberingSettings(v); err != nil {
 		return err
 	}
@@ -190,16 +191,16 @@ func (s Store) SaveNumbering(v domain.NumberingSettings) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.DB.Exec("INSERT INTO system_settings(id,extract_workers,cache_gb,stability_seconds,numbering) VALUES(1,8,10,30,?) ON CONFLICT(id) DO UPDATE SET numbering=excluded.numbering", string(raw))
+	_, err = s.DB.ExecContext(ctx, "INSERT INTO system_settings(id,extract_workers,cache_gb,stability_seconds,numbering) VALUES(1,8,10,30,?) ON CONFLICT(id) DO UPDATE SET numbering=excluded.numbering", string(raw))
 	return err
 }
 
 // FixedPrompt returns the stored hard-constraint suffix; empty or missing
 // values fall back to the default text, which includes the naming-failure
 // output protocol.
-func (s Store) FixedPrompt() (string, error) {
+func (s Store) FixedPrompt(ctx context.Context) (string, error) {
 	var v string
-	err := s.DB.Read().QueryRow("SELECT fixed_prompt FROM system_settings WHERE id=1").Scan(&v)
+	err := s.DB.Read().QueryRowContext(ctx, "SELECT fixed_prompt FROM system_settings WHERE id=1").Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DefaultFixedPrompt, nil
 	}
@@ -214,13 +215,13 @@ func (s Store) FixedPrompt() (string, error) {
 
 // SaveFixedPrompt stores the fixed prompt appended to every request and returns
 // it trimmed.
-func (s Store) SaveFixedPrompt(v string) (string, error) {
+func (s Store) SaveFixedPrompt(ctx context.Context, v string) (string, error) {
 	v = strings.TrimSpace(v)
 	if v == "" || len(v) > 16000 {
 		return "", domain.InvalidField("fixed_prompt", "invalid_length")
 	}
-	if _, err := s.DB.Exec("INSERT INTO system_settings(id,extract_workers,cache_gb,stability_seconds,numbering,fixed_prompt) VALUES(1,8,10,30,'',?) ON CONFLICT(id) DO UPDATE SET fixed_prompt=excluded.fixed_prompt", v); err != nil {
+	if _, err := s.DB.ExecContext(ctx, "INSERT INTO system_settings(id,extract_workers,cache_gb,stability_seconds,numbering,fixed_prompt) VALUES(1,8,10,30,'',?) ON CONFLICT(id) DO UPDATE SET fixed_prompt=excluded.fixed_prompt", v); err != nil {
 		return "", err
 	}
-	return s.FixedPrompt()
+	return s.FixedPrompt(ctx)
 }

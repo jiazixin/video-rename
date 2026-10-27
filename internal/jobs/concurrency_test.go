@@ -21,7 +21,7 @@ func TestRunningBatchConcurrencyChangesAndCancellation(t *testing.T) {
 		}
 	}
 	store := models.Store{DB: m.DB}
-	profile, err := store.Get(1)
+	profile, err := store.Get(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestRunningBatchConcurrencyChangesAndCancellation(t *testing.T) {
 		t.Helper()
 		profile.Workers = workers
 		var err error
-		profile, err = store.Save(profile)
+		profile, err = store.Save(t.Context(), profile)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -120,7 +120,7 @@ func TestRunningBatchConcurrencyChangesAndCancellation(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if err := m.Cancel(id); err != nil {
+	if err := m.Cancel(ctx, id); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -145,12 +145,12 @@ func TestDeletedModelUsesBatchConcurrencySnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := models.Store{DB: m.DB}
-	profile, err := store.Get(1)
+	profile, err := store.Get(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	profile.Workers = 3
-	profile, err = store.Save(profile)
+	profile, err = store.Save(t.Context(), profile)
 	if err != nil {
 		t.Fatal(err)
 	}

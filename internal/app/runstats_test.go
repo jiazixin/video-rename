@@ -13,11 +13,11 @@ import (
 
 func runsAnalyticsApp(t *testing.T) *App {
 	t.Helper()
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { a.Close() })
+	t.Cleanup(func() { shutdown(t, a) })
 	base := time.Date(2026, 9, 23, 8, 0, 0, 0, time.UTC)
 	if _, err := a.DB.Exec(`INSERT INTO runs(id,source,targets,recursive,status,created,started,finished,discovered,done,skipped,failed,request_key,config_summary,model_config_id,model_config_title) VALUES(1,'manual','[]',1,'completed','2026-09-23T08:00:00Z','2026-09-23T08:00:00Z','2026-09-23T09:00:00Z',1,1,0,0,'k','{"model":"vision","provider":"custom","protocol":"openai"}',1,'默认')`); err != nil {
 		t.Fatal(err)

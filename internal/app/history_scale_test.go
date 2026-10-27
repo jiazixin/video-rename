@@ -37,7 +37,7 @@ type historyScalePage struct {
 // starting workers. The fallback successes are distributed throughout the batch.
 func historyScaleFixture(tb testing.TB) (*App, []historyScaleRecord) {
 	tb.Helper()
-	db, err := storage.Open(filepath.Join(tb.TempDir(), "history.sqlite"))
+	db, err := storage.Open(tb.Context(), filepath.Join(tb.TempDir(), "history.sqlite"))
 	if err != nil {
 		tb.Fatal(err)
 	}

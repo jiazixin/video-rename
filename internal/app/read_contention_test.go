@@ -26,29 +26,29 @@ func TestSettingsReloadReadsWhileWriterBusy(t *testing.T) {
 }
 
 func testSettingsReloadReadsWhileWriterBusy(t *testing.T, renewalDue bool) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	settings := systemsettings.Default()
 	settings.ExtractWorkers, settings.CacheGB, settings.StabilitySeconds = 3, 2, 17
 	store := systemsettings.Store{DB: a.DB}
-	if err := store.Save(settings); err != nil {
+	if err := store.Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	numbering := domain.DefaultNumberingSettings()
 	numbering.Image.Prefix, numbering.Audio.Prefix, numbering.Shared = "IMAGE_", "AUDIO_", true
-	if err := store.SaveNumbering(numbering); err != nil {
+	if err := store.SaveNumbering(t.Context(), numbering); err != nil {
 		t.Fatal(err)
 	}
 	modelStore := models.Store{DB: a.DB}
-	profile, err := modelStore.Get(1)
+	profile, err := modelStore.Get(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	profile.BaseURL, profile.Model, profile.Title = "http://localhost/v1", "committed-model", "committed profile"
-	profile, err = modelStore.Save(profile)
+	profile, err = modelStore.Save(t.Context(), profile)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,7 +9,7 @@ import (
 )
 
 func TestReadPoolIsolationAndWriterAvailability(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "state.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

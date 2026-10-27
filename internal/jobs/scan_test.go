@@ -31,7 +31,7 @@ func TestQueueFilesAtomicCountersAndDeduplication(t *testing.T) {
 			}
 			var files []library.Entry
 			for _, entry := range page.Items {
-				e, err := m.Library.IndexedEntry(entry.ID)
+				e, err := m.Library.IndexedEntry(t.Context(), entry.ID)
 				if err != nil {
 					t.Fatal(err)
 				}

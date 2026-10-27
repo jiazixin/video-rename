@@ -1,6 +1,7 @@
 package systemsettings
 
 import (
+	"context"
 	"encoding/json/v2"
 	"strings"
 	"unicode/utf8"
@@ -38,8 +39,8 @@ func NormalizeFailureKeywords(values []string) ([]string, error) {
 }
 
 // FailureKeywords returns the stored naming failure keywords.
-func (s Store) FailureKeywords() ([]string, error) {
-	policy, err := loadPolicy(s.DB.Read().QueryRow("SELECT policy FROM system_settings WHERE id=1"))
+func (s Store) FailureKeywords(ctx context.Context) ([]string, error) {
+	policy, err := loadPolicy(s.DB.Read().QueryRowContext(ctx, "SELECT policy FROM system_settings WHERE id=1"))
 	if err != nil {
 		return nil, err
 	}
@@ -51,17 +52,17 @@ func (s Store) FailureKeywords() ([]string, error) {
 
 // SaveFailureKeywords normalizes and stores values and returns the stored
 // keywords.
-func (s Store) SaveFailureKeywords(values []string) ([]string, error) {
+func (s Store) SaveFailureKeywords(ctx context.Context, values []string) ([]string, error) {
 	keywords, err := NormalizeFailureKeywords(values)
 	if err != nil {
 		return nil, err
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
-	policy, err := loadPolicy(tx.QueryRow("SELECT policy FROM system_settings WHERE id=1"))
+	policy, err := loadPolicy(tx.QueryRowContext(ctx, "SELECT policy FROM system_settings WHERE id=1"))
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +72,7 @@ func (s Store) SaveFailureKeywords(values []string) ([]string, error) {
 		return nil, err
 	}
 	d := Default()
-	if _, err = tx.Exec("INSERT INTO system_settings(id,extract_workers,cache_gb,stability_seconds,policy) VALUES(1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET policy=excluded.policy", d.ExtractWorkers, d.CacheGB, d.StabilitySeconds, string(raw)); err != nil {
+	if _, err = tx.ExecContext(ctx, "INSERT INTO system_settings(id,extract_workers,cache_gb,stability_seconds,policy) VALUES(1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET policy=excluded.policy", d.ExtractWorkers, d.CacheGB, d.StabilitySeconds, string(raw)); err != nil {
 		return nil, err
 	}
 	if err = tx.Commit(); err != nil {

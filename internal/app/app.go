@@ -1,4 +1,10 @@
 // Package app assembles the HTTP service. Domain logic lives in its owning package.
+//
+// Lifecycle: New opens the stores and recovers interrupted work without
+// starting goroutines. Serve binds the listener, then calls Start to launch the
+// background workers, and calls Shutdown after the HTTP server has drained.
+// Work started by requests (marks, numbering, refreshes, manual scans) is
+// detached from its request and cancelled by Shutdown.
 package app
 
 import (
@@ -24,7 +30,8 @@ import (
 )
 
 // App is the video-rename service with its stores, managers and background
-// workers.
+// workers. markMu guards markJobs and markClosed; numberingMu guards
+// numberingJobs and numberingClosed.
 type App struct {
 	logger          *slog.Logger
 	version         string
@@ -35,8 +42,8 @@ type App struct {
 	Jobs            *jobs.Manager
 	Scheduler       *scheduler.Scheduler
 	Auth            *auth.Auth
-	ctx             context.Context
-	cancel          context.CancelFunc
+	stop            context.CancelFunc
+	closeStores     func() error
 	wg              sync.WaitGroup
 	settingsMu      sync.Mutex
 	markMu          sync.Mutex
@@ -50,71 +57,119 @@ type App struct {
 }
 
 // New opens the database and builds every component of the service from cfg.
-func New(cfg *config.Config, logger *slog.Logger) (*App, error) {
-	db, err := storage.Open(cfg.DatabasePath())
+func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, error) {
+	db, err := storage.Open(ctx, cfg.DatabasePath())
 	if err != nil {
 		return nil, err
 	}
-	l, err := library.New(db, cfg.Path)
+	l, err := library.New(ctx, db, cfg.Path)
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
-	j, err := jobs.New(db, l, cfg, logger)
+	j, err := jobs.New(ctx, db, l, cfg, logger)
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
 	s := &scheduler.Scheduler{DB: db, Jobs: j}
-	if err = s.ResetNext(time.Now()); err != nil {
+	if err = s.ResetNext(ctx, time.Now()); err != nil {
 		j.Cache.Close()
 		db.Close()
 		return nil, err
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	l.RefreshContext = ctx
-	return &App{logger: logger, Notifications: notifications.New(db, logger), DB: db, Library: l, Scanner: libraryscan.New(l, systemsettings.Store{DB: db}), Jobs: j, Scheduler: s, Auth: auth.New(db, cfg.Auth), ctx: ctx, cancel: cancel}, nil
+	return &App{logger: logger, Notifications: notifications.New(db, logger), DB: db, Library: l, Scanner: libraryscan.New(l, systemsettings.Store{DB: db}), Jobs: j, Scheduler: s, Auth: auth.New(db, cfg.Auth),
+		closeStores: sync.OnceValue(func() error { return errors.Join(j.Cache.Close(), db.Close()) })}, nil
 }
 
-// Start starts the background workers.
-func (a *App) Start() {
-	a.wg.Go(func() { a.Notifications.Loop(a.ctx) })
-	a.wg.Go(func() { a.Jobs.Loop(a.ctx) })
-	a.wg.Go(func() { a.Scheduler.Loop(a.ctx) })
-	a.wg.Go(func() { a.Scanner.Loop(a.ctx) })
+var errStarted = errors.New("app is already started")
+
+// Start launches the background workers under ctx; Shutdown stops them.
+func (a *App) Start(ctx context.Context) error {
+	if a.stop != nil {
+		return errStarted
+	}
+	ctx, a.stop = context.WithCancel(ctx)
+	workers := []struct {
+		name string
+		run  func(context.Context) error
+	}{
+		{"notifications", a.Notifications.Run},
+		{"jobs", a.Jobs.Run},
+		{"scheduler", a.Scheduler.Run},
+		{"library_scan", a.Scanner.Run},
+	}
+	for _, w := range workers {
+		a.wg.Go(func() {
+			if err := w.run(ctx); err != nil {
+				a.logger.Error("worker_failed", "worker", w.name, "error", err)
+			}
+		})
+	}
+	return nil
 }
 
-// Close stops the background workers and closes every component.
-func (a *App) Close() error {
+// Shutdown cancels request-started work and the background workers, waits for
+// them and closes every component; later calls only repeat the result. If ctx
+// ends first it returns its cause and leaves the stores open for the work that
+// is still stopping.
+func (a *App) Shutdown(ctx context.Context) error {
 	a.markMu.Lock()
 	a.markClosed = true
+	for _, job := range a.markJobs {
+		if job.cancel != nil {
+			job.cancel()
+		}
+	}
 	a.markMu.Unlock()
 	a.numberingMu.Lock()
 	a.numberingClosed = true
+	for _, job := range a.numberingJobs {
+		if job.cancel != nil {
+			job.cancel()
+		}
+	}
 	a.numberingMu.Unlock()
-	a.cancel()
-	a.Scanner.Close()
-	a.numberingWG.Wait()
-	a.markWG.Wait()
-	a.wg.Wait()
-	a.Library.Close()
-	a.Jobs.Cache.Close()
-	return a.DB.Close()
+	if a.stop != nil {
+		a.stop()
+	}
+	stopped := make(chan struct{})
+	// The waiter only observes the owned goroutines below and ends with them.
+	go func() {
+		defer close(stopped)
+		a.Scanner.Close()
+		a.numberingWG.Wait()
+		a.markWG.Wait()
+		a.wg.Wait()
+		a.Library.Close()
+	}()
+	select {
+	case <-stopped:
+	case <-ctx.Done():
+		return fmt.Errorf("wait for background work: %w", context.Cause(ctx))
+	}
+	return a.closeStores()
 }
 
-// shutdownTimeout bounds graceful HTTP shutdown before connections are closed.
-const shutdownTimeout = 10 * time.Second
+const (
+	// shutdownTimeout bounds graceful HTTP shutdown before connections are closed.
+	shutdownTimeout = 10 * time.Second
+	// workerStopTimeout bounds waiting for background work after HTTP shutdown.
+	workerStopTimeout = 30 * time.Second
+)
 
 // Serve listens before starting background work and shuts down when ctx ends.
 func Serve(ctx context.Context, cfg config.Config, logger *slog.Logger, version string) (err error) {
-	a, err := New(&cfg, logger)
+	a, err := New(ctx, &cfg, logger)
 	if err != nil {
 		return err
 	}
 	a.version = version
 	defer func() {
-		if closeErr := a.Close(); closeErr != nil {
-			err = errors.Join(err, fmt.Errorf("close app: %w", closeErr))
+		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workerStopTimeout)
+		defer cancel()
+		if stopErr := a.Shutdown(stopCtx); stopErr != nil {
+			err = errors.Join(err, fmt.Errorf("shut down app: %w", stopErr))
 		}
 	}()
 	srv := &http.Server{
@@ -132,7 +187,10 @@ func Serve(ctx context.Context, cfg config.Config, logger *slog.Logger, version 
 		return fmt.Errorf("http listen failed: %w", err)
 	}
 	defer listener.Close()
-	a.Start()
+	// Workers keep running while HTTP drains; the deferred Shutdown stops them.
+	if err := a.Start(context.WithoutCancel(ctx)); err != nil {
+		return err
+	}
 	logger.Info("service_listening", "listen", listener.Addr().String())
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(listener) }()

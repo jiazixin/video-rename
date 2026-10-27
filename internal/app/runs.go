@@ -85,9 +85,9 @@ func (a *App) runRoutes(api *router) {
 			}
 			var err error
 			if action == "pause" {
-				err = a.Jobs.Pause(id)
+				err = a.Jobs.Pause(r.Context(), id)
 			} else {
-				err = a.Jobs.Resume(id)
+				err = a.Jobs.Resume(r.Context(), id)
 			}
 			if err != nil {
 				writeError(w, r, err)
@@ -97,7 +97,7 @@ func (a *App) runRoutes(api *router) {
 		})
 	}
 	api.HandleFunc("POST /api/runs/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
-		if err := a.Jobs.Cancel(number(r.PathValue("id"))); err != nil {
+		if err := a.Jobs.Cancel(r.Context(), number(r.PathValue("id"))); err != nil {
 			writeError(w, r, err)
 			return
 		}

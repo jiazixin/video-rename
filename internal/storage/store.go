@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"context"
 	"crypto/cipher"
 	"database/sql"
 	"errors"
@@ -26,7 +27,7 @@ type Store struct {
 }
 
 // Open opens or creates the database at path and applies its schema.
-func Open(path string) (*Store, error) {
+func Open(ctx context.Context, path string) (*Store, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -82,11 +83,11 @@ func Open(path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	s := &Store{DB: db, lock: lock}
-	if err = s.initialize(); err != nil {
+	if err = s.initialize(ctx); err != nil {
 		s.Close()
 		return nil, err
 	}
-	if _, err = db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+	if _, err = db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
 		s.Close()
 		return nil, err
 	}
@@ -94,7 +95,7 @@ func Open(path string) (*Store, error) {
 		s.Close()
 		return nil, err
 	}
-	if err = s.initSecret(path + ".key"); err != nil {
+	if err = s.initSecret(ctx, path+".key"); err != nil {
 		s.Close()
 		return nil, err
 	}
@@ -105,7 +106,7 @@ func Open(path string) (*Store, error) {
 	if err == nil {
 		s.read.SetMaxOpenConns(4)
 		s.read.SetMaxIdleConns(4)
-		err = s.read.Ping()
+		err = s.read.PingContext(ctx)
 	}
 	if err != nil {
 		s.Close()
@@ -133,3 +134,14 @@ func (s *Store) Close() error {
 
 // Now returns the current UTC time in RFC 3339 format with nanoseconds.
 func Now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
+
+// recordTimeout bounds writes that record the outcome of work after its
+// context has ended.
+const recordTimeout = 30 * time.Second
+
+// Detach returns a context for recording the outcome of work whose ctx may
+// already be cancelled: a cancelled run, interrupted rename or failed delivery
+// must still persist its result. It keeps ctx values and bounds the writes.
+func Detach(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
+}

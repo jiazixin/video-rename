@@ -12,7 +12,7 @@ import (
 
 func analyticsDB(t *testing.T) *storage.Store {
 	t.Helper()
-	db, err := storage.Open(filepath.Join(t.TempDir(), "runstats.sqlite"))
+	db, err := storage.Open(t.Context(), filepath.Join(t.TempDir(), "runstats.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,7 +7,7 @@ import (
 )
 
 func TestLargeLibraryQueriesSeekByEntry(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "index.sqlite"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "index.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestLargeLibraryQueriesSeekByEntry(t *testing.T) {
 }
 
 func TestCandidateDeletionDoesNotScanForeignKeyTables(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "foreign-keys.sqlite"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "foreign-keys.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestCandidateDeletionDoesNotScanForeignKeyTables(t *testing.T) {
 }
 
 func TestAnalysisTimestampPreservesMillisecondBoundaries(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "time.sqlite"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "time.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

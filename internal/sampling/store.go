@@ -2,6 +2,7 @@
 package sampling
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
@@ -14,9 +15,9 @@ import (
 type Store struct{ DB *storage.Store }
 
 // Get returns the stored frame settings.
-func (s Store) Get() (config.FrameSettings, error) {
+func (s Store) Get(ctx context.Context) (config.FrameSettings, error) {
 	var raw string
-	err := s.DB.QueryRow("SELECT settings FROM sampling_settings WHERE id=1").Scan(&raw)
+	err := s.DB.QueryRowContext(ctx, "SELECT settings FROM sampling_settings WHERE id=1").Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		value := config.DefaultFrameSettings()
 		return value, value.Validate()
@@ -37,7 +38,7 @@ func Parse(raw string) (config.FrameSettings, error) {
 }
 
 // Save validates and stores value.
-func (s Store) Save(value config.FrameSettings) error {
+func (s Store) Save(ctx context.Context, value config.FrameSettings) error {
 	if err := value.Validate(); err != nil {
 		return err
 	}
@@ -45,6 +46,6 @@ func (s Store) Save(value config.FrameSettings) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.DB.Exec("INSERT INTO sampling_settings(id,settings) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET settings=excluded.settings", string(raw))
+	_, err = s.DB.ExecContext(ctx, "INSERT INTO sampling_settings(id,settings) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET settings=excluded.settings", string(raw))
 	return err
 }

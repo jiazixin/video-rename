@@ -13,13 +13,13 @@ import (
 
 func TestFailureKeywordsDefaultsEmptyPersistenceAndRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "keywords.sqlite")
-	db, err := storage.Open(path)
+	db, err := storage.Open(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { db.Close() }()
 	store := Store{DB: db}
-	got, err := store.FailureKeywords()
+	got, err := store.FailureKeywords(t.Context())
 	if err != nil || !slices.Equal(got, []string{"命名失败", "拒绝", "无法完成", "sorry"}) {
 		t.Fatal(got, err)
 	}
@@ -27,25 +27,25 @@ func TestFailureKeywordsDefaultsEmptyPersistenceAndRestart(t *testing.T) {
 	if !slices.Equal(DefaultFailureKeywords(), []string{"命名失败", "拒绝", "无法完成", "sorry"}) {
 		t.Fatal("default list shared mutable memory")
 	}
-	if err := store.Save(Default()); err != nil {
+	if err := store.Save(t.Context(), Default()); err != nil {
 		t.Fatal(err)
 	}
 	for _, raw := range []string{`{}`, `{"failure_keywords":null}`} {
 		if _, err := db.Exec("UPDATE system_settings SET policy=?", raw); err != nil {
 			t.Fatal(err)
 		}
-		got, err := store.FailureKeywords()
+		got, err := store.FailureKeywords(t.Context())
 		if err != nil || !slices.Equal(got, DefaultFailureKeywords()) {
 			t.Fatalf("missing/null did not use defaults: %s %v %v", raw, got, err)
 		}
 	}
-	if saved, err := store.SaveFailureKeywords([]string{}); err != nil || saved == nil || len(saved) != 0 {
+	if saved, err := store.SaveFailureKeywords(t.Context(), []string{}); err != nil || saved == nil || len(saved) != 0 {
 		t.Fatalf("empty save: %v %v", saved, err)
 	}
-	if err := store.Save(Default()); err != nil {
+	if err := store.Save(t.Context(), Default()); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveScan(DefaultScanSettings()); err != nil {
+	if err := store.SaveScan(t.Context(), DefaultScanSettings()); err != nil {
 		t.Fatal(err)
 	}
 	var raw string
@@ -62,19 +62,19 @@ func TestFailureKeywordsDefaultsEmptyPersistenceAndRestart(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	db, err = storage.Open(path)
+	db, err = storage.Open(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	store = Store{DB: db}
-	got, err = store.FailureKeywords()
+	got, err = store.FailureKeywords(t.Context())
 	if err != nil || got == nil || len(got) != 0 {
 		t.Fatalf("empty rules lost after restart: %v %v", got, err)
 	}
-	if _, err = store.SaveFailureKeywords(DefaultFailureKeywords()); err != nil {
+	if _, err = store.SaveFailureKeywords(t.Context(), DefaultFailureKeywords()); err != nil {
 		t.Fatal(err)
 	}
-	got, err = store.FailureKeywords()
+	got, err = store.FailureKeywords(t.Context())
 	if err != nil || !slices.Equal(got, DefaultFailureKeywords()) {
 		t.Fatalf("restore defaults failed: %v %v", got, err)
 	}
@@ -100,7 +100,7 @@ func TestFailureKeywordsNormalizationAndValidation(t *testing.T) {
 }
 
 func TestConcurrentFailureKeywordScanAndProcessingSaves(t *testing.T) {
-	db, err := storage.Open(filepath.Join(t.TempDir(), "policy.sqlite"))
+	db, err := storage.Open(t.Context(), filepath.Join(t.TempDir(), "policy.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,44 +113,44 @@ func TestConcurrentFailureKeywordScanAndProcessingSaves(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 5 {
 		wg.Go(func() {
-			if _, err := store.SaveFailureKeywords(keywords); err != nil {
+			if _, err := store.SaveFailureKeywords(t.Context(), keywords); err != nil {
 				t.Error(err)
 			}
 		})
 		wg.Go(func() {
-			if err := store.SaveScan(scan); err != nil {
+			if err := store.SaveScan(t.Context(), scan); err != nil {
 				t.Error(err)
 			}
 		})
 		wg.Go(func() {
-			if err := store.Save(processing); err != nil {
+			if err := store.Save(t.Context(), processing); err != nil {
 				t.Error(err)
 			}
 		})
 	}
 	wg.Wait()
-	gotKeywords, err := store.FailureKeywords()
+	gotKeywords, err := store.FailureKeywords(t.Context())
 	if err != nil || !slices.Equal(gotKeywords, keywords) {
 		t.Fatalf("lost keyword save: %v %v", gotKeywords, err)
 	}
-	gotScan, err := store.Scan()
+	gotScan, err := store.Scan(t.Context())
 	if err != nil || gotScan.Enabled != scan.Enabled || gotScan.IntervalMinutes != scan.IntervalMinutes || !slices.Equal(gotScan.Targets, scan.Targets) {
 		t.Fatalf("lost scan save: %+v %v", gotScan, err)
 	}
-	gotProcessing, err := store.Get()
+	gotProcessing, err := store.Get(t.Context())
 	if err != nil || gotProcessing != processing {
 		t.Fatalf("lost processing save: %+v %v", gotProcessing, err)
 	}
 	if _, err := db.Exec(`UPDATE system_settings SET policy='{"failure_keywords":[" "]}'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.FailureKeywords(); err == nil {
+	if _, err := store.FailureKeywords(t.Context()); err == nil {
 		t.Fatal("invalid stored keywords silently accepted")
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.FailureKeywords(); err == nil {
+	if _, err := store.FailureKeywords(t.Context()); err == nil {
 		t.Fatal("closed database returned defaults")
 	}
 }

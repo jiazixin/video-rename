@@ -140,14 +140,14 @@ JOIN entries e ON e.identity=m.identity AND e.size=m.size AND e.mtime=m.mtime WH
 
 func TestProcessedMarksBatchValidationFailureKeepsValidPeers(t *testing.T) {
 	l, root, ids := markBatchFixture(t, 4)
-	changed, err := l.IndexedEntry(ids[1])
+	changed, err := l.IndexedEntry(t.Context(), ids[1])
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, changed.Name), []byte("changed file has a different size"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	l.Busy = func(id int64) bool { return id == ids[0] }
+	l.Busy = func(_ context.Context, id int64) bool { return id == ids[0] }
 	r := l.SetProcessedWithProgress(t.Context(), ids, true, func(result MarkResult) {
 		assertDurableMarkProgress(t, l, result)
 	})
@@ -177,12 +177,12 @@ func TestProcessedMarksDuplicateMissingTargetsFailOnce(t *testing.T) {
 
 func TestProcessedMarksRevalidateMediaTypeBeforeCommit(t *testing.T) {
 	l, root, ids := markBatchFixture(t, 3)
-	changed, err := l.IndexedEntry(ids[1])
+	changed, err := l.IndexedEntry(t.Context(), ids[1])
 	if err != nil {
 		t.Fatal(err)
 	}
 	const unsupported = "renamed.txt"
-	l.Busy = func(id int64) bool {
+	l.Busy = func(_ context.Context, id int64) bool {
 		if id == ids[0] {
 			// Every target is collected before validation starts. Simulate another
 			// operation changing a later target while it waits in the batch.
@@ -212,7 +212,7 @@ func TestProcessedMarksCancellationDuringBatchValidation(t *testing.T) {
 	l, _, ids := markBatchFixture(t, 8)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	l.Busy = func(id int64) bool {
+	l.Busy = func(_ context.Context, id int64) bool {
 		if id == ids[4] {
 			cancel()
 		}
@@ -314,12 +314,12 @@ func TestProcessedMarksRecursiveAndPersistent(t *testing.T) {
 		t.Fatal("new file inherited mark")
 	}
 	l.DB.Close()
-	db, err := storage.Open(dbpath)
+	db, err := storage.Open(t.Context(), dbpath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	l, err = New(db, root)
+	l, err = New(t.Context(), db, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,7 +409,7 @@ func TestProcessedMarksPreserveHistoryAndValidateIdentity(t *testing.T) {
 	if _, err = l.Restore(t.Context(), op.ID, "restore-after-unmark"); err != nil {
 		t.Fatal(err)
 	}
-	l.Busy = func(int64) bool { return true }
+	l.Busy = func(context.Context, int64) bool { return true }
 	if r = l.SetProcessed(t.Context(), []int64{a.ID}, true); r.Failed != 1 {
 		t.Fatal("busy file accepted")
 	}

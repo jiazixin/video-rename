@@ -98,9 +98,9 @@ func scanPlan(row interface{ Scan(...any) error }) (p Plan, err error) {
 const columns = "id,name,targets,recursive,kind,expression,timezone,enabled,next,last,version,model_config_id,task"
 
 // List returns all plans.
-func (s *Scheduler) List() ([]Plan, error) { return s.list(true) }
-func (s *Scheduler) list(withNames bool) ([]Plan, error) {
-	rows, err := s.DB.Query("SELECT " + columns + " FROM schedules ORDER BY id DESC")
+func (s *Scheduler) List(ctx context.Context) ([]Plan, error) { return s.list(ctx, true) }
+func (s *Scheduler) list(ctx context.Context, withNames bool) ([]Plan, error) {
+	rows, err := s.DB.QueryContext(ctx, "SELECT "+columns+" FROM schedules ORDER BY id DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +121,7 @@ func (s *Scheduler) list(withNames bool) ([]Plan, error) {
 	if withNames {
 		for i := range out {
 			for _, id := range out[i].Targets {
-				out[i].TargetNames = append(out[i].TargetNames, s.Jobs.Library.DisplayPath(id))
+				out[i].TargetNames = append(out[i].TargetNames, s.Jobs.Library.DisplayPath(ctx, id))
 			}
 		}
 	}
@@ -129,11 +129,11 @@ func (s *Scheduler) list(withNames bool) ([]Plan, error) {
 }
 
 // Get returns plan id.
-func (s *Scheduler) Get(id int64) (Plan, error) {
-	p, err := scanPlan(s.DB.QueryRow("SELECT "+columns+" FROM schedules WHERE id=?", id))
+func (s *Scheduler) Get(ctx context.Context, id int64) (Plan, error) {
+	p, err := scanPlan(s.DB.QueryRowContext(ctx, "SELECT "+columns+" FROM schedules WHERE id=?", id))
 	if err == nil {
 		for _, target := range p.Targets {
-			p.TargetNames = append(p.TargetNames, s.Jobs.Library.DisplayPath(target))
+			p.TargetNames = append(p.TargetNames, s.Jobs.Library.DisplayPath(ctx, target))
 		}
 	}
 	return p, err
@@ -158,12 +158,12 @@ func (s *Scheduler) Save(ctx context.Context, p Plan) (Plan, error) {
 	} else {
 		if p.ModelConfigID == 0 {
 			var err error
-			p.ModelConfigID, err = (models.Store{DB: s.DB}).DefaultID()
+			p.ModelConfigID, err = (models.Store{DB: s.DB}).DefaultID(ctx)
 			if err != nil {
 				return p, err
 			}
 		}
-		if profile, err := (models.Store{DB: s.DB}).Get(p.ModelConfigID); err != nil {
+		if profile, err := (models.Store{DB: s.DB}).Get(ctx, p.ModelConfigID); err != nil {
 			return p, domain.InvalidField("model_config_id", "invalid").Wrap(err)
 		} else if err = profile.Validate(); err != nil {
 			return p, domain.Fail(domain.KindInvalid, "model_config_incomplete", "model configuration is incomplete").Wrap(err)
@@ -179,7 +179,7 @@ func (s *Scheduler) Save(ctx context.Context, p Plan) (Plan, error) {
 		if err != nil || e.Kind != "directory" {
 			return p, domain.InvalidField("targets", "not_directory")
 		}
-		if _, err = s.Jobs.Library.Path(id); err != nil {
+		if _, err = s.Jobs.Library.Path(ctx, id); err != nil {
 			return p, err
 		}
 	}
@@ -189,14 +189,14 @@ func (s *Scheduler) Save(ctx context.Context, p Plan) (Plan, error) {
 	}
 	p.Next = next[0]
 	raw, _ := json.Marshal(p.Targets)
-	tx, err := s.DB.Begin()
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return p, err
 	}
 	defer tx.Rollback()
 	if p.Task == "rename" {
 		var exists bool
-		if err = tx.QueryRow("SELECT EXISTS(SELECT 1 FROM model_configs WHERE id=?)", p.ModelConfigID).Scan(&exists); err != nil {
+		if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM model_configs WHERE id=?)", p.ModelConfigID).Scan(&exists); err != nil {
 			return p, err
 		}
 		if !exists {
@@ -205,19 +205,19 @@ func (s *Scheduler) Save(ctx context.Context, p Plan) (Plan, error) {
 	}
 	if p.ID == 0 {
 		var n int
-		if err = tx.QueryRow("SELECT count(*) FROM schedules").Scan(&n); err != nil {
+		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM schedules").Scan(&n); err != nil {
 			return p, err
 		}
 		if n >= 100 {
 			return p, domain.Fail(domain.KindTooMany, "schedules_full", "at most 100 schedules")
 		}
-		res, err := tx.Exec("INSERT INTO schedules(name,targets,recursive,kind,expression,timezone,enabled,next,model_config_id,task) VALUES(?,?,?,?,?,?,?,?,?,?)", p.Name, string(raw), p.Recursive, p.Kind, p.Expression, p.Timezone, p.Enabled, p.Next, p.ModelConfigID, p.Task)
+		res, err := tx.ExecContext(ctx, "INSERT INTO schedules(name,targets,recursive,kind,expression,timezone,enabled,next,model_config_id,task) VALUES(?,?,?,?,?,?,?,?,?,?)", p.Name, string(raw), p.Recursive, p.Kind, p.Expression, p.Timezone, p.Enabled, p.Next, p.ModelConfigID, p.Task)
 		if err != nil {
 			return p, err
 		}
 		p.ID, _ = res.LastInsertId()
 	} else {
-		res, err := tx.Exec("UPDATE schedules SET name=?,targets=?,recursive=?,kind=?,expression=?,timezone=?,enabled=?,next=?,model_config_id=?,task=?,version=version+1 WHERE id=? AND version=?", p.Name, string(raw), p.Recursive, p.Kind, p.Expression, p.Timezone, p.Enabled, p.Next, p.ModelConfigID, p.Task, p.ID, p.Version)
+		res, err := tx.ExecContext(ctx, "UPDATE schedules SET name=?,targets=?,recursive=?,kind=?,expression=?,timezone=?,enabled=?,next=?,model_config_id=?,task=?,version=version+1 WHERE id=? AND version=?", p.Name, string(raw), p.Recursive, p.Kind, p.Expression, p.Timezone, p.Enabled, p.Next, p.ModelConfigID, p.Task, p.ID, p.Version)
 		if err != nil {
 			return p, err
 		}
@@ -229,22 +229,22 @@ func (s *Scheduler) Save(ctx context.Context, p Plan) (Plan, error) {
 	if err = tx.Commit(); err != nil {
 		return p, err
 	}
-	return s.Get(p.ID)
+	return s.Get(ctx, p.ID)
 }
 
 // Delete deletes plan id.
-func (s *Scheduler) Delete(id int64) error {
+func (s *Scheduler) Delete(ctx context.Context, id int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.DB.Exec("DELETE FROM schedules WHERE id=?", id)
+	_, err := s.DB.ExecContext(ctx, "DELETE FROM schedules WHERE id=?", id)
 	return err
 }
 
 // ResetNext deliberately does not catch up missed runs on service restart.
-func (s *Scheduler) ResetNext(now time.Time) error {
+func (s *Scheduler) ResetNext(ctx context.Context, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	plans, err := s.list(false)
+	plans, err := s.list(ctx, false)
 	if err != nil {
 		return err
 	}
@@ -253,7 +253,7 @@ func (s *Scheduler) ResetNext(now time.Time) error {
 		if e != nil {
 			return e
 		}
-		if _, e = s.DB.Exec("UPDATE schedules SET next=? WHERE id=?", times[0], p.ID); e != nil {
+		if _, e = s.DB.ExecContext(ctx, "UPDATE schedules SET next=? WHERE id=?", times[0], p.ID); e != nil {
 			return e
 		}
 	}
@@ -265,7 +265,7 @@ func (s *Scheduler) ResetNext(now time.Time) error {
 func (s *Scheduler) Tick(ctx context.Context, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	plans, err := s.list(false)
+	plans, err := s.list(ctx, false)
 	if err != nil {
 		return err
 	}
@@ -286,17 +286,17 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) error {
 		}
 		loc, _ := time.LoadLocation(p.Timezone)
 		wall := at.In(loc).Format("2006-01-02 15:04")
-		tx, e := s.DB.Begin()
+		tx, e := s.DB.BeginTx(ctx, nil)
 		if e != nil {
 			return e
 		}
-		res, e := tx.Exec("INSERT OR IGNORE INTO schedule_ticks VALUES(?,?,?)", p.ID, wall, storage.Now())
+		res, e := tx.ExecContext(ctx, "INSERT OR IGNORE INTO schedule_ticks VALUES(?,?,?)", p.ID, wall, storage.Now())
 		if e != nil {
 			tx.Rollback()
 			return e
 		}
 		n, _ := res.RowsAffected()
-		if _, e = tx.Exec("UPDATE schedules SET next=? WHERE id=?", next[0], p.ID); e != nil {
+		if _, e = tx.ExecContext(ctx, "UPDATE schedules SET next=? WHERE id=?", next[0], p.ID); e != nil {
 			tx.Rollback()
 			return e
 		}
@@ -307,7 +307,7 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) error {
 			continue
 		}
 		var active int
-		if e = s.DB.QueryRow("SELECT count(*) FROM runs WHERE plan=? AND status IN "+domain.ActiveRunStatusesSQL, p.ID).Scan(&active); e != nil {
+		if e = s.DB.QueryRowContext(ctx, "SELECT count(*) FROM runs WHERE plan=? AND status IN "+domain.ActiveRunStatusesSQL, p.ID).Scan(&active); e != nil {
 			return e
 		}
 		message := domain.Record{Code: "schedule_triggered", Message: "triggered"}.Text()
@@ -317,29 +317,29 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) error {
 			_, e = s.Jobs.Create(ctx, jobs.Request{Task: p.Task, ModelConfigID: p.ModelConfigID, Targets: p.Targets, Recursive: p.Recursive, Key: fmt.Sprintf("plan:%d:%s", p.ID, wall)}, "schedule", p.ID)
 			if e != nil {
 				message = domain.RecordText(e)
-				if er := s.Jobs.Library.Event("failure", "schedule", 0, 0, 0, "", "", message); er != nil {
+				if er := s.Jobs.Library.Event(ctx, "failure", "schedule", 0, 0, 0, "", "", message); er != nil {
 					return er
 				}
 			}
 		}
-		if _, e = s.DB.Exec("UPDATE schedules SET last=? WHERE id=?", message, p.ID); e != nil {
+		if _, e = s.DB.ExecContext(ctx, "UPDATE schedules SET last=? WHERE id=?", message, p.ID); e != nil {
 			return e
 		}
 	}
 	return nil
 }
 
-// Loop calls Tick every second until ctx ends.
-func (s *Scheduler) Loop(ctx context.Context) {
+// Run calls Tick every second until ctx ends.
+func (s *Scheduler) Run(ctx context.Context) error {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case now := <-t.C:
 			if err := s.Tick(ctx, now); err != nil {
-				_ = s.Jobs.Library.Event("failure", "scheduler", 0, 0, 0, "", "", domain.RecordText(err))
+				_ = s.Jobs.Library.Event(ctx, "failure", "scheduler", 0, 0, 0, "", "", domain.RecordText(err))
 			}
 		}
 	}

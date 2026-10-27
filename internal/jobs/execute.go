@@ -29,7 +29,7 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 		m.mu.Unlock()
 		return
 	}
-	claim, err := m.DB.Exec("UPDATE runs SET status='scanning',started=? WHERE id=? AND status='queued'", storage.Now(), id)
+	claim, err := m.DB.ExecContext(ctx, "UPDATE runs SET status='scanning',started=? WHERE id=? AND status='queued'", storage.Now(), id)
 	if err != nil {
 		m.mu.Unlock()
 		return
@@ -39,26 +39,32 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 		m.mu.Unlock()
 		return
 	}
-	scheduleCtx, stop := context.WithCancel(ctx)
-	m.active[id] = activeRun{targets: r.Targets, cancel: cancel, control: &runControl{phase: "scanning", parent: ctx, schedule: scheduleCtx, stop: stop, changed: make(chan struct{})}}
+	m.active[id] = activeRun{targets: r.Targets, cancel: cancel, control: newRunControl()}
 	m.mu.Unlock()
 	defer func() { m.mu.Lock(); delete(m.active, id); m.mu.Unlock() }()
 
 	failAt := func(e error, target int64) {
-		if err := m.failRun(id, target, e); err != nil {
+		if ctx.Err() != nil && errors.Is(e, ctx.Err()) {
+			// A cancelled read is the cancellation itself, not a run failure.
+			if err := m.completeRun(ctx, id, true); err != nil {
+				m.logger.Error("run_failure_save_failed", "run_id", id, "error", err, "cause", e)
+			}
+			return
+		}
+		if err := m.failRun(ctx, id, target, e); err != nil {
 			m.logger.Error("run_failure_save_failed", "run_id", id, "error", err, "cause", e)
 		}
 		path, action := "", "run"
 		if target > 0 {
-			path, action = m.Library.DisplayPath(target), "scan"
+			path, action = m.Library.DisplayPath(context.WithoutCancel(ctx), target), "scan"
 		}
 		if r.Task == "extract" {
 			if target == 0 {
 				path = strings.Join(r.TargetNames, ", ")
 			}
-			m.extractionFailure(r, target, path, e)
+			m.extractionFailure(ctx, r, target, path, e)
 		} else {
-			if logErr := m.recordFailure(action, target, id, path, e); logErr != nil {
+			if logErr := m.recordFailure(ctx, action, target, id, path, e); logErr != nil {
 				m.logger.Error("run_diagnostics_save_failed", "run_id", id, "error", logErr)
 			}
 		}
@@ -70,7 +76,7 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 	}
 	var runConfig config.TaskConfig
 	var frameSnapshot string
-	if err = m.DB.QueryRow("SELECT sampling_snapshot FROM runs WHERE id=?", id).Scan(&frameSnapshot); err != nil {
+	if err = m.DB.QueryRowContext(ctx, "SELECT sampling_snapshot FROM runs WHERE id=?", id).Scan(&frameSnapshot); err != nil {
 		fail(err)
 		return
 	}
@@ -82,7 +88,7 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 	runConfig.Sampling, runConfig.Images = frames.Sampling, frames.Images
 	if r.Task != "extract" {
 		var snapshot, retryRaw string
-		if err = m.DB.QueryRow("SELECT model_snapshot,retry_snapshot FROM runs WHERE id=?", id).Scan(&snapshot, &retryRaw); err != nil {
+		if err = m.DB.QueryRowContext(ctx, "SELECT model_snapshot,retry_snapshot FROM runs WHERE id=?", id).Scan(&snapshot, &retryRaw); err != nil {
 			fail(err)
 			return
 		}
@@ -98,7 +104,7 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 		}
 		runConfig.FailureKeywords = r.retry.FailureKeywords
 	}
-	settings, err := (systemsettings.Store{DB: m.DB}).Get()
+	settings, err := (systemsettings.Store{DB: m.DB}).Get(ctx)
 	if err != nil {
 		fail(err)
 		return
@@ -107,10 +113,10 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 	// Media mounts may be slow. Validate every selected path in the worker,
 	// before creating any items, so submission never waits for media I/O.
 	for _, target := range r.Targets {
-		if _, err = m.dispatchContext(ctx, id); err != nil {
+		if err = m.waitDispatch(ctx, id); err != nil {
 			break
 		}
-		if _, err = m.Library.Path(target); err != nil {
+		if _, err = m.Library.Path(ctx, target); err != nil {
 			failAt(err, target)
 			return
 		}
@@ -125,7 +131,7 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 		}
 	}
 	var pending int
-	if e := m.DB.QueryRow("SELECT count(*) FROM run_items WHERE run=? AND status='queued'", id).Scan(&pending); e != nil {
+	if e := m.DB.QueryRowContext(ctx, "SELECT count(*) FROM run_items WHERE run=? AND status='queued'", id).Scan(&pending); e != nil {
 		fail(e)
 		return
 	}
@@ -136,7 +142,7 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 		}
 	}
 	if ctx.Err() == nil {
-		if err = m.setPhase(id, "running"); err != nil {
+		if err = m.setPhase(ctx, id, "running"); err != nil {
 			fail(err)
 			return
 		}
@@ -146,7 +152,7 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 			return
 		}
 	}
-	if err = m.completeRun(id, ctx.Err() != nil); err != nil {
+	if err = m.completeRun(ctx, id, ctx.Err() != nil); err != nil {
 		fail(fmt.Errorf("save run result: %w", err))
 	}
 }

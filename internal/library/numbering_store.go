@@ -25,17 +25,17 @@ type Numbering struct {
 }
 
 // Numbering returns numbering id.
-func (l *Library) Numbering(id string) (Numbering, error) {
+func (l *Library) Numbering(ctx context.Context, id string) (Numbering, error) {
 	var b Numbering
 	var stored string
-	err := l.DB.QueryRow("SELECT id,parent,status,created,fingerprint,undo_of,error,media FROM image_numberings WHERE id=?", id).Scan(&b.ID, &b.Parent, &b.Status, &b.Created, &b.Fingerprint, &b.UndoOf, &stored, &b.Media)
+	err := l.DB.QueryRowContext(ctx, "SELECT id,parent,status,created,fingerprint,undo_of,error,media FROM image_numberings WHERE id=?", id).Scan(&b.ID, &b.Parent, &b.Status, &b.Created, &b.Fingerprint, &b.UndoOf, &stored, &b.Media)
 	if err != nil {
 		return b, err
 	}
 	if err = b.decodeNumberingError(stored); err != nil {
 		return b, err
 	}
-	rows, err := l.DB.Query(`SELECT entry,version,identity,size,mtime,old_name,new_name,temp_name,current_name,pending_name,operation,undo_of FROM image_numbering_items WHERE batch=? ORDER BY position`, id)
+	rows, err := l.DB.QueryContext(ctx, `SELECT entry,version,identity,size,mtime,old_name,new_name,temp_name,current_name,pending_name,operation,undo_of FROM image_numbering_items WHERE batch=? ORDER BY position`, id)
 	if err != nil {
 		return b, err
 	}
@@ -55,11 +55,11 @@ func (l *Library) Numbering(id string) (Numbering, error) {
 }
 
 // NumberingHistory returns the numberings of media under parent.
-func (l *Library) NumberingHistory(parent int64, media string) ([]Numbering, error) {
+func (l *Library) NumberingHistory(ctx context.Context, parent int64, media string) ([]Numbering, error) {
 	if _, err := mediaOf(media); err != nil {
 		return nil, err
 	}
-	rows, err := l.DB.Query(`SELECT b.id,b.parent,b.status,b.created,b.undo_of,b.error,count(i.entry),COALESCE(sum(i.old_name<>i.new_name),0) FROM image_numberings b JOIN image_numbering_items i ON i.batch=b.id WHERE b.parent=? AND b.media=? AND b.status<>'preview' GROUP BY b.id ORDER BY b.created DESC,b.id DESC LIMIT 50`, parent, media)
+	rows, err := l.DB.QueryContext(ctx, `SELECT b.id,b.parent,b.status,b.created,b.undo_of,b.error,count(i.entry),COALESCE(sum(i.old_name<>i.new_name),0) FROM image_numberings b JOIN image_numbering_items i ON i.batch=b.id WHERE b.parent=? AND b.media=? AND b.status<>'preview' GROUP BY b.id ORDER BY b.created DESC,b.id DESC LIMIT 50`, parent, media)
 	if err != nil {
 		return nil, err
 	}
@@ -83,17 +83,17 @@ func (l *Library) NumberingHistory(parent int64, media string) ([]Numbering, err
 func (l *Library) PreviewNumberingRestore(ctx context.Context, id string) (Numbering, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	original, err := l.Numbering(id)
+	original, err := l.Numbering(ctx, id)
 	if err != nil {
 		return Numbering{}, err
 	}
 	if original.Status != "committed" || original.UndoOf != "" {
 		return Numbering{}, domain.Fail(domain.KindConflict, "numbering_not_restorable", "numbering batch cannot be restored")
 	}
-	if err = l.CheckAvailable(original.Parent); err != nil {
+	if err = l.CheckAvailable(ctx, original.Parent); err != nil {
 		return Numbering{}, err
 	}
-	path, err := l.Path(original.Parent)
+	path, err := l.Path(ctx, original.Parent)
 	if err != nil {
 		return Numbering{}, err
 	}

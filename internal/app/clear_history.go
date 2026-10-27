@@ -34,7 +34,7 @@ func (a *App) clearHistory(w http.ResponseWriter, r *http.Request) {
 		}
 		query += " AND id IN (" + strings.TrimRight(strings.Repeat("?,", len(input.IDs)), ",") + ")"
 	}
-	result, err := a.DB.Exec(query, args...)
+	result, err := a.DB.ExecContext(r.Context(), query, args...)
 	if err != nil {
 		writeError(w, r, err)
 		return

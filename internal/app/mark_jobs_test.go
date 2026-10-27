@@ -31,11 +31,11 @@ func markTestApp(t *testing.T, files int) (*App, []int64) {
 			}
 		}
 	}
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { a.Close() })
+	t.Cleanup(func() { shutdown(t, a) })
 	if err := a.Library.Refresh(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
@@ -93,12 +93,12 @@ func TestBackgroundMarksSurviveRequestCancellation(t *testing.T) {
 	a, ids := markTestApp(t, 140) // Crosses multiple pages in both directories.
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
-	a.Library.Busy = func(int64) bool {
+	a.Library.Busy = func(ctx context.Context, _ int64) bool {
 		once.Do(func() {
 			close(entered)
 			select {
 			case <-release:
-			case <-a.ctx.Done():
+			case <-ctx.Done():
 			}
 		})
 		return false
@@ -142,7 +142,7 @@ func TestBackgroundMarksSurviveRequestCancellation(t *testing.T) {
 func TestBackgroundMarksReportFailuresAndShutdown(t *testing.T) {
 	t.Run("file failure", func(t *testing.T) {
 		a, ids := markTestApp(t, 2)
-		a.Library.Busy = func(int64) bool { return true }
+		a.Library.Busy = func(context.Context, int64) bool { return true }
 		markRequest(t, a, t.Context(), "busy-files-test", ids, true, 202)
 		r := awaitMark(t, a, "busy-files-test")
 		if r.Status != "partial_failure" || r.Failed != 4 || len(r.Failures) != 4 {
@@ -153,9 +153,9 @@ func TestBackgroundMarksReportFailuresAndShutdown(t *testing.T) {
 		a, ids := markTestApp(t, 2)
 		entered := make(chan struct{})
 		var once sync.Once
-		a.Library.Busy = func(int64) bool {
+		a.Library.Busy = func(ctx context.Context, _ int64) bool {
 			once.Do(func() { close(entered) })
-			<-a.ctx.Done()
+			<-ctx.Done()
 			return false
 		}
 		markRequest(t, a, t.Context(), "shutdown-request", ids, true, 202)
@@ -164,7 +164,9 @@ func TestBackgroundMarksReportFailuresAndShutdown(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("worker did not start")
 		}
-		a.cancel()
+		if err := a.Shutdown(t.Context()); err != nil {
+			t.Fatal(err)
+		}
 		r := awaitMark(t, a, "shutdown-request")
 		if r.Status != "interrupted" || !r.Interrupted {
 			t.Fatal(r)
@@ -244,14 +246,17 @@ func TestBackgroundMarksEvictOldestCompletedResult(t *testing.T) {
 		t.Fatal("lookup or conflict evicted a cached result")
 	}
 	entered, release := make(chan struct{}), make(chan struct{})
-	wait := sync.OnceFunc(func() {
-		close(entered)
-		select {
-		case <-release:
-		case <-a.ctx.Done():
-		}
-	})
-	a.Library.Busy = func(int64) bool { wait(); return false }
+	var once sync.Once
+	a.Library.Busy = func(ctx context.Context, _ int64) bool {
+		once.Do(func() {
+			close(entered)
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+		})
+		return false
+	}
 	markRequest(t, a, t.Context(), "new-capacity-request", ids, true, 202)
 	select {
 	case <-entered:

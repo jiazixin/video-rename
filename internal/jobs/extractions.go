@@ -13,9 +13,9 @@ import (
 	"video-rename/internal/storage"
 )
 
-func recoverExtractions(db *storage.Store) error {
+func recoverExtractions(ctx context.Context, db *storage.Store) error {
 	now := storage.Now()
-	_, err := db.Exec(`UPDATE extraction_records SET status='failure',finished=?,duration_ms=MAX(0,CAST((julianday(?)-julianday(started))*86400000 AS INTEGER)),message=? WHERE status='running'`, now, now, recordExtractInterrupted)
+	_, err := db.ExecContext(ctx, `UPDATE extraction_records SET status='failure',finished=?,duration_ms=MAX(0,CAST((julianday(?)-julianday(started))*86400000 AS INTEGER)),message=? WHERE status='running'`, now, now, recordExtractInterrupted)
 	return err
 }
 
@@ -26,9 +26,11 @@ func (m *Manager) prepareFrames(ctx context.Context, run Run, entry int64, cfg *
 	release := extracted
 	defer func() { release() }()
 	for {
-		schedule := m.currentSchedule(ctx, run.ID)
+		schedule, done := m.scheduleContext(ctx, run.ID)
 		lease, err := m.prepareFramesOnce(ctx, schedule, run, entry, cfg, job, probe, ffmpeg)
-		if err == nil || !errors.Is(err, context.Canceled) || schedule.Err() == nil || ctx.Err() != nil {
+		paused := schedule.Err() != nil
+		done()
+		if err == nil || !errors.Is(err, context.Canceled) || !paused || ctx.Err() != nil {
 			return lease, err
 		}
 		release()
@@ -46,7 +48,7 @@ func (m *Manager) prepareFramesOnce(ctx, schedule context.Context, run Run, entr
 	cached := true
 	start := func() error {
 		var err error
-		id, err = m.startExtraction(run, entry, m.Library.DisplayPath(entry), started)
+		id, err = m.startExtraction(ctx, run, entry, m.Library.DisplayPath(ctx, entry), started)
 		return err
 	}
 	defer func() {
@@ -57,7 +59,7 @@ func (m *Manager) prepareFramesOnce(ctx, schedule context.Context, run Run, entr
 		if lease != nil {
 			frames = len(lease.Set.Frames)
 		}
-		m.finishExtraction(id, started, cached && err == nil, frames, err)
+		m.finishExtraction(ctx, id, started, cached && err == nil, frames, err)
 	}()
 	reserve := int64(cfg.Sampling.MaxFrames)*(1<<20) + (32 << 20) + 65536
 	lease, err = m.Cache.Acquire(schedule, framecache.Key(job, cfg), reserve, func(work string) (domain.FrameSet, error) {
@@ -91,19 +93,21 @@ func (m *Manager) prepareFramesOnce(ctx, schedule context.Context, run Run, entr
 	return
 }
 
-func (m *Manager) startExtraction(run Run, entry int64, path string, started time.Time) (int64, error) {
+func (m *Manager) startExtraction(ctx context.Context, run Run, entry int64, path string, started time.Time) (int64, error) {
 	source := "automatic"
 	if run.Task == "extract" {
 		source = "manual"
 	}
-	res, err := m.DB.Exec(`INSERT INTO extraction_records(run,entry,path,source,status,started) VALUES(?,?,?,?,'running',?)`, run.ID, entry, path, source, started.UTC().Format(time.RFC3339Nano))
+	res, err := m.DB.ExecContext(ctx, `INSERT INTO extraction_records(run,entry,path,source,status,started) VALUES(?,?,?,?,'running',?)`, run.ID, entry, path, source, started.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
 }
 
-func (m *Manager) finishExtraction(id int64, started time.Time, cached bool, frames int, extractionErr error) {
+func (m *Manager) finishExtraction(ctx context.Context, id int64, started time.Time, cached bool, frames int, extractionErr error) {
+	ctx, cancel := storage.Detach(ctx)
+	defer cancel()
 	finished := time.Now()
 	status, message, detail := "success", "", ""
 	if extractionErr != nil {
@@ -115,19 +119,21 @@ func (m *Manager) finishExtraction(id int64, started time.Time, cached bool, fra
 			detail = strings.TrimSpace(diagnostic.ProcessingLog + "\n" + diagnostic.StderrTail)
 		}
 	}
-	if _, err := m.DB.Exec(`UPDATE extraction_records SET status=?,finished=?,duration_ms=?,cached=?,frames=?,message=?,processing_log=? WHERE id=?`, status, finished.UTC().Format(time.RFC3339Nano), finished.Sub(started).Milliseconds(), cached, frames, extractionText(message), extractionText(detail), id); err != nil {
+	if _, err := m.DB.ExecContext(ctx, `UPDATE extraction_records SET status=?,finished=?,duration_ms=?,cached=?,frames=?,message=?,processing_log=? WHERE id=?`, status, finished.UTC().Format(time.RFC3339Nano), finished.Sub(started).Milliseconds(), cached, frames, extractionText(message), extractionText(detail), id); err != nil {
 		m.logger.Error("extraction_result_save_failed", "record_id", id, "error", err)
 	}
 }
 
-func (m *Manager) extractionFailure(run Run, entry int64, path string, cause error) {
+func (m *Manager) extractionFailure(ctx context.Context, run Run, entry int64, path string, cause error) {
+	ctx, cancel := storage.Detach(ctx)
+	defer cancel()
 	started := time.Now()
-	id, err := m.startExtraction(run, entry, path, started)
+	id, err := m.startExtraction(ctx, run, entry, path, started)
 	if err != nil {
 		m.logger.Error("extraction_failure_save_failed", "run_id", run.ID, "error", err)
 		return
 	}
-	m.finishExtraction(id, started, false, 0, cause)
+	m.finishExtraction(ctx, id, started, false, 0, cause)
 }
 
 func extractionText(text string) string {

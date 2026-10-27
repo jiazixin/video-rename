@@ -58,7 +58,7 @@ func TestNumberingTreeIndexesEveryLevelAndRestores(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(outside, "untouched.JPG")); err != nil {
 		t.Fatal(err)
 	}
-	history, err := l.NumberingTreeHistory(1)
+	history, err := l.NumberingTreeHistory(t.Context(), 1)
 	if err != nil || len(history) != 4 {
 		t.Fatalf("history: %v, %v", history, err)
 	}
@@ -158,7 +158,7 @@ func TestNumberingTreeWithPendingRefreshFlag(t *testing.T) {
 	put(t, filepath.Join(root, "photo.jpg"))
 	// The worker may be waiting for l.mu, or finished but waiting to clear this flag.
 	l.refreshMu.Lock()
-	l.refreshing[1] = true
+	l.refreshing[1] = func() {}
 	l.refreshMu.Unlock()
 	batches, err := l.PreviewNumberingTree(t.Context(), 1, domain.DefaultNumberingSettings())
 	if err != nil || len(batches) != 1 || batches[0].Items[0].New != "1.jpg" {
@@ -204,7 +204,7 @@ func TestNumberingTreeConflictDiagnostics(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(dir, "photo.jpg")); err != nil {
 				t.Fatal(err)
 			}
-			history, err := l.NumberingTreeHistory(1)
+			history, err := l.NumberingTreeHistory(t.Context(), 1)
 			if err != nil || len(history) != 0 {
 				t.Fatalf("preview created execution history: %+v %v", history, err)
 			}

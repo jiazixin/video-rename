@@ -25,12 +25,12 @@ func BenchmarkDirectoryScanUnchanged(b *testing.B) {
 						b.Fatal(err)
 					}
 				}
-				db, err := storage.Open(filepath.Join(base, "state", "library.sqlite"))
+				db, err := storage.Open(b.Context(), filepath.Join(base, "state", "library.sqlite"))
 				if err != nil {
 					b.Fatal(err)
 				}
 				b.Cleanup(func() { db.Close() })
-				l, err := New(db, root)
+				l, err := New(b.Context(), db, root)
 				if err != nil {
 					b.Fatal(err)
 				}

@@ -33,7 +33,7 @@ func (l *Library) DirectoryState(ctx context.Context, id int64) (DirectoryState,
 	}
 	state.Refreshed = refreshed.String
 	l.refreshMu.Lock()
-	state.Refreshing = l.refreshing[id] || l.scanning[id]
+	state.Refreshing = l.refreshing[id] != nil || l.scanning[id]
 	l.refreshMu.Unlock()
 	return state, nil
 }

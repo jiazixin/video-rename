@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"context"
 	"encoding/json/v2"
 	"maps"
 	"slices"
@@ -28,19 +29,19 @@ func newScopeIndex(db *storage.Store) *scopeIndex {
 	return &scopeIndex{db: db, entries: map[int64]scopeTarget{}, ancestors: map[int64]map[int64]bool{}}
 }
 
-func (s *scopeIndex) get(id int64) (scopeTarget, error) {
+func (s *scopeIndex) get(ctx context.Context, id int64) (scopeTarget, error) {
 	if e, ok := s.entries[id]; ok {
 		return e, nil
 	}
 	var e scopeTarget
-	err := s.db.QueryRow("SELECT id,parent,kind,identity,name FROM entries WHERE id=? AND present=1", id).Scan(&e.id, &e.parent, &e.kind, &e.identity, &e.name)
+	err := s.db.QueryRowContext(ctx, "SELECT id,parent,kind,identity,name FROM entries WHERE id=? AND present=1", id).Scan(&e.id, &e.parent, &e.kind, &e.identity, &e.name)
 	if err == nil {
 		s.entries[id] = e
 	}
 	return e, err
 }
 
-func (s *scopeIndex) parents(id int64) (map[int64]bool, error) {
+func (s *scopeIndex) parents(ctx context.Context, id int64) (map[int64]bool, error) {
 	if parents, ok := s.ancestors[id]; ok {
 		return parents, nil
 	}
@@ -50,7 +51,7 @@ func (s *scopeIndex) parents(id int64) (map[int64]bool, error) {
 			return nil, domain.Fail(domain.KindConflict, "invalid_hierarchy", "directory hierarchy is invalid")
 		}
 		parents[current] = true
-		e, err := s.get(current)
+		e, err := s.get(ctx, current)
 		if err != nil {
 			return nil, err
 		}
@@ -60,7 +61,7 @@ func (s *scopeIndex) parents(id int64) (map[int64]bool, error) {
 	return parents, nil
 }
 
-func (s *scopeIndex) normalize(ids []int64, recursive bool) ([]int64, error) {
+func (s *scopeIndex) normalize(ctx context.Context, ids []int64, recursive bool) ([]int64, error) {
 	ids = slices.Clone(ids)
 	slices.Sort(ids)
 	ids = slices.Compact(ids)
@@ -73,7 +74,7 @@ func (s *scopeIndex) normalize(ids []int64, recursive bool) ([]int64, error) {
 	}
 	result := make([]int64, 0, len(ids))
 	for _, id := range ids {
-		parents, err := s.parents(id)
+		parents, err := s.parents(ctx, id)
 		if err != nil {
 			return nil, err
 		}
@@ -91,7 +92,7 @@ func (s *scopeIndex) normalize(ids []int64, recursive bool) ([]int64, error) {
 	return result, nil
 }
 
-func (s *scopeIndex) covers(a, b scopeTarget, recursive bool) (bool, error) {
+func (s *scopeIndex) covers(ctx context.Context, a, b scopeTarget, recursive bool) (bool, error) {
 	if a.id == b.id || a.kind == "file" && b.kind == "file" && a.identity == b.identity {
 		return true, nil
 	}
@@ -101,13 +102,13 @@ func (s *scopeIndex) covers(a, b scopeTarget, recursive bool) (bool, error) {
 	if !recursive {
 		return b.kind == "file" && b.parent == a.id, nil
 	}
-	parents, err := s.parents(b.id)
+	parents, err := s.parents(ctx, b.id)
 	return parents[a.id], err
 }
 
 // All callers create batches through Create's mutex, including scheduled runs.
-func (m *Manager) checkOverlap(request Request, index *scopeIndex) error {
-	rows, err := m.DB.Query("SELECT id,targets,recursive FROM runs WHERE status IN " + domain.ActiveRunStatusesSQL + " ORDER BY id")
+func (m *Manager) checkOverlap(ctx context.Context, request Request, index *scopeIndex) error {
+	rows, err := m.DB.QueryContext(ctx, "SELECT id,targets,recursive FROM runs WHERE status IN "+domain.ActiveRunStatusesSQL+" ORDER BY id")
 	if err != nil {
 		return err
 	}
@@ -146,7 +147,7 @@ func (m *Manager) checkOverlap(request Request, index *scopeIndex) error {
 		}
 	}
 	for id := range maps.Keys(unique) {
-		if _, err := index.get(id); err != nil {
+		if _, err := index.get(ctx, id); err != nil {
 			for _, s := range scopes {
 				if slices.Contains(s.targets, id) {
 					return domain.Fail(domain.KindConflict, "run_targets_unavailable", "targets of an unfinished run are unavailable", "run", s.id)
@@ -159,12 +160,12 @@ func (m *Manager) checkOverlap(request Request, index *scopeIndex) error {
 		a := index.entries[id]
 		for _, s := range scopes {
 			for _, other := range s.targets {
-				covered, err := index.covers(a, index.entries[other], request.Recursive)
+				covered, err := index.covers(ctx, a, index.entries[other], request.Recursive)
 				if err != nil {
 					return err
 				}
 				if !covered {
-					covered, err = index.covers(index.entries[other], a, s.recursive)
+					covered, err = index.covers(ctx, index.entries[other], a, s.recursive)
 					if err != nil {
 						return err
 					}

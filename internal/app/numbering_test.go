@@ -21,11 +21,11 @@ func TestImageNumberingAPI(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "photo.PNG"), []byte("picture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	if err = a.Library.Refresh(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
@@ -100,11 +100,11 @@ func TestImageNumberingAPI(t *testing.T) {
 
 func TestNumberingSettingsAPI(t *testing.T) {
 	root := t.TempDir()
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	handler := a.Handler()
 	loginReq := jsonRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"test-password"}`))
 	loginReq.Header.Set("Content-Type", "application/json")
@@ -147,11 +147,11 @@ func TestAudioNumberingAPI(t *testing.T) {
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "track.MP3"), []byte("audio"), 0o600)
 	os.WriteFile(filepath.Join(root, "cover.png"), []byte("cover"), 0o600)
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	if err = a.Library.Refresh(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}

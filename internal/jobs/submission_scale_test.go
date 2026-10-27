@@ -56,7 +56,7 @@ func TestScaleMultiSelectSubmission(t *testing.T) {
 			created = append(created, id)
 		}
 		for _, id := range created {
-			if err := m.Cancel(id); err != nil {
+			if err := m.Cancel(t.Context(), id); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -115,7 +115,7 @@ func TestScaleMixedDirectorySubmission(t *testing.T) {
 			if err := m.DB.QueryRow("SELECT count(*) FROM run_items WHERE run=?", id).Scan(&count); err != nil || count != 0 {
 				t.Fatalf("submission performed worker scan: items=%d, err=%v", count, err)
 			}
-			if err := m.Cancel(id); err != nil {
+			if err := m.Cancel(t.Context(), id); err != nil {
 				t.Fatal(err)
 			}
 		}

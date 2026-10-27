@@ -1,6 +1,7 @@
 package library
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,7 +16,7 @@ import (
 // openDirectory pins each indexed ancestor before opening its child. A path
 // replacement cannot redirect subsequent relative filesystem operations.
 // The caller holds Library.mu and must close the returned directory.
-func (l *Library) openDirectory(id int64) (*os.File, error) {
+func (l *Library) openDirectory(ctx context.Context, id int64) (*os.File, error) {
 	var chain []Entry
 	seen := map[int64]bool{}
 	for {
@@ -23,7 +24,7 @@ func (l *Library) openDirectory(id int64) (*os.File, error) {
 			return nil, errBadHierarchy
 		}
 		seen[id] = true
-		e, err := l.IndexedEntry(id)
+		e, err := l.IndexedEntry(ctx, id)
 		if err != nil {
 			return nil, err
 		}

@@ -20,11 +20,11 @@ import (
 )
 
 func TestRunDirectoryRecords(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { a.Close() })
+	t.Cleanup(func() { shutdown(t, a) })
 	for id := range 2 {
 		if _, err := a.DB.Exec(`INSERT INTO runs(id,source,targets,recursive,status,created,request_key) VALUES(?,'manual','[]',0,'running','now',?)`, id+1, fmt.Sprint(id)); err != nil {
 			t.Fatal(err)
@@ -262,11 +262,11 @@ UPDATE run_items SET finished_ms=100 WHERE id=8`); err != nil {
 func automaticRunApp(t *testing.T) (*App, string) {
 	t.Helper()
 	root := t.TempDir()
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { a.Close() })
+	t.Cleanup(func() { shutdown(t, a) })
 	tools := t.TempDir()
 	for _, name := range []string{"ffmpeg", "ffprobe"} {
 		if err := os.WriteFile(filepath.Join(tools, name), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
@@ -274,17 +274,17 @@ func automaticRunApp(t *testing.T) (*App, string) {
 		}
 	}
 	t.Setenv("PATH", tools)
-	profile, err := (models.Store{DB: a.DB}).Get(1)
+	profile, err := (models.Store{DB: a.DB}).Get(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	profile.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test", Timeout: "2s", MaxTokens: 128}
-	if _, err := (models.Store{DB: a.DB}).Save(profile); err != nil {
+	if _, err := (models.Store{DB: a.DB}).Save(t.Context(), profile); err != nil {
 		t.Fatal(err)
 	}
 	settings := systemsettings.Default()
 	settings.StabilitySeconds = 0
-	if err := (systemsettings.Store{DB: a.DB}).Save(settings); err != nil {
+	if err := (systemsettings.Store{DB: a.DB}).Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "原视频.mp4"), []byte("isolated video fixture"), 0o600); err != nil {

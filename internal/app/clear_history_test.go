@@ -10,11 +10,11 @@ import (
 )
 
 func TestClearHistoryCategoryIsolation(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	for _, category := range []string{"success", "failure"} {
 		if _, err = a.DB.Exec("INSERT INTO events(category,action,message,created) VALUES(?,'manual','test','now')", category); err != nil {
 			t.Fatal(err)

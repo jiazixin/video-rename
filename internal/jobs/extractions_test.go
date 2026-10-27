@@ -19,7 +19,7 @@ import (
 
 func TestExtractionWithoutModelPreservesFilesAndReusesFrames(t *testing.T) {
 	m, root := setup(t)
-	profile, err := (models.Store{DB: m.DB}).Get(1)
+	profile, err := (models.Store{DB: m.DB}).Get(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestExtractionWithoutModelPreservesFilesAndReusesFrames(t *testing.T) {
 		t.Fatal(status, source, started, finished, elapsed, cached, err)
 	}
 	profile.ID = 0
-	if profile, err = (models.Store{DB: m.DB}).Save(profile); err != nil {
+	if profile, err = (models.Store{DB: m.DB}).Save(t.Context(), profile); err != nil {
 		t.Fatal(err)
 	}
 	request.Task = "rename"
@@ -158,7 +158,7 @@ func TestExtractionCancellationAndInterruptedRecords(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("extraction did not start")
 	}
-	if err = m.Cancel(id); err != nil {
+	if err = m.Cancel(t.Context(), id); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -170,10 +170,10 @@ func TestExtractionCancellationAndInterruptedRecords(t *testing.T) {
 	if err = m.DB.QueryRow("SELECT status,message FROM extraction_records WHERE run=?", id).Scan(&status, &message); err != nil || status != "failure" || !strings.Contains(message, `"code":"extraction_cancelled"`) {
 		t.Fatal(status, message, err)
 	}
-	if _, err = m.startExtraction(Run{}, 0, "interrupted.mp4", time.Now().Add(-time.Minute)); err != nil {
+	if _, err = m.startExtraction(t.Context(), Run{}, 0, "interrupted.mp4", time.Now().Add(-time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if err = recoverExtractions(m.DB); err != nil {
+	if err = recoverExtractions(t.Context(), m.DB); err != nil {
 		t.Fatal(err)
 	}
 	var duration int64
@@ -185,7 +185,7 @@ func TestExtractionCancellationAndInterruptedRecords(t *testing.T) {
 func TestExtractionScansBeyondLibraryPagesAndFreezesSampling(t *testing.T) {
 	m, root := setup(t)
 	settings := sampling.Store{DB: m.DB}
-	original, err := settings.Get()
+	original, err := settings.Get(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestExtractionScansBeyondLibraryPagesAndFreezesSampling(t *testing.T) {
 	changed := original
 	changed.Images.JPEGQuality = 6
 	changed.Sampling.MaxFrames = original.Sampling.MaxFrames - 1
-	if err = settings.Save(changed); err != nil {
+	if err = settings.Save(t.Context(), changed); err != nil {
 		t.Fatal(err)
 	}
 	m.Execute(t.Context(), id)
@@ -226,7 +226,7 @@ func TestExtractionScansBeyondLibraryPagesAndFreezesSampling(t *testing.T) {
 	if err != nil || r.Done != 105 || r.Discovered != 105 || calls.Load() != 105 {
 		t.Fatal("non-recursive extraction lost files across pages", r, calls.Load(), err)
 	}
-	if err = settings.Save(original); err != nil {
+	if err = settings.Save(t.Context(), original); err != nil {
 		t.Fatal(err)
 	}
 	id, err = m.Create(t.Context(), Request{Task: "extract", Targets: []int64{1}, Recursive: true, Key: "extract-nested"}, "manual", 0)

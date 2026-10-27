@@ -12,11 +12,11 @@ import (
 )
 
 func TestNotificationEndpointsRequireSessionAndSameSite(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	for _, endpoint := range []struct{ method, url string }{{"GET", "/api/notifications"}, {"GET", "/api/notifications/history"}, {"PUT", "/api/notifications/webhook"}, {"POST", "/api/notifications/webhook/test"}} {
 		w := httptest.NewRecorder()
 		r := jsonRequest(endpoint.method, endpoint.url, strings.NewReader(`{"enabled":true,"endpoint":"http://127.0.0.1/webhook"}`))

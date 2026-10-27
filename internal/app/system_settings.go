@@ -26,7 +26,7 @@ func (a *App) systemSettingsRoutes(mux *router) {
 		model := ""
 		configured := false
 		store := models.Store{DB: a.DB}
-		profiles, modelErr := store.List()
+		profiles, modelErr := store.List(r.Context())
 		if modelErr != nil {
 			writeError(w, r, modelErr)
 			return
@@ -46,7 +46,7 @@ func (a *App) systemSettingsRoutes(mux *router) {
 	})
 	store := systemsettings.Store{DB: a.DB}
 	mux.HandleFunc("GET /api/system/settings", func(w http.ResponseWriter, r *http.Request) {
-		s, err := store.Get()
+		s, err := store.Get(r.Context())
 		if err != nil {
 			writeError(w, r, err)
 			return
@@ -62,13 +62,13 @@ func (a *App) systemSettingsRoutes(mux *router) {
 		a.settingsMu.Lock()
 		defer a.settingsMu.Unlock()
 		if s.FallbackModelID > 0 {
-			p, err := (models.Store{DB: a.DB}).Get(s.FallbackModelID)
+			p, err := (models.Store{DB: a.DB}).Get(r.Context(), s.FallbackModelID)
 			if err != nil || !p.Ready {
 				invalid(w, r, "fallback_model_id", "model_not_ready")
 				return
 			}
 		}
-		if err := store.Save(s); err != nil {
+		if err := store.Save(r.Context(), s); err != nil {
 			writeError(w, r, err)
 			return
 		}

@@ -198,7 +198,7 @@ func TestQueuedScopeVisibleAndRejectsOtherBatch(t *testing.T) {
 	if _, err = m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "duplicate-parent"}, "manual", 0); err == nil {
 		t.Fatal("overlapping parent allowed")
 	}
-	if err = m.Cancel(second); err != nil {
+	if err = m.Cancel(t.Context(), second); err != nil {
 		t.Fatal(err)
 	}
 	e, _ = m.Library.Get(t.Context(), b)
@@ -239,7 +239,7 @@ func TestQueuedDirectoryCoversIndexedChildren(t *testing.T) {
 	if e.TaskStatus != "" {
 		t.Fatal("nonrecursive scope leaked")
 	}
-	m.Cancel(id)
+	m.Cancel(t.Context(), id)
 	_, err = m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "recursive-root"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
@@ -272,7 +272,7 @@ func TestQueuedAndPausedScopesBlockManualMutations(t *testing.T) {
 				t.Fatal(err)
 			}
 			if paused {
-				if err := m.Pause(id); err != nil {
+				if err := m.Pause(t.Context(), id); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -297,7 +297,7 @@ func TestQueuedAndPausedScopesBlockManualMutations(t *testing.T) {
 			if _, err := m.Library.Rename(t.Context(), dir.ID, dir.Version, "changed-directory", "parent-while-queued"); err == nil {
 				t.Fatal("ancestor of queued target was renamed")
 			}
-			if err := m.Cancel(id); err != nil {
+			if err := m.Cancel(t.Context(), id); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := m.Library.Restore(t.Context(), op.ID, "restore-after-cancel"); err != nil {
@@ -323,12 +323,12 @@ func TestBusyUsesPersistentScopeBoundaries(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, name := range c.busy {
-				if !m.Busy(ids[name]) {
+				if !m.Busy(t.Context(), ids[name]) {
 					t.Errorf("%s did not retain occupancy", name)
 				}
 			}
 			for _, name := range c.free {
-				if m.Busy(ids[name]) {
+				if m.Busy(t.Context(), ids[name]) {
 					t.Errorf("%s outside task scope is busy", name)
 				}
 			}

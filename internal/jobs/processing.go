@@ -11,6 +11,7 @@ import (
 	"video-rename/internal/domain"
 	"video-rename/internal/framecache"
 	"video-rename/internal/library"
+	"video-rename/internal/storage"
 )
 
 type item struct {
@@ -22,10 +23,10 @@ type item struct {
 
 func (m *Manager) scan(ctx context.Context, batch Run, id int64) error {
 	run := batch.ID
-	if _, err := m.dispatchContext(ctx, run); err != nil {
+	if err := m.waitDispatch(ctx, run); err != nil {
 		return err
 	}
-	e, err := m.Library.IndexedEntry(id)
+	e, err := m.Library.IndexedEntry(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -37,16 +38,19 @@ func (m *Manager) scan(ctx context.Context, batch Run, id int64) error {
 	}
 	if err = m.Library.Refresh(ctx, id); err != nil {
 		if batch.Task == "extract" {
-			m.extractionFailure(batch, id, m.Library.DisplayPath(id), err)
-		} else if er := m.recordFailure("scan", id, run, m.Library.DisplayPath(id), err); er != nil {
+			m.extractionFailure(ctx, batch, id, m.Library.DisplayPath(context.WithoutCancel(ctx), id), err)
+		} else if er := m.recordFailure(ctx, "scan", id, run, m.Library.DisplayPath(context.WithoutCancel(ctx), id), err); er != nil {
 			return er
 		}
-		_, er := m.DB.Exec("UPDATE runs SET failed=failed+1 WHERE id=?", run)
+		// The counter belongs to the failure just recorded.
+		record, cancel := storage.Detach(ctx)
+		defer cancel()
+		_, er := m.DB.ExecContext(record, "UPDATE runs SET failed=failed+1 WHERE id=?", run)
 		return er
 	}
 	var after int64
 	for {
-		if _, err := m.dispatchContext(ctx, run); err != nil {
+		if err := m.waitDispatch(ctx, run); err != nil {
 			return err
 		}
 		rows, err := m.DB.Read().QueryContext(ctx, `SELECT e.id,e.parent,e.name,e.kind,e.identity,e.size,e.mtime,
@@ -94,20 +98,20 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.T
 	}
 	defer m.clearStage(it.ID)
 	finish := func(status, msg string) {
-		if err := m.finishItem(run, it.ID, status, msg); err != nil {
+		if err := m.finishItem(ctx, run, it.ID, status, msg); err != nil {
 			result = fmt.Errorf("save item result: %w", err)
 		}
 	}
 	e, p, snap, skip, err := m.checkItem(ctx, batch, it)
 	if skip != "" {
 		if skip == recordSkipUnstable && batch.Task == "extract" {
-			m.extractionFailure(batch, it.Entry, m.Library.DisplayPath(it.Entry), errUnstable)
+			m.extractionFailure(ctx, batch, it.Entry, m.Library.DisplayPath(context.WithoutCancel(ctx), it.Entry), errUnstable)
 		}
 		finish("skipped", skip)
 		return
 	}
 	if err == nil {
-		err = m.startItem(it)
+		err = m.startItem(ctx, it)
 	}
 	var committed, extractionLogged bool
 	if err == nil {
@@ -125,11 +129,11 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.T
 	if err != nil {
 		if batch.Task == "extract" {
 			if !extractionLogged {
-				m.extractionFailure(batch, it.Entry, m.Library.DisplayPath(it.Entry), err)
+				m.extractionFailure(ctx, batch, it.Entry, m.Library.DisplayPath(context.WithoutCancel(ctx), it.Entry), err)
 			}
 		} else {
 			rel, _ := filepath.Rel(m.Library.Root, p)
-			if logErr := m.recordFailure("automatic", it.Entry, run, rel, err); logErr != nil {
+			if logErr := m.recordFailure(ctx, "automatic", it.Entry, run, rel, err); logErr != nil {
 				m.logger.Error("video_diagnostics_save_failed", "run_id", run, "entry_id", it.Entry, "error", logErr)
 			}
 		}
@@ -140,7 +144,10 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.T
 				r.cancel()
 			}
 			m.mu.Unlock()
-			_, writeErr := m.DB.Exec("UPDATE runs SET error=? WHERE id=?", domain.RecordText(err), run)
+			// The cancel above ends ctx; the cause must still reach the run.
+			record, cancel := storage.Detach(ctx)
+			defer cancel()
+			_, writeErr := m.DB.ExecContext(record, "UPDATE runs SET error=? WHERE id=?", domain.RecordText(err), run)
 			result = errors.Join(result, writeErr)
 		}
 		return
@@ -161,7 +168,7 @@ func (m *Manager) checkItem(ctx context.Context, batch Run, it item) (e library.
 		err = m.Library.CheckAutomaticRetry(ctx, it.Entry, retryOperation)
 	}
 	if err == nil {
-		path, err = m.Library.Path(it.Entry)
+		path, err = m.Library.Path(ctx, it.Entry)
 	}
 	if err == nil {
 		snap, err = domain.StatSnapshot(path)
@@ -174,12 +181,12 @@ func (m *Manager) checkItem(ctx context.Context, batch Run, it item) (e library.
 
 // startItem marks the item running and confirms its file is not held by
 // another operation.
-func (m *Manager) startItem(it item) error {
-	if _, err := m.DB.Exec("UPDATE run_items SET status='running',started_ms=? WHERE id=?", time.Now().UnixMilli(), it.ID); err != nil {
+func (m *Manager) startItem(ctx context.Context, it item) error {
+	if _, err := m.DB.ExecContext(ctx, "UPDATE run_items SET status='running',started_ms=? WHERE id=?", time.Now().UnixMilli(), it.ID); err != nil {
 		return err
 	}
 	m.setStage(it.ID, "extracting")
-	return m.Library.CheckAvailable(it.Entry)
+	return m.Library.CheckAvailable(ctx, it.Entry)
 }
 
 // runItemTask extracts frames, or names and commits the file. The caller
@@ -187,7 +194,7 @@ func (m *Manager) startItem(it item) error {
 func (m *Manager) runItemTask(ctx context.Context, batch Run, it item, e library.Entry, path string, snap domain.Snapshot, cfg *config.TaskConfig, extracted func()) (lease *framecache.Lease, committed, extractionLogged bool, err error) {
 	probe, ffmpeg, err := m.Tools()
 	if err != nil {
-		m.extractionFailure(batch, it.Entry, m.Library.DisplayPath(it.Entry), err)
+		m.extractionFailure(ctx, batch, it.Entry, m.Library.DisplayPath(context.WithoutCancel(ctx), it.Entry), err)
 		return nil, false, true, err
 	}
 	job := domain.VideoJob{Path: path, Snapshot: snap, JobID: fmt.Sprint(it.ID)}

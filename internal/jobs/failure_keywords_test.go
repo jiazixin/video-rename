@@ -41,28 +41,28 @@ func TestFailureKeywordSnapshotPrimaryRetryAndFallback(t *testing.T) {
 	}))
 	defer server.Close()
 	modelsStore := models.Store{DB: m.DB}
-	primary, err := modelsStore.Get(1)
+	primary, err := modelsStore.Get(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	primary.BaseURL = server.URL + "/primary"
-	primary, err = modelsStore.Save(primary)
+	primary, err = modelsStore.Save(t.Context(), primary)
 	if err != nil {
 		t.Fatal(err)
 	}
 	fallback := primary
 	fallback.ID, fallback.Title, fallback.BaseURL = 0, "冻结规则备用模型", server.URL+"/fallback"
-	fallback, err = modelsStore.Save(fallback)
+	fallback, err = modelsStore.Save(t.Context(), fallback)
 	if err != nil {
 		t.Fatal(err)
 	}
 	settingsStore := systemsettings.Store{DB: m.DB}
 	settings := systemsettings.Default()
 	settings.StabilitySeconds, settings.RetryCount, settings.FallbackModelID = 0, 2, fallback.ID
-	if err = settingsStore.Save(settings); err != nil {
+	if err = settingsStore.Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = settingsStore.SaveFailureKeywords(keywords); err != nil {
+	if _, err = settingsStore.SaveFailureKeywords(t.Context(), keywords); err != nil {
 		t.Fatal(err)
 	}
 	original := filepath.Join(root, "original.mp4")
@@ -83,7 +83,7 @@ func TestFailureKeywordSnapshotPrimaryRetryAndFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Editing settings after queueing cannot change any attempt in this batch.
-	if _, err = settingsStore.SaveFailureKeywords([]string{}); err != nil {
+	if _, err = settingsStore.SaveFailureKeywords(t.Context(), []string{}); err != nil {
 		t.Fatal(err)
 	}
 	m.Execute(t.Context(), id)
@@ -128,16 +128,16 @@ func TestDeletedFailureKeywordsStayDeletedInQueuedBatch(t *testing.T) {
 			}))
 			defer server.Close()
 			modelsStore := models.Store{DB: m.DB}
-			primary, err := modelsStore.Get(1)
+			primary, err := modelsStore.Get(t.Context(), 1)
 			if err != nil {
 				t.Fatal(err)
 			}
 			primary.BaseURL = server.URL
-			if _, err := modelsStore.Save(primary); err != nil {
+			if _, err := modelsStore.Save(t.Context(), primary); err != nil {
 				t.Fatal(err)
 			}
 			settingsStore := systemsettings.Store{DB: m.DB}
-			if _, err := settingsStore.SaveFailureKeywords(rules); err != nil {
+			if _, err := settingsStore.SaveFailureKeywords(t.Context(), rules); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.WriteFile(filepath.Join(root, "original.mp4"), []byte("video"), 0o600); err != nil {
@@ -151,7 +151,7 @@ func TestDeletedFailureKeywordsStayDeletedInQueuedBatch(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := settingsStore.SaveFailureKeywords(systemsettings.DefaultFailureKeywords()); err != nil {
+			if _, err := settingsStore.SaveFailureKeywords(t.Context(), systemsettings.DefaultFailureKeywords()); err != nil {
 				t.Fatal(err)
 			}
 			m.Execute(t.Context(), id)

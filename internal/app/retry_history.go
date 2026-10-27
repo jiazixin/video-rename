@@ -145,7 +145,7 @@ func (a *App) retryTargets(ctx context.Context, records []retryRecord, category 
 			target.records = append(target.records, record.id)
 			continue
 		}
-		if _, err := a.Library.Path(record.entry); err != nil {
+		if _, err := a.Library.Path(ctx, record.entry); err != nil {
 			problems = append(problems, retryProblem{Record: record.id, Error: retryPathProblem(err)})
 			continue
 		}

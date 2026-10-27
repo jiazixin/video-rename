@@ -74,7 +74,7 @@ func TestCommitRejectsChangedFile(t *testing.T) {
 					if err == nil || !l.Halted() {
 						t.Fatalf("must halt without success: %+v %v", op, err)
 					}
-					saved, err := l.Operation(op.ID)
+					saved, err := l.Operation(t.Context(), op.ID)
 					if err != nil || saved.Status != "prepared" {
 						t.Fatalf("lost prepared evidence: %+v %v", saved, err)
 					}
@@ -90,10 +90,10 @@ func TestCommitRejectsChangedFile(t *testing.T) {
 					if _, err := l.DB.Exec("DROP TRIGGER change_leaf"); err != nil {
 						t.Fatal(err)
 					}
-					if err := l.Recover(); err != nil {
+					if err := l.Recover(t.Context()); err != nil {
 						t.Fatal(err)
 					}
-					saved, err = l.Operation(op.ID)
+					saved, err = l.Operation(t.Context(), op.ID)
 					if err != nil || saved.Status != "review" {
 						t.Fatalf("ambiguous operation must require review: %+v %v", saved, err)
 					}

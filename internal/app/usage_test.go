@@ -12,11 +12,11 @@ import (
 
 func usageApp(t *testing.T) *App {
 	t.Helper()
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { a.Close() })
+	t.Cleanup(func() { shutdown(t, a) })
 	base := time.Date(2026, 9, 23, 8, 0, 0, 0, time.UTC)
 	if _, err := a.DB.Exec(`INSERT INTO entries(id,parent,name,kind,identity,size,mtime,observed) VALUES(500,1,'clip.mp4','file','i',1,'m','o')`); err != nil {
 		t.Fatal(err)

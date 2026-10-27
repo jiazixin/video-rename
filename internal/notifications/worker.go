@@ -25,8 +25,8 @@ type Delivery struct {
 }
 
 // History returns the 30 latest deliveries.
-func (s *Service) History() ([]Delivery, error) {
-	rows, err := s.DB.Query("SELECT id,kind,run,status,attempts,error,updated FROM notification_deliveries ORDER BY id DESC LIMIT 30")
+func (s *Service) History(ctx context.Context) ([]Delivery, error) {
+	rows, err := s.DB.QueryContext(ctx, "SELECT id,kind,run,status,attempts,error,updated FROM notification_deliveries ORDER BY id DESC LIMIT 30")
 	if err != nil {
 		return nil, err
 	}
@@ -42,9 +42,9 @@ func (s *Service) History() ([]Delivery, error) {
 	return out, rows.Err()
 }
 
-// Loop delivers pending notifications until ctx ends.
-func (s *Service) Loop(ctx context.Context) {
-	if _, err := s.DB.Exec("UPDATE notification_deliveries SET status=CASE WHEN attempts>=3 THEN 'failed' ELSE 'pending' END,error=? WHERE status='sending'", domain.Record{Code: "notification_unconfirmed", Message: "service restarted; the last delivery is unconfirmed"}.Text()); err != nil {
+// Run delivers pending notifications until ctx ends.
+func (s *Service) Run(ctx context.Context) error {
+	if _, err := s.DB.ExecContext(ctx, "UPDATE notification_deliveries SET status=CASE WHEN attempts>=3 THEN 'failed' ELSE 'pending' END,error=? WHERE status='sending'", domain.Record{Code: "notification_unconfirmed", Message: "service restarted; the last delivery is unconfirmed"}.Text()); err != nil {
 		s.logger.Warn("notification_recovery_failed", "error", err)
 	}
 	ticker := time.NewTicker(3 * time.Second)
@@ -52,7 +52,7 @@ func (s *Service) Loop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-ticker.C:
 			if ctx.Err() == nil {
 				if err := s.tick(ctx); err != nil {
@@ -85,14 +85,14 @@ func (s *Service) tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	c, credentials, err := s.get(d.Kind)
+	c, credentials, err := s.get(ctx, d.Kind)
 	if err != nil {
 		return err
 	}
 	if !c.Enabled {
 		return nil
 	}
-	result, err := s.DB.Exec("UPDATE notification_deliveries SET status='sending',attempts=attempts+1 WHERE id=? AND status='pending'", d.ID)
+	result, err := s.DB.ExecContext(ctx, "UPDATE notification_deliveries SET status='sending',attempts=attempts+1 WHERE id=? AND status='pending'", d.ID)
 	if err != nil {
 		return err
 	}
@@ -100,7 +100,7 @@ func (s *Service) tick(ctx context.Context) error {
 	if n == 0 {
 		return nil
 	}
-	err = s.Send(credentials, d.Kind, title, body)
+	err = s.Send(ctx, credentials, d.Kind, title, body)
 	status, message := "sent", ""
 	if err != nil {
 		status = "pending"
@@ -109,7 +109,10 @@ func (s *Service) tick(ctx context.Context) error {
 			status = "failed"
 		}
 	}
-	_, writeErr := s.DB.Exec("UPDATE notification_deliveries SET status=?,error=?,updated=?,next_attempt=? WHERE id=? AND status='sending'", status, message, storage.Now(), time.Now().UTC().Add(time.Duration(d.Attempts+1)*30*time.Second).Format(time.RFC3339Nano), d.ID)
+	// The attempt happened; record it even if shutdown cancelled the send.
+	record, cancel := storage.Detach(ctx)
+	defer cancel()
+	_, writeErr := s.DB.ExecContext(record, "UPDATE notification_deliveries SET status=?,error=?,updated=?,next_attempt=? WHERE id=? AND status='sending'", status, message, storage.Now(), time.Now().UTC().Add(time.Duration(d.Attempts+1)*30*time.Second).Format(time.RFC3339Nano), d.ID)
 	return writeErr
 }
 func (s *Service) enqueue(ctx context.Context) error {
@@ -166,7 +169,7 @@ func (s *Service) enqueue(ctx context.Context) error {
 			var name string
 			if id == 1 {
 				name = "整个媒体库"
-			} else if s.DB.QueryRow("SELECT name FROM entries WHERE id=?", id).Scan(&name) != nil {
+			} else if s.DB.QueryRowContext(ctx, "SELECT name FROM entries WHERE id=?", id).Scan(&name) != nil {
 				name = fmt.Sprintf("条目 #%d", id)
 			}
 			names = append(names, clip(name, 60))

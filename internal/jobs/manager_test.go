@@ -32,31 +32,31 @@ func setup(t *testing.T) (*Manager, string) {
 		}
 	}
 	t.Setenv("PATH", base)
-	db, err := storage.Open(filepath.Join(base, "db.sqlite"))
+	db, err := storage.Open(t.Context(), filepath.Join(base, "db.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	l, err := library.New(db, root)
+	l, err := library.New(t.Context(), db, root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := New(db, l, &config.Config{}, slog.New(slog.DiscardHandler))
+	m, err := New(t.Context(), db, l, &config.Config{}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile, e := (models.Store{DB: db}).Get(1)
+	profile, e := (models.Store{DB: db}).Get(t.Context(), 1)
 	if e != nil {
 		t.Fatal(e)
 	}
 	profile.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}
-	if _, e = (models.Store{DB: db}).Save(profile); e != nil {
+	if _, e = (models.Store{DB: db}).Save(t.Context(), profile); e != nil {
 		t.Fatal(e)
 	}
 	t.Cleanup(func() { m.Cache.Close() })
 	settings := systemsettings.Default()
 	settings.StabilitySeconds = 0
-	if err := (systemsettings.Store{DB: db}).Save(settings); err != nil {
+	if err := (systemsettings.Store{DB: db}).Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	return m, root
@@ -176,7 +176,7 @@ func TestManualProtectsFileAndCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = m.Cancel(id); err != nil {
+	if err = m.Cancel(t.Context(), id); err != nil {
 		t.Fatal(err)
 	}
 	m.Execute(t.Context(), id)
@@ -192,7 +192,7 @@ func TestToolsDisappearingStopsBatch(t *testing.T) {
 			m, root := setup(t)
 			settings := systemsettings.Default()
 			settings.StabilitySeconds, settings.ExtractWorkers = 0, 1
-			if err := (systemsettings.Store{DB: m.DB}).Save(settings); err != nil {
+			if err := (systemsettings.Store{DB: m.DB}).Save(t.Context(), settings); err != nil {
 				t.Fatal(err)
 			}
 			for _, name := range []string{"a.mp4", "b.mp4", "c.mp4"} {
@@ -261,7 +261,7 @@ func TestCancelInFlight(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("not started")
 	}
-	if err = m.Cancel(id); err != nil {
+	if err = m.Cancel(t.Context(), id); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -283,11 +283,11 @@ func TestPromptSnapshotAndIsolation(t *testing.T) {
 		}
 	}
 	store := models.Store{DB: m.DB}
-	libraryPrompt, err := (prompts.Store{DB: m.DB}).Save(prompts.Profile{Title: "独立提示词", Body: "批次创建时的要求"})
+	libraryPrompt, err := (prompts.Store{DB: m.DB}).Save(t.Context(), prompts.Profile{Title: "独立提示词", Body: "批次创建时的要求"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	prompt, err := store.Save(models.Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Workers: 1, Title: "独立提示词", PromptID: libraryPrompt.ID})
+	prompt, err := store.Save(t.Context(), models.Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Workers: 1, Title: "独立提示词", PromptID: libraryPrompt.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +297,7 @@ func TestPromptSnapshotAndIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	libraryPrompt.Body = "后续修改的要求"
-	if _, err = (prompts.Store{DB: m.DB}).Save(libraryPrompt); err != nil {
+	if _, err = (prompts.Store{DB: m.DB}).Save(t.Context(), libraryPrompt); err != nil {
 		t.Fatal(err)
 	}
 	prompt.BaseURL = "http://127.0.0.1:9999/v1"
@@ -305,7 +305,7 @@ func TestPromptSnapshotAndIsolation(t *testing.T) {
 	prompt.APIKey = "new-key"
 	prompt.Temperature = 1.1
 	prompt.Workers = 4
-	if _, err = store.Save(prompt); err != nil {
+	if _, err = store.Save(t.Context(), prompt); err != nil {
 		t.Fatal(err)
 	}
 	if again, err := m.Create(t.Context(), request, "manual", 0); err != nil || again != id {
@@ -354,15 +354,15 @@ func TestPromptSnapshotAndIsolation(t *testing.T) {
 func TestGlobalDefaultUsedByNewRuns(t *testing.T) {
 	m, _ := setup(t)
 	store := models.Store{DB: m.DB}
-	libraryPrompt, err := (prompts.Store{DB: m.DB}).Save(prompts.Profile{Title: "全局默认提示词", Body: "使用新默认"})
+	libraryPrompt, err := (prompts.Store{DB: m.DB}).Save(t.Context(), prompts.Profile{Title: "全局默认提示词", Body: "使用新默认"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := store.Save(models.Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: "全局默认测试", PromptID: libraryPrompt.ID})
+	p, err := store.Save(t.Context(), models.Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: "全局默认测试", PromptID: libraryPrompt.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store.SetDefault(p.ID); err != nil {
+	if err = store.SetDefault(t.Context(), p.ID); err != nil {
 		t.Fatal(err)
 	}
 	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "default-selection"}, "manual", 0)
@@ -373,7 +373,7 @@ func TestGlobalDefaultUsedByNewRuns(t *testing.T) {
 	if err != nil || r.ModelConfigID != p.ID || r.PromptBody != libraryPrompt.Body+"\n\n"+systemsettings.DefaultFixedPrompt {
 		t.Fatal(r, err)
 	}
-	if err = store.SetDefault(1); err != nil {
+	if err = store.SetDefault(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
 	r, err = m.Get(t.Context(), id)
@@ -504,7 +504,7 @@ func TestRestartFinalizesPendingItems(t *testing.T) {
 	if _, err = m.DB.Exec("UPDATE runs SET status='running' WHERE id=?; UPDATE run_items SET status='running',started_ms=123 WHERE run=?", id, id); err != nil {
 		t.Fatal(err)
 	}
-	if err = interruptRuns(m.DB); err != nil {
+	if err = interruptRuns(t.Context(), m.DB); err != nil {
 		t.Fatal(err)
 	}
 	var status string

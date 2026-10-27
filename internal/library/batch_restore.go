@@ -28,13 +28,13 @@ type BatchRestoreFailure struct {
 func (l *Library) RestoreBatch(ctx context.Context, run int64) (BatchRestoreResult, error) {
 	out := BatchRestoreResult{Errors: []BatchRestoreFailure{}}
 	var status string
-	if err := l.DB.QueryRow("SELECT status FROM runs WHERE id=?", run).Scan(&status); err != nil {
+	if err := l.DB.QueryRowContext(ctx, "SELECT status FROM runs WHERE id=?", run).Scan(&status); err != nil {
 		return out, err
 	}
 	if domain.ActiveRunStatus(status) {
 		return out, domain.Fail(domain.KindConflict, "run_active", "cancel the run and wait for it to finish first")
 	}
-	rows, err := l.DB.Query("SELECT id FROM operations WHERE run=? AND source='automatic' AND status='committed' AND undo_of=0 ORDER BY id DESC", run)
+	rows, err := l.DB.QueryContext(ctx, "SELECT id FROM operations WHERE run=? AND source='automatic' AND status='committed' AND undo_of=0 ORDER BY id DESC", run)
 	if err != nil {
 		return out, err
 	}
@@ -56,7 +56,7 @@ func (l *Library) RestoreBatch(ctx context.Context, run int64) (BatchRestoreResu
 		if err := ctx.Err(); err != nil {
 			return out, err
 		}
-		op, err := l.Operation(id)
+		op, err := l.Operation(ctx, id)
 		if err == nil && op.Undone {
 			out.Skipped++
 			continue

@@ -17,11 +17,11 @@ import (
 
 func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 	cfg := &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}
-	a, err := New(cfg, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), cfg, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer shutdown(t, a)
 	h := a.Handler()
 	var cookie *http.Cookie
 	call := func(method, path string, payload any, sameSite bool) *httptest.ResponseRecorder {
@@ -96,7 +96,7 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 			t.Fatal("malformed failure keywords accepted", payload, w.Code, w.Body.String())
 		}
 	}
-	if got, err := (systemsettings.Store{DB: a.DB}).FailureKeywords(); err != nil || !slices.Equal(got, page.FailureKeywords) {
+	if got, err := (systemsettings.Store{DB: a.DB}).FailureKeywords(t.Context()); err != nil || !slices.Equal(got, page.FailureKeywords) {
 		t.Fatal("rejected request changed rules", got, err)
 	}
 	for _, keywords := range [][]string{{" "}, {strings.Repeat("字", 201)}, make([]string, 101)} {

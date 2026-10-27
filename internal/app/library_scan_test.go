@@ -20,15 +20,11 @@ import (
 func scanAPI(t *testing.T) (*App, string, func(string, string, string, bool) *httptest.ResponseRecorder) {
 	t.Helper()
 	root := t.TempDir()
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		if err := a.Close(); err != nil {
-			t.Error(err)
-		}
-	})
+	t.Cleanup(func() { shutdown(t, a) })
 	var cookies []*http.Cookie
 	request := func(method, path, body string, sameSite bool) *httptest.ResponseRecorder {
 		t.Helper()

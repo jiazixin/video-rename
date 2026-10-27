@@ -17,7 +17,7 @@ import (
 )
 
 func TestSessionValidationWhileWriterBusy(t *testing.T) {
-	db, err := storage.Open(filepath.Join(t.TempDir(), "sessions.sqlite"))
+	db, err := storage.Open(t.Context(), filepath.Join(t.TempDir(), "sessions.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestSessionValidationWhileWriterBusy(t *testing.T) {
 }
 
 func TestSessionValidationReadWaitHonorsCancellation(t *testing.T) {
-	db, err := storage.Open(filepath.Join(t.TempDir(), "sessions.sqlite"))
+	db, err := storage.Open(t.Context(), filepath.Join(t.TempDir(), "sessions.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestSessionRenewalWhileWriterBusy(t *testing.T) {
 		{"request cancellation", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			db, err := storage.Open(filepath.Join(t.TempDir(), "sessions.sqlite"))
+			db, err := storage.Open(t.Context(), filepath.Join(t.TempDir(), "sessions.sqlite"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -272,7 +272,7 @@ func TestSessionRenewalWhileWriterBusy(t *testing.T) {
 }
 
 func TestSessionCrossOriginAndLogout(t *testing.T) {
-	db, e := storage.Open(filepath.Join(t.TempDir(), "db.sqlite"))
+	db, e := storage.Open(t.Context(), filepath.Join(t.TempDir(), "db.sqlite"))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -324,7 +324,7 @@ func TestSessionCrossOriginAndLogout(t *testing.T) {
 }
 
 func TestSessionSlidingRenewal(t *testing.T) {
-	db, e := storage.Open(filepath.Join(t.TempDir(), "db.sqlite"))
+	db, e := storage.Open(t.Context(), filepath.Join(t.TempDir(), "db.sqlite"))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -400,7 +400,7 @@ func TestSessionSlidingRenewal(t *testing.T) {
 }
 
 func TestLoginRateLimitCountsFailuresOnly(t *testing.T) {
-	db, e := storage.Open(filepath.Join(t.TempDir(), "db.sqlite"))
+	db, e := storage.Open(t.Context(), filepath.Join(t.TempDir(), "db.sqlite"))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -441,7 +441,7 @@ func TestCookieSecuritySurvivesProxyRenewal(t *testing.T) {
 		{"HTTP LAN ignores forwarded header", "http://example.test", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			db, err := storage.Open(filepath.Join(t.TempDir(), "sessions.sqlite"))
+			db, err := storage.Open(t.Context(), filepath.Join(t.TempDir(), "sessions.sqlite"))
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -2,6 +2,7 @@
 package models
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
@@ -41,11 +42,11 @@ func DefaultSettings() config.ServerConfig {
 }
 
 // Seed creates the default prompt and model profile when none exist.
-func (s Store) Seed() error {
-	if _, err := s.DB.Exec("INSERT INTO prompts(title,body,created,updated) SELECT '默认提示词',?,?,? WHERE NOT EXISTS(SELECT 1 FROM prompts)", DefaultBody, storage.Now(), storage.Now()); err != nil {
+func (s Store) Seed(ctx context.Context) error {
+	if _, err := s.DB.ExecContext(ctx, "INSERT INTO prompts(title,body,created,updated) SELECT '默认提示词',?,?,? WHERE NOT EXISTS(SELECT 1 FROM prompts)", DefaultBody, storage.Now(), storage.Now()); err != nil {
 		return err
 	}
-	_, err := s.DB.Exec("INSERT INTO model_configs(id,title,prompt_id,created,updated,is_default) SELECT 1,'默认视频命名',(SELECT min(id) FROM prompts),?,?,1 WHERE NOT EXISTS(SELECT 1 FROM model_configs)", storage.Now(), storage.Now())
+	_, err := s.DB.ExecContext(ctx, "INSERT INTO model_configs(id,title,prompt_id,created,updated,is_default) SELECT 1,'默认视频命名',(SELECT min(id) FROM prompts),?,?,1 WHERE NOT EXISTS(SELECT 1 FROM model_configs)", storage.Now(), storage.Now())
 	return err
 }
 
@@ -73,13 +74,13 @@ func (s Store) scan(row interface{ Scan(...any) error }) (p Profile, err error) 
 }
 
 // Get returns model profile id.
-func (s Store) Get(id int64) (Profile, error) {
-	return s.scan(s.DB.Read().QueryRow("SELECT "+columns+" FROM model_configs c LEFT JOIN prompts p ON p.id=c.prompt_id WHERE c.id=?", id))
+func (s Store) Get(ctx context.Context, id int64) (Profile, error) {
+	return s.scan(s.DB.Read().QueryRowContext(ctx, "SELECT "+columns+" FROM model_configs c LEFT JOIN prompts p ON p.id=c.prompt_id WHERE c.id=?", id))
 }
 
 // List returns all model profiles.
-func (s Store) List() ([]Profile, error) {
-	rows, err := s.DB.Read().Query("SELECT " + columns + " FROM model_configs c LEFT JOIN prompts p ON p.id=c.prompt_id ORDER BY c.id")
+func (s Store) List(ctx context.Context) ([]Profile, error) {
+	rows, err := s.DB.Read().QueryContext(ctx, "SELECT "+columns+" FROM model_configs c LEFT JOIN prompts p ON p.id=c.prompt_id ORDER BY c.id")
 	if err != nil {
 		return nil, err
 	}
@@ -97,11 +98,11 @@ func (s Store) List() ([]Profile, error) {
 
 // resolve fills the read-only prompt fields from the library so validation
 // and snapshots always see the text the reference currently points at.
-func (s Store) resolve(p *Profile) error {
+func (s Store) resolve(ctx context.Context, p *Profile) error {
 	if p.PromptID <= 0 {
 		return domain.InvalidField("prompt_id", "required")
 	}
-	err := s.DB.Read().QueryRow("SELECT title,body FROM prompts WHERE id=?", p.PromptID).Scan(&p.PromptTitle, &p.Body)
+	err := s.DB.Read().QueryRowContext(ctx, "SELECT title,body FROM prompts WHERE id=?", p.PromptID).Scan(&p.PromptTitle, &p.Body)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.InvalidField("prompt_id", "required")
 	}
@@ -129,8 +130,8 @@ func (p *Profile) Validate() error {
 }
 
 // Save creates or updates profile p.
-func (s Store) Save(p Profile) (Profile, error) {
-	if err := s.resolve(&p); err != nil {
+func (s Store) Save(ctx context.Context, p Profile) (Profile, error) {
+	if err := s.resolve(ctx, &p); err != nil {
 		return p, err
 	}
 	if err := p.Validate(); err != nil {
@@ -145,19 +146,19 @@ func (s Store) Save(p Profile) (Profile, error) {
 		return p, err
 	}
 	if p.ID == 0 {
-		tx, err := s.DB.Begin()
+		tx, err := s.DB.BeginTx(ctx, nil)
 		if err != nil {
 			return p, err
 		}
 		defer tx.Rollback()
 		var n int
-		if err = tx.QueryRow("SELECT count(*) FROM model_configs").Scan(&n); err != nil {
+		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM model_configs").Scan(&n); err != nil {
 			return p, err
 		}
 		if n >= 200 {
 			return p, domain.Fail(domain.KindTooMany, "model_configs_full", "at most 200 model configurations")
 		}
-		res, err := tx.Exec("INSERT INTO model_configs(title,prompt_id,created,updated,settings,api_key) VALUES(?,?,?,?,?,?)", p.Title, p.PromptID, storage.Now(), storage.Now(), string(raw), secret)
+		res, err := tx.ExecContext(ctx, "INSERT INTO model_configs(title,prompt_id,created,updated,settings,api_key) VALUES(?,?,?,?,?,?)", p.Title, p.PromptID, storage.Now(), storage.Now(), string(raw), secret)
 		if err != nil {
 			return p, err
 		}
@@ -169,7 +170,7 @@ func (s Store) Save(p Profile) (Profile, error) {
 			return p, err
 		}
 	} else {
-		res, err := s.DB.Exec("UPDATE model_configs SET title=?,prompt_id=?,settings=?,api_key=?,updated=?,version=version+1 WHERE id=? AND version=?", p.Title, p.PromptID, string(raw), secret, storage.Now(), p.ID, p.Version)
+		res, err := s.DB.ExecContext(ctx, "UPDATE model_configs SET title=?,prompt_id=?,settings=?,api_key=?,updated=?,version=version+1 WHERE id=? AND version=?", p.Title, p.PromptID, string(raw), secret, storage.Now(), p.ID, p.Version)
 		if err != nil {
 			return p, err
 		}
@@ -178,11 +179,11 @@ func (s Store) Save(p Profile) (Profile, error) {
 			return p, domain.Fail(domain.KindConflict, "model_config_changed", "model configuration was modified or deleted; refresh")
 		}
 	}
-	return s.Get(p.ID)
+	return s.Get(ctx, p.ID)
 }
 
 // ResolveKey reuses a stored key only for the same destination and protocol.
-func (s Store) ResolveKey(p *Profile, key *string) error {
+func (s Store) ResolveKey(ctx context.Context, p *Profile, key *string) error {
 	if key != nil {
 		p.APIKey = *key
 		return nil
@@ -190,7 +191,7 @@ func (s Store) ResolveKey(p *Profile, key *string) error {
 	if p.ID == 0 {
 		return nil
 	}
-	old, err := s.Get(p.ID)
+	old, err := s.Get(ctx, p.ID)
 	if err != nil {
 		return err
 	}
@@ -205,23 +206,23 @@ func (s Store) ResolveKey(p *Profile, key *string) error {
 }
 
 // SetDefault makes profile id the default.
-func (s Store) SetDefault(id int64) error {
-	p, err := s.Get(id)
+func (s Store) SetDefault(ctx context.Context, id int64) error {
+	p, err := s.Get(ctx, id)
 	if err != nil {
 		return err
 	}
 	if err = p.Validate(); err != nil {
 		return err
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec("UPDATE model_configs SET is_default=0 WHERE is_default=1"); err != nil {
+	if _, err = tx.ExecContext(ctx, "UPDATE model_configs SET is_default=0 WHERE is_default=1"); err != nil {
 		return err
 	}
-	res, err := tx.Exec("UPDATE model_configs SET is_default=1 WHERE id=? AND version=?", id, p.Version)
+	res, err := tx.ExecContext(ctx, "UPDATE model_configs SET is_default=1 WHERE id=? AND version=?", id, p.Version)
 	if err != nil {
 		return err
 	}
@@ -234,8 +235,8 @@ func (s Store) SetDefault(id int64) error {
 }
 
 // DefaultID returns the ID of the default profile.
-func (s Store) DefaultID() (id int64, err error) {
-	err = s.DB.Read().QueryRow("SELECT id FROM model_configs WHERE is_default=1").Scan(&id)
+func (s Store) DefaultID(ctx context.Context) (id int64, err error) {
+	err = s.DB.Read().QueryRowContext(ctx, "SELECT id FROM model_configs WHERE is_default=1").Scan(&id)
 	return
 }
 

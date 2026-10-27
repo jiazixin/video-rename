@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json/v2"
 	"net/http/httptest"
 	"os"
@@ -111,12 +112,14 @@ func TestNumberingExplicitCancelAndLease(t *testing.T) {
 			}
 			entered, release := make(chan struct{}), make(chan struct{})
 			var once sync.Once
-			a.Library.Busy = func(int64) bool {
+			// Hold the worker until the test observes cancellation; the test
+			// context ends before cleanup if the test fails early.
+			a.Library.Busy = func(context.Context, int64) bool {
 				once.Do(func() {
 					close(entered)
 					select {
 					case <-release:
-					case <-a.ctx.Done():
+					case <-t.Context().Done():
 					}
 				})
 				return false
@@ -171,7 +174,9 @@ func TestNumberingJobsProtectedAndShutdown(t *testing.T) {
 			t.Fatal(path, w.Code)
 		}
 	}
-	a.cancel()
+	if err := a.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	numberingRequestTest(t, a, numberingRequest{Key: "closed-service", Action: "preview", Parent: 1}, 503)
 }
 
@@ -192,13 +197,13 @@ func TestNumberingCancelKeepsCompletedDirectories(t *testing.T) {
 	batchIDs := []string{result[0].ID, result[1].ID}
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
-	a.Library.Busy = func(id int64) bool {
+	a.Library.Busy = func(ctx context.Context, id int64) bool {
 		if id == ids[1] {
 			once.Do(func() {
 				close(entered)
 				select {
 				case <-release:
-				case <-a.ctx.Done():
+				case <-ctx.Done():
 				}
 			})
 		}

@@ -2,6 +2,7 @@
 package notifications
 
 import (
+	"context"
 	"encoding/json/v2"
 	"log/slog"
 	"net/url"
@@ -50,7 +51,7 @@ type Service struct {
 	logger *slog.Logger
 	DB     *storage.Store
 	mu     sync.Mutex
-	Send   func(Credentials, string, string, string) error
+	Send   func(context.Context, Credentials, string, string, string) error
 }
 
 // New creates the notification service.
@@ -59,10 +60,10 @@ func New(db *storage.Store, logger *slog.Logger) *Service {
 	s.Send = sendMessage
 	return s
 }
-func (s *Service) get(kind string) (Channel, Credentials, error) {
+func (s *Service) get(ctx context.Context, kind string) (Channel, Credentials, error) {
 	c := Channel{Kind: kind}
 	var encrypted string
-	err := s.DB.QueryRow("SELECT enabled,failure_only,credentials FROM notification_channels WHERE kind=?", kind).Scan(&c.Enabled, &c.FailureOnly, &encrypted)
+	err := s.DB.QueryRowContext(ctx, "SELECT enabled,failure_only,credentials FROM notification_channels WHERE kind=?", kind).Scan(&c.Enabled, &c.FailureOnly, &encrypted)
 	if err != nil {
 		return c, Credentials{}, err
 	}
@@ -82,18 +83,18 @@ func (s *Service) get(kind string) (Channel, Credentials, error) {
 }
 
 // List returns the notification channels.
-func (s *Service) List() ([]Channel, error) {
+func (s *Service) List(ctx context.Context) ([]Channel, error) {
 	out := []Channel{}
 	for _, kind := range Kinds {
 		var count int
-		if err := s.DB.QueryRow("SELECT count(*) FROM notification_channels WHERE kind=?", kind).Scan(&count); err != nil {
+		if err := s.DB.QueryRowContext(ctx, "SELECT count(*) FROM notification_channels WHERE kind=?", kind).Scan(&count); err != nil {
 			return nil, err
 		}
 		if count == 0 {
 			out = append(out, Channel{Kind: kind})
 			continue
 		}
-		c, _, err := s.get(kind)
+		c, _, err := s.get(ctx, kind)
 		if err != nil {
 			return nil, err
 		}
@@ -128,19 +129,19 @@ func validate(kind string, c Credentials) error {
 }
 
 // Save applies v to its channel.
-func (s *Service) Save(v Input) error {
+func (s *Service) Save(ctx context.Context, v Input) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !slices.Contains(Kinds, v.Kind) {
 		return errUnsupportedChannel
 	}
 	var exists int
-	if err := s.DB.QueryRow("SELECT count(*) FROM notification_channels WHERE kind=?", v.Kind).Scan(&exists); err != nil {
+	if err := s.DB.QueryRowContext(ctx, "SELECT count(*) FROM notification_channels WHERE kind=?", v.Kind).Scan(&exists); err != nil {
 		return err
 	}
 	c := v.Credentials
 	if exists > 0 {
-		_, old, err := s.get(v.Kind)
+		_, old, err := s.get(ctx, v.Kind)
 		if err != nil {
 			return err
 		}
@@ -171,23 +172,23 @@ func (s *Service) Save(v Input) error {
 		return err
 	}
 	// Saving a disabled channel cancels pending delivery. Re-enabling starts with new batches.
-	tx, err := s.DB.Begin()
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.Exec(`INSERT INTO notification_channels(kind,enabled,failure_only,credentials,after_run) VALUES(?,?,?,?,(SELECT COALESCE(max(id),0) FROM runs)) ON CONFLICT(kind) DO UPDATE SET after_run=CASE WHEN notification_channels.enabled=0 THEN (SELECT COALESCE(max(id),0) FROM runs) ELSE notification_channels.after_run END,enabled=excluded.enabled,failure_only=excluded.failure_only,credentials=excluded.credentials`, v.Kind, v.Enabled, v.FailureOnly, encrypted)
+	_, err = tx.ExecContext(ctx, `INSERT INTO notification_channels(kind,enabled,failure_only,credentials,after_run) VALUES(?,?,?,?,(SELECT COALESCE(max(id),0) FROM runs)) ON CONFLICT(kind) DO UPDATE SET after_run=CASE WHEN notification_channels.enabled=0 THEN (SELECT COALESCE(max(id),0) FROM runs) ELSE notification_channels.after_run END,enabled=excluded.enabled,failure_only=excluded.failure_only,credentials=excluded.credentials`, v.Kind, v.Enabled, v.FailureOnly, encrypted)
 	if err != nil {
 		return err
 	}
 	if !v.Enabled {
-		_, err = tx.Exec("UPDATE notification_deliveries SET status='cancelled' WHERE kind=? AND status IN ('pending','sending')", v.Kind)
+		_, err = tx.ExecContext(ctx, "UPDATE notification_deliveries SET status='cancelled' WHERE kind=? AND status IN ('pending','sending')", v.Kind)
 		if err != nil {
 			return err
 		}
 	}
 	if v.FailureOnly {
-		_, err = tx.Exec("UPDATE notification_deliveries SET status='cancelled' WHERE kind=? AND status='pending' AND run IN (SELECT id FROM runs WHERE failed=0 AND status IN ('completed','cancelled'))", v.Kind)
+		_, err = tx.ExecContext(ctx, "UPDATE notification_deliveries SET status='cancelled' WHERE kind=? AND status='pending' AND run IN (SELECT id FROM runs WHERE failed=0 AND status IN ('completed','cancelled'))", v.Kind)
 		if err != nil {
 			return err
 		}
@@ -200,13 +201,13 @@ var errUnsupportedChannel = domain.Fail(domain.KindInvalid, "unsupported_channel
 
 // Test sends a test message through the channel of kind. The message is
 // notification content, a recorded exception to the error-code rule.
-func (s *Service) Test(kind string) error {
-	_, c, err := s.get(kind)
+func (s *Service) Test(ctx context.Context, kind string) error {
+	_, c, err := s.get(ctx, kind)
 	if err != nil {
 		return domain.Fail(domain.KindConflict, "notification_not_configured", "save this channel first")
 	}
 	if err = validate(kind, c); err != nil {
 		return err
 	}
-	return s.Send(c, kind, "video-rename · 测试通知", "通知连接正常。批次结束后，这里将显示处理数量、开始与完成时间等摘要。")
+	return s.Send(ctx, c, kind, "video-rename · 测试通知", "通知连接正常。批次结束后，这里将显示处理数量、开始与完成时间等摘要。")
 }

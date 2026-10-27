@@ -24,7 +24,7 @@ func (m *Manager) queueFiles(ctx context.Context, batch Run, entries []library.E
 		prefix, ok := parents[e.Parent]
 		if !ok {
 			if e.Parent != 1 {
-				prefix = m.Library.DisplayPath(e.Parent) + " / "
+				prefix = m.Library.DisplayPath(ctx, e.Parent) + " / "
 			}
 			parents[e.Parent] = prefix
 		}
