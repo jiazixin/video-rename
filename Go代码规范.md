@@ -1,6 +1,6 @@
 # Go 代码规范
 
-基线版本：1.0.0。适用范围：Go 后端服务、命令行工具与库。先读 [代码规范.md](代码规范.md)；`cmd/`、`internal/`、`testdata/`、配置文件位置与版本元数据见 [目录规范.md](目录规范.md)，本文不重复。第 10 节命令行入口契约与附录只在新建或修改 `cmd/` 时阅读。
+基线版本：1.0.1。适用范围：Go 后端服务、命令行工具与库。先读 [代码规范.md](代码规范.md)；`cmd/`、`internal/`、`testdata/`、配置文件位置与版本元数据见 [目录规范.md](目录规范.md)，本文不重复。第 10 节命令行入口契约与附录只在新建或修改 `cmd/` 时阅读。
 
 ## 1. 工具链
 
@@ -62,7 +62,7 @@ go run golang.org/x/vuln/cmd/govulncheck@<固定版本> ./...
 
 ## 5. context、并发与生命周期
 
-- 所有可能阻塞的 I/O、数据库、外部进程调用的第一个参数为 `ctx context.Context`。不新增“无 ctx 的 `Xxx` + 带 ctx 的 `XxxContext`”成对 API，不在库代码中用 `context.Background()` 代替调用方的 ctx。关闭阶段需要脱离取消时用 `context.WithoutCancel(ctx)` 加超时。
+- 网络、数据库、外部进程调用，以及可能长时间运行的文件操作（如目录扫描、大文件复制），第一个参数为 `ctx context.Context`。进程启动时一次性读取本地配置文件不在此列（第 7 节的 `Load`）。不新增“无 ctx 的 `Xxx` + 带 ctx 的 `XxxContext`”成对 API，不在库代码中用 `context.Background()` 代替调用方的 ctx。关闭阶段需要脱离取消时用 `context.WithoutCancel(ctx)` 加超时。
 - 不把 `context.Context` 存进结构体字段，更不导出。
 - 有后台工作的组件：`New(...)` 只做构造与校验，不启动 goroutine；`Run(ctx) error` 启动后台工作，阻塞到 `ctx` 结束且所有 goroutine 退出后返回。应用装配确需分步启动（例如先监听端口再启动后台任务）时使用 `Start(ctx) error` 与 `Shutdown(ctx) error`，并在包注释中说明顺序。
 - 后台 goroutine 用 `sync.WaitGroup.Go` 启动并等待；需要“任一失败即取消全部”时组合 `context.WithCancelCause`，不为此引入额外依赖。每个 goroutine 都有退出路径。
@@ -105,7 +105,7 @@ func Load(src Source) (Config, error)
 func (c Config) Validate() error
 ```
 
-  `Explicit` 为真时文件必须存在；为假时文件缺失可回退到内置默认值，但必填项缺失仍报错。`Validate` 只校验、不修改，规范化（去空白、转小写、补默认值）在解码阶段完成。
+  `Load` 只读取本地配置文件，且在建立信号 ctx 之前运行，因此不接收 `ctx`（见第 5 节）。`Explicit` 为真时文件必须存在；为假时文件缺失可回退到内置默认值，但必填项缺失仍报错。`Validate` 只校验、不修改，规范化（去空白、转小写、补默认值）在解码阶段完成。
 - 校验错误使用带字段路径的错误类型，消息为英文：`server.port: must be between 1 and 65535`。
 - 字段级环境变量覆盖的变量名为：程序名转大写、`-` 换成 `_`，作为前缀；层级之间用 `__` 连接，键名内部保留单个 `_`（如 `HARBOR_CONSOLE_SERVER__LISTEN_ADDR`）。协议写入 README 的“配置约定”，见目录规范第 7.1 节。
 
@@ -281,31 +281,31 @@ type options struct {
 
 // parseArgs accepts -x and --x spellings, "--config file" and "--config=file".
 func parseArgs(args []string) (options, error) {
-	var o options
+	var opts options
 	flags := flag.NewFlagSet("<name>", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	setConfig := func(v string) error {
 		if strings.TrimSpace(v) == "" {
 			return errors.New("configuration path must not be empty")
 		}
-		if o.configFile != "" && o.configFile != v {
-			return fmt.Errorf("different files given for -c/--config: %q and %q", o.configFile, v)
+		if opts.configFile != "" && opts.configFile != v {
+			return fmt.Errorf("different files given for -c/--config: %q and %q", opts.configFile, v)
 		}
-		o.configFile = v
+		opts.configFile = v
 		return nil
 	}
 	flags.Func("c", "", setConfig)
 	flags.Func("config", "", setConfig)
-	flags.BoolVar(&o.help, "h", false, "")
-	flags.BoolVar(&o.help, "help", false, "")
-	flags.BoolVar(&o.version, "version", false, "")
+	flags.BoolVar(&opts.help, "h", false, "")
+	flags.BoolVar(&opts.help, "help", false, "")
+	flags.BoolVar(&opts.version, "version", false, "")
 	if err := flags.Parse(args); err != nil {
 		return options{}, err
 	}
 	if flags.NArg() > 0 {
 		return options{}, fmt.Errorf("unexpected argument %q", flags.Arg(0))
 	}
-	return o, nil
+	return opts, nil
 }
 
 // configPath returns --config, then CONFIG_FILE, then the default file.
@@ -355,21 +355,21 @@ func main() {
 // run reports usage and startup errors as plain text on stderr; once the
 // logger is ready, failures are logged.
 func run(args []string, stdout, stderr io.Writer) int {
-	o, err := parseArgs(args)
+	opts, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "<name>: %v\nRun '<name> --help' for usage.\n", err)
 		return exitUsage
 	}
 	build := currentBuild()
 	switch {
-	case o.help:
+	case opts.help:
 		fmt.Fprint(stdout, usage)
 		return exitOK
-	case o.version:
+	case opts.version:
 		fmt.Fprintln(stdout, "<name>", build)
 		return exitOK
 	}
-	path, explicit, err := o.configPath(os.LookupEnv)
+	path, explicit, err := opts.configPath(os.LookupEnv)
 	if err != nil {
 		fmt.Fprintf(stderr, "<name>: config: %v\n", err)
 		return exitFailure
@@ -510,6 +510,7 @@ import (
 )
 
 func TestReadBuild(t *testing.T) {
+	t.Parallel()
 	const revision = "0123456789abcdef0123456789abcdef01234567"
 	vcs := func(modified string) []debug.BuildSetting {
 		return []debug.BuildSetting{
@@ -534,6 +535,7 @@ func TestReadBuild(t *testing.T) {
 		{"blank release", " ", &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}, "dev"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := readBuild(tc.release, tc.info).String(); got != tc.want {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
@@ -542,9 +544,11 @@ func TestReadBuild(t *testing.T) {
 }
 
 func TestReadBuildKeepsCommitTime(t *testing.T) {
-	b := readBuild("dev", &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.time", Value: "2026-10-01T12:00:00Z"}}})
-	if b.Time != "2026-10-01T12:00:00Z" || b.Revision != "" || b.Version != "dev" {
-		t.Fatalf("got %+v", b)
+	t.Parallel()
+	got := readBuild("dev", &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.time", Value: "2026-10-01T12:00:00Z"}}})
+	want := buildInfo{Version: "dev", Time: "2026-10-01T12:00:00Z"}
+	if got != want {
+		t.Fatalf("got %+v, want %+v", got, want)
 	}
 }
 ```
@@ -592,19 +596,20 @@ func TestBuildVersion(t *testing.T) {
 			}
 		}
 	}
-	command := func(t *testing.T, dir, name string, args ...string) string {
+	// command runs argv[0] with the remaining arguments in dir.
+	command := func(t *testing.T, dir string, argv ...string) string {
 		t.Helper()
-		cmd := exec.CommandContext(t.Context(), name, args...)
+		cmd := exec.CommandContext(t.Context(), argv[0], argv[1:]...)
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			t.Fatalf("%s %q: %v\n%s", name, args, err, out)
+			t.Fatalf("%q: %v\n%s", argv, err, out)
 		}
 		return strings.TrimSpace(string(out))
 	}
 	git := func(args ...string) string {
 		t.Helper()
-		return command(t, repo, "git", args...)
+		return command(t, repo, append([]string{"git"}, args...)...)
 	}
 	git("init", "-q")
 	git("config", "user.name", "Version Fixture")
@@ -614,12 +619,21 @@ func TestBuildVersion(t *testing.T) {
 	git("add", ".")
 	git("commit", "-qm", "fixture")
 	revision := git("rev-parse", "--short=12", "HEAD")
-	check := func(name, dir, prefix, suffix string, flags ...string) {
+	// buildCase expects the output to equal prefix when suffix is empty,
+	// otherwise to start with prefix and end with suffix.
+	type buildCase struct {
+		name   string
+		dir    string
+		prefix string
+		suffix string
+		flags  []string
+	}
+	check := func(tc buildCase) {
 		t.Helper()
-		t.Run(name, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			binary := filepath.Join(base, "binary")
-			args := append([]string{"build", "-o", binary}, flags...)
-			command(t, dir, "go", append(args, ".")...)
+			argv := append([]string{"go", "build", "-o", binary}, tc.flags...)
+			command(t, tc.dir, append(argv, ".")...)
 			// No source directory or Git executable is available at runtime.
 			cmd := exec.CommandContext(t.Context(), binary)
 			cmd.Dir = base
@@ -629,35 +643,35 @@ func TestBuildVersion(t *testing.T) {
 				t.Fatalf("run binary: %v\n%s", err, out)
 			}
 			got := strings.TrimSpace(string(out))
-			if (suffix == "" && got != prefix) || !strings.HasPrefix(got, prefix) || !strings.HasSuffix(got, suffix) {
-				t.Fatalf("got %q; want prefix %q and suffix %q", got, prefix, suffix)
+			if (tc.suffix == "" && got != tc.prefix) || !strings.HasPrefix(got, tc.prefix) || !strings.HasSuffix(got, tc.suffix) {
+				t.Fatalf("got %q, want prefix %q and suffix %q", got, tc.prefix, tc.suffix)
 			}
 			t.Log(got)
 		})
 	}
 	clean := " (revision=" + revision + ")"
-	check("no tag", repo, "v0.0.0-", "-"+revision)
+	check(buildCase{name: "no tag", dir: repo, prefix: "v0.0.0-", suffix: "-" + revision})
 	git("tag", "1.1")
-	check("legacy tag ignored", repo, "v0.0.0-", "-"+revision)
+	check(buildCase{name: "legacy tag ignored", dir: repo, prefix: "v0.0.0-", suffix: "-" + revision})
 	git("tag", "v1.2.3")
-	check("standard tag", repo, "v1.2.3"+clean, "")
+	check(buildCase{name: "standard tag", dir: repo, prefix: "v1.2.3" + clean})
 	for _, value := range []string{"", "dev", "(devel)"} {
-		check("placeholder "+value, repo, "v1.2.3"+clean, "", "-ldflags", "-X main.version="+value)
+		check(buildCase{name: "placeholder " + value, dir: repo, prefix: "v1.2.3" + clean, flags: []string{"-ldflags", "-X main.version=" + value}})
 	}
-	check("explicit override", repo, "custom-build"+clean, "", "-ldflags", "-X main.version=custom-build")
+	check(buildCase{name: "explicit override", dir: repo, prefix: "custom-build" + clean, flags: []string{"-ldflags", "-X main.version=custom-build"}})
 	if err := os.WriteFile(filepath.Join(repo, "untracked.txt"), []byte("dirty"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	modified := " (revision=" + revision + ", modified)"
-	check("dirty tag", repo, "v1.2.3+dirty"+modified, "")
-	check("dirty override", repo, "custom-build"+modified, "", "-ldflags", "-X main.version=custom-build")
+	check(buildCase{name: "dirty tag", dir: repo, prefix: "v1.2.3+dirty" + modified})
+	check(buildCase{name: "dirty override", dir: repo, prefix: "custom-build" + modified, flags: []string{"-ldflags", "-X main.version=custom-build"}})
 	git("add", ".")
 	git("commit", "-qm", "after tag")
 	revision = git("rev-parse", "--short=12", "HEAD")
-	check("after tag", repo, "v1.2.4-0.", "-"+revision)
-	check("disabled VCS", repo, "dev", "dev", "-buildvcs=false")
-	check("source archive", archive, "dev", "dev")
-	check("archive override", archive, "v1.2.3", "v1.2.3", "-ldflags", "-X main.version=v1.2.3")
+	check(buildCase{name: "after tag", dir: repo, prefix: "v1.2.4-0.", suffix: "-" + revision})
+	check(buildCase{name: "disabled VCS", dir: repo, prefix: "dev", flags: []string{"-buildvcs=false"}})
+	check(buildCase{name: "source archive", dir: archive, prefix: "dev"})
+	check(buildCase{name: "archive override", dir: archive, prefix: "v1.2.3", flags: []string{"-ldflags", "-X main.version=v1.2.3"}})
 }
 ```
 
