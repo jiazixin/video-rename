@@ -1,10 +1,12 @@
 <script setup lang="ts">
+  import { errorText } from '../../app/errors';
   import PageNavigation from '../../components/PageNavigation.vue';
   import { computed, onDeactivated, ref } from 'vue';
   import { Hash, History, Undo2 } from '@lucide/vue';
-  import { api, ApiError } from '../../app/api';
+  import { api, ApiError, apiItems } from '../../app/api';
+  import type { ServerRecord } from '../../app/contracts';
   import DateTime from '../../components/DateTime.vue';
-  import Modal from '../../components/Modal.vue';
+  import ModalDialog from '../../components/ModalDialog.vue';
   import ModalTransition from '../../components/ModalTransition.vue';
   import NumberingDiagnostics from './NumberingDiagnostics.vue';
   import './media-numbering.css';
@@ -14,13 +16,20 @@
     status: string;
     created: string;
     undo_of: string;
-    error: string;
+    error?: ServerRecord;
     processing_log?: string;
     total: number;
     changed: number;
     items?: { entry: number; old_name: string; new_name: string }[];
   };
-  const props = defineProps<{
+  const {
+    directory,
+    query,
+    status = '',
+    sort,
+    disabled,
+    media
+  } = defineProps<{
     directory: number;
     query: string;
     status?: string;
@@ -28,11 +37,9 @@
     disabled: boolean;
     media: 'image' | 'audio';
   }>();
-  const noun = computed(() => (props.media === 'audio' ? '音频' : '图片'));
-  const unit = computed(() => (props.media === 'audio' ? '个' : '张'));
-  const untouched = computed(() =>
-    props.media === 'audio' ? '视频、图片和目录不变' : '视频和目录不变'
-  );
+  const noun = computed(() => (media === 'audio' ? '音频' : '图片'));
+  const unit = computed(() => (media === 'audio' ? '个' : '张'));
+  const untouched = computed(() => (media === 'audio' ? '视频、图片和目录不变' : '视频和目录不变'));
   const emit = defineEmits<{ changed: []; notice: [message: string] }>();
   const busy = ref(false),
     show = ref(false),
@@ -58,7 +65,7 @@
   };
   let parent = 0;
   async function open(restore?: Batch) {
-    parent = props.directory;
+    parent = directory;
     show.value = true;
     history.value = false;
     error.value = '';
@@ -68,25 +75,31 @@
     busy.value = true;
     try {
       preview.value = restore
-        ? await api<Batch>(`/numberings/${restore.id}/restore-preview`, 'POST', {})
-        : await api<Batch>(`/directories/${parent}/numberings/preview`, 'POST', {
-            media: props.media,
-            query: props.query,
-            status: props.status || '',
-            sort: props.sort
+        ? await api<Batch>(`/numberings/${restore.id}/restore-preview`, {
+            method: 'POST',
+            body: {}
+          })
+        : await api<Batch>(`/directories/${parent}/numberings/preview`, {
+            method: 'POST',
+            body: {
+              media: media,
+              query: query,
+              status: status || '',
+              sort: sort
+            }
           });
     } catch (e) {
       diagnostics.value = e instanceof ApiError ? e.processingLog : '';
-      error.value = (e as Error).message;
+      error.value = errorText(e);
     } finally {
       busy.value = false;
     }
   }
   async function loadHistory() {
-    records.value = await api<Batch[]>(`/directories/${parent}/numberings?media=${props.media}`);
+    records.value = await apiItems<Batch>(`/directories/${parent}/numberings?media=${media}`);
   }
   async function openHistory() {
-    parent = props.directory;
+    parent = directory;
     show.value = true;
     history.value = true;
     preview.value = undefined;
@@ -97,7 +110,7 @@
       await loadHistory();
     } catch (e) {
       diagnostics.value = e instanceof ApiError ? e.processingLog : '';
-      error.value = (e as Error).message;
+      error.value = errorText(e);
     } finally {
       busy.value = false;
     }
@@ -108,7 +121,10 @@
     error.value = '';
     diagnostics.value = '';
     try {
-      const batch = await api<Batch>(`/numberings/${preview.value.id}/apply`, 'POST', {});
+      const batch = await api<Batch>(`/numberings/${preview.value.id}/apply`, {
+        method: 'POST',
+        body: {}
+      });
       emit(
         'notice',
         `${batch.undo_of ? '已还原' : '已编号'} ${batch.changed} ${unit.value}${noun.value}`
@@ -118,7 +134,7 @@
       await loadHistory();
     } catch (e) {
       diagnostics.value = e instanceof ApiError ? e.processingLog : '';
-      error.value = (e as Error).message;
+      error.value = errorText(e);
     } finally {
       busy.value = false;
       emit('changed');
@@ -129,18 +145,25 @@
     error.value = '';
     diagnostics.value = '';
     try {
-      const updated = await api<Batch>(`/numberings/${batch.id}/recover`, 'POST', {});
-      if (updated.status === 'review') error.value = updated.error;
-      else emit('notice', updated.error || '已恢复原名');
+      const updated = await api<Batch>(`/numberings/${batch.id}/recover`, {
+        method: 'POST',
+        body: {}
+      });
+      if (updated.status === 'review') error.value = errorText(updated.error);
+      else emit('notice', errorText(updated.error) || '已恢复原名');
       await loadHistory();
     } catch (e) {
       diagnostics.value = e instanceof ApiError ? e.processingLog : '';
-      error.value = (e as Error).message;
+      error.value = errorText(e);
     } finally {
       busy.value = false;
       emit('changed');
     }
   }
+  const dialogTitle = computed(() => {
+    if (history.value) return `${noun.value}编号记录`;
+    return preview.value?.undo_of ? `还原${noun.value}编号` : `${noun.value}编号预览`;
+  });
 </script>
 <template>
   <button :disabled="disabled || busy" @click="open()"><Hash :size="16" />一键编号</button>
@@ -148,14 +171,7 @@
     ><History :size="16" />编号记录</button
   >
   <ModalTransition
-    ><Modal
-      v-if="show"
-      :title="
-        history ? `${noun}编号记录` : preview?.undo_of ? `还原${noun}编号` : `${noun}编号预览`
-      "
-      wide
-      @close="!busy && (show = false)"
-    >
+    ><ModalDialog v-if="show" :title="dialogTitle" wide @close="!busy && (show = false)">
       <p v-if="busy" role="status">正在处理，请稍候…</p>
       <div v-if="error" class="notice error" role="alert">{{ error }}</div>
       <NumberingDiagnostics v-if="diagnostics" :message="error" :diagnostics="diagnostics" />
@@ -221,10 +237,10 @@
               ><DateTime :value="batch.created" /><span
                 >{{ batch.changed }} {{ unit }}修改 / {{ batch.total }} {{ unit }}{{ noun }}</span
               ></p
-            ><p v-if="batch.error">{{ batch.error }}</p
+            ><p v-if="batch.error">{{ errorText(batch.error) }}</p
             ><NumberingDiagnostics
               v-if="batch.processing_log"
-              :message="batch.error"
+              :message="errorText(batch.error)"
               :diagnostics="batch.processing_log" /></div
           ><button
             v-if="batch.status === 'committed' && !batch.undo_of && batch.changed"
@@ -243,6 +259,6 @@
       <div v-if="!preview" class="modal-actions"
         ><button :disabled="busy" @click="show = false">关闭</button></div
       >
-    </Modal></ModalTransition
+    </ModalDialog></ModalTransition
   >
 </template>

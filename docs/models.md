@@ -22,7 +22,7 @@ OpenAI 和 Claude 预设默认不发送 temperature，以兼容不支持自定�
 | Ollama | http://127.0.0.1:11434/v1 | OpenAI 兼容 |
 | 自定义 | 手工填写 | OpenAI 兼容或 Anthropic Messages |
 
-URL 不包括最终的 /chat/completions 或 /messages。Ollama 地址由服务端访问：容器内的 127.0.0.1 是容器自身。模型列表检测固定 5 秒上限，整个检测（含分页）共用该时限；单页 1 MiB、1000 个结果，禁止跟随重定向。保留本地 / 局域网地址支持；所有操作均需登录且写入 / 检测需通过 CSRF 校验。
+URL 不包括最终的 /chat/completions 或 /messages。Ollama 地址由服务端访问：容器内的 127.0.0.1 是容器自身。模型列表检测固定 5 秒上限，整个检测（含分页）共用该时限；单页 1 MiB、1000 个结果，禁止跟随重定向。保留本地 / 局域网地址支持；所有操作均需登录，写入 / 检测需通过跨站校验（`Sec-Fetch-Site` / `Origin`）。
 
 ## 密钥与持久化
 

@@ -10,32 +10,44 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// minimalYAML 仅包含必填项,其余取默认值。
+// minimalYAML contains only required fields; the rest use defaults.
 const minimalYAML = "# deployment\n"
 
-// fullYAML 与 docs/configuration.md 的完整示例一致。
+// fullYAML matches the complete example in docs/configuration.md.
 const fullYAML = `
 listen: "127.0.0.1"
 port: 8790
-media-path: "/srv/videos"
+media_path: "/srv/videos"
 storage: "../data"
 auth:
   username: "admin"
   password: "test-password"
 `
 
-func loadTemp(t *testing.T, content string, name string) (*Config, error) {
+func writeTemp(t *testing.T, content string, name string) string {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, name)
+	path := filepath.Join(t.TempDir(), name)
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return Load(path)
+	return path
+}
+
+// readTemp decodes a file without validating it, for decoding-only fixtures.
+func readTemp(t *testing.T, content string, name string) (Config, error) {
+	t.Helper()
+	cfg, _, err := read(Source{Path: writeTemp(t, content, name), Explicit: true})
+	return cfg, err
+}
+
+// loadTemp runs the full Load on an explicitly selected file.
+func loadTemp(t *testing.T, content string, name string) (Config, error) {
+	t.Helper()
+	return Load(Source{Path: writeTemp(t, content, name), Explicit: true, WorkDir: t.TempDir()})
 }
 
 func TestLoadMinimalAppliesDefaults(t *testing.T) {
-	cfg, err := loadTemp(t, minimalYAML, "config.yaml")
+	cfg, err := readTemp(t, minimalYAML, "config.yaml")
 	if err != nil {
 		t.Fatalf("加载失败: %v", err)
 	}
@@ -72,7 +84,7 @@ func TestDefaultFrameSettings(t *testing.T) {
 }
 
 func TestLoadFullExample(t *testing.T) {
-	cfg, err := loadTemp(t, fullYAML, "config.yaml")
+	cfg, err := readTemp(t, fullYAML, "config.yaml")
 	if err != nil {
 		t.Fatalf("加载完整示例失败: %v", err)
 	}
@@ -83,14 +95,14 @@ func TestLoadFullExample(t *testing.T) {
 }
 
 func TestUnknownFieldRejected(t *testing.T) {
-	_, err := loadTemp(t, minimalYAML+"unknown_key: 1\n", "config.yaml")
+	_, err := readTemp(t, minimalYAML+"unknown_key: 1\n", "config.yaml")
 	if err == nil || !strings.Contains(err.Error(), "unknown_key") {
 		t.Fatalf("未知字段应报错, got %v", err)
 	}
 }
 
 func TestUnknownNestedFieldRejected(t *testing.T) {
-	_, err := loadTemp(t, `
+	_, err := readTemp(t, `
 server:
   base_url: "http://a/v1"
   model: m
@@ -102,14 +114,14 @@ server:
 }
 
 func TestDuplicateKeyRejected(t *testing.T) {
-	_, err := loadTemp(t, minimalYAML+"workers: 3\nworkers: 4\n", "config.yaml")
-	if err == nil || !strings.Contains(err.Error(), "重复") {
+	_, err := readTemp(t, minimalYAML+"workers: 3\nworkers: 4\n", "config.yaml")
+	if err == nil || !strings.Contains(err.Error(), "duplicate key") {
 		t.Fatalf("重复 key 应报错, got %v", err)
 	}
 }
 
 func TestDuplicateNestedKeyRejected(t *testing.T) {
-	_, err := loadTemp(t, `
+	_, err := readTemp(t, `
 server:
   base_url: "http://a/v1"
   base_url: "http://b/v1"
@@ -128,16 +140,16 @@ func TestInvalidStrategyRejected(t *testing.T) {
 }
 
 func TestWorkersRemovedFromYAML(t *testing.T) {
-	if _, err := loadTemp(t, minimalYAML+"workers: 2\n", "config.yaml"); err == nil {
+	if _, err := readTemp(t, minimalYAML+"workers: 2\n", "config.yaml"); err == nil {
 		t.Fatal("workers must be configured in model profiles")
 	}
 }
 
 func TestTypeMismatchRejected(t *testing.T) {
-	if _, err := loadTemp(t, minimalYAML+"workers: two\n", "config.yaml"); err == nil {
+	if _, err := readTemp(t, minimalYAML+"workers: two\n", "config.yaml"); err == nil {
 		t.Error("workers 非整数应报错")
 	}
-	if _, err := loadTemp(t, minimalYAML+"images:\n  max_dimension: large\n", "config.yaml"); err == nil {
+	if _, err := readTemp(t, minimalYAML+"images:\n  max_dimension: large\n", "config.yaml"); err == nil {
 		t.Error("max_dimension 非整数应报错")
 	}
 }
@@ -159,7 +171,7 @@ func TestRuleTableValidation(t *testing.T) {
 			t.Errorf("%s 应报错", name)
 		}
 	}
-	// 未使用的表也必须合法:duration 策略下 size_rules 仍要校验
+	// unused tables must still be valid: size_rules is validated under the duration strategy
 	bad := base + "  strategy: \"duration\"\n  size_rules:\n    - {max_mib: 100, frames: 3}\n    - {max_mib: 50, frames: 5}\n    - {max_mib: null, frames: 8}\n"
 	if _, err := loadFrameSettings(t, bad); err == nil {
 		t.Error("未使用表的违规配置应报错")
@@ -185,7 +197,7 @@ func TestRuleTableReplacesDefaults(t *testing.T) {
 	if cfg.Sampling.ParsedDuration[1].Max < time.Duration(1<<62) {
 		t.Errorf("兜底档应使用极大上限: %v", cfg.Sampling.ParsedDuration[1].Max)
 	}
-	// size 表保持默认
+	// keep the default size table
 	if len(cfg.Sampling.ParsedSize) != 4 {
 		t.Errorf("未填写的 size 表应保留默认: %d", len(cfg.Sampling.ParsedSize))
 	}
@@ -216,11 +228,42 @@ func TestImagesValidation(t *testing.T) {
 }
 
 func TestMissingFileAndEmptyPath(t *testing.T) {
-	if _, err := Load(""); err == nil {
+	work := t.TempDir()
+	if _, err := Load(Source{WorkDir: work}); err == nil {
 		t.Error("空路径应报错")
 	}
-	if _, err := Load(filepath.Join(t.TempDir(), "nope.yaml")); err == nil {
-		t.Error("不存在的配置应报错")
+	_, err := Load(Source{Path: filepath.Join(work, "nope.yaml"), Explicit: true, WorkDir: work})
+	if err == nil || !strings.HasPrefix(err.Error(), "read configuration: ") {
+		t.Errorf("explicit missing file: %v", err)
+	}
+	// Built-in defaults have no media_path or credentials, so a missing default file still fails.
+	_, err = Load(Source{Path: "configs/config.local.yaml", WorkDir: work})
+	if err == nil || !strings.Contains(err.Error(), "built-in defaults are incomplete: auth.username: is required") {
+		t.Errorf("missing default file: %v", err)
+	}
+	if entries, err := os.ReadDir(work); err != nil || len(entries) != 0 {
+		t.Fatalf("loading created files: %v %v", entries, err)
+	}
+}
+
+func TestMissingDefaultFileUsesWorkDir(t *testing.T) {
+	work := t.TempDir()
+	cfg, found, err := read(Source{Path: "configs/config.local.yaml", WorkDir: work})
+	want := defaults()
+	want.ConfigDir = work
+	if err != nil || found || cfg != want {
+		t.Fatalf("got %+v, %v, %v", cfg, found, err)
+	}
+}
+
+func TestRelativePathUsesWorkDir(t *testing.T) {
+	path := writeTemp(t, "port: 9000\n", "config.yaml")
+	cfg, found, err := read(Source{Path: filepath.Base(path), Explicit: true, WorkDir: filepath.Dir(path)})
+	if err != nil || !found || cfg.Port != 9000 || cfg.ConfigFile != path {
+		t.Fatalf("got %+v, %v, %v", cfg, found, err)
+	}
+	if _, _, err := read(Source{Path: "config.yaml", Explicit: true}); err == nil {
+		t.Fatal("resolved a relative path without a work directory")
 	}
 }
 
@@ -237,7 +280,7 @@ func TestPromptHashStable(t *testing.T) {
 }
 
 func TestRejectPromptInYAML(t *testing.T) {
-	if _, err := loadTemp(t, minimalYAML+"\nprompt: 不应从配置读取\n", "config.yaml"); err == nil {
+	if _, err := readTemp(t, minimalYAML+"\nprompt: 不应从配置读取\n", "config.yaml"); err == nil {
 		t.Fatal("YAML prompt must be rejected")
 	}
 }
@@ -262,24 +305,24 @@ func loadFrameSettings(t *testing.T, content string) (*FrameSettings, error) {
 
 func TestFrameSettingsNotInDeploymentYAML(t *testing.T) {
 	for _, field := range []string{"sampling", "images"} {
-		if _, err := loadTemp(t, field+": {}\n", "config.yaml"); err == nil {
+		if _, err := readTemp(t, field+": {}\n", "config.yaml"); err == nil {
 			t.Fatalf("unexpected deployment field %s", field)
 		}
 	}
 }
 
 func TestMediaPathConfigKey(t *testing.T) {
-	cfg, err := loadTemp(t, "media-path: /srv/videos\n", "config.yaml")
+	cfg, err := readTemp(t, "media_path: /srv/videos\n", "config.yaml")
 	if err != nil || cfg.Path != "/srv/videos" {
-		t.Fatalf("media-path 未正确加载: cfg=%+v err=%v", cfg, err)
+		t.Fatalf("media_path 未正确加载: cfg=%+v err=%v", cfg, err)
 	}
-	if _, err := loadTemp(t, "path: /srv/videos\n", "config.yaml"); err == nil {
+	if _, err := readTemp(t, "path: /srv/videos\n", "config.yaml"); err == nil {
 		t.Fatal("旧 path 字段应被拒绝")
 	}
 }
 
 func TestRejectMultipleConfigurationDocuments(t *testing.T) {
-	if _, err := loadTemp(t, "port: 8790\n---\nport: 9999\n", "config.yaml"); err == nil {
+	if _, err := readTemp(t, "port: 8790\n---\nport: 9999\n", "config.yaml"); err == nil {
 		t.Fatal("second configuration document silently ignored")
 	}
 }

@@ -2,12 +2,15 @@ package library
 
 import (
 	"database/sql/driver"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"modernc.org/sqlite"
+
 	"video-rename/internal/domain"
 )
 
@@ -19,7 +22,7 @@ func init() {
 				return nil, err
 			}
 		}
-		return nil, os.WriteFile(path, []byte("externally changed content must survive"), 0600)
+		return nil, os.WriteFile(path, []byte("externally changed content must survive"), 0o600)
 	})
 }
 
@@ -35,7 +38,7 @@ func TestCommitRejectsChangedFile(t *testing.T) {
 					var undo int64
 					target := "renamed.mp4"
 					if operation == "restore" {
-						o, err := l.Rename(e.ID, e.Version, "renamed.mp4", "initial")
+						o, err := l.Rename(t.Context(), e.ID, e.Version, "renamed.mp4", "initial")
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -62,11 +65,11 @@ func TestCommitRejectsChangedFile(t *testing.T) {
 					var op Operation
 					switch operation {
 					case "manual":
-						op, err = l.Rename(e.ID, e.Version, target, "changed-file")
+						op, err = l.Rename(t.Context(), e.ID, e.Version, target, "changed-file")
 					case "automatic_same_name":
-						op, err = l.AutoCommit(e.ID, snap, "original", "changed-file", 0)
+						op, err = l.AutoCommit(t.Context(), e.ID, snap, "original", "changed-file", 0)
 					case "restore":
-						op, err = l.Restore(undo, "changed-file")
+						op, err = l.Restore(t.Context(), undo, "changed-file")
 					}
 					if err == nil || !l.Halted() {
 						t.Fatalf("must halt without success: %+v %v", op, err)
@@ -80,7 +83,7 @@ func TestCommitRejectsChangedFile(t *testing.T) {
 						t.Fatalf("false success: %d %v", successes, err)
 					}
 					if stage == "prepared" && source != filepath.Join(root, target) {
-						if _, err := os.Stat(filepath.Join(root, target)); !os.IsNotExist(err) {
+						if _, err := os.Stat(filepath.Join(root, target)); !errors.Is(err, fs.ErrNotExist) {
 							t.Fatalf("changed source was moved: %v", err)
 						}
 					}

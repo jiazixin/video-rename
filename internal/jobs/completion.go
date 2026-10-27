@@ -2,9 +2,11 @@ package jobs
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
+	"video-rename/internal/domain"
 	"video-rename/internal/storage"
 )
 
@@ -16,7 +18,7 @@ func (m *Manager) finishItem(run, id int64, status, message string) error {
 		column = status
 	case "cancelled":
 	default:
-		return fmt.Errorf("无效文件终态 %q", status)
+		return fmt.Errorf("invalid item status %q", status)
 	}
 	tx, err := m.DB.Begin()
 	if err != nil {
@@ -33,7 +35,7 @@ WHERE id=? AND run=? AND status IN ('queued','running')`, status, message, time.
 		return err
 	}
 	if n != 1 {
-		return fmt.Errorf("文件处理状态已变化")
+		return errors.New("item status changed")
 	}
 	if column != "" {
 		if _, err = tx.Exec("UPDATE runs SET "+column+"="+column+"+1 WHERE id=?", run); err != nil {
@@ -57,10 +59,10 @@ func (m *Manager) failRun(id, target int64, cause error) error {
 		return err
 	}
 	defer tx.Rollback()
-	if err = cancelUnfinished(tx, id, "批次失败，处理已停止："+cause.Error()); err != nil {
+	if err = cancelUnfinished(tx, id, runFailedRecord(cause)); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(`UPDATE runs SET status='failed',failed=failed+CASE WHEN ?>0 THEN 1 ELSE 0 END,error=?,finished=? WHERE id=?`, target, cause.Error(), storage.Now(), id); err != nil {
+	if _, err = tx.Exec(`UPDATE runs SET status='failed',failed=failed+CASE WHEN ?>0 THEN 1 ELSE 0 END,error=?,finished=? WHERE id=?`, target, domain.RecordText(cause), storage.Now(), id); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -83,7 +85,7 @@ func (m *Manager) completeRun(id int64, cancelled bool) error {
 		if message != "" {
 			status = "failed"
 		}
-		if err = cancelUnfinished(tx, id, "已取消"); err != nil {
+		if err = cancelUnfinished(tx, id, recordCancelled); err != nil {
 			return err
 		}
 	} else {
@@ -92,7 +94,7 @@ func (m *Manager) completeRun(id int64, cancelled bool) error {
 			return err
 		}
 		if unfinished {
-			return fmt.Errorf("仍有未结束文件，不能完成批次")
+			return errors.New("run has unfinished items")
 		}
 		if failed > 0 {
 			status = "failed"

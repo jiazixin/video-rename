@@ -1,15 +1,16 @@
 <script setup lang="ts">
+  import { formatClock, formatDate, formatTime } from '../lib/format/date';
   import { computed } from 'vue';
 
-  const props = defineProps<{ value?: string | null }>();
+  const { value = null } = defineProps<{ value?: string | null }>();
   const parts = computed(() => {
-    if (!props.value) return undefined;
-    const date = new Date(props.value);
+    if (!value) return undefined;
+    const date = new Date(value);
     if (Number.isNaN(date.getTime())) return undefined;
     return {
-      date: date.toLocaleDateString('zh-CN'),
-      clock: date.toLocaleTimeString('zh-CN', { hour12: false }),
-      full: date.toLocaleString('zh-CN', { hour12: false }),
+      date: formatDate(date),
+      clock: formatClock(date),
+      full: formatTime(date),
       iso: date.toISOString()
     };
   });

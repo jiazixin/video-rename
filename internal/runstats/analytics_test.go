@@ -81,16 +81,16 @@ func seededDashboard(t *testing.T, db *storage.Store, base time.Time) {
 		discovered: 2, done: 1, failed: 1,
 		items: []seedItem{
 			{status: "done", started: base.Add(91 * time.Minute).UnixMilli(), finished: base.Add(91*time.Minute + 40*time.Second).UnixMilli()},
-			{status: "failed", message: "模型返回命名失败\n详细堆栈", started: base.Add(105 * time.Minute).UnixMilli(), finished: base.Add(105*time.Minute + 5*time.Second).UnixMilli()},
+			{status: "failed", message: `{"code":"naming_failed","message":"model output named a failure\ndetail"}`, started: base.Add(105 * time.Minute).UnixMilli(), finished: base.Add(105*time.Minute + 5*time.Second).UnixMilli()},
 		}})
 	seedBatch2(t, db, seedBatch{id: 3, source: "manual", profile: 1, title: "配置一", status: "cancelled",
 		created: at(base.Add(time.Hour)), started: at(base.Add(130 * time.Minute)), finished: at(base.Add(140 * time.Minute)),
 		discovered: 1, failed: 1,
-		items: []seedItem{{status: "failed", message: "取消前失败", finished: base.Add(140 * time.Minute).UnixMilli()}}})
-	seedBatch2(t, db, seedBatch{id: 4, source: "manual", profile: 1, title: "配置一", status: "failed", err: "全局依赖故障",
+		items: []seedItem{{status: "failed", message: `{"code":"extract_failed","message":"failed before cancel"}`, finished: base.Add(140 * time.Minute).UnixMilli()}}})
+	seedBatch2(t, db, seedBatch{id: 4, source: "manual", profile: 1, title: "配置一", status: "failed", err: `{"code":"dependency_failed","message":"global dependency failure"}`,
 		created: at(base.Add(time.Hour)), started: at(base.Add(150 * time.Minute)), finished: at(base.Add(151 * time.Minute)),
 		discovered: 1, failed: 1,
-		items: []seedItem{{status: "failed", message: "模型返回命名失败", finished: base.Add(151 * time.Minute).UnixMilli()}}})
+		items: []seedItem{{status: "failed", message: `{"code":"naming_failed","message":"model output named a failure"}`, finished: base.Add(151 * time.Minute).UnixMilli()}}})
 	// Outside the requested range: fully excluded.
 	seedBatch2(t, db, seedBatch{id: 5, source: "manual", profile: 3, title: "配置三", status: "completed",
 		created: at(base.Add(-time.Hour)), started: at(base.Add(-time.Hour)), finished: at(base.Add(-30 * time.Minute)),
@@ -181,10 +181,10 @@ func TestAnalyticsTrendDistributionAndFailures(t *testing.T) {
 	if report.Distribution[1].Count != 2 || report.Distribution[2].Count != 1 || report.Distribution[3].Count != 1 {
 		t.Fatal("distribution bands 5–15s/15–30s/30–60s", report.Distribution)
 	}
-	if len(report.Failures) != 2 || report.Failures[0].Message != "模型返回命名失败" || report.Failures[0].Count != 2 {
+	if len(report.Failures) != 2 || report.Failures[0].Error.Code != "naming_failed" || report.Failures[0].Count != 2 {
 		t.Fatal("failure grouping across batches", report.Failures)
 	}
-	if len(report.BatchFailures) != 1 || report.BatchFailures[0].Message != "全局依赖故障" {
+	if len(report.BatchFailures) != 1 || report.BatchFailures[0].Error.Code != "dependency_failed" {
 		t.Fatal("batch failures", report.BatchFailures)
 	}
 }

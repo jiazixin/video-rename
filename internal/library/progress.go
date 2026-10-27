@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json/v2"
-	"fmt"
 	"slices"
 
 	"modernc.org/sqlite"
+
 	"video-rename/internal/discovery"
 	"video-rename/internal/domain"
 )
@@ -166,7 +166,7 @@ func sumDirectoryProcessing(ctx context.Context, nodes map[int64]*directoryProce
 			return nil
 		}
 		if n.state == 1 || depth > 1024 {
-			return fmt.Errorf("目录关系无效")
+			return errBadHierarchy
 		}
 		n.state = 1
 		for _, child := range n.children {

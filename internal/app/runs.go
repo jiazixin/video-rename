@@ -5,64 +5,66 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+
+	"video-rename/internal/domain"
 	"video-rename/internal/jobs"
 )
 
-func (a *App) runRoutes(api *http.ServeMux) {
+func (a *App) runRoutes(api *router) {
 	api.HandleFunc("POST /api/runs", func(w http.ResponseWriter, r *http.Request) {
 		var v jobs.Request
 		if !decode(w, r, &v) {
 			return
 		}
-		id, err := a.Jobs.Create(v, "manual", 0)
+		id, err := a.Jobs.Create(r.Context(), v, "manual", 0)
 		if err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
-		send(w, 202, map[string]int64{"id": id})
+		send(w, http.StatusAccepted, map[string]int64{"id": id})
 	})
 	api.HandleFunc("GET /api/runs", func(w http.ResponseWriter, r *http.Request) {
 		if category := r.URL.Query().Get("category"); category != "" {
 			if category != "all" && category != "manual" && category != "automatic" {
-				send(w, 400, map[string]string{"message": "运行分类无效"})
+				invalid(w, r, "category", "invalid_choice")
 				return
 			}
 			task := r.URL.Query().Get("task")
 			if task != "" && task != "rename" && task != "extract" {
-				send(w, 400, map[string]string{"message": "任务类型无效"})
+				invalid(w, r, "task", "invalid_choice")
 				return
 			}
 			v, err := a.Jobs.ListPage(r.Context(), category, task, int(number(r.URL.Query().Get("page"))), int(number(r.URL.Query().Get("size"))), r.URL.Query())
 			if err != nil {
-				failure(w, err)
+				writeError(w, r, err)
 				return
 			}
-			send(w, 200, v)
+			send(w, http.StatusOK, v)
 			return
 		}
 		v, err := a.Jobs.List(r.Context(), number(r.URL.Query().Get("before")))
 		if err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
-		send(w, 200, v)
+		send(w, http.StatusOK, v)
 	})
 	api.HandleFunc("GET /api/runs/{id}", func(w http.ResponseWriter, r *http.Request) {
 		v, err := a.Jobs.Get(r.Context(), number(r.PathValue("id")))
 		if err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
-		send(w, 200, v)
+		send(w, http.StatusOK, v)
 	})
 	api.HandleFunc("GET /api/runs/{id}/items", a.items)
 	api.HandleFunc("POST /api/runs/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
 		result, err := a.Library.RestoreBatch(r.Context(), number(r.PathValue("id")))
 		if err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
-		send(w, 200, result)
+		send(w, http.StatusOK, result)
 	})
 	for _, action := range []string{"pause", "resume"} {
 		api.HandleFunc("POST /api/runs/{id}/"+action, func(w http.ResponseWriter, r *http.Request) {
@@ -73,12 +75,12 @@ func (a *App) runRoutes(api *http.ServeMux) {
 				return
 			}
 			if !request.Confirm {
-				send(w, 400, map[string]string{"message": "请确认批次操作"})
+				invalid(w, r, "confirm", "confirmation_required")
 				return
 			}
 			id := number(r.PathValue("id"))
 			if id <= 0 {
-				send(w, 400, map[string]string{"message": "批次编号无效"})
+				invalid(w, r, "id", "invalid")
 				return
 			}
 			var err error
@@ -88,18 +90,18 @@ func (a *App) runRoutes(api *http.ServeMux) {
 				err = a.Jobs.Resume(id)
 			}
 			if err != nil {
-				failure(w, err)
+				writeError(w, r, err)
 				return
 			}
-			send(w, 200, map[string]bool{"ok": true})
+			w.WriteHeader(http.StatusNoContent)
 		})
 	}
 	api.HandleFunc("POST /api/runs/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
 		if err := a.Jobs.Cancel(number(r.PathValue("id"))); err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
-		send(w, 200, map[string]bool{"ok": true})
+		w.WriteHeader(http.StatusNoContent)
 	})
 }
 
@@ -130,8 +132,8 @@ const runItemOperation = ` LEFT JOIN operations o ON o.id=(
  ORDER BY op.id DESC LIMIT 1) AND o.run=i.run AND o.entry=i.entry AND o.source='automatic'`
 
 type skipReason struct {
-	Message string `json:"message"`
-	Count   int64  `json:"count"`
+	Reason domain.Record `json:"reason"`
+	Count  int64         `json:"count"`
 }
 
 func splitRunPath(original string) (string, string) {
@@ -146,12 +148,12 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
 	q, run := r.URL.Query(), number(r.PathValue("id"))
 	status := q.Get("status")
 	if q.Has("view") || !slices.Contains([]string{"", "running", "done", "skipped", "failed"}, status) {
-		send(w, 400, map[string]string{"message": "批次记录筛选无效"})
+		invalid(w, r, "status", "invalid_choice")
 		return
 	}
 	tx, err := a.DB.Read().BeginTx(r.Context(), nil)
 	if err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
 	defer tx.Rollback()
@@ -162,7 +164,7 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
  count(*) FILTER (WHERE status='skipped'),count(*) FILTER (WHERE status='cancelled')
  FROM run_items WHERE run=? GROUP BY 1 ORDER BY 1`, run)
 	if err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
 	var total int64
@@ -188,7 +190,7 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
 	}
 	rows.Close()
 	if err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
 	page := min(max(1, number(q.Get("page"))), max(1, (total+99)/100))
@@ -216,14 +218,15 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
  FROM run_items i`+runItemOperation+`
  WHERE `+where+` ORDER BY `+order+` LIMIT 100 OFFSET ?`, args...)
 	if err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
 	out := []map[string]any{}
 	itemIDs, entryIDs := []int64{}, []int64{}
 	for rows.Next() {
 		var id, entry, updated, undone int64
-		var itemStatus, message, original, newName, operationStatus string
+		var itemStatus, original, newName, operationStatus string
+		var message domain.Record
 		if err = rows.Scan(&id, &entry, &itemStatus, &message, &original, &updated, &newName, &operationStatus, &undone); err != nil {
 			break
 		}
@@ -237,7 +240,7 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
 	}
 	rows.Close()
 	if err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
 	extra := map[string]any{}
@@ -251,13 +254,14 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
  WHERE `+scope+` AND i.status<>'queued' AND i.status<>'running'
  ORDER BY MAX(i.started_ms,i.finished_ms) DESC,i.id DESC LIMIT 20`, scopeArgs...)
 		if err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
 		recentIDs := []int64{}
 		for rows.Next() {
 			var id, started, finished, undone int64
-			var itemStatus, message, original, newName, operationStatus string
+			var itemStatus, original, newName, operationStatus string
+			var message domain.Record
 			if err = rows.Scan(&id, &itemStatus, &message, &original, &started, &finished, &newName, &operationStatus, &undone); err != nil {
 				break
 			}
@@ -270,7 +274,7 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
 		}
 		rows.Close()
 		if err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
 		itemIDs = append(itemIDs, recentIDs...)
@@ -281,12 +285,12 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
 		rows, err = tx.QueryContext(r.Context(), `SELECT i.message,count(*) FROM run_items i
  WHERE `+scope+` AND i.status='skipped' GROUP BY 1 ORDER BY 2 DESC,1 LIMIT 8`, scopeArgs...)
 		if err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
 		for rows.Next() {
 			var reason skipReason
-			if err = rows.Scan(&reason.Message, &reason.Count); err != nil {
+			if err = rows.Scan(&reason.Reason, &reason.Count); err != nil {
 				break
 			}
 			reasons = append(reasons, reason)
@@ -296,23 +300,23 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
 		}
 		rows.Close()
 		if err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
 		extra["skip_reasons"] = reasons
 	}
 	if err = tx.Commit(); err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
 	paths, err := a.Library.DisplayPaths(r.Context(), entryIDs)
 	if err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
 	attempts, err := jobs.Attempts(r.Context(), a.DB, itemIDs)
 	if err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
 	var live map[int64]jobs.LiveStage
@@ -335,5 +339,5 @@ func (a *App) items(w http.ResponseWriter, r *http.Request) {
 	result := map[string]any{"items": out, "directories": directories, "total": total, "all_total": all.Total,
 		"done_total": all.Done, "running_total": all.Running, "skipped_total": all.Skipped, "failed_total": all.Failed, "page": page}
 	maps.Copy(result, extra)
-	send(w, 200, result)
+	send(w, http.StatusOK, result)
 }

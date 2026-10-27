@@ -1,5 +1,5 @@
-// Package media 封装 ffprobe 探测、采样计划与 FFmpeg JPEG 抽帧。
-// 媒体模块不访问 HTTP;所有外部命令通过参数数组启动,不拼接 shell 命令。
+// Package media wraps ffprobe probing, frame sampling plans and FFmpeg JPEG extraction.
+// It never makes HTTP calls; external commands start from argument arrays, never shell strings.
 package media
 
 import (
@@ -8,8 +8,8 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io/fs"
 	"math"
-	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -18,7 +18,7 @@ import (
 	"video-rename/internal/domain"
 )
 
-// ffprobeOutput 与 ffprobe JSON 输出的相关子集。
+// ffprobeOutput is the relevant subset of ffprobe JSON output.
 type ffprobeOutput struct {
 	Format struct {
 		Duration string `json:"duration"`
@@ -48,12 +48,12 @@ type ffprobeStream struct {
 	Tags map[string]string `json:"tags"`
 }
 
-// Prober 执行 ffprobe 探测。所有上限可注入以便测试;零值取内置默认。
+// Prober runs ffprobe. All limits can be injected for tests; zero values use built-in defaults.
 type Prober struct {
 	FFprobePath string
-	Timeout     time.Duration // 探测超时,默认 30s
-	StdoutLimit int64         // stdout 上限,默认 4 MiB
-	StderrTail  int           // stderr 保留量,默认 8 KiB
+	Timeout     time.Duration // probe timeout, default 30s
+	StdoutLimit int64         // stdout limit, default 4 MiB
+	StderrTail  int           // stderr kept, default 8 KiB
 }
 
 func (p *Prober) timeout() time.Duration {
@@ -70,8 +70,8 @@ func (p *Prober) stdoutLimit() int64 {
 	return domain.DefaultBudgets().ProbeStdoutLimit
 }
 
-// limitedWriter 接受至多 max 字节,超出后停止记录并标记溢出;
-// 写入方(进程管道)获得错误从而使子进程被终止。
+// limitedWriter accepts at most max bytes, then stops recording and marks overflow;
+// the writer (a process pipe) then gets an error so the child process is terminated.
 type limitedWriter struct {
 	buf      bytes.Buffer
 	max      int64
@@ -88,22 +88,22 @@ func (w *limitedWriter) Write(b []byte) (int, error) {
 		if room > 0 {
 			w.buf.Write(b[:room])
 		}
-		return len(b), nil // 丢弃剩余,下次写入报错
+		return len(b), nil // drop the rest; the next write fails
 	}
 	w.buf.Write(b)
 	return len(b), nil
 }
 
-// Probe 探测单个视频。
-// 错误以 *domain.JobError 返回,区分执行失败、超时、输出超限、JSON 无效、
-// 无视频流与时长未知;提交前的大小核验失败报 SOURCE_CHANGED。
+// Probe probes a single video.
+// Errors are *domain.JobError values distinguishing execution failure, timeout, output overflow, invalid JSON,
+// no video stream and unknown duration; a failed size check before commit reports source_changed.
 func (p *Prober) Probe(ctx context.Context, job domain.VideoJob) (domain.VideoMeta, *domain.JobError) {
 	ctx, cancel := context.WithTimeout(ctx, p.timeout())
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, p.FFprobePath,
 		"-v", "error", "-show_format", "-show_streams", "-of", "json", job.Path)
-	// 取消后若孤儿子进程仍持有管道,WaitDelay 强制回收,避免等待悬挂
+	// if an orphaned child still holds the pipes after cancellation, WaitDelay reclaims them instead of hanging
 	cmd.WaitDelay = 500 * time.Millisecond
 	var stdout limitedWriter
 	stdout.max = p.stdoutLimit()
@@ -117,20 +117,21 @@ func (p *Prober) Probe(ctx context.Context, job domain.VideoJob) (domain.VideoMe
 	if stdout.overflow {
 		return domain.VideoMeta{}, &domain.JobError{
 			Code:    domain.CodeProbeOutputLimit,
-			Message: fmt.Sprintf("ffprobe stdout 超过 %d 字节上限", p.stdoutLimit()),
+			Message: fmt.Sprintf("ffprobe stdout exceeds %d bytes", p.stdoutLimit()),
+			Details: map[string]any{"limit": p.stdoutLimit()},
 		}
 	}
 	if ctx.Err() == context.DeadlineExceeded {
 		return domain.VideoMeta{}, &domain.JobError{
 			Code:       domain.CodeProbeTimeout,
-			Message:    "ffprobe 探测超时",
+			Message:    "ffprobe timed out",
 			StderrTail: string(tail),
 		}
 	}
 	if ctx.Err() == context.Canceled {
 		return domain.VideoMeta{}, &domain.JobError{
 			Code:    domain.CodeCancelled,
-			Message: "探测被取消",
+			Message: "probe cancelled",
 		}
 	}
 	if runErr != nil {
@@ -140,13 +141,14 @@ func (p *Prober) Probe(ctx context.Context, job domain.VideoJob) (domain.VideoMe
 		}
 		je := &domain.JobError{
 			Code:       domain.CodeProbeExecFailed,
-			Message:    fmt.Sprintf("ffprobe 执行失败: %v", runErr),
+			Message:    fmt.Sprintf("ffprobe failed: %v", runErr),
 			ExitCode:   exitCode,
 			StderrTail: string(tail),
 		}
-		if errors.Is(runErr, exec.ErrNotFound) || os.IsNotExist(runErr) {
+		if errors.Is(runErr, exec.ErrNotFound) || errors.Is(runErr, fs.ErrNotExist) {
 			je.Code = domain.CodeToolNotFound
-			je.Message = "ffprobe 在运行中消失(PATH 中不再存在)"
+			je.Message = "ffprobe disappeared while running (no longer in PATH)"
+			je.Details = map[string]any{"tool": "ffprobe", "reason": "vanished"}
 			je.Global = true
 		}
 		return domain.VideoMeta{}, je
@@ -159,16 +161,17 @@ func (p *Prober) Probe(ctx context.Context, job domain.VideoJob) (domain.VideoMe
 	return meta, nil
 }
 
-// parseProbeOutput 解析 ffprobe JSON 并完成流选择与派生计算。
+// parseProbeOutput parses ffprobe JSON, selects the stream and derives values.
 func parseProbeOutput(data []byte, job domain.VideoJob) (domain.VideoMeta, *domain.JobError) {
 	var out ffprobeOutput
 	if err := json.Unmarshal(data, &out); err != nil {
 		return domain.VideoMeta{}, &domain.JobError{
 			Code:    domain.CodeProbeJSONInvalid,
-			Message: fmt.Sprintf("ffprobe JSON 解析失败: %v", err),
+			Message: fmt.Sprintf("parse ffprobe JSON: %v", err),
+			Details: map[string]any{"reason": "json", "detail": err.Error()},
 		}
 	}
-	// 流选择:首个 default 且非封面的视频流;否则第一个非封面视频流。
+	// stream selection: the first default, non-cover video stream; otherwise the first non-cover video stream.
 	var chosen *ffprobeStream
 	var firstNonCover *ffprobeStream
 	for i := range out.Streams {
@@ -192,11 +195,11 @@ func parseProbeOutput(data []byte, job domain.VideoJob) (domain.VideoMeta, *doma
 	if chosen == nil {
 		return domain.VideoMeta{}, &domain.JobError{
 			Code:    domain.CodeProbeNoVideo,
-			Message: "没有可用的视频流(纯音频、仅封面或无视频轨)",
+			Message: "no usable video stream (audio only, cover art only or no video track)",
 		}
 	}
 
-	// 时长:优先所选视频流 duration,缺失回退 format.duration。
+	// duration: prefer the selected stream's duration, falling back to format.duration.
 	duration, ok := parseFiniteSeconds(chosen.Duration)
 	if !ok {
 		duration, ok = parseFiniteSeconds(out.Format.Duration)
@@ -204,7 +207,7 @@ func parseProbeOutput(data []byte, job domain.VideoJob) (domain.VideoMeta, *doma
 	if !ok || duration <= 0 {
 		return domain.VideoMeta{}, &domain.JobError{
 			Code:    domain.CodeProbeDurationUnknown,
-			Message: "无法获得有限且大于 0 的时长(流与 format 均缺失或无效)",
+			Message: "no finite positive duration (stream and format both missing or invalid)",
 		}
 	}
 
@@ -216,7 +219,7 @@ func parseProbeOutput(data []byte, job domain.VideoJob) (domain.VideoMeta, *doma
 		Height:      chosen.Height,
 	}
 
-	// SAR:缺失、"N/A" 与 "0:1" 按方形像素;其余必须可解释。
+	// SAR: missing, "N/A" and "0:1" mean square pixels; anything else must be interpretable.
 	sarNum, sarDen := 1, 1
 	sar := strings.TrimSpace(chosen.SampleAspectRatio)
 	if sar != "" && sar != "N/A" && sar != "0:1" && sar != "0" {
@@ -224,14 +227,15 @@ func parseProbeOutput(data []byte, job domain.VideoJob) (domain.VideoMeta, *doma
 		if err != nil || n < 0 || d <= 0 {
 			return domain.VideoMeta{}, &domain.JobError{
 				Code:    domain.CodeProbeJSONInvalid,
-				Message: fmt.Sprintf("无法解释的 sample_aspect_ratio %q", chosen.SampleAspectRatio),
+				Message: fmt.Sprintf("cannot interpret sample_aspect_ratio %q", chosen.SampleAspectRatio),
+				Details: map[string]any{"reason": "sample_aspect_ratio", "value": chosen.SampleAspectRatio},
 			}
 		}
 		sarNum, sarDen = n, d
 	}
 	meta.SARNum, meta.SARDen = sarNum, sarDen
 
-	// 旋转:优先 side_data_list 的 display matrix,回退 tags.rotate。
+	// rotation: prefer the side_data_list display matrix, falling back to tags.rotate.
 	rotDeg := 0.0
 	for _, sd := range chosen.SideDataList {
 		if sd.SideDataType == "Display Matrix" && sd.Rotation != nil {
@@ -247,12 +251,13 @@ func parseProbeOutput(data []byte, job domain.VideoJob) (domain.VideoMeta, *doma
 	if rot%90 != 0 {
 		return domain.VideoMeta{}, &domain.JobError{
 			Code:    domain.CodeProbeJSONInvalid,
-			Message: fmt.Sprintf("无法解释的旋转元信息 %v 度", rotDeg),
+			Message: fmt.Sprintf("cannot interpret rotation of %v degrees", rotDeg),
+			Details: map[string]any{"reason": "rotation", "value": rotDeg},
 		}
 	}
 	meta.Rotation = rot
 
-	// 显示尺寸 = 编码尺寸 × SAR,90/270 度旋转后交换宽高。
+	// display size = coded size × SAR, swapping width and height for 90/270 degree rotation.
 	dw := float64(chosen.Width) * float64(sarNum) / float64(sarDen)
 	dh := float64(chosen.Height)
 	if rot == 90 || rot == 270 {
@@ -263,38 +268,41 @@ func parseProbeOutput(data []byte, job domain.VideoJob) (domain.VideoMeta, *doma
 	if meta.DisplayWidth <= 0 || meta.DisplayHeight <= 0 {
 		return domain.VideoMeta{}, &domain.JobError{
 			Code:    domain.CodeProbeJSONInvalid,
-			Message: "视频流编码尺寸无效",
+			Message: "video stream coded size is invalid",
+			Details: map[string]any{"reason": "coded_size"},
 		}
 	}
 
-	// HDR 传递特性检测(仅用于 warning,不做色调映射)。
+	// HDR transfer characteristic detection (warning only, no tone mapping).
 	switch chosen.ColorTransfer {
 	case "smpte2084", "arib-std-b67":
 		meta.HDR = true
 		meta.HDRNotToneMap = true
 	}
 
-	// 大小核验:与 format.size 明显不一致时重新核验文件是否变化。
+	// size check: when clearly different from format.size, check again whether the file changed.
 	if fs, err := strconv.ParseInt(strings.TrimSpace(out.Format.Size), 10, 64); err == nil && fs >= 0 && fs != job.Snapshot.Size {
 		cur, statErr := domain.StatSnapshot(job.Path)
 		switch {
 		case statErr != nil:
 			return domain.VideoMeta{}, &domain.JobError{
 				Code:    domain.CodeSourceChanged,
-				Message: fmt.Sprintf("重新核验文件失败: %v", statErr),
+				Message: fmt.Sprintf("recheck file: %v", statErr),
+				Details: map[string]any{"reason": "recheck_failed", "detail": statErr.Error()},
 			}
 		case !cur.Same(job.Snapshot):
 			return domain.VideoMeta{}, &domain.JobError{
 				Code:    domain.CodeSourceChanged,
-				Message: "文件在探测期间被外部修改",
+				Message: "file changed during probe",
+				Details: map[string]any{"reason": "modified_during_probe"},
 			}
 		}
-		// 身份未变但 ffprobe 报告不同大小:以 Go stat 为准,继续处理。
+		// identity unchanged but ffprobe reports another size: trust Go stat and continue.
 	}
 	return meta, nil
 }
 
-// parseFiniteSeconds 解析 ffprobe 的秒字符串,要求有限且可解析。
+// parseFiniteSeconds parses an ffprobe seconds string, which must be finite and parseable.
 func parseFiniteSeconds(s string) (float64, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" || s == "N/A" {
@@ -307,7 +315,7 @@ func parseFiniteSeconds(s string) (float64, bool) {
 	return v, true
 }
 
-// parseRatio 解析 "num:den"。
+// parseRatio parses "num:den".
 func parseRatio(s string) (int, int, error) {
 	parts := strings.SplitN(s, ":", 2)
 	if len(parts) != 2 {
@@ -321,7 +329,7 @@ func parseRatio(s string) (int, int, error) {
 	return n, d, nil
 }
 
-// tailBytes 返回末尾至多 n 字节。
+// tailBytes returns at most the last n bytes.
 func tailBytes(b []byte, n int) []byte {
 	if len(b) <= n {
 		return b

@@ -14,13 +14,13 @@ import (
 
 func TestStabilityZeroDisablesWait(t *testing.T) {
 	m, root := setup(t)
-	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	m.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 		return "renamed", nil
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "zero-stability"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "zero-stability"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestStabilityWaitProtectsChangedFileAndCanBeCancelled(t *testing.T) {
 		t.Run(map[bool]string{false: "source-change", true: "cancel-wait"}[cancelled], func(t *testing.T) {
 			m, root := setup(t)
 			path := filepath.Join(root, "a.mp4")
-			if err := os.WriteFile(path, []byte("video"), 0600); err != nil {
+			if err := os.WriteFile(path, []byte("video"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			settings := systemsettings.Default()
@@ -52,7 +52,7 @@ func TestStabilityWaitProtectsChangedFileAndCanBeCancelled(t *testing.T) {
 				calls <- struct{}{}
 				return "renamed", nil
 			}
-			id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "wait-stability"}, "manual", 0)
+			id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "wait-stability"}, "manual", 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -86,7 +86,7 @@ func TestStabilityWaitProtectsChangedFileAndCanBeCancelled(t *testing.T) {
 				if err = store.Save(settings); err != nil {
 					t.Fatal(err)
 				}
-				if err = os.WriteFile(path, []byte("still writing more video"), 0600); err != nil {
+				if err = os.WriteFile(path, []byte("still writing more video"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}

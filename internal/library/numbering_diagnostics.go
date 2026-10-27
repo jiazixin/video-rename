@@ -11,64 +11,73 @@ import (
 	"video-rename/internal/domain"
 )
 
-// Keep the error summary and its diagnostic together in the existing TEXT field.
-// Plain error records remain readable; no database schema change is needed.
+// numberingErrorRecord keeps the error record and its diagnostic together in
+// the TEXT column.
 type numberingErrorRecord struct {
-	Message       string `json:"message"`
-	ProcessingLog string `json:"processing_log"`
+	Code          string         `json:"code,omitempty"`
+	Message       string         `json:"message"`
+	Details       map[string]any `json:"details,omitempty"`
+	ProcessingLog string         `json:"processing_log,omitempty"`
 }
 
 func (b Numbering) numberingErrorRecord() string {
 	if b.ProcessingLog == "" {
-		return b.Error
+		return b.Error.Text()
 	}
-	data, err := json.Marshal(numberingErrorRecord{b.Error, b.ProcessingLog})
+	data, err := json.Marshal(numberingErrorRecord{b.Error.Code, b.Error.Message, b.Error.Details, b.ProcessingLog})
 	if err != nil {
-		return b.Error
+		return b.Error.Text()
 	}
 	return string(data)
 }
 
-func (b *Numbering) decodeNumberingError() {
-	var record numberingErrorRecord
-	if json.Unmarshal([]byte(b.Error), &record) == nil && record.ProcessingLog != "" {
-		b.Error, b.ProcessingLog = record.Message, record.ProcessingLog
+// decodeNumberingError fills Error and ProcessingLog from the stored text.
+func (b *Numbering) decodeNumberingError(stored string) error {
+	if stored == "" {
+		return nil
 	}
+	var record numberingErrorRecord
+	if err := json.Unmarshal([]byte(stored), &record); err != nil {
+		return fmt.Errorf("numbering %s error record: %w", b.ID, err)
+	}
+	b.Error = domain.Record{Code: record.Code, Message: record.Message, Details: record.Details}
+	b.ProcessingLog = record.ProcessingLog
+	return nil
 }
 
 // Capture after the failed syscall and before any rollback. These are subsequent
 // observations, not an assertion about the filesystem at syscall time.
 func numberingMoveFailure(b *Numbering, item *NumberingItem, path, target string, cause *domain.JobError) error {
-	phase := "最终编号"
+	phase := "final_rename"
 	if target == item.Temp {
-		phase = "临时改名"
+		phase = "temporary_rename"
 	}
 	if b.Status == "rollback" {
-		phase = "恢复原名"
+		phase = "rollback_rename"
 	}
 	var detail strings.Builder
-	fmt.Fprintf(&detail, "编号执行失败诊断\n采集时间：%s\n批次：%s\n目录：%q\n阶段：%s\n原文件名：%q\n当前文件名：%q\n目标文件名：%q\n最终文件名：%q\n系统错误：%v\n预览身份：%s；大小：%d；修改时间：%s\n", time.Now().UTC().Format(time.RFC3339Nano), b.ID, path, phase, item.Old, item.Current, target, item.New, cause, item.Identity, item.Size, item.Mtime)
+	fmt.Fprintf(&detail, "numbering failure\ncaptured: %s\nbatch: %s\ndirectory: %q\nphase: %s\noriginal name: %q\ncurrent name: %q\ntarget name: %q\nfinal name: %q\nsystem error: %v\npreview identity: %s; size: %d; mtime: %s\n", time.Now().UTC().Format(time.RFC3339Nano), b.ID, path, phase, item.Old, item.Current, target, item.New, cause, item.Identity, item.Size, item.Mtime)
 	inspect := func(label, name string) {
 		info, err := os.Lstat(filepath.Join(path, name))
 		if err != nil {
-			fmt.Fprintf(&detail, "%s %q：%v\n", label, name, err)
+			fmt.Fprintf(&detail, "%s %q: %v\n", label, name, err)
 			return
 		}
-		fmt.Fprintf(&detail, "%s %q：类型=%s；大小=%d；修改时间=%s", label, name, kindOf(info), info.Size(), info.ModTime().UTC().Format(time.RFC3339Nano))
+		fmt.Fprintf(&detail, "%s %q: kind=%s; size=%d; mtime=%s", label, name, kindOf(info), info.Size(), info.ModTime().UTC().Format(time.RFC3339Nano))
 		if snapshot, err := domain.SnapshotFromInfo(info); err == nil {
-			fmt.Fprintf(&detail, "；身份=%s", Identity(snapshot))
+			fmt.Fprintf(&detail, "; identity=%s", Identity(snapshot))
 		}
 		fmt.Fprintln(&detail)
 		if info.Mode()&os.ModeSymlink != 0 {
 			link, err := os.Readlink(filepath.Join(path, name))
-			fmt.Fprintf(&detail, "链接指向：%q；读取错误：%v\n", link, err)
+			fmt.Fprintf(&detail, "link target: %q; read error: %v\n", link, err)
 		}
 	}
-	inspect("源路径", item.Current)
-	inspect("目标路径", target)
+	inspect("source", item.Current)
+	inspect("target", target)
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		fmt.Fprintf(&detail, "读取目录失败：%v\n", err)
+		fmt.Fprintf(&detail, "read directory: %v\n", err)
 	} else {
 		count := 0
 		for _, entry := range entries {
@@ -79,18 +88,22 @@ func numberingMoveFailure(b *Numbering, item *NumberingItem, path, target string
 			if count > 20 {
 				continue
 			}
-			inspect("目标同名或大小写匹配条目", entry.Name())
-			participation := "未参与本次编号"
+			inspect("entry matching the target (case-insensitive)", entry.Name())
+			participation := "not part of this numbering"
 			for _, planned := range b.Items {
 				if entry.Name() == planned.Current || entry.Name() == planned.Old || entry.Name() == planned.New {
-					participation = fmt.Sprintf("关联计划 %q → %q；记录当前位置 %q", planned.Old, planned.New, planned.Current)
+					participation = fmt.Sprintf("planned %q -> %q; recorded at %q", planned.Old, planned.New, planned.Current)
 					break
 				}
 			}
 			fmt.Fprintln(&detail, participation)
 		}
-		fmt.Fprintf(&detail, "目标同名或大小写匹配条目总数：%d（最多展示 20 条）\n", count)
+		fmt.Fprintf(&detail, "entries matching the target: %d (at most 20 shown)\n", count)
 	}
-	fmt.Fprintln(&detail, "以上为改名调用失败后、恢复操作前的读取结果；不能据此认定缓存异常或外部修改。")
-	return &domain.JobError{Code: cause.Code, Message: fmt.Sprintf("%s失败：%q → %q：%s", phase, item.Current, target, cause.Message), ProcessingLog: detail.String()}
+	fmt.Fprintln(&detail, "These reads happened after the failed rename call and before recovery; they do not establish a cache fault or external change.")
+	details := map[string]any{"phase": phase, "from": item.Current, "to": target}
+	for key, value := range cause.Details {
+		details[key] = value
+	}
+	return &domain.JobError{Code: cause.Code, Message: fmt.Sprintf("%s failed: %q -> %q: %s", phase, item.Current, target, cause.Message), Details: details, ProcessingLog: detail.String()}
 }

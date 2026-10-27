@@ -5,25 +5,28 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
-	"fmt"
+	"errors"
+	"io/fs"
 	"os"
+
+	"video-rename/internal/domain"
 )
 
 func (s *Store) initSecret(path string) error {
 	key, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	if errors.Is(err, fs.ErrNotExist) {
 		var n int
 		if err = s.QueryRow("SELECT (SELECT count(*) FROM model_configs WHERE api_key<>'')+(SELECT count(*) FROM runs WHERE model_snapshot<>'')+(SELECT count(*) FROM notification_channels WHERE credentials<>'')").Scan(&n); err != nil {
 			return err
 		}
 		if n > 0 {
-			return fmt.Errorf("数据库密钥文件缺失，请恢复对应的 .key 文件")
+			return errors.New("database key file is missing; restore the matching .key file")
 		}
 		key = make([]byte, 32)
 		if _, err = rand.Read(key); err != nil {
 			return err
 		}
-		f, e := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		f, e := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if e != nil {
 			return e
 		}
@@ -40,9 +43,9 @@ func (s *Store) initSecret(path string) error {
 		return err
 	}
 	if len(key) != 32 {
-		return fmt.Errorf("数据库密钥文件无效")
+		return errors.New("database key file is invalid")
 	}
-	if err = os.Chmod(path, 0600); err != nil {
+	if err = os.Chmod(path, 0o600); err != nil {
 		return err
 	}
 	block, err := aes.NewCipher(key)
@@ -52,6 +55,8 @@ func (s *Store) initSecret(path string) error {
 	s.secret, err = cipher.NewGCM(block)
 	return err
 }
+
+// Seal encrypts value for storage; an empty value stays empty.
 func (s *Store) Seal(value string) (string, error) {
 	if value == "" {
 		return "", nil
@@ -63,17 +68,19 @@ func (s *Store) Seal(value string) (string, error) {
 	encrypted := s.secret.Seal(nonce, nonce, []byte(value), []byte("video-rename-model-v1"))
 	return base64.StdEncoding.EncodeToString(encrypted), nil
 }
+
+// Unseal decrypts a value produced by Seal.
 func (s *Store) Unseal(value string) (string, error) {
 	if value == "" {
 		return "", nil
 	}
 	data, err := base64.StdEncoding.DecodeString(value)
 	if err != nil || len(data) < s.secret.NonceSize() {
-		return "", fmt.Errorf("模型密钥数据无效")
+		return "", domain.Fail(domain.KindInternal, "secret_invalid", "stored secret is malformed")
 	}
 	plain, err := s.secret.Open(nil, data[:s.secret.NonceSize()], data[s.secret.NonceSize():], []byte("video-rename-model-v1"))
 	if err != nil {
-		return "", fmt.Errorf("模型密钥无法解密，请核对数据库 .key 文件")
+		return "", domain.Fail(domain.KindInternal, "secret_unreadable", "stored secret cannot be decrypted; check the database .key file")
 	}
 	return string(plain), nil
 }

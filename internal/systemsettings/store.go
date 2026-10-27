@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
 	"video-rename/internal/domain"
 	"video-rename/internal/storage"
 )
@@ -20,6 +21,7 @@ const DefaultFixedPrompt = `输出要求：
 除标题正文之外不输出任何其他内容。
 例外：如果无法根据提供的画面生成符合要求的标题，只回复“命名失败”四个字，不加引号、标点或解释；此时不适用上述标题字数要求。`
 
+// Policy holds the retry, fallback model and frame cache policy.
 type Policy struct {
 	RetryEnabled      bool   `json:"retry_enabled"`
 	RetryCount        int    `json:"retry_count"`
@@ -29,6 +31,7 @@ type Policy struct {
 	IdleCacheHours    int    `json:"idle_cache_hours"`
 }
 
+// Settings are the runtime resource limits and policies.
 type Settings struct {
 	Policy
 	BatchLimits
@@ -37,17 +40,19 @@ type Settings struct {
 	CacheGB          int64 `json:"cache_gb"`
 }
 
+// BatchLimits bounds running and waiting batches.
 type BatchLimits struct {
 	RunningBatchLimit int `json:"running_batch_limit"`
 	WaitingBatchLimit int `json:"waiting_batch_limit"`
 }
 
+// Validate checks the batch limits.
 func (v BatchLimits) Validate() error {
 	if v.RunningBatchLimit < 1 || v.RunningBatchLimit > 256 {
-		return fmt.Errorf("同时运行批次上限须在 1–256 之间")
+		return domain.InvalidField("running_batch_limit", "out_of_range")
 	}
 	if v.WaitingBatchLimit < 1 || v.WaitingBatchLimit > 100000 {
-		return fmt.Errorf("等待批次上限须在 1–100000 之间")
+		return domain.InvalidField("waiting_batch_limit", "out_of_range")
 	}
 	return nil
 }
@@ -62,47 +67,55 @@ func ReadBatchLimits(row interface{ Scan(...any) error }) (BatchLimits, error) {
 	return v.BatchLimits, v.BatchLimits.Validate()
 }
 
+// BatchLimits returns the stored batch limits.
 func (s Store) BatchLimits() (BatchLimits, error) {
 	return ReadBatchLimits(s.DB.Read().QueryRow("SELECT policy FROM system_settings WHERE id=1"))
 }
 
+// Default returns the default settings.
 func Default() Settings {
 	return Settings{ExtractWorkers: 8, CacheGB: 10, StabilitySeconds: 30, RunningBatchLimit: 32, WaitingBatchLimit: 1000, RetryEnabled: true, RetryCount: 3, SuccessCacheMode: "immediate", SuccessCacheHours: 72, IdleCacheHours: 72}
 }
+
+// Validate checks the settings.
 func (s Settings) Validate() error {
 	if err := s.BatchLimits.Validate(); err != nil {
 		return err
 	}
 	if s.RetryCount < 0 || s.RetryCount > 10 || (s.RetryEnabled && s.RetryCount == 0) {
-		return fmt.Errorf("重试次数须在 1–10 次之间")
+		return domain.InvalidField("retry_count", "out_of_range")
 	}
 	if s.FallbackModelID < 0 {
-		return fmt.Errorf("兜底模型配置无效")
+		return domain.InvalidField("fallback_model_id", "invalid")
 	}
 	if s.SuccessCacheMode != "" && s.SuccessCacheMode != "immediate" && s.SuccessCacheMode != "delayed" && s.SuccessCacheMode != "keep" {
-		return fmt.Errorf("缓存处理方式无效")
+		return domain.InvalidField("success_cache_mode", "invalid_choice")
 	}
 	if s.SuccessCacheHours < 0 || s.SuccessCacheHours > 8760 || (s.SuccessCacheMode == "delayed" && s.SuccessCacheHours == 0) {
-		return fmt.Errorf("成功后保留时长须在 1–8760 小时之间")
+		return domain.InvalidField("success_cache_hours", "out_of_range")
 	}
 	if s.IdleCacheHours < 0 || s.IdleCacheHours > 8760 {
-		return fmt.Errorf("闲置清理时长须在 0–8760 小时之间，0 表示关闭")
+		return domain.InvalidField("idle_cache_hours", "out_of_range")
 	}
 	if s.ExtractWorkers < 1 || s.ExtractWorkers > 32 {
-		return fmt.Errorf("并发抽帧数须在 1–32 之间")
+		return domain.InvalidField("extract_workers", "out_of_range")
 	}
 	if s.CacheGB < 1 || s.CacheGB > 10000 {
-		return fmt.Errorf("临时目录容量须在 1–10000 GB 之间")
+		return domain.InvalidField("cache_gb", "out_of_range")
 	}
 	if s.StabilitySeconds < 0 || s.StabilitySeconds > 3600 {
-		return fmt.Errorf("稳定性等待时长须在 0–3600 秒之间，0 表示禁用等待")
+		return domain.InvalidField("stability_seconds", "out_of_range")
 	}
 	return nil
 }
+
+// Bytes returns the frame cache limit in bytes.
 func (s Settings) Bytes() int64 { return s.CacheGB * 1000000000 }
 
+// Store stores the system settings.
 type Store struct{ DB *storage.Store }
 
+// Get returns the stored settings.
 func (s Store) Get() (Settings, error) {
 	v := Default()
 	var policy string
@@ -120,6 +133,8 @@ func (s Store) Get() (Settings, error) {
 	}
 	return v, err
 }
+
+// Save validates and stores v.
 func (s Store) Save(v Settings) error {
 	if err := v.Validate(); err != nil {
 		return err
@@ -161,10 +176,12 @@ func (s Store) Numbering() (domain.NumberingSettings, error) {
 		return v, nil
 	}
 	if err := json.Unmarshal([]byte(raw), &v); err != nil {
-		return v, fmt.Errorf("编号设置无效: %w", err)
+		return v, fmt.Errorf("stored numbering settings: %w", err)
 	}
 	return v, domain.ValidateNumberingSettings(v)
 }
+
+// SaveNumbering validates and stores the numbering settings v.
 func (s Store) SaveNumbering(v domain.NumberingSettings) error {
 	if err := domain.ValidateNumberingSettings(v); err != nil {
 		return err
@@ -194,10 +211,13 @@ func (s Store) FixedPrompt() (string, error) {
 	}
 	return v, err
 }
+
+// SaveFixedPrompt stores the fixed prompt appended to every request and returns
+// it trimmed.
 func (s Store) SaveFixedPrompt(v string) (string, error) {
 	v = strings.TrimSpace(v)
 	if v == "" || len(v) > 16000 {
-		return "", fmt.Errorf("固定提示词不能为空且不得超过 16000 字节")
+		return "", domain.InvalidField("fixed_prompt", "invalid_length")
 	}
 	if _, err := s.DB.Exec("INSERT INTO system_settings(id,extract_workers,cache_gb,stability_seconds,numbering,fixed_prompt) VALUES(1,8,10,30,'',?) ON CONFLICT(id) DO UPDATE SET fixed_prompt=excluded.fixed_prompt", v); err != nil {
 		return "", err

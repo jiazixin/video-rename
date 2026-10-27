@@ -1,6 +1,6 @@
 import { ref, type Ref } from 'vue'
 
-interface StickyHeaderElements {
+type StickyHeaderElements = {
   /** The sticky controls whose height moves the header. */
   fixedControls: Ref<HTMLElement | undefined>
   /** The scrolling table whose column widths the header copies. */
@@ -20,13 +20,12 @@ export function useStickyHeader({ fixedControls, fileTable, headerScroll }: Stic
     headerFrame = 0
     const table = fileTable.value,
       head = table?.tHead
-    if (!table || !head) return
-    headerColumns.value = Array.from(
-      head.rows[0].cells,
-      (cell) => cell.getBoundingClientRect().width
-    )
+    const row = head?.rows[0]
+    if (!table || !row) return
+    headerColumns.value = Array.from(row.cells, (cell) => cell.getBoundingClientRect().width)
     headerWidth.value = table.getBoundingClientRect().width
-    if (headerScroll.value) headerScroll.value.scrollLeft = table.parentElement!.scrollLeft
+    if (headerScroll.value && table.parentElement)
+      headerScroll.value.scrollLeft = table.parentElement.scrollLeft
   }
   function scheduleHeaderLayout() {
     if (!headerFrame) headerFrame = requestAnimationFrame(updateHeaderLayout)

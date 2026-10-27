@@ -3,13 +3,13 @@
 package domain
 
 import (
-	"fmt"
+	"errors"
 	"os"
 	"syscall"
 	"time"
 )
 
-// StatSnapshot 获取路径的文件身份快照(不跟随符号链接)。
+// StatSnapshot returns the file identity snapshot of path without following symlinks.
 func StatSnapshot(path string) (Snapshot, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -22,7 +22,7 @@ func StatSnapshot(path string) (Snapshot, error) {
 func SnapshotFromInfo(info os.FileInfo) (Snapshot, error) {
 	st, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
-		return Snapshot{}, fmt.Errorf("文件信息缺少系统身份")
+		return Snapshot{}, errors.New("file info has no system identity")
 	}
 	return Snapshot{
 		Dev:     uint64(st.Dev),

@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json/v2"
 	"fmt"
+	"log/slog"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -11,7 +12,7 @@ import (
 )
 
 func TestExtractionHistoryGroupsFiltersPaginationAndClear(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +89,7 @@ func TestExtractionHistoryGroupsFiltersPaginationAndClear(t *testing.T) {
 		}
 	}
 	w = httptest.NewRecorder()
-	a.clearExtractions(w, httptest.NewRequest("POST", "/api/extractions/clear", strings.NewReader(`{"all":true}`)))
+	a.clearExtractions(w, jsonRequest("POST", "/api/extractions/clear", strings.NewReader(`{"all":true}`)))
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}

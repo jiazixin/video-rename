@@ -1,14 +1,15 @@
 <script setup lang="ts">
-  import ToastNotice from '../../components/ToastNotice.vue';
+  import { errorText } from '../../app/errors';
+  import { useToast } from '../../app/use-toast';
   import { computed, nextTick, onMounted, ref } from 'vue';
   import { PenLine, Plus, RotateCcw, Save, Trash2, X } from '@lucide/vue';
   import { api } from '../../app/api';
-  import { formatTime } from '../../lib/date/format';
+  import { formatTime } from '../../lib/format/date';
   import { type PromptProfile } from '../../app/contracts';
-  import Modal from '../../components/Modal.vue';
+  import ModalDialog from '../../components/ModalDialog.vue';
   import ModalTransition from '../../components/ModalTransition.vue';
   import './prompts.css';
-  const toast = ref<InstanceType<typeof ToastNotice>>();
+  const toast = useToast();
   const fixed = ref(''),
     savedFixed = ref(''),
     defaultFixed = ref(''),
@@ -80,7 +81,7 @@
       rows.value = page.prompts;
       promptsLoaded.value = true;
     } catch (e) {
-      error.value = (e as Error).message;
+      error.value = errorText(e);
     } finally {
       loading.value = false;
       loadingFailureKeywords.value = false;
@@ -91,14 +92,17 @@
     savingFixed.value = true;
     error.value = '';
     try {
-      const out = await api<{ fixed_prompt: string }>('/prompts/fixed', 'PUT', {
-        fixed_prompt: fixed.value
+      const out = await api<{ fixed_prompt: string }>('/prompts/fixed', {
+        method: 'PUT',
+        body: {
+          fixed_prompt: fixed.value
+        }
       });
       fixed.value = out.fixed_prompt;
       savedFixed.value = out.fixed_prompt;
-      toast.value?.show('固定提示词已保存。之后创建的运行会把它附加在所选提示词末尾发送。');
+      toast.show('固定提示词已保存。之后创建的运行会把它附加在所选提示词末尾发送。');
     } catch (e) {
-      error.value = (e as Error).message;
+      error.value = errorText(e);
     } finally {
       savingFixed.value = false;
     }
@@ -124,6 +128,8 @@
     keywordInputElement.value?.focus();
   }
   function addFailureKeywordOnEnter(event: KeyboardEvent) {
+    // Safari reports the IME confirmation Enter only as keyCode 229.
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- no standard replacement for Safari IME detection
     if (event.isComposing || composingKeyword.value || event.keyCode === 229) return;
     event.preventDefault();
     addFailureKeyword();
@@ -149,14 +155,17 @@
     savingFailureKeywords.value = true;
     failureKeywordsError.value = '';
     try {
-      const out = await api<{ failure_keywords: string[] }>('/prompts/failure-keywords', 'PUT', {
-        failure_keywords: [...failureKeywords.value]
+      const out = await api<{ failure_keywords: string[] }>('/prompts/failure-keywords', {
+        method: 'PUT',
+        body: {
+          failure_keywords: [...failureKeywords.value]
+        }
       });
       failureKeywords.value = [...out.failure_keywords];
       savedFailureKeywords.value = [...out.failure_keywords];
-      toast.value?.show('失败关键词已保存，对之后创建的批次生效。');
+      toast.show('失败关键词已保存，对之后创建的批次生效。');
     } catch (e) {
-      failureKeywordsError.value = (e as Error).message;
+      failureKeywordsError.value = errorText(e);
     } finally {
       savingFailureKeywords.value = false;
     }
@@ -173,15 +182,14 @@
     saving.value = true;
     dialogError.value = '';
     try {
-      await api(
-        editId.value ? `/prompts/${editId.value}` : '/prompts',
-        editId.value ? 'PATCH' : 'POST',
-        { ...edit.value, version: editVersion.value }
-      );
+      await api<unknown>(editId.value ? `/prompts/${editId.value}` : '/prompts', {
+        method: editId.value ? 'PATCH' : 'POST',
+        body: { ...edit.value, version: editVersion.value }
+      });
       editing.value = false;
       await load(true);
     } catch (e) {
-      dialogError.value = (e as Error).message;
+      dialogError.value = errorText(e);
     } finally {
       saving.value = false;
     }
@@ -191,13 +199,16 @@
     deleting.value = true;
     deleteError.value = '';
     try {
-      await api(`/prompts/${deleteTarget.value.id}`, 'DELETE', {
-        version: deleteTarget.value.version
+      await api<unknown>(`/prompts/${deleteTarget.value.id}`, {
+        method: 'DELETE',
+        body: {
+          version: deleteTarget.value.version
+        }
       });
       deleteTarget.value = undefined;
       await load(true);
     } catch (e) {
-      deleteError.value = (e as Error).message;
+      deleteError.value = errorText(e);
     } finally {
       deleting.value = false;
     }
@@ -206,7 +217,6 @@
 </script>
 <template>
   <section class="prompts-page">
-    <ToastNotice ref="toast" />
     <div v-if="error" class="notice error" role="alert"
       >{{ error }}<button @click="load(true)">重试</button></div
     >
@@ -365,11 +375,11 @@
       >
     </template>
     <ModalTransition
-      ><Modal
+      ><ModalDialog
         v-if="editing"
         :title="editId ? '编辑提示词' : '新增提示词'"
         @close="!saving && (editing = false)"
-        ><form @submit.prevent="save" class="prompt-form"
+        ><form class="prompt-form" @submit.prevent="save"
           ><label
             >提示词名称<input
               v-model="edit.title"
@@ -392,11 +402,11 @@
               saving ? '正在保存…' : '保存提示词'
             }}</button></div
           ></form
-        ></Modal
+        ></ModalDialog
       ></ModalTransition
     >
     <ModalTransition
-      ><Modal
+      ><ModalDialog
         v-if="deleteTarget"
         title="删除提示词"
         @close="!deleting && (deleteTarget = undefined)"
@@ -408,7 +418,7 @@
           ><button class="cancel-run" :disabled="deleting" @click="remove"
             ><Trash2 :size="16" />{{ deleting ? '正在删除…' : '确认删除' }}</button
           ></div
-        ></Modal
+        ></ModalDialog
       ></ModalTransition
     >
   </section>

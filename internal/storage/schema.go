@@ -2,13 +2,14 @@ package storage
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
 )
 
 //go:embed schema.sql
 var schema string
 
-const schemaVersion = 20261005
+const schemaVersion = 20261027
 
 // initialize creates the current schema once. An unrelated or obsolete database
 // is rejected before any schema changes; its contents are never reset or upgraded.
@@ -29,10 +30,10 @@ func (s *Store) initialize() error {
 		return err
 	}
 	if version != 0 || tables != 0 {
-		return fmt.Errorf("数据库结构不受支持，请为当前版本配置新的 storage 目录；原数据库未修改")
+		return errors.New("unsupported database schema; configure a new storage directory for this version; the existing database was not modified")
 	}
 	if _, err = tx.Exec(schema); err != nil {
-		return fmt.Errorf("创建数据库结构: %w", err)
+		return fmt.Errorf("create database schema: %w", err)
 	}
 	return tx.Commit()
 }

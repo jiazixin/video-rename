@@ -1,9 +1,11 @@
 <script setup lang="ts">
+  import { formatCompact, formatCount, formatPercent } from '../../lib/format/number';
+  import { errorText } from '../../app/errors';
   import PageNavigation from '../../components/PageNavigation.vue';
   import { computed, onUnmounted, ref, watch } from 'vue';
   import { RefreshCw, RotateCcw, ChevronRight } from '@lucide/vue';
   import { api } from '../../app/api';
-  import { formatTime } from '../../lib/date/format';
+  import { formatTime, localTimeZone } from '../../lib/format/date';
   import { statusNames } from '../../app/labels';
   import { type UsageReport } from '../../app/contracts';
   import SelectField from '../../components/SelectField.vue';
@@ -29,7 +31,7 @@
     loading = ref(false);
   let seq = 0,
     controller: AbortController | undefined;
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const timezone = localTimeZone();
   const presets: { value: Preset; label: string }[] = [
     { value: '1h', label: '最近 1 小时' },
     { value: '3h', label: '最近 3 小时' },
@@ -49,13 +51,6 @@
     'month': '1 个月',
     'year': '1 年'
   };
-  function tokens(n: number) {
-    return n >= 999_950
-      ? `${(n / 1e6).toFixed(2).replace(/\.?0+$/, '')}M`
-      : n >= 1000
-        ? `${(n / 1000).toFixed(1).replace(/\.?0+$/, '')}K`
-        : String(n);
-  }
   function rangeTimes(): { from?: string; to: string } | string {
     const now = new Date();
     if (preset.value === 'custom') {
@@ -105,19 +100,17 @@
     controller = new AbortController();
     loading.value = true;
     try {
-      const data = await api<UsageReport>(
-        `/usage/analytics?${params.toString()}`,
-        'GET',
-        undefined,
-        controller.signal
-      );
+      const data = await api<UsageReport>(`/usage/analytics?${params.toString()}`, {
+        signal: controller.signal
+      });
       if (mine === seq) {
         report.value = data;
         if (page.value !== data.batches.page) page.value = data.batches.page;
         error.value = '';
       }
     } catch (e) {
-      if (mine === seq && (e as Error).name !== 'AbortError') error.value = (e as Error).message;
+      if (mine === seq && !(e instanceof DOMException && e.name === 'AbortError'))
+        error.value = errorText(e);
     } finally {
       if (mine === seq) loading.value = false;
     }
@@ -163,7 +156,7 @@
     seq++;
     controller?.abort();
   });
-  load();
+  void load();
   const totals = computed(() => report.value?.totals);
   const average = computed(() =>
     totals.value && totals.value.records ? totals.value.tokens / totals.value.records : 0
@@ -180,6 +173,12 @@
       label: m.model || '未记录模型'
     })) || [])
   ]);
+  // A repeated title gets its ID so the options stay distinguishable.
+  function profileLabel(p: { id: number; title: string; deleted?: boolean }, isRepeated: boolean) {
+    if (p.deleted) return `${p.title || '配置'}（已删除 · #${p.id}）`;
+    if (isRepeated) return `${p.title}（#${p.id}）`;
+    return p.title || `配置 #${p.id}`;
+  }
   const profileOptions = computed(() => {
     const profiles = report.value?.options.profiles || [];
     const names = new Map<string, number>();
@@ -190,11 +189,7 @@
         .filter((p) => !model.value || p.model_keys.includes(model.value))
         .map((p) => ({
           value: p.id,
-          label: p.deleted
-            ? `${p.title || '配置'}（已删除 · #${p.id}）`
-            : (names.get(p.title) || 0) > 1
-              ? `${p.title}（#${p.id}）`
-              : p.title || `配置 #${p.id}`
+          label: profileLabel(p, (names.get(p.title) || 0) > 1)
         }))
     ];
   });
@@ -249,22 +244,22 @@
     <template v-if="report">
       <div class="usage-kpis">
         <div class="usage-kpi"
-          ><span>累计 token</span><strong>{{ tokens(totals?.tokens || 0) }}</strong
-          ><small>{{ (totals?.tokens || 0).toLocaleString() }}</small></div
+          ><span>累计 token</span><strong>{{ formatCompact(totals?.tokens || 0) }}</strong
+          ><small>{{ formatCount(totals?.tokens || 0) }}</small></div
         >
         <div class="usage-kpi"
-          ><span>已记录请求</span><strong>{{ (totals?.records || 0).toLocaleString() }}</strong
+          ><span>已记录请求</span><strong>{{ formatCount(totals?.records || 0) }}</strong
           ><small v-if="totals?.estimated_records"
-            >含粗估 {{ totals.estimated_records.toLocaleString() }} 条</small
+            >含粗估 {{ formatCount(totals.estimated_records) }} 条</small
           ><small v-else>全部来自模型 usage</small></div
         >
         <div class="usage-kpi"
-          ><span>涉及批次</span><strong>{{ (totals?.batches || 0).toLocaleString() }}</strong
+          ><span>涉及批次</span><strong>{{ formatCount(totals?.batches || 0) }}</strong
           ><small>区间内有记录的批次</small></div
         >
         <div class="usage-kpi"
-          ><span>平均每请求</span><strong>{{ tokens(Math.round(average)) }}</strong
-          ><small>{{ Math.round(average).toLocaleString() }} token / 条</small></div
+          ><span>平均每请求</span><strong>{{ formatCompact(Math.round(average)) }}</strong
+          ><small>{{ formatCount(Math.round(average)) }} token / 条</small></div
         >
       </div>
       <p class="help usage-notes">
@@ -294,8 +289,8 @@
                       ><span class="date-time-range"
                         ><DateTime :value="b.from" /><span>至</span
                         ><DateTime :value="b.to" /></span></td
-                    ><td>{{ b.tokens.toLocaleString() }}</td
-                    ><td>{{ b.records.toLocaleString() }}</td
+                    ><td>{{ formatCount(b.tokens) }}</td
+                    ><td>{{ formatCount(b.records) }}</td
                     ><td>{{ b.estimated_records || '—' }}</td></tr
                   ></tbody
                 >
@@ -306,11 +301,11 @@
         <div class="panel">
           <div class="panel-toolbar"
             ><h2>模型用量对比</h2
-            ><span class="subtle" v-if="report.sources.length">{{
+            ><span v-if="report.sources.length" class="subtle">{{
               report.sources
                 .map(
                   (s) =>
-                    `${s.key === 'manual' ? '手动' : '自动计划'} ${tokens(s.tokens)} token（${s.batches} 批）`
+                    `${s.key === 'manual' ? '手动' : '自动计划'} ${formatCompact(s.tokens)} token（${s.batches} 批）`
                 )
                 .join(' · ')
             }}</span></div
@@ -322,8 +317,8 @@
                   m.model || '未记录模型'
                 }}</strong
                 ><span
-                  >{{ tokens(m.tokens) }} token · {{ m.records.toLocaleString() }} 条 · 平均
-                  {{ tokens(Math.round(m.tokens / Math.max(m.records, 1))) }}</span
+                  >{{ formatCompact(m.tokens) }} token · {{ formatCount(m.records) }} 条 · 平均
+                  {{ formatCompact(Math.round(m.tokens / Math.max(m.records, 1))) }}</span
                 ></div
               >
               <div class="usage-bar-track"
@@ -334,17 +329,15 @@
                   }"
               /></div>
               <small class="subtle"
-                >占区间总量
-                {{
-                  totals?.tokens ? ((m.tokens / totals.tokens) * 100).toFixed(1) : '0.0'
-                }}%<template v-if="m.provider">
+                >占区间总量 {{ formatPercent(m.tokens, totals?.tokens || 0, '0.0%')
+                }}<template v-if="m.provider">
                   · {{ m.provider }} / {{ m.protocol }}</template
                 ></small
               >
             </div>
             <p v-if="restModels.length" class="help"
               >其余 {{ restModels.length }} 个模型合计
-              {{ tokens(restModels.reduce((sum, m) => sum + m.tokens, 0)) }} token。</p
+              {{ formatCompact(restModels.reduce((sum, m) => sum + m.tokens, 0)) }} token。</p
             >
           </div>
           <div v-else class="empty compact">区间内没有模型用量记录</div>
@@ -374,16 +367,12 @@
                   >
                   <td class="subtle">{{ b.profile_title || `配置 #${b.profile_id}` }}</td>
                   <td class="subtle">{{ b.source === 'manual' ? '手动' : '自动计划' }}</td>
-                  <td class="run-tokens">{{ tokens(b.tokens) }}</td>
-                  <td class="subtle"
-                    >{{
-                      totals?.tokens ? ((b.tokens / totals.tokens) * 100).toFixed(1) : '0.0'
-                    }}%</td
-                  >
+                  <td class="run-tokens">{{ formatCompact(b.tokens) }}</td>
+                  <td class="subtle">{{ formatPercent(b.tokens, totals?.tokens || 0, '0.0%') }}</td>
                   <td
                     class="subtle run-tokens"
-                    :title="`批次累计 ${b.lifetime_tokens.toLocaleString()} token / ${b.lifetime_records} 条`"
-                    >{{ tokens(b.lifetime_tokens) }}</td
+                    :title="`批次累计 ${formatCount(b.lifetime_tokens)} token / ${b.lifetime_records} 条`"
+                    >{{ formatCompact(b.lifetime_tokens) }}</td
                   >
                   <td><button class="text-button" @click="focusBatch(b.id)">仅看此批次</button></td>
                 </tr></tbody
@@ -443,14 +432,14 @@
                       statusNames[b.status] || b.status
                     }}</StatusBadge></td
                   >
-                  <td>{{ b.records.toLocaleString() }}</td>
-                  <td class="run-tokens" :title="b.tokens.toLocaleString()">{{
-                    tokens(b.tokens)
+                  <td>{{ formatCount(b.records) }}</td>
+                  <td class="run-tokens" :title="formatCount(b.tokens)">{{
+                    formatCompact(b.tokens)
                   }}</td>
                   <td
                     class="subtle run-tokens"
-                    :title="`批次累计 ${b.lifetime_tokens.toLocaleString()} token / ${b.lifetime_records} 条`"
-                    >{{ tokens(b.lifetime_tokens) }}</td
+                    :title="`批次累计 ${formatCount(b.lifetime_tokens)} token / ${b.lifetime_records} 条`"
+                    >{{ formatCompact(b.lifetime_tokens) }}</td
                   >
                   <td class="subtle date-cell"><DateTime :value="b.last_recorded_at" /></td> </tr
               ></tbody> </table

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -13,27 +14,28 @@ import (
 func TestNumberingExecutionDiagnosticSurvivesRollbackAndHistory(t *testing.T) {
 	l, root, _ := fixture(t)
 	for _, name := range []string{"a.JPG", "b.JPG"} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	refresh(t, l, 1)
-	preview, err := l.PreviewNumberingContext(t.Context(), 1, "image", "", "name_asc", domain.DefaultNumberingSettings())
+	preview, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "image", Sort: "name_asc", Settings: domain.DefaultNumberingSettings()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	batch, err := l.ApplyNumberingContext(t.Context(), preview.ID, func(done, total int) {
+	batch, err := l.ApplyNumbering(t.Context(), preview.ID, func(done, total int) {
 		if done == 1 {
-			if err := os.WriteFile(filepath.Join(root, "2.jpg"), []byte("external occupant"), 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(root, "2.jpg"), []byte("external occupant"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}
 	})
 	diagnostic, ok := errors.AsType[*domain.JobError](err)
-	if !ok || diagnostic.Code != domain.CodeRenameConflict || batch.Status != "rolled_back" {
+	cause, _ := diagnostic.Details["cause"].(domain.Record)
+	if !ok || diagnostic.Code != "numbering_rolled_back" || cause.Code != string(domain.CodeRenameConflict) || batch.Status != "rolled_back" {
 		t.Fatalf("batch=%+v err=%v", batch, err)
 	}
-	for _, want := range []string{"阶段：最终编号", "原文件名：\"b.JPG\"", "目标文件名：\"2.jpg\"", "目标路径 \"2.jpg\"：类型=file", "目标同名或大小写匹配条目总数：1"} {
+	for _, want := range []string{"phase: final_rename", "original name: \"b.JPG\"", "target name: \"2.jpg\"", "target \"2.jpg\": kind=file", "entries matching the target: 1"} {
 		if !strings.Contains(diagnostic.ProcessingLog, want) {
 			t.Fatalf("missing %q in %s", want, diagnostic.ProcessingLog)
 		}
@@ -44,7 +46,7 @@ func TestNumberingExecutionDiagnosticSurvivesRollbackAndHistory(t *testing.T) {
 		t.Fatalf("occupant changed: %q %v", data, err)
 	}
 	saved, err := l.Numbering(preview.ID)
-	if err != nil || saved.ProcessingLog != diagnostic.ProcessingLog || saved.Error != batch.Error {
+	if err != nil || saved.ProcessingLog != diagnostic.ProcessingLog || saved.Error.Code != batch.Error.Code || saved.Error.Message != batch.Error.Message {
 		t.Fatalf("saved=%+v err=%v", saved, err)
 	}
 	history, err := l.NumberingHistory(1, "image")
@@ -59,11 +61,11 @@ func TestNumberingExecutionDiagnosticSurvivesRollbackAndHistory(t *testing.T) {
 
 func TestNumberingTemporaryMoveDiagnostic(t *testing.T) {
 	l, root, _ := fixture(t)
-	if err := os.WriteFile(filepath.Join(root, "photo.JPG"), []byte("photo.JPG"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "photo.JPG"), []byte("photo.JPG"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	refresh(t, l, 1)
-	batch, err := l.PreviewNumberingContext(t.Context(), 1, "image", "", "name_asc", domain.DefaultNumberingSettings())
+	batch, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "image", Sort: "name_asc", Settings: domain.DefaultNumberingSettings()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +73,7 @@ func TestNumberingTemporaryMoveDiagnostic(t *testing.T) {
 	put(t, filepath.Join(root, item.Temp))
 	err = l.moveNumbering(&batch, item, root, item.Temp)
 	diagnostic, ok := errors.AsType[*domain.JobError](err)
-	if !ok || !strings.Contains(diagnostic.ProcessingLog, "阶段：临时改名") || !strings.Contains(diagnostic.ProcessingLog, item.Temp) {
+	if !ok || !strings.Contains(diagnostic.ProcessingLog, "phase: temporary_rename") || !strings.Contains(diagnostic.ProcessingLog, item.Temp) {
 		t.Fatalf("%v", err)
 	}
 	for name, want := range map[string]string{"photo.JPG": "photo.JPG", item.Temp: "video fixture"} {
@@ -83,11 +85,21 @@ func TestNumberingTemporaryMoveDiagnostic(t *testing.T) {
 }
 
 func TestNumberingErrorRecordPlainAndStructured(t *testing.T) {
-	for _, original := range []Numbering{{Error: "目标已存在"}, {Error: "恢复未完成", ProcessingLog: "现场\n含中文与引号\""}} {
-		loaded := Numbering{Error: original.numberingErrorRecord()}
-		loaded.decodeNumberingError()
-		if loaded.Error != original.Error || loaded.ProcessingLog != original.ProcessingLog {
+	for _, original := range []Numbering{
+		{Error: domain.Record{Message: "目标已存在"}},
+		{Error: domain.Record{Code: "numbering_rolled_back", Message: "rolled back", Details: map[string]any{"media": "image"}}},
+		{Error: domain.Record{Code: "numbering_recovery_incomplete", Message: "recovery incomplete"}, ProcessingLog: "evidence\nwith \"quotes\""},
+	} {
+		var loaded Numbering
+		loaded.decodeNumberingError(original.numberingErrorRecord())
+		if !reflect.DeepEqual(loaded.Error, original.Error) || loaded.ProcessingLog != original.ProcessingLog {
 			t.Fatalf("%+v", loaded)
 		}
+	}
+	// Records written before error codes keep their text.
+	var legacy Numbering
+	legacy.decodeNumberingError(`{"message":"恢复未完成","processing_log":"现场"}`)
+	if legacy.Error.Message != "恢复未完成" || legacy.Error.Code != "" || legacy.ProcessingLog != "现场" {
+		t.Fatalf("%+v", legacy)
 	}
 }

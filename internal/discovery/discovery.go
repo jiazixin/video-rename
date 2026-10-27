@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// videoExtensions 内置视频扩展名列表(小写,含点)。
+// videoExtensions lists the built-in video extensions (lowercase, with dot).
 var videoExtensions = map[string]bool{
 	".mp4": true, ".m4v": true, ".mkv": true, ".mov": true, ".avi": true,
 	".webm": true, ".flv": true, ".wmv": true, ".mpg": true, ".mpeg": true,
@@ -14,7 +14,7 @@ var videoExtensions = map[string]bool{
 	".rmvb": true, ".asf": true, ".vob": true,
 }
 
-// IsVideoExtension 报告扩展名是否在内置视频列表中。
+// IsVideoExtension reports whether ext is a built-in video extension.
 func IsVideoExtension(ext string) bool {
 	return videoExtensions[filepath.Ext(strings.ToLower(ext))]
 }

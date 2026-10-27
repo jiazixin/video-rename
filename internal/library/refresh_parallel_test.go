@@ -345,7 +345,7 @@ WHEN NEW.dir=1 AND NEW.name='new-02.mp4' BEGIN SELECT RAISE(ABORT,'injected dire
 	}
 	refresh(t, l, 1)
 	page, err := l.ListOrdered(t.Context(), 1, 0, 50, 0, "", "", "", false, "name_asc")
-	if err != nil || len(page.Items) != 5 || page.Error != "" || page.Generation == generation {
+	if err != nil || len(page.Items) != 5 || page.Error.Message != "" || page.Generation == generation {
 		t.Fatalf("retry did not publish rolled-back page: %+v %v", page, err)
 	}
 }
@@ -396,7 +396,7 @@ func TestRefreshUnchangedEntriesKeepObservationAndVersion(t *testing.T) {
 	}
 	refresh(t, l, 1)
 	after, err := l.DirectoryState(t.Context(), 1)
-	if err != nil || after.Generation != state.Generation || after.Refreshed == oldObservation || after.Error != "" {
+	if err != nil || after.Generation != state.Generation || after.Refreshed == oldObservation || after.Error.Message != "" {
 		t.Fatalf("unchanged refresh changed the generation or retained stale status: before=%+v after=%+v error=%v", state, after, err)
 	}
 	var unpublished int
@@ -489,7 +489,7 @@ WHEN OLD.dir=1 BEGIN SELECT RAISE(ABORT,'injected generation publication failure
 				t.Fatalf("failed publication kept partial mutations: old present=%d old items=%d", present, oldItems)
 			}
 			page, err := l.ListOrdered(t.Context(), 1, 0, 50, generation, "", "", "", false, "name_asc")
-			if err != nil || len(page.Items) != 1 || page.Items[0].Name != "old.mp4" || page.Error == "" {
+			if err != nil || len(page.Items) != 1 || page.Items[0].Name != "old.mp4" || page.Error.Message == "" {
 				t.Fatalf("previous complete generation is unavailable: %+v %v", page, err)
 			}
 			if _, err := l.DB.ExecContext(t.Context(), "DROP TRIGGER reject_publish"); err != nil {
@@ -497,7 +497,7 @@ WHEN OLD.dir=1 BEGIN SELECT RAISE(ABORT,'injected generation publication failure
 			}
 			refresh(t, l, 1)
 			page, err = l.ListOrdered(t.Context(), 1, 0, 50, 0, "", "", "", false, "name_asc")
-			if err != nil || page.Generation == generation || page.Error != "" || len(page.Items) != 1 || page.Items[0].Name != "new.mp4" {
+			if err != nil || page.Generation == generation || page.Error.Message != "" || len(page.Items) != 1 || page.Items[0].Name != "new.mp4" {
 				t.Fatalf("retry did not publish complete replacement generation: %+v %v", page, err)
 			}
 		})

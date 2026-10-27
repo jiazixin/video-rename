@@ -15,7 +15,7 @@ func TestScaleCandidateQueue(t *testing.T) {
  INSERT INTO entries(id,parent,name,kind,identity,size,mtime,observed) SELECT x,1,'video-'||x||'.mp4','file','identity-'||x,100,'now','now' FROM n`); err != nil {
 		t.Fatal(err)
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "large-queue-test"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "large-queue-test"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

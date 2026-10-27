@@ -20,7 +20,7 @@ func TestScaleLargeProcessedMarks(t *testing.T) {
 	start := time.Now()
 	for d := range directories {
 		dir := filepath.Join(root, fmt.Sprintf("mark-%03d", d))
-		if err := os.Mkdir(dir, 0700); err != nil {
+		if err := os.Mkdir(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
 		for f := range filesPerDirectory {

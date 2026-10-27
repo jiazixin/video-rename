@@ -2,10 +2,12 @@ package media
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +19,7 @@ import (
 	"video-rename/internal/domain"
 )
 
-// makeJPEG 生成真实 JPEG 文件,作为假 ffmpeg 的输出夹具。
+// makeJPEG writes a real JPEG file as the fake ffmpeg output fixture.
 func makeJPEG(t *testing.T, path string, w, h int, quality int) {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
@@ -36,9 +38,9 @@ func makeJPEG(t *testing.T, path string, w, h int, quality int) {
 	}
 }
 
-// fakeFFmpeg 生成假 ffmpeg 脚本。
-// copyFrom 指定复制到输出参数的 JPEG;failAt 指定 -ss 值命中时报错(可为空);
-// reFrom 非空时,输出以 .re.jpg 结尾(重新编码调用)复制该文件。
+// fakeFFmpeg writes a fake ffmpeg script.
+// copyFrom is the JPEG copied to the output argument; failAt makes a matching -ss value fail (may be empty);
+// when reFrom is set, outputs ending in .re.jpg (re-encode calls) copy that file.
 func fakeFFmpeg(t *testing.T, name, copyFrom, failAt string) string {
 	t.Helper()
 	sh, err := exec.LookPath("sh")
@@ -72,7 +74,7 @@ exit 0
 }
 
 func testPlan(n int) domain.FramePlan {
-	// 窗口 [2s, 8s],L=6s;N 点均为段中点
+	// window [2s, 8s], L=6s; all N points are segment midpoints
 	plan := domain.FramePlan{
 		Duration:    10 * time.Second,
 		BaseN:       n,
@@ -101,9 +103,9 @@ func TestTargetDims(t *testing.T) {
 	}{
 		{3840, 2160, 768, 768, 432},
 		{2160, 3840, 768, 432, 768},
-		{720, 480, 768, 720, 480},  // 不放大小图
-		{719, 479, 768, 718, 478},  // 取偶数
-		{1920, 1080, 128, 128, 72}, // 极小 maxDim
+		{720, 480, 768, 720, 480},  // small images are not upscaled
+		{719, 479, 768, 718, 478},  // rounded to even values
+		{1920, 1080, 128, 128, 72}, // tiny maxDim
 	}
 	for _, tc := range cases {
 		tw, th, err := targetDims(tc.w, tc.h, tc.max)
@@ -146,7 +148,7 @@ func TestExtractHappyPath(t *testing.T) {
 			t.Errorf("帧 %d 计划点 %v != %v", i, fr.Planned, set.Plan.Times[i])
 		}
 	}
-	// 临时目录在调用方清理前应存在
+	// the temp directory must exist until the caller removes it
 	if set.TempDir == "" {
 		t.Fatal("TempDir 应返回给调用方")
 	}
@@ -161,7 +163,7 @@ func TestExtractRetriesAtOneThird(t *testing.T) {
 	fixture := filepath.Join(dir, "f.jpg")
 	makeJPEG(t, fixture, 320, 180, 90)
 	plan := testPlan(2)
-	// 第一个点的中点 3.500 失败,补试点 2+1/3*3 = 3.000(段 [2,5) 的 1/3 处)
+	// the first midpoint 3.500 fails; the retry point is 2+1/3*3 = 3.000 (1/3 of segment [2,5))
 	mid := formatSeconds(plan.Times[0])
 	if mid != "3.500" {
 		t.Fatalf("测试假设中点为 3.500, got %s", mid)
@@ -195,9 +197,9 @@ func TestExtractRetriesAtOneThird(t *testing.T) {
 func TestExtractOversizeRecompress(t *testing.T) {
 	dir := t.TempDir()
 	big := filepath.Join(dir, "big.jpg")
-	small := filepath.Join(dir, "big.jpg.re") // 重新编码调用输出 .re.jpg 时复制
+	small := filepath.Join(dir, "big.jpg.re") // copied when a re-encode call writes .re.jpg
 	makeJPEG(t, big, 320, 180, 100)
-	makeJPEG(t, small, 240, 134, 50) // 320*0.75=240, 180*0.75=135→偶数 134
+	makeJPEG(t, small, 240, 134, 50) // 320*0.75=240, 180*0.75=135→even 134
 	ff := fakeFFmpeg(t, "ffmpeg-big", big, "")
 
 	job, _ := fakeJob(t, 100)
@@ -205,7 +207,7 @@ func TestExtractOversizeRecompress(t *testing.T) {
 	ex := testExtractor(ff, 768, 4)
 	fi, _ := os.Stat(big)
 	si, _ := os.Stat(small)
-	ex.ImageLimit = fi.Size() - 1 // big 超限,small 合法
+	ex.ImageLimit = fi.Size() - 1 // big is over the limit, small is within it
 	if ex.ImageLimit <= si.Size() {
 		t.Fatalf("夹具尺寸不满足测试假设: big=%d small=%d", fi.Size(), si.Size())
 	}
@@ -235,16 +237,16 @@ func TestExtractImageTooLargeFailsVideo(t *testing.T) {
 	job, _ := fakeJob(t, 100)
 	meta := domain.VideoMeta{StreamIndex: 0, DisplayWidth: 320, DisplayHeight: 180}
 	ex := testExtractor(ff, 768, 4)
-	ex.ImageLimit = 10 // 一切图片都超限
+	ex.ImageLimit = 10 // every image is over the limit
 	set, jerr := ex.Extract(t.Context(), job, meta, testPlan(1))
 	if jerr == nil || jerr.Code != domain.CodeExtractInsufficientFrames {
-		t.Fatalf("应报 EXTRACT_INSUFFICIENT_FRAMES, got %+v", jerr)
+		t.Fatalf("应报 extract_insufficient_frames, got %+v", jerr)
 	}
 	if len(set.Frames) != 0 && set.TempDir != "" {
 		t.Log("失败时应清理临时目录")
 	}
 	if set.TempDir != "" {
-		if _, err := os.Stat(set.TempDir); !os.IsNotExist(err) {
+		if _, err := os.Stat(set.TempDir); !errors.Is(err, fs.ErrNotExist) {
 			t.Error("失败后临时目录应被清理")
 		}
 	}
@@ -263,7 +265,7 @@ func TestExtractBudgetTimeout(t *testing.T) {
 	ex.Budget = 150 * time.Millisecond
 	set, jerr := ex.Extract(t.Context(), job, meta, testPlan(1))
 	if jerr == nil || jerr.Code != domain.CodeExtractTimeout {
-		t.Fatalf("应报 EXTRACT_TIMEOUT, got %+v", jerr)
+		t.Fatalf("应报 extract_timeout, got %+v", jerr)
 	}
 	if len(set.Frames) != 0 {
 		t.Error("不应有成功帧")
@@ -275,7 +277,7 @@ func TestExtractPartialFailureStillSucceeds(t *testing.T) {
 	fixture := filepath.Join(dir, "f.jpg")
 	makeJPEG(t, fixture, 320, 180, 90)
 	plan := testPlan(2)
-	// 两个点的中点都失败,补试点也都失败(补试点值不同于中点,这里让所有 -ss 都失败)
+	// both midpoints and both retry points fail (retry points differ from midpoints, so every -ss fails here)
 	sh, _ := exec.LookPath("sh")
 	p := filepath.Join(dir, "ffmpeg-fail")
 	os.WriteFile(p, []byte("#!"+sh+"\necho 'cannot seek' >&2\nexit 4\n"), 0o755)
@@ -394,7 +396,7 @@ var _ = fmt.Sprintf
 func TestExtractKeepsBothAttemptDiagnostics(t *testing.T) {
 	dir := t.TempDir()
 	ff := filepath.Join(dir, "ffmpeg-fail")
-	if err := os.WriteFile(ff, []byte("#!/bin/sh\necho 'decoder unavailable' >&2\nexit 7\n"), 0700); err != nil {
+	if err := os.WriteFile(ff, []byte("#!/bin/sh\necho 'decoder unavailable' >&2\nexit 7\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	job, _ := fakeJob(t, 100)
@@ -403,7 +405,7 @@ func TestExtractKeepsBothAttemptDiagnostics(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected extraction failure")
 	}
-	for _, want := range []string{"首次抽帧", "补试抽帧", "decoder unavailable", "退出码 7", "计划帧数: 2"} {
+	for _, want := range []string{"first attempt", "retry", "decoder unavailable", "exit code 7", "planned frames: 2"} {
 		if !strings.Contains(err.ProcessingLog, want) {
 			t.Fatalf("missing %s: %s", want, err.ProcessingLog)
 		}

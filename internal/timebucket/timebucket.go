@@ -16,6 +16,7 @@ const (
 	dayMs  = 24 * hourMs
 )
 
+// Bucketing is a trend granularity.
 type Bucketing struct {
 	Name string // 15m, hour, day, month or year
 	step int64  // fixed-step milliseconds; zero for calendar buckets

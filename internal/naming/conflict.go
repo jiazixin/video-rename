@@ -1,7 +1,9 @@
 package naming
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,29 +12,30 @@ import (
 	"video-rename/internal/domain"
 )
 
-// Allocator 串行分配同目录候选目标名称。
-// 维护本次运行已保留的名称集合(大小写不敏感,保守处理大小写不敏感卷),
-// 并结合磁盘现状与源文件身份判定 unchanged / 冲突后缀。
-// 并发安全;由提交协调器串行调用。
+// Allocator assigns candidate target names within a directory one at a time.
+// It tracks names reserved in this run (case-insensitively, to stay safe on case-insensitive volumes)
+// and combines the disk state with the source identity to decide unchanged or a conflict suffix.
+// It is safe for concurrent use; the commit coordinator calls it serially.
 type Allocator struct {
 	mu       sync.Mutex
-	reserved map[string]map[string]struct{} // dir → 小写名称集合
+	reserved map[string]map[string]struct{} // dir → set of lowercase names
 }
 
+// NewAllocator returns an empty allocator.
 func NewAllocator() *Allocator {
 	return &Allocator{reserved: map[string]map[string]struct{}{}}
 }
 
-// AllocateResult 候选分配结果。
+// AllocateResult is the result of a candidate allocation.
 type AllocateResult struct {
-	Target    string // 目标绝对路径
-	Unchanged bool   // 目标与源为同一文件且源扩展名已为小写
+	Target    string // absolute target path
+	Unchanged bool   // the target is the source file and its extension is already lowercase
 }
 
-// Allocate 为清洗后的标题分配目标名称。
-// 冲突时在扩展名前追加 " (2)"、" (3)"…,每次为后缀和扩展名重新预留字节;
-// 名称空间超过 (9999) 报 RENAME_CONFLICT_EXHAUSTED。
-// 候选指向源文件身份时，除需规范扩展名大小写外返回 Unchanged。
+// Allocate assigns a target name for a cleaned title.
+// On conflict it appends " (2)", " (3)"… before the extension, re-reserving bytes for suffix and extension each time;
+// past (9999) it reports rename_conflict_exhausted.
+// When a candidate is the source file itself it returns Unchanged, unless the extension case must be normalized.
 func (a *Allocator) Allocate(dir, title, ext string, job domain.VideoJob) (AllocateResult, *domain.JobError) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -55,16 +58,17 @@ func (a *Allocator) Allocate(dir, title, ext string, job domain.VideoJob) (Alloc
 		}
 		target := filepath.Join(dir, name)
 
-		// 候选存在：同一身份仅在无需转换扩展名时跳过；不同身份尝试下一后缀。
+		// candidate exists: skip only for the same identity with no extension change; try the next suffix for another identity.
 		if snap, err := domain.StatSnapshot(target); err == nil {
 			if snap.SameIdentity(job.Snapshot) && sameDirectoryEntry(dir, name, filepath.Base(job.Path)) {
 				return AllocateResult{Target: target, Unchanged: filepath.Ext(job.Path) == ext}, nil
 			}
 			continue
-		} else if !os.IsNotExist(err) {
+		} else if !errors.Is(err, fs.ErrNotExist) {
 			return AllocateResult{}, &domain.JobError{
 				Code:    domain.CodeRenameFailed,
-				Message: fmt.Sprintf("检查目标 %s 失败: %v", target, err),
+				Message: fmt.Sprintf("check target %s: %v", target, err),
+				Details: map[string]any{"to": target, "detail": err.Error()},
 			}
 		}
 		key := strings.ToLower(name)
@@ -81,11 +85,11 @@ func (a *Allocator) Allocate(dir, title, ext string, job domain.VideoJob) (Alloc
 	}
 	return AllocateResult{}, &domain.JobError{
 		Code:    domain.CodeRenameConflictExhausted,
-		Message: fmt.Sprintf("目录 %s 中名称空间超过 (9999)", dir),
+		Message: fmt.Sprintf("more than 9999 names taken in directory %s", dir),
 	}
 }
 
-// Release 归还保留的名称(目标竞争需要换后缀时调用方使用)。
+// Release returns a reserved name (used when a target race requires another suffix).
 func (a *Allocator) Release(dir, name string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

@@ -2,7 +2,6 @@ package jobs
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"video-rename/internal/config"
@@ -22,6 +21,7 @@ type runControl struct {
 	changed  chan struct{}
 }
 
+// Pause pauses batch id.
 func (m *Manager) Pause(id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -30,7 +30,7 @@ func (m *Manager) Pause(id int64) error {
 		return err
 	}
 	if n, _ := result.RowsAffected(); n == 0 {
-		return fmt.Errorf("该批次已结束或正在取消，无法暂停")
+		return domain.Fail(domain.KindConflict, "run_not_pausable", "run finished or is cancelling; cannot pause")
 	}
 	if active, ok := m.active[id]; ok && !active.control.paused {
 		active.control.paused = true
@@ -39,6 +39,7 @@ func (m *Manager) Pause(id int64) error {
 	return nil
 }
 
+// Resume resumes paused batch id.
 func (m *Manager) Resume(id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -52,7 +53,7 @@ func (m *Manager) Resume(id int64) error {
 		return err
 	}
 	if n, _ := result.RowsAffected(); n == 0 {
-		return fmt.Errorf("该批次未暂停，无法继续运行")
+		return domain.Fail(domain.KindConflict, "run_not_paused", "run is not paused; cannot resume")
 	}
 	if ok {
 		c := active.control

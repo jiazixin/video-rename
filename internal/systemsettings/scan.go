@@ -4,8 +4,9 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
-	"fmt"
 	"slices"
+
+	"video-rename/internal/domain"
 )
 
 // ScanSettings controls discovery only; it never starts media processing.
@@ -16,31 +17,33 @@ type ScanSettings struct {
 	ExcludedTargets []int64 `json:"excluded_targets"`
 }
 
+// DefaultScanSettings returns the default background scan settings.
 func DefaultScanSettings() ScanSettings {
 	return ScanSettings{Enabled: true, IntervalMinutes: 60, Targets: []int64{1}, ExcludedTargets: []int64{}}
 }
 
+// Validate checks the scan settings.
 func (v ScanSettings) Validate() error {
 	if v.IntervalMinutes < 5 || v.IntervalMinutes > 1440 {
-		return fmt.Errorf("扫描间隔须在 5–1440 分钟之间")
+		return domain.InvalidField("interval_minutes", "out_of_range")
 	}
 	if len(v.Targets) == 0 || len(v.Targets) > 100 {
-		return fmt.Errorf("请选择 1–100 个扫描目录")
+		return domain.InvalidField("targets", "selection_required")
 	}
 	seen := make(map[int64]bool, len(v.Targets))
 	for _, id := range v.Targets {
 		if id <= 0 || seen[id] {
-			return fmt.Errorf("扫描目录编号无效或重复")
+			return domain.InvalidField("targets", "invalid_or_duplicate")
 		}
 		seen[id] = true
 	}
 	if len(v.ExcludedTargets) > 100 {
-		return fmt.Errorf("最多选择 100 个排除目录")
+		return domain.InvalidField("excluded_targets", "too_many")
 	}
 	clear(seen)
 	for _, id := range v.ExcludedTargets {
 		if id <= 0 || seen[id] {
-			return fmt.Errorf("排除目录编号无效或重复")
+			return domain.InvalidField("excluded_targets", "invalid_or_duplicate")
 		}
 		seen[id] = true
 	}
@@ -73,6 +76,7 @@ func loadPolicy(row interface{ Scan(...any) error }) (storedPolicy, error) {
 	return v, err
 }
 
+// Scan returns the stored background scan settings.
 func (s Store) Scan() (ScanSettings, error) {
 	policy, err := loadPolicy(s.DB.Read().QueryRow("SELECT policy FROM system_settings WHERE id=1"))
 	if err != nil {
@@ -87,6 +91,7 @@ func (s Store) Scan() (ScanSettings, error) {
 	return v, v.Validate()
 }
 
+// SaveScan validates and stores v.
 func (s Store) SaveScan(v ScanSettings) error {
 	if err := v.Validate(); err != nil {
 		return err

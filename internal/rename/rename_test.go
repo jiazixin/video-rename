@@ -1,6 +1,8 @@
 package rename
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -38,7 +40,7 @@ func TestNoReplaceAtSuccess(t *testing.T) {
 	if err != nil || string(data) != "content" {
 		t.Fatalf("目标应存在: %q %v", data, err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "source.mp4")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "source.mp4")); !errors.Is(err, fs.ErrNotExist) {
 		t.Error("源应不存在")
 	}
 }
@@ -51,7 +53,7 @@ func TestNoReplaceAtNeverOverwrites(t *testing.T) {
 	}
 	jerr := NoReplaceAt(fd, "source.mp4", "target.mp4")
 	if jerr == nil || jerr.Code != domain.CodeRenameConflict {
-		t.Fatalf("目标存在时必须报 RENAME_CONFLICT: %v", jerr)
+		t.Fatalf("目标存在时必须报 rename_conflict: %v", jerr)
 	}
 	if data, err := os.ReadFile(dst); err != nil || string(data) != "existing" {
 		t.Fatalf("已有目标被覆盖: %q %v", data, err)
@@ -92,13 +94,13 @@ func TestNoReplaceAtPermissionDenied(t *testing.T) {
 		t.Fatal("只读目录应失败")
 	}
 	if jerr.Code != domain.CodeRenamePermissionDenied {
-		t.Errorf("错误码 = %s, 期望 RENAME_PERMISSION_DENIED", jerr.Code)
+		t.Errorf("错误码 = %s, 期望 rename_permission_denied", jerr.Code)
 	}
 }
 
 func TestNoReplaceAtSameName(t *testing.T) {
 	_, fd := setup(t)
-	// 同名:no-replace 重命名对自身通常报 EEXIST
+	// same name: a no-replace rename onto itself usually reports EEXIST
 	if jerr := NoReplaceAt(fd, "source.mp4", "source.mp4"); jerr != nil && jerr.Code != domain.CodeRenameConflict {
 		t.Errorf("错误码 = %s", jerr.Code)
 	}

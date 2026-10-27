@@ -1,61 +1,56 @@
 <script setup lang="ts">
-  import { onMounted, onUnmounted, ref, watch } from 'vue';
+  import { localTimeZone } from '../lib/format/date';
+  import { computed, onMounted, ref, watch } from 'vue';
+  import { useRoute, useRouter, type RouteLocationNormalizedLoaded } from 'vue-router';
   import { api, bootstrap, session } from './api';
-  import Login from '../features/auth/Login.vue';
-  import Workspace from '../layouts/Workspace.vue';
-  import Library from '../features/library/Library.vue';
-  import History from '../features/history/History.vue';
-  import ExtractionHistory from '../features/history/ExtractionHistory.vue';
-  import Runs from '../features/runs/Runs.vue';
-  import Usage from '../features/usage/Usage.vue';
-  import SystemSettings from './SystemSettings.vue';
-  const settingsTab = ref('processing'),
-    usageTab = ref('tokens');
-  const page = ref('library'),
-    loading = ref(true),
-    system = ref({ model: '', ready: false, message: '' });
-  let libraryHash = location.hash.startsWith('#library/') ? location.hash.slice(1) : 'library';
-  function navigate(v: string) {
-    location.hash = v === 'library' ? libraryHash : v;
-    hash();
+  import { errorText } from './errors';
+  import type { ServerRecord } from './contracts';
+  import LoginPage from '../features/auth/LoginPage.vue';
+  import WorkspaceLayout from '../layouts/WorkspaceLayout.vue';
+  import ToastNotice from './ToastNotice.vue';
+  const route = useRoute();
+  const router = useRouter();
+  const loading = ref(true),
+    system = ref<{ model: string; ready: boolean; problem?: ServerRecord }>({
+      model: '',
+      ready: false
+    });
+  // The library entry returns to the directory the user last browsed.
+  let libraryPath = '/library';
+  router.afterEach((to) => {
+    if (to.name === 'library') libraryPath = to.fullPath;
+  });
+  function navigate(target: string) {
+    void router.push(target === 'library' ? libraryPath : `/${target}`);
   }
-  function hash() {
-    if (location.hash.startsWith('#library')) libraryHash = location.hash.slice(1);
-    const [name, tab] = location.hash.slice(1).split('/');
-    page.value = [
-      'library',
-      'history',
-      'extractions',
-      'plans',
-      'runs',
-      'usage',
-      'settings'
-    ].includes(name || '')
-      ? name!
-      : 'library';
-    settingsTab.value = [
-      'processing',
-      'scan',
-      'numbering',
-      'prompts',
-      'models',
-      'sampling',
-      'notifications'
-    ].includes(tab || '')
-      ? tab!
-      : 'processing';
-    usageTab.value = ['tokens', 'analysis'].includes(tab || '') ? tab! : 'tokens';
+  const activePage = computed(() => {
+    if (route.name === 'usage')
+      return `usage/${route.params.tab === 'analysis' ? 'analysis' : 'tokens'}`;
+    return typeof route.name === 'string' ? route.name : 'library';
+  });
+  // Page-specific props and listeners; RouterView passes the route's own props.
+  function pageAttrs(page: RouteLocationNormalizedLoaded) {
+    if (page.name === 'library')
+      return {
+        ready: system.value.ready,
+        onRun: () => {
+          navigate('runs');
+        }
+      };
+    if (page.name === 'runs' || page.name === 'plans') return { ready: system.value.ready };
+    if (page.name === 'settings') return { onChanged: loadSystem };
+    return {};
   }
   async function loadSystem() {
     if (session.value) {
       try {
         system.value = await api('/system');
-      } catch {}
+      } catch {
+        // Without the status the workspace still opens; the pages report their own failures.
+      }
     }
   }
   onMounted(async () => {
-    hash();
-    window.addEventListener('hashchange', hash);
     await bootstrap();
     await loadSystem();
     loading.value = false;
@@ -63,10 +58,15 @@
   watch(session, async (value) => {
     if (value) {
       try {
-        await api('/notifications/timezone', 'PUT', {
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+        await api<unknown>('/notifications/timezone', {
+          method: 'PUT',
+          body: {
+            timezone: localTimeZone()
+          }
         });
-      } catch {}
+      } catch {
+        // Notification times fall back to the stored timezone; nothing to show the user.
+      }
     }
   });
   // The leaving page fades out for a moment; keep it out of focus and assistive tech meanwhile.
@@ -79,31 +79,26 @@
     el.removeAttribute('aria-hidden');
     (el as HTMLElement).inert = false;
   }
-  onUnmounted(() => window.removeEventListener('hashchange', hash));
   watch(session, loadSystem);
 </script>
 <template>
-  <div v-if="loading" class="boot">正在打开工作台…</div><Login v-else-if="!session" /><Workspace
+  <div v-if="loading" class="boot">正在打开工作台…</div
+  ><LoginPage v-else-if="!session" /><WorkspaceLayout
     v-else
-    :page="page === 'usage' ? `usage/${usageTab}` : page"
+    :page="activePage"
     :model="system.model"
     :ready="system.ready"
     @navigate="navigate"
-    ><div v-if="system.message" class="notice error"
-      >{{ system.message }}。文件浏览和手动改名仍可使用。</div
-    ><Transition name="page" mode="out-in" @before-leave="retirePage" @before-enter="restorePage"
-      ><KeepAlive include="Library"
-        ><Library v-if="page === 'library'" :ready="system.ready" @run="navigate('runs')" /><History
-          v-else-if="page === 'history'" /><ExtractionHistory
-          v-else-if="page === 'extractions'" /><SystemSettings
-          v-else-if="page === 'settings'"
-          :tab="settingsTab"
-          @changed="loadSystem" /><Runs
-          v-else-if="page === 'runs' || page === 'plans'"
-          :key="page"
-          :view="page"
-          :ready="system.ready" /><Usage
-          v-else-if="page === 'usage'"
-          :tab="usageTab" /></KeepAlive></Transition
-  ></Workspace>
+    ><div v-if="system.problem" class="notice error"
+      >{{ errorText(system.problem) }}。文件浏览和手动改名仍可使用。</div
+    ><RouterView v-slot="{ Component, route: page }"
+      ><Transition name="page" mode="out-in" @before-leave="retirePage" @before-enter="restorePage"
+        ><KeepAlive include="LibraryPage"
+          ><component
+            :is="Component"
+            :key="page.name"
+            v-bind="pageAttrs(page)" /></KeepAlive></Transition
+    ></RouterView>
+  </WorkspaceLayout>
+  <ToastNotice />
 </template>

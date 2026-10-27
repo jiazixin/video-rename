@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json/v2"
+	"log/slog"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -12,7 +13,7 @@ import (
 
 func runsAnalyticsApp(t *testing.T) *App {
 	t.Helper()
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +104,7 @@ func TestRunsAnalyticsRoutePrecedence(t *testing.T) {
 	a := runsAnalyticsApp(t)
 	handler := a.Handler()
 	login := httptest.NewRecorder()
-	loginRequest := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"test-password-123"}`))
+	loginRequest := jsonRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"test-password-123"}`))
 	loginRequest.Header.Set("Content-Type", "application/json")
 	handler.ServeHTTP(login, loginRequest)
 	if login.Code != 200 {

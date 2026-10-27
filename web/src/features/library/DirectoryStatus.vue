@@ -2,7 +2,7 @@
   import { statusNames } from '../../app/labels';
   import { type Entry } from '../../app/contracts';
   import StatusBadge from '../../components/StatusBadge.vue';
-  defineProps<{ entry: Entry }>();
+  const { entry } = defineProps<{ entry: Entry }>();
   function directoryStatus(e: Entry) {
     if (e.task_status) return statusNames[e.task_status] || e.task_status;
     const p = e.progress;
@@ -14,13 +14,9 @@
   function directoryTone(e: Entry) {
     if (e.task_status) return e.task_status;
     const p = e.progress;
-    return !p || p.unknown || !p.total
-      ? 'unprocessed'
-      : p.processed === p.total
-        ? 'completed'
-        : p.processed
-          ? 'scanning'
-          : 'unprocessed';
+    if (!p || p.unknown || !p.total) return 'unprocessed';
+    if (p.processed === p.total) return 'completed';
+    return p.processed ? 'scanning' : 'unprocessed';
   }
 </script>
 <template>

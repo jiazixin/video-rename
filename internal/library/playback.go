@@ -1,6 +1,7 @@
 package library
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,15 +10,15 @@ import (
 
 // OpenPlayback pins a regular file beneath the configured root. The returned
 // descriptor stays valid across later renames; callers must close it.
-func (l *Library) OpenPlayback(id int64) (*os.File, error) {
+func (l *Library) OpenPlayback(ctx context.Context, id int64) (*os.File, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	e, err := l.Get(id)
+	e, err := l.Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if e.Kind != "file" {
-		return nil, fmt.Errorf("不是普通文件")
+		return nil, errNotRegular
 	}
 	p, err := l.Path(id)
 	if err != nil {
@@ -44,7 +45,7 @@ func (l *Library) OpenPlayback(id int64) (*os.File, error) {
 	identity, ok := st.Sys().(*syscall.Stat_t)
 	if !st.Mode().IsRegular() || !ok || fmt.Sprintf("%d:%d", uint64(identity.Dev), identity.Ino) != e.Identity {
 		f.Close()
-		return nil, fmt.Errorf("文件身份已变化，请刷新目录")
+		return nil, errIdentityChanged
 	}
 	// Recheck ancestors after opening, including root mount and symlink changes.
 	if _, err = l.Path(id); err != nil {

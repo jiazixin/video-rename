@@ -4,12 +4,14 @@ package prompts
 import (
 	"database/sql"
 	"errors"
-	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	"video-rename/internal/domain"
 	"video-rename/internal/storage"
 )
 
+// Profile is a reusable prompt.
 type Profile struct {
 	ID      int64  `json:"id"`
 	Title   string `json:"title"`
@@ -18,18 +20,23 @@ type Profile struct {
 	Created string `json:"created"`
 	Updated string `json:"updated"`
 }
+
+// Store stores prompts.
 type Store struct{ DB *storage.Store }
 
 const columns = "id,title,body,version,created,updated"
 
+// Get returns prompt id.
 func (s Store) Get(id int64) (Profile, error) {
 	var p Profile
 	err := s.DB.QueryRow("SELECT "+columns+" FROM prompts WHERE id=?", id).Scan(&p.ID, &p.Title, &p.Body, &p.Version, &p.Created, &p.Updated)
 	if errors.Is(err, sql.ErrNoRows) {
-		return p, fmt.Errorf("提示词不存在")
+		return p, domain.Fail(domain.KindNotFound, "prompt_not_found", "prompt does not exist")
 	}
 	return p, err
 }
+
+// List returns all prompts.
 func (s Store) List() ([]Profile, error) {
 	rows, err := s.DB.Query("SELECT " + columns + " FROM prompts ORDER BY id")
 	if err != nil {
@@ -50,11 +57,16 @@ func (s Store) List() ([]Profile, error) {
 func (p *Profile) validate() error {
 	p.Title = strings.TrimSpace(p.Title)
 	p.Body = strings.TrimSpace(p.Body)
-	if p.Title == "" || utf8.RuneCountInString(p.Title) > 80 || p.Body == "" || len(p.Body) > 16000 {
-		return fmt.Errorf("名称须为 1–80 字，提示词内容不能为空且不得超过 16000 字节")
+	if p.Title == "" || utf8.RuneCountInString(p.Title) > 80 {
+		return domain.InvalidField("title", "invalid_length")
+	}
+	if p.Body == "" || len(p.Body) > 16000 {
+		return domain.InvalidField("body", "invalid_length")
 	}
 	return nil
 }
+
+// Save creates or updates prompt p.
 func (s Store) Save(p Profile) (Profile, error) {
 	if err := p.validate(); err != nil {
 		return p, err
@@ -70,7 +82,7 @@ func (s Store) Save(p Profile) (Profile, error) {
 			return p, err
 		}
 		if n >= 200 {
-			return p, fmt.Errorf("最多保存 200 条提示词")
+			return p, domain.Fail(domain.KindTooMany, "prompts_full", "at most 200 prompts")
 		}
 		res, err := tx.Exec("INSERT INTO prompts(title,body,created,updated) VALUES(?,?,?,?)", p.Title, p.Body, storage.Now(), storage.Now())
 		if err != nil {
@@ -90,11 +102,13 @@ func (s Store) Save(p Profile) (Profile, error) {
 		}
 		n, _ := res.RowsAffected()
 		if n == 0 {
-			return p, fmt.Errorf("提示词已修改或不存在，请刷新后重试")
+			return p, domain.Fail(domain.KindConflict, "prompt_changed", "prompt was modified or deleted; refresh")
 		}
 	}
 	return s.Get(p.ID)
 }
+
+// Delete deletes prompt id if its version is still version.
 func (s Store) Delete(id, version int64) error {
 	tx, err := s.DB.Begin()
 	if err != nil {
@@ -104,19 +118,19 @@ func (s Store) Delete(id, version int64) error {
 	var current int64
 	if err = tx.QueryRow("SELECT version FROM prompts WHERE id=?", id).Scan(&current); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("提示词不存在")
+			return domain.Fail(domain.KindNotFound, "prompt_not_found", "prompt does not exist")
 		}
 		return err
 	}
 	if current != version {
-		return fmt.Errorf("提示词已修改，请刷新后重试")
+		return domain.Fail(domain.KindConflict, "prompt_changed", "prompt was modified; refresh")
 	}
 	var configs int
 	if err = tx.QueryRow("SELECT count(*) FROM model_configs WHERE prompt_id=?", id).Scan(&configs); err != nil {
 		return err
 	}
 	if configs > 0 {
-		return fmt.Errorf("有 %d 个模型配置使用此提示词，请先更换模型配置中的提示词", configs)
+		return domain.Fail(domain.KindConflict, "prompt_in_use", "prompt is used by model configurations", "configs", configs)
 	}
 	if _, err = tx.Exec("DELETE FROM prompts WHERE id=?", id); err != nil {
 		return err

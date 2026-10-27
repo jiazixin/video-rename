@@ -1,24 +1,28 @@
 <script setup lang="ts">
   import { computed, ref, watch, useId } from 'vue';
   import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from '@lucide/vue';
-  const props = withDefaults(
-    defineProps<{
-      page: number;
-      totalPages: number;
-      disabled?: boolean;
-      label?: string;
-      previousLabel?: string;
-      nextLabel?: string;
-    }>(),
-    { label: '分页导航', previousLabel: '上一页', nextLabel: '下一页' }
-  );
+  const {
+    page,
+    totalPages,
+    disabled,
+    label = '分页导航',
+    previousLabel = '上一页',
+    nextLabel = '下一页'
+  } = defineProps<{
+    page: number;
+    totalPages: number;
+    disabled?: boolean;
+    label?: string;
+    previousLabel?: string;
+    nextLabel?: string;
+  }>();
   const emit = defineEmits<{ change: [page: number] }>();
   const errorID = useId();
-  const count = computed(() => Math.max(1, props.totalPages));
-  const draft = ref(String(props.page)),
+  const count = computed(() => Math.max(1, totalPages));
+  const draft = ref(String(page)),
     error = ref('');
   watch(
-    () => props.page,
+    () => page,
     (value) => {
       draft.value = String(value);
       error.value = '';
@@ -28,13 +32,13 @@
     error.value = '';
   });
   function go(value: number) {
-    if (props.disabled) return;
+    if (disabled) return;
     error.value = '';
     draft.value = String(value);
-    if (value !== props.page) emit('change', value);
+    if (value !== page) emit('change', value);
   }
   function jump() {
-    if (props.disabled) return;
+    if (disabled) return;
     const value = Number(draft.value);
     if (
       !/^\d+$/.test(draft.value) ||
@@ -141,15 +145,15 @@
     padding: 5px 7px;
     border: 1px solid var(--line);
     border-radius: 7px;
-    background: #fff;
+    background: var(--palette-ffffff);
     color: var(--steel);
     font-size: 12px;
     line-height: 20px;
   }
   .page-navigation button:hover:not(:disabled) {
-    border-color: #89bca7;
-    background: #edf7f0;
-    color: #287452;
+    border-color: var(--palette-89bca7);
+    background: var(--tone-green-bg);
+    color: var(--tone-green-ink);
   }
   .page-navigation button:disabled {
     opacity: 0.4;
@@ -165,7 +169,7 @@
     font-variant-numeric: tabular-nums;
   }
   .page-current {
-    color: #287452;
+    color: var(--tone-green-ink);
     font-weight: 600;
   }
   .page-slash {
@@ -189,7 +193,7 @@
     padding: 5px 6px;
     border: 1px solid var(--line);
     border-radius: 7px;
-    background: #fff;
+    background: var(--palette-ffffff);
     color: var(--ink);
     font: inherit;
     text-align: center;
@@ -200,17 +204,17 @@
     opacity: 0.6;
   }
   .page-jump input[aria-invalid='true'] {
-    border-color: #b14545;
+    border-color: var(--tone-red-ink);
   }
   .page-navigation button:focus-visible,
   .page-jump input:focus-visible {
-    outline: 2px solid #287452;
+    outline: 2px solid var(--tone-green-ink);
     outline-offset: 2px;
   }
   .page-error {
     flex-basis: 100%;
     text-align: right;
-    color: #b14545;
+    color: var(--tone-red-ink);
     font-size: 12px;
   }
   @media (max-width: 600px) {

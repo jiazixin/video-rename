@@ -1,10 +1,10 @@
 package library
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"video-rename/internal/domain"
@@ -32,7 +32,7 @@ func TestNumberingSkipsMediaMarksAndReservesNumbers(t *testing.T) {
 					settings.Image.Prefix, settings.Audio.Prefix = "pic-", "aud-"
 					settings.Image.Padding, settings.Audio.Padding = 3, 3
 					settings.Image.Compact, settings.Audio.Compact = compact, compact
-					b, err := l.PreviewNumberingContext(t.Context(), 1, media, "", "name_asc", settings)
+					b, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: media, Sort: "name_asc", Settings: settings})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -59,11 +59,11 @@ func TestNumberingSkipsMediaMarksAndReservesNumbers(t *testing.T) {
 							t.Fatalf("wrong reserved number: %+v; want %s", item, want[item.Old])
 						}
 					}
-					if _, err := l.ApplyNumbering(b.ID); err != nil {
+					if _, err := l.ApplyNumbering(t.Context(), b.ID, nil); err != nil {
 						t.Fatal(err)
 					}
 					for _, id := range ids {
-						e, err := l.Get(id)
+						e, err := l.Get(t.Context(), id)
 						if err != nil || e.Processed != "marked" {
 							t.Fatalf("lost protection: %+v %v", e, err)
 						}
@@ -84,7 +84,7 @@ func TestNumberingRejectsMarkAddedAfterPreview(t *testing.T) {
 	}
 	refresh(t, l, 1)
 	settings := domain.DefaultNumberingSettings()
-	b, err := l.PreviewNumberingContext(t.Context(), 1, "mixed", "", "name_asc", settings)
+	b, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "mixed", Sort: "name_asc", Settings: settings})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestNumberingRejectsMarkAddedAfterPreview(t *testing.T) {
 	if r := l.SetProcessed(t.Context(), []int64{e.ID}, true); r.Changed != 1 || r.Failed != 0 {
 		t.Fatal(r)
 	}
-	if _, err := l.ApplyNumbering(b.ID); err == nil || !strings.Contains(err.Error(), "跳过编号") {
+	if _, err := l.ApplyNumbering(t.Context(), b.ID, nil); err == nil || !errors.Is(err, domain.Fail(domain.KindConflict, "numbering_item_marked", "")) {
 		t.Fatalf("old preview ignored new protection: %v", err)
 	}
 	for _, name := range []string{"photo.JPG", "song.MP3"} {
@@ -103,14 +103,14 @@ func TestNumberingRejectsMarkAddedAfterPreview(t *testing.T) {
 	if r := l.SetProcessed(t.Context(), []int64{e.ID}, false); r.Changed != 1 || r.Failed != 0 {
 		t.Fatal(r)
 	}
-	if _, err := l.ApplyNumbering(b.ID); err != nil {
+	if _, err := l.ApplyNumbering(t.Context(), b.ID, nil); err != nil {
 		t.Fatalf("unmarked file cannot be numbered: %v", err)
 	}
 }
 
 func TestNumberingTreeTraversesProtectedDirectories(t *testing.T) {
 	l, root, _ := fixture(t)
-	if err := os.MkdirAll(filepath.Join(root, "child", "deep"), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "child", "deep"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	put(t, filepath.Join(root, "photo.JPG"))
@@ -123,7 +123,7 @@ func TestNumberingTreeTraversesProtectedDirectories(t *testing.T) {
 	if err != nil || len(batches) != 1 || batches[0].Path != filepath.Join("child", "deep") || batches[0].Total != 1 {
 		t.Fatalf("protected ancestor blocked new descendant: %+v %v", batches, err)
 	}
-	if _, err := l.ApplyNumbering(batches[0].ID); err != nil {
+	if _, err := l.ApplyNumbering(t.Context(), batches[0].ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"photo.JPG", "child/song.MP3", "child/deep/1.jpg"} {

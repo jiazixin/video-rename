@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import { ArrowDownUp } from '@lucide/vue';
-  defineProps<{ multi: boolean; sort: string; sizing?: boolean }>();
+  const { multi, sort, sizing } = defineProps<{ multi: boolean; sort: string; sizing?: boolean }>();
   const emit = defineEmits<{ sort: [field: string] }>();
   const columns = [
     { field: 'name', label: '名称', class: 'filename-cell' },
@@ -18,6 +18,11 @@
   ];
   const sortable = (field: string) =>
     ['name', 'size', 'status', 'mtime', 'renamed'].includes(field);
+  function ariaSort(field: string) {
+    if (!sortable(field)) return undefined;
+    if (!sort.startsWith(field + '_')) return 'none';
+    return sort.endsWith('_desc') ? 'descending' : 'ascending';
+  }
 </script>
 
 <template>
@@ -30,15 +35,7 @@
         :class="column.class"
         :title="column.title"
         scope="col"
-        :aria-sort="
-          sortable(column.field)
-            ? sort.startsWith(column.field + '_')
-              ? sort.endsWith('_desc')
-                ? 'descending'
-                : 'ascending'
-              : 'none'
-            : undefined
-        "
+        :aria-sort="ariaSort(column.field)"
       >
         <button
           v-if="sortable(column.field)"

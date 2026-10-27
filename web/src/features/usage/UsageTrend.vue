@@ -1,7 +1,10 @@
 <script setup lang="ts">
+  import { niceCeil, stepActive } from './chart-scale';
+  import { formatClock, formatHourMinute, formatMonthDay, formatTime } from '../../lib/format/date';
+  import { formatCount, formatCompact } from '../../lib/format/number';
   import { computed, onMounted, onUnmounted, ref } from 'vue';
   import { type UsageBucket } from '../../app/contracts';
-  const props = defineProps<{ buckets: UsageBucket[]; interval: string }>();
+  const { buckets, interval } = defineProps<{ buckets: UsageBucket[]; interval: string }>();
   const box = ref<HTMLElement>(),
     width = ref(860),
     height = 250,
@@ -13,20 +16,9 @@
   });
   const maxY = computed(() => {
     let top = 0;
-    for (const b of props.buckets) if (b.tokens > top) top = b.tokens;
+    for (const b of buckets) if (b.tokens > top) top = b.tokens;
     return niceCeil(top);
   });
-  function niceCeil(value: number) {
-    if (value <= 0) return 1;
-    const pow = 10 ** Math.floor(Math.log10(value));
-    const f = value / pow;
-    return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * pow;
-  }
-  function compact(value: number) {
-    if (value >= 999_950) return `${(value / 1e6).toFixed(2).replace(/\.?0+$/, '')}M`;
-    if (value >= 1000) return `${(value / 1000).toFixed(1).replace(/\.?0+$/, '')}K`;
-    return String(value);
-  }
   const ticks = computed(() => {
     const out: number[] = [];
     for (let i = 0; i <= 4; i++) out.push((maxY.value * i) / 4);
@@ -34,33 +26,35 @@
   });
   const points = computed(() => {
     const { w, h } = inner(),
-      n = props.buckets.length;
-    return props.buckets.map((b, i) => ({
+      n = buckets.length;
+    return buckets.map((b, i) => ({
       x: pad.left + (n === 1 ? w / 2 : (w * i) / (n - 1)),
       y: pad.top + h - (b.tokens / maxY.value) * h,
       b
     }));
   });
+  const hovered = computed(() => (active.value >= 0 ? points.value[active.value] : undefined));
   const linePath = computed(() => points.value.map((p) => `${p.x},${p.y}`).join(' '));
   const areaPath = computed(() => {
     if (!points.value.length) return '';
     const { h } = inner(),
-      first = points.value[0]!,
-      last = points.value[points.value.length - 1]!;
+      first = points.value[0],
+      last = points.value.at(-1);
+    if (!first || !last) return '';
     return `M${first.x},${pad.top + h} L${points.value.map((p) => `${p.x},${p.y}`).join(' L')} L${last.x},${pad.top + h} Z`;
   });
   const labelSteps = computed(() => {
-    const n = props.buckets.length;
+    const n = buckets.length;
     return Math.max(1, Math.ceil(n / 6));
   });
   function axisLabel(value: string) {
     const d = new Date(value);
-    switch (props.interval) {
+    switch (interval) {
       case '15m':
       case 'hour':
-        return d.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' });
+        return formatHourMinute(d);
       case 'day':
-        return d.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
+        return formatMonthDay(d);
       case 'month':
         return `${d.getFullYear()}-${d.getMonth() + 1}`;
       default:
@@ -68,12 +62,13 @@
     }
   }
   function bucketTitle(b: UsageBucket) {
-    return `${new Date(b.from).toLocaleString('zh-CN', { hour12: false })} – ${new Date(b.to).toLocaleTimeString('zh-CN', { hour12: false })}`;
+    return `${formatTime(b.from)} – ${formatClock(b.to)}`;
   }
   function pick(event: PointerEvent) {
-    const n = props.buckets.length;
+    const n = buckets.length;
     if (!n) return;
-    const svg = (event.currentTarget as SVGRectElement).ownerSVGElement!;
+    const svg = (event.currentTarget as SVGRectElement).ownerSVGElement;
+    if (!svg) return;
     const rect = svg.getBoundingClientRect();
     const x = ((event.clientX - rect.left) * width.value) / rect.width;
     const ratio = (x - pad.left) / inner().w;
@@ -86,14 +81,9 @@
     }
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
-    const n = props.buckets.length;
+    const n = buckets.length;
     if (!n) return;
-    active.value =
-      active.value < 0
-        ? event.key === 'ArrowLeft'
-          ? n - 1
-          : 0
-        : Math.max(0, Math.min(n - 1, active.value + (event.key === 'ArrowRight' ? 1 : -1)));
+    active.value = stepActive(active.value, n, event.key === 'ArrowRight' ? 1 : -1);
   }
   const tooltipStyle = computed(() => {
     const p = points.value[active.value];
@@ -140,19 +130,19 @@
         class="axis-text"
         text-anchor="end"
       >
-        {{ compact(t) }}
+        {{ formatCompact(t) }}
       </text>
       <path v-if="areaPath" :d="areaPath" class="trend-area" />
       <polyline v-if="points.length" :points="linePath" class="trend-line" />
-      <template v-if="active >= 0 && points[active]">
+      <template v-if="hovered">
         <line
-          :x1="points[active]!.x"
-          :x2="points[active]!.x"
+          :x1="hovered.x"
+          :x2="hovered.x"
           :y1="pad.top"
           :y2="pad.top + inner().h"
           class="crosshair"
         />
-        <circle :cx="points[active]!.x" :cy="points[active]!.y" r="4.5" class="trend-dot" />
+        <circle :cx="hovered.x" :cy="hovered.y" r="4.5" class="trend-dot" />
       </template>
       <text
         v-for="p in points.filter((_, i) => i % labelSteps === 0 || i === points.length - 1)"
@@ -174,20 +164,14 @@
         class="hit-zone"
         @pointermove="pick"
       /></svg
-    ><div
-      v-if="active >= 0 && points[active]"
-      class="trend-tooltip"
-      :style="tooltipStyle"
-      role="status"
-      ><strong :title="`${points[active]!.b.tokens.toLocaleString()} token`"
-        >{{ compact(points[active]!.b.tokens) }} token</strong
-      ><span>{{ bucketTitle(points[active]!.b) }}</span
+    ><div v-if="hovered" class="trend-tooltip" :style="tooltipStyle" role="status"
+      ><strong :title="`${formatCount(hovered.b.tokens)} token`"
+        >{{ formatCompact(hovered.b.tokens) }} token</strong
+      ><span>{{ bucketTitle(hovered.b) }}</span
       ><span
-        :title="`${points[active]!.b.records.toLocaleString()} 条请求 · 粗估 ${points[active]!.b.estimated_records.toLocaleString()} 条`"
-        >{{ compact(points[active]!.b.records) }} 条请求<template
-          v-if="points[active]!.b.estimated_records"
-        >
-          · 粗估 {{ compact(points[active]!.b.estimated_records) }} 条</template
+        :title="`${formatCount(hovered.b.records)} 条请求 · 粗估 ${formatCount(hovered.b.estimated_records)} 条`"
+        >{{ formatCompact(hovered.b.records) }} 条请求<template v-if="hovered.b.estimated_records">
+          · 粗估 {{ formatCompact(hovered.b.estimated_records) }} 条</template
         ></span
       ></div
     ><p v-if="buckets.every((b) => !b.tokens)" class="trend-empty">所选区间没有记录到的用量</p

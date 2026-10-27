@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,22 +11,47 @@ import (
 func TestServiceConfiguration(t *testing.T) {
 	base := t.TempDir()
 	media := filepath.Join(base, "media")
-	os.Mkdir(media, 0700)
-	cfg, err := loadTemp(t, minimalYAML+"\nlisten: 127.0.0.1\nport: 8790\nmedia-path: "+media+"\nauth:\n  username: admin\n  password: test-password-123\nstorage: "+filepath.Join(base, "state")+"\n", "cfg.yaml")
+	os.Mkdir(media, 0o700)
+	cfg, err := loadTemp(t, minimalYAML+"\nlisten: 127.0.0.1\nport: 8790\nmedia_path: "+media+"\nauth:\n  username: admin\n  password: test-password-123\nstorage: "+filepath.Join(base, "state")+"\n", "cfg.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = cfg.ValidateService(); err != nil {
+	if err = cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	cfg.Port = 0
-	if err = cfg.ValidateService(); err == nil {
-		t.Fatal("invalid port")
+	bad := cfg
+	bad.Port = 0
+	if err = bad.Validate(); err == nil || err.Error() != "port: must be between 1 and 65535" {
+		t.Fatalf("invalid port: %v", err)
 	}
-	cfg.Port = 8790
-	cfg.Storage = filepath.Join(media, "data")
-	if err = cfg.ValidateService(); err == nil {
-		t.Fatal("database inside library")
+	if field, ok := errors.AsType[*FieldError](err); !ok || field.Field != "port" {
+		t.Fatalf("not a field error: %#v", err)
+	}
+	bad = cfg
+	bad.Storage = filepath.Join(media, "data")
+	if err = bad.Validate(); err == nil || err.Error() != "storage: must be outside media_path" {
+		t.Fatalf("database inside library: %v", err)
+	}
+	if bad.Storage != filepath.Join(media, "data") {
+		t.Fatal("Validate changed the configuration")
+	}
+}
+
+func TestValidateDoesNotNormalize(t *testing.T) {
+	base := t.TempDir()
+	if err := os.Mkdir(filepath.Join(base, "media"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{Listen: "127.0.0.1", Port: 8790, Path: "../media", Storage: "../data", TempStorage: "../.cache", ConfigDir: filepath.Join(base, "configs"), Auth: AuthConfig{Username: "admin", Password: "x"}}
+	if err := os.Mkdir(cfg.ConfigDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	want := cfg
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg != want {
+		t.Fatalf("Validate changed %+v to %+v", want, cfg)
 	}
 }
 func TestLoggingIsNotDeploymentConfiguration(t *testing.T) {
@@ -37,12 +63,12 @@ func TestLoggingIsNotDeploymentConfiguration(t *testing.T) {
 func TestStorageDirectoryAndShortPassword(t *testing.T) {
 	base := t.TempDir()
 	media := filepath.Join(base, "media")
-	if err := os.Mkdir(media, 0700); err != nil {
+	if err := os.Mkdir(media, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	for _, storage := range []string{"./custom/nested", filepath.Join(base, "absolute"), ""} {
 		t.Run(storage, func(t *testing.T) {
-			yaml := "media-path: " + media + "\nauth:\n  username: admin\n  password: x\n"
+			yaml := "media_path: " + media + "\nauth:\n  username: admin\n  password: x\n"
 			if storage != "" {
 				yaml += "storage: " + storage + "\n"
 			}
@@ -58,22 +84,19 @@ func TestStorageDirectoryAndShortPassword(t *testing.T) {
 				want = filepath.Join(cfg.ConfigDir, want)
 			}
 			// macOS temp roots can themselves be symlinks.
-			if err = cfg.ValidateService(); err != nil {
-				t.Fatal(err)
-			}
 			if filepath.Base(cfg.DatabasePath()) != "data.sqlite" || filepath.Dir(cfg.DatabasePath()) != cfg.Storage {
 				t.Fatal(cfg.DatabasePath())
 			}
 			if filepath.Base(cfg.Storage) != filepath.Base(want) {
 				t.Fatal(cfg.Storage, want)
 			}
-			first := cfg.DatabasePath()
-			if err = cfg.ValidateService(); err != nil || cfg.DatabasePath() != first {
-				t.Fatal("validation must be idempotent", err)
+			again, err := cfg.resolve()
+			if err != nil || again != cfg {
+				t.Fatal("resolving a loaded configuration must be idempotent", err)
 			}
 			for _, password := range []string{"", "   ", "请替换为你的密码"} {
 				cfg.Auth.Password = password
-				if cfg.ValidateService() == nil {
+				if cfg.Validate() == nil {
 					t.Fatalf("accepted empty/placeholder password %q", password)
 				}
 			}
@@ -84,20 +107,16 @@ func TestStorageDirectoryAndShortPassword(t *testing.T) {
 func TestStorageDirectoryRejectsFilesAndMediaSymlinks(t *testing.T) {
 	base := t.TempDir()
 	media := filepath.Join(base, "media")
-	os.Mkdir(media, 0700)
+	os.Mkdir(media, 0o700)
 	existing := filepath.Join(base, "old.sqlite")
-	os.WriteFile(existing, []byte("preserve"), 0600)
+	os.WriteFile(existing, []byte("preserve"), 0o600)
 	link := filepath.Join(base, "linked")
 	if err := os.Symlink(media, link); err != nil {
 		t.Fatal(err)
 	}
 	for _, storage := range []string{existing, filepath.Join(existing, "child"), link, filepath.Join(link, "new", "data")} {
-		cfg, err := loadTemp(t, "media-path: "+media+"\nstorage: "+storage+"\nauth:\n  username: admin\n  password: x\n", "cfg.yaml")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if cfg.ValidateService() == nil {
-			t.Fatalf("accepted storage %s", storage)
+		if _, err := loadTemp(t, "media_path: "+media+"\nstorage: "+storage+"\nauth:\n  username: admin\n  password: x\n", "cfg.yaml"); err == nil || !strings.HasPrefix(err.Error(), "storage: ") {
+			t.Fatalf("accepted storage %s: %v", storage, err)
 		}
 	}
 	raw, err := os.ReadFile(existing)
@@ -109,15 +128,12 @@ func TestStorageDirectoryRejectsFilesAndMediaSymlinks(t *testing.T) {
 func TestTempStorageResolutionAndIsolation(t *testing.T) {
 	base := t.TempDir()
 	media := filepath.Join(base, "media")
-	if err := os.Mkdir(media, 0700); err != nil {
+	if err := os.Mkdir(media, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	yaml := "media-path: " + media + "\nstorage: ../state\nauth:\n  username: admin\n  password: test\n"
-	cfg, err := loadTemp(t, yaml+"tmp-storage: ./frames\n", "config.yaml")
+	yaml := "media_path: " + media + "\nstorage: ../state\nauth:\n  username: admin\n  password: test\n"
+	cfg, err := loadTemp(t, yaml+"tmp_storage: ./frames\n", "config.yaml")
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err = cfg.ValidateService(); err != nil {
 		t.Fatal(err)
 	}
 	realDir, err := filepath.EvalSymlinks(cfg.ConfigDir)
@@ -132,11 +148,7 @@ func TestTempStorageResolutionAndIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, value := range []string{"\"\"", media, filepath.Join(link, "new-cache")} {
-		c, e := loadTemp(t, yaml+"tmp-storage: "+value+"\n", "config.yaml")
-		if e == nil {
-			e = c.ValidateService()
-		}
-		if e == nil {
+		if _, e := loadTemp(t, yaml+"tmp_storage: "+value+"\n", "config.yaml"); e == nil {
 			t.Fatal("accepted temp path", value)
 		}
 	}

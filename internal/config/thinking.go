@@ -1,8 +1,9 @@
 package config
 
 import (
-	"fmt"
 	"strings"
+
+	"video-rename/internal/domain"
 )
 
 // ThinkingFields resolves provider-specific controls. Default deliberately sends nothing.
@@ -11,7 +12,7 @@ func (s ServerConfig) ThinkingFields() (map[string]any, error) {
 		return map[string]any{}, nil
 	}
 	if s.Thinking != "enabled" && s.Thinking != "disabled" {
-		return nil, fmt.Errorf("思考模式必须为默认、开启或关闭")
+		return nil, domain.InvalidField("thinking", "invalid_choice")
 	}
 	enabled := s.Thinking == "enabled"
 	adapter := s.ThinkingAdapter
@@ -25,17 +26,17 @@ func (s ServerConfig) ThinkingFields() (map[string]any, error) {
 		}
 	}
 	if s.Protocol == "anthropic" && adapter != "adaptive" && adapter != "budget" {
-		return nil, fmt.Errorf("Anthropic 协议请选择自适应或固定预算思考参数")
+		return nil, domain.InvalidField("thinking_adapter", "anthropic_needs_claude_adapter")
 	}
 	if s.Protocol != "anthropic" && (adapter == "adaptive" || adapter == "budget") {
-		return nil, fmt.Errorf("Claude 思考参数需要 Anthropic 协议")
+		return nil, domain.InvalidField("thinking_adapter", "claude_adapter_needs_anthropic")
 	}
 	effort := s.ThinkingEffort
 	if effort == "" {
 		effort = "low"
 	}
 	if effort != "low" && effort != "medium" && effort != "high" {
-		return nil, fmt.Errorf("思考强度必须为低、中或高")
+		return nil, domain.InvalidField("thinking_effort", "invalid_choice")
 	}
 	return s.thinkingRequestFields(adapter, enabled, effort)
 }
@@ -53,9 +54,9 @@ func autoThinkingAdapter(provider, model string, enabled bool) (string, error) {
 	case "claude":
 		return claudeThinkingAdapter(model, enabled)
 	case "custom":
-		return "", fmt.Errorf("自定义服务开启或关闭思考前，请选择服务支持的思考参数类型")
+		return "", domain.InvalidField("thinking_adapter", "required")
 	default:
-		return "", fmt.Errorf("该服务不支持思考控制")
+		return "", domain.InvalidField("thinking", "unsupported_provider")
 	}
 }
 
@@ -63,16 +64,16 @@ func openAIThinkingAdapter(model string, enabled bool) (string, error) {
 	switch {
 	case strings.HasPrefix(model, "gpt-5.1"), strings.HasPrefix(model, "gpt-5.2"), strings.HasPrefix(model, "gpt-5.4"), strings.HasPrefix(model, "gpt-5.5"):
 		if strings.Contains(model, "pro") || strings.Contains(model, "codex") || strings.Contains(model, "chat") {
-			return "", fmt.Errorf("此 OpenAI 型号尚未适配思考控制，请选择跟随模型默认")
+			return "", domain.InvalidField("thinking", "unsupported_model")
 		}
 		return "effort", nil
 	case model == "gpt-5" || strings.HasPrefix(model, "gpt-5-"), strings.HasPrefix(model, "o1"), strings.HasPrefix(model, "o3"), strings.HasPrefix(model, "o4"):
 		if !enabled {
-			return "", fmt.Errorf("该型号不支持关闭思考，请使用默认或开启低强度思考")
+			return "", domain.InvalidField("thinking", "disable_unsupported_use_low")
 		}
 		return "effort", nil
 	default:
-		return "", fmt.Errorf("该 OpenAI 型号尚未适配思考控制，请选择跟随模型默认")
+		return "", domain.InvalidField("thinking", "unsupported_model")
 	}
 }
 
@@ -88,7 +89,7 @@ func claudeThinkingAdapter(model string, enabled bool) (string, error) {
 	switch {
 	case containsAny("mythos", "fable"):
 		if !enabled {
-			return "", fmt.Errorf("该 Claude 型号无法关闭思考")
+			return "", domain.InvalidField("thinking", "disable_unsupported")
 		}
 		return "adaptive", nil
 	case containsAny("4-6", "4.6", "4-7", "4.7", "4-8", "4.8") || strings.HasPrefix(model, "claude-opus-5") || strings.HasPrefix(model, "claude-sonnet-5"):
@@ -96,7 +97,7 @@ func claudeThinkingAdapter(model string, enabled bool) (string, error) {
 	case containsAny("4-5", "4.5", "3-7", "3.7") || strings.HasPrefix(model, "claude-sonnet-4") || strings.HasPrefix(model, "claude-opus-4"):
 		return "budget", nil
 	default:
-		return "", fmt.Errorf("该 Claude 型号尚未适配思考控制，请选择跟随模型默认")
+		return "", domain.InvalidField("thinking", "unsupported_model")
 	}
 }
 
@@ -117,7 +118,7 @@ func (s ServerConfig) thinkingRequestFields(adapter string, enabled bool, effort
 		budget := 0
 		if enabled {
 			if s.ThinkingBudget < 1 || s.ThinkingBudget >= s.MaxTokens {
-				return nil, fmt.Errorf("llama.cpp 思考预算须至少 1，且小于最大输出 token")
+				return nil, domain.InvalidField("thinking_budget", "llama_out_of_range")
 			}
 			budget = s.ThinkingBudget
 		}
@@ -134,14 +135,14 @@ func (s ServerConfig) thinkingRequestFields(adapter string, enabled bool, effort
 	case "budget":
 		if enabled {
 			if s.ThinkingBudget < 1024 || s.ThinkingBudget >= s.MaxTokens {
-				return nil, fmt.Errorf("Claude 思考预算须至少 1024，且小于最大输出 token")
+				return nil, domain.InvalidField("thinking_budget", "claude_out_of_range")
 			}
 			fields["thinking"] = map[string]any{"type": "enabled", "budget_tokens": s.ThinkingBudget}
 		} else {
 			fields["thinking"] = map[string]any{"type": "disabled"}
 		}
 	default:
-		return nil, fmt.Errorf("未知思考参数类型")
+		return nil, domain.InvalidField("thinking_adapter", "invalid_choice")
 	}
 	return fields, nil
 }

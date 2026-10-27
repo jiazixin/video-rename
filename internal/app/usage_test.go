@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json/v2"
+	"log/slog"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -11,7 +12,7 @@ import (
 
 func usageApp(t *testing.T) *App {
 	t.Helper()
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

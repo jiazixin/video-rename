@@ -6,22 +6,25 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
+
+	"video-rename/internal/domain"
 	"video-rename/internal/storage"
 )
 
+// Delivery is one notification delivery.
 type Delivery struct {
-	ID       int64  `json:"id"`
-	Kind     string `json:"kind"`
-	Run      int64  `json:"run"`
-	Status   string `json:"status"`
-	Attempts int    `json:"attempts"`
-	Error    string `json:"error"`
-	Updated  string `json:"updated"`
+	ID       int64         `json:"id"`
+	Kind     string        `json:"kind"`
+	Run      int64         `json:"run"`
+	Status   string        `json:"status"`
+	Attempts int           `json:"attempts"`
+	Error    domain.Record `json:"error,omitzero"`
+	Updated  string        `json:"updated"`
 }
 
+// History returns the 30 latest deliveries.
 func (s *Service) History() ([]Delivery, error) {
 	rows, err := s.DB.Query("SELECT id,kind,run,status,attempts,error,updated FROM notification_deliveries ORDER BY id DESC LIMIT 30")
 	if err != nil {
@@ -38,9 +41,11 @@ func (s *Service) History() ([]Delivery, error) {
 	}
 	return out, rows.Err()
 }
+
+// Loop delivers pending notifications until ctx ends.
 func (s *Service) Loop(ctx context.Context) {
-	if _, err := s.DB.Exec("UPDATE notification_deliveries SET status=CASE WHEN attempts>=3 THEN 'failed' ELSE 'pending' END,error='服务重启，上次发送结果未确认' WHERE status='sending'"); err != nil {
-		slog.Warn("notification recovery failed", "error", err)
+	if _, err := s.DB.Exec("UPDATE notification_deliveries SET status=CASE WHEN attempts>=3 THEN 'failed' ELSE 'pending' END,error=? WHERE status='sending'", domain.Record{Code: "notification_unconfirmed", Message: "service restarted; the last delivery is unconfirmed"}.Text()); err != nil {
+		s.logger.Warn("notification_recovery_failed", "error", err)
 	}
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
@@ -51,7 +56,7 @@ func (s *Service) Loop(ctx context.Context) {
 		case <-ticker.C:
 			if ctx.Err() == nil {
 				if err := s.tick(ctx); err != nil {
-					slog.Warn("notification worker failed", "error", err)
+					s.logger.Warn("notification_worker_failed", "error", err)
 				}
 			}
 		}
@@ -99,7 +104,7 @@ func (s *Service) tick(ctx context.Context) error {
 	status, message := "sent", ""
 	if err != nil {
 		status = "pending"
-		message = err.Error()
+		message = domain.RecordText(err)
 		if d.Attempts+1 >= 3 {
 			status = "failed"
 		}
@@ -140,6 +145,8 @@ func (s *Service) enqueue(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Titles and bodies are message content for chat apps, a recorded
+	// exception to the error-code rule (README, code exceptions).
 	for _, b := range batches {
 		labels := map[string]string{"completed": "批次成功", "partial_failure": "批次失败（部分失败）", "failed": "批次失败", "cancelled": "批次已取消", "interrupted": "批次失败（服务中断）"}
 		source := "手动运行"

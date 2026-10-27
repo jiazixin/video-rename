@@ -83,9 +83,9 @@ chmod 600 configs/config.local.yaml
 ```yaml
 listen: "127.0.0.1"
 port: 8790
-media-path: "/srv/videos"   # 已存在的媒体根目录
+media_path: "/srv/videos"   # 已存在的媒体根目录
 storage: "../data"          # SQLite 与密钥，相对于配置文件所在目录
-tmp-storage: "../.cache"    # 可重建的截图缓存
+tmp_storage: "../.cache"    # 可重建的截图缓存
 auth:
   username: "admin"
   password: "请替换为你的密码"
@@ -129,9 +129,9 @@ go build -trimpath -o bin/video-rename ./cmd/video-rename
 
 完整字段、默认值和页面资源设置见 [配置参考](docs/configuration.md)。要点：
 
-- `-c <文件>` 与 `--config <文件>` 等价，同时指定不同文件报错。选择顺序为 `--config` > `CONFIG_FILE` > 工作目录下的 `configs/config.local.yaml`，所选文件必须存在。除 `CONFIG_FILE` 外，不支持用环境变量覆盖配置项。
+- `-c <文件>` 与 `--config <文件>` 等价，同时指定不同文件报错。选择顺序为 `--config` > `CONFIG_FILE` > 工作目录下的 `configs/config.local.yaml`。`--config` 或 `CONFIG_FILE` 指定的文件必须存在，`CONFIG_FILE` 设置为空值也报错；默认文件缺失时改用内置默认值，但 `media_path` 与 `auth` 没有默认值，因此仍会报出缺失项并退出。除 `CONFIG_FILE` 外，不支持用环境变量覆盖配置项。
 - 配置中的相对路径以配置文件所在目录为基准。媒体目录必须已经存在；配置、数据和缓存目录必须位于媒体目录之外。
-- 媒体、配置和持久数据不能放入 `tmp-storage/video-rename-frames-v1/`，该目录由程序自动清理；危险的路径重叠会在启动前被拒绝。
+- 媒体、配置和持久数据不能放入 `tmp_storage/video-rename-frames-v1/`，该目录由程序自动清理；危险的路径重叠会在启动前被拒绝。
 - 示例密码不能用于启动。模型、抽帧规则、提示词、通知和扫描都在 Web 页面设置。
 
 ## 部署与数据
@@ -148,6 +148,9 @@ go build -trimpath -o bin/video-rename ./cmd/video-rename
 ```sh
 npm --prefix web ci
 npm --prefix web run format:check
+npm --prefix web run lint
+npm --prefix web run typecheck
+npm --prefix web run test
 npm --prefix web run build
 go vet ./...
 go test -race -count=1 ./...
@@ -165,7 +168,8 @@ npm --prefix web run test:e2e
 
 - 版本号来自 Git tag，格式为 `v主版本.次版本.修订版本`（预发布如 `v1.2.0-rc.1`）。Go 构建时自动写入模块版本，非 tag 提交显示伪版本，有未提交修改时带 `+dirty`。
 - 查询版本：`video-rename --version`，输出形如 `video-rename v1.2.0 (revision=0123456789ab)`。该命令与 `--help`（英文）输出到 stdout，不读取配置，也不启动服务。
-- 退出码：0 成功，2 参数错误，1 配置、启动或运行失败。启动前的错误以 `video-rename: <错误>` 纯文本写入 stderr，参数错误另附 `Run 'video-rename --help' for usage.`。
+- 退出码：0 成功（含收到 SIGINT/SIGTERM 后正常关闭），2 参数错误，1 配置、启动或运行失败。参数错误以 `video-rename: <错误>` 纯文本写入 stderr，另附一行 `Run 'video-rename --help' for usage.`；配置错误为一行英文 `video-rename: config: <错误>`，校验错误带字段路径，如 `video-rename: config: port: must be between 1 and 65535`。
+- 日志：配置加载成功后，服务日志以 JSON 逐行写入 stdout，启动与关闭事件为 `service_starting`（含 `version`）、`service_listening`（含 `listen`）、`service_stopping`、`service_stopped`；此后的启动或运行失败记录为 `service_failed` 日志，不再另写 stderr。第一次 SIGINT/SIGTERM 开始平滑关闭（最多等待 10 秒），第二次立即终止进程。
 - 源码包没有 `.git` 时默认显示 `dev`，可显式注入与源码一致的版本：`go build -trimpath -ldflags='-X main.version=v1.0.0' -o bin/video-rename ./cmd/video-rename`。
 - 推送标准 tag 会触发 [Release 工作流](.github/workflows/release.yml)：先核对 `--version` 与 tag 一致，再由 GoReleaser 构建全部目标，并上传 tar.gz 与 `checksums.txt`。
 
@@ -179,6 +183,7 @@ npm --prefix web run test:e2e
 | [docs/operations.md](docs/operations.md) | 批量操作、标记、重试、还原、通知和备份 |
 | [docs/models.md](docs/models.md) | 服务地址、图片识别测试、密钥及思考参数 |
 | [docs/processing.md](docs/processing.md) | 探测、采样、截图预算和失败处理 |
+| [docs/API.md](docs/API.md) | 错误响应、参数错误、任务与记录错误代码的契约 |
 | [docs/DESIGN.md](docs/DESIGN.md) | 当前架构、数据流、持久化与 UI 约定 |
 | [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md) | 模块入口、构建、回归、规模测试、发布与 CI |
 | [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) | 最新验收结果与未验证范围 |
@@ -202,10 +207,16 @@ coverage/ test-results/  忽略的覆盖率与测试输出
 
 | 基线规则 | 实际行为 | 原因与依据 | 适用范围 / 重新评估条件 |
 | --- | --- | --- | --- |
-| §3 根目录 README | 中文 `README.md` 为主入口，英文翻译为 `README.en.md` | 用户要求中英文 README | 两份同步维护；放弃英文版时评估 |
 | §7.1 配置入口与覆盖 | `-c` / `--config` > `CONFIG_FILE` > 工作目录下的 `configs/config.local.yaml`；无字段环境变量覆盖 | 已有 CLI 配置协议 | 本程序；仅用户要求改变时评估 |
 | §11 工具必需路径 | `web/embed.go` 嵌入 `web/dist` | Go embed 与 Vite 的实际构建边界 | Web 资源；交付方式改变时评估 |
 | §4 `bin/` 只放可执行文件 | GoReleaser 输出（二进制、tar.gz、checksums、元数据）在 `bin/release/` | 默认根 `dist/` 未被忽略会让 Go 标记 dirty，且 `dist/` 保留给 Web 产物 | 发布构建；更换发布工具时评估 |
+
+## 代码例外
+
+| 规则 | 实际做法 | 原因与依据 | 适用范围 | 重新评估条件 |
+| --- | --- | --- | --- | --- |
+| 代码规范 §3.1 用户文案由客户端按代码映射 | 发给模型的提示内容（默认提示词、固定提示词、截图说明、图片识别测试指令）、默认失败词句、通知标题与正文（含测试通知）、默认提示词与模型配置的种子名称及复制配置的“副本”后缀由服务端生成中文 | 提示内容与失败词句是发给模型或与模型输出比对的数据，通知发往外部渠道，种子名称是用户可编辑的数据，都没有可做映射的客户端；管理 API 与各类记录已按 [接口错误约定](docs/API.md) 只返回代码 | `internal/models`（`DefaultBody`、种子与复制、`probe.go`）、`internal/systemsettings`（`DefaultFixedPrompt`）、`internal/vision/client.go` 截图说明、`internal/naming/failure.go`、`internal/notifications` 的通知内容 | 提示内容、通知或种子数据改为多语言时 |
+| Web代码规范 §3 至少启用 `strictTypeChecked` | `@typescript-eslint/restrict-template-expressions` 设为 `allowNumber: true`，模板字符串可直接插入数字 | 数字插值不会产生 `[object Object]` 或 `undefined` 文本，逐处改写为 `String(n)` 会降低可读性；其余类型仍报错 | `web/eslint.config.js`，全部 Web 源码与 E2E | 规则默认值或规范调整时 |
 
 ## 参与贡献
 

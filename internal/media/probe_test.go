@@ -74,7 +74,7 @@ func TestParseDurationFallbackToFormat(t *testing.T) {
 	if meta.Duration != 45250*time.Millisecond {
 		t.Errorf("应回退 format.duration, got %v", meta.Duration)
 	}
-	// SAR 0:1 按方形像素
+	// SAR 0:1 means square pixels
 	if meta.SARNum != 1 || meta.SARDen != 1 {
 		t.Errorf("SAR 0:1 应按 1:1 处理")
 	}
@@ -86,7 +86,7 @@ func TestParseRotationAndSAR(t *testing.T) {
 	if jerr != nil {
 		t.Fatal(jerr)
 	}
-	// 720×480,SAR 8:9 → 640×480;旋转 -90(=270)→ 480×640
+	// 720×480, SAR 8:9 → 640×480; rotation -90 (=270) → 480×640
 	if meta.DisplayWidth != 480 || meta.DisplayHeight != 640 {
 		t.Errorf("显示尺寸 = %dx%d, 期望 480x640", meta.DisplayWidth, meta.DisplayHeight)
 	}
@@ -99,7 +99,7 @@ func TestParseAudioOnly(t *testing.T) {
 	job, _ := fakeJob(t, 5000)
 	_, jerr := parseProbeOutput(loadProbeFixture(t, "audio_only.json"), job)
 	if jerr == nil || jerr.Code != domain.CodeProbeNoVideo {
-		t.Fatalf("纯音频应报 PROBE_NO_VIDEO, got %+v", jerr)
+		t.Fatalf("纯音频应报 probe_no_video, got %+v", jerr)
 	}
 }
 
@@ -118,9 +118,9 @@ func TestParseUnknownDuration(t *testing.T) {
 	data := `{"streams":[{"index":0,"codec_type":"video","width":640,"height":480,"sample_aspect_ratio":"1:1","disposition":{"default":1}}],"format":{"size":"1"}}`
 	job, _ := fakeJob(t, 1)
 	if _, jerr := parseProbeOutput([]byte(data), job); jerr == nil || jerr.Code != domain.CodeProbeDurationUnknown {
-		t.Fatalf("缺时长应报 PROBE_DURATION_UNKNOWN, got %+v", jerr)
+		t.Fatalf("缺时长应报 probe_duration_unknown, got %+v", jerr)
 	}
-	// 负时长同样拒绝
+	// negative durations are rejected too
 	data = `{"streams":[{"index":0,"codec_type":"video","width":640,"height":480,"duration":"-5","sample_aspect_ratio":"1:1","disposition":{"default":1}}],"format":{"duration":"-5"}}`
 	if _, jerr := parseProbeOutput([]byte(data), job); jerr == nil || jerr.Code != domain.CodeProbeDurationUnknown {
 		t.Fatalf("负时长应报错, got %+v", jerr)
@@ -145,7 +145,7 @@ func TestParseBadRotationRejected(t *testing.T) {
 
 func TestParseSizeMismatchUnchangedContinues(t *testing.T) {
 	job, path := fakeJob(t, 1000)
-	// ffprobe 报告 size=999 与快照不一致,但文件未变 → 继续以 stat 为准
+	// ffprobe reports size=999, unlike the snapshot, but the file is unchanged → continue with stat
 	data := strings.Replace(string(loadProbeFixture(t, "normal.json")), `"size": "1000"`, `"size": "999"`, 1)
 	meta, jerr := parseProbeOutput([]byte(data), job)
 	if jerr != nil {
@@ -159,7 +159,7 @@ func TestParseSizeMismatchUnchangedContinues(t *testing.T) {
 
 func TestParseSizeMismatchChangedReportsSourceChanged(t *testing.T) {
 	job, path := fakeJob(t, 1000)
-	// 修改文件大小与 mtime 后再解析 → SOURCE_CHANGED
+	// parse again after changing the file size and mtime → source_changed
 	if err := os.WriteFile(path, make([]byte, 2000), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -170,11 +170,11 @@ func TestParseSizeMismatchChangedReportsSourceChanged(t *testing.T) {
 	data := strings.Replace(string(loadProbeFixture(t, "normal.json")), `"size": "1000"`, `"size": "2000"`, 1)
 	_, jerr := parseProbeOutput([]byte(data), job)
 	if jerr == nil || jerr.Code != domain.CodeSourceChanged {
-		t.Fatalf("文件已变化应报 SOURCE_CHANGED, got %+v", jerr)
+		t.Fatalf("文件已变化应报 source_changed, got %+v", jerr)
 	}
 }
 
-// writeScript 生成可执行 shell 脚本作为假 ffprobe。
+// writeScript writes an executable shell script as a fake ffprobe.
 func writeScript(t *testing.T, body string) string {
 	t.Helper()
 	sh, err := exec.LookPath("sh")
@@ -194,7 +194,7 @@ func TestProbeExecFailure(t *testing.T) {
 	prober := &Prober{FFprobePath: script}
 	_, jerr := prober.Probe(t.Context(), job)
 	if jerr == nil || jerr.Code != domain.CodeProbeExecFailed {
-		t.Fatalf("执行失败应报 PROBE_EXEC_FAILED, got %+v", jerr)
+		t.Fatalf("执行失败应报 probe_exec_failed, got %+v", jerr)
 	}
 	if jerr.ExitCode != 1 {
 		t.Errorf("退出码 = %d", jerr.ExitCode)
@@ -211,7 +211,7 @@ func TestProbeTimeout(t *testing.T) {
 	start := time.Now()
 	_, jerr := prober.Probe(t.Context(), job)
 	if jerr == nil || jerr.Code != domain.CodeProbeTimeout {
-		t.Fatalf("应报 PROBE_TIMEOUT, got %+v", jerr)
+		t.Fatalf("应报 probe_timeout, got %+v", jerr)
 	}
 	if time.Since(start) > time.Second {
 		t.Error("超时应及时返回")
@@ -224,7 +224,7 @@ func TestProbeOutputLimit(t *testing.T) {
 	prober := &Prober{FFprobePath: script, StdoutLimit: 1024}
 	_, jerr := prober.Probe(t.Context(), job)
 	if jerr == nil || jerr.Code != domain.CodeProbeOutputLimit {
-		t.Fatalf("应报 PROBE_OUTPUT_LIMIT, got %+v", jerr)
+		t.Fatalf("应报 probe_output_limit, got %+v", jerr)
 	}
 }
 
@@ -234,7 +234,7 @@ func TestProbeBadJSON(t *testing.T) {
 	prober := &Prober{FFprobePath: script}
 	_, jerr := prober.Probe(t.Context(), job)
 	if jerr == nil || jerr.Code != domain.CodeProbeJSONInvalid {
-		t.Fatalf("应报 PROBE_JSON_INVALID, got %+v", jerr)
+		t.Fatalf("应报 probe_json_invalid, got %+v", jerr)
 	}
 }
 
@@ -256,7 +256,7 @@ func TestProbeMissingBinary(t *testing.T) {
 }
 
 func TestProbeScriptOutputsFixture(t *testing.T) {
-	// 假 ffprobe 输出夹具内容
+	// fake ffprobe output fixture
 	fixture := string(loadProbeFixture(t, "normal.json"))
 	script := writeScript(t, "cat <<'JSONEOF'\n"+fixture+"\nJSONEOF\n")
 	job, _ := fakeJob(t, 1000)

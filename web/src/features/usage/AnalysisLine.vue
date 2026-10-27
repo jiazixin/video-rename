@@ -1,11 +1,14 @@
 <script setup lang="ts">
+  import { niceCeil, stepActive } from './chart-scale';
+  import { formatClock, formatHourMinute, formatMonthDay, formatTime } from '../../lib/format/date';
+  import { formatCompact } from '../../lib/format/number';
   import { computed, onMounted, onUnmounted, ref } from 'vue';
-  interface LineSeries {
+  type LineSeries = {
     name: string;
-    color: string;
+    tone: string; // data-series value; analysis.css maps it to a theme color
     values: number[];
-  }
-  const props = defineProps<{
+  };
+  const { series, buckets, interval, format } = defineProps<{
     series: LineSeries[];
     buckets: { from: string; to: string }[];
     interval: string;
@@ -24,20 +27,9 @@
   });
   const maxY = computed(() => {
     let top = 0;
-    for (const s of props.series) for (const v of s.values) if (v > top) top = v;
+    for (const s of series) for (const v of s.values) if (v > top) top = v;
     return niceCeil(top);
   });
-  function niceCeil(value: number) {
-    if (value <= 0) return 1;
-    const pow = 10 ** Math.floor(Math.log10(value));
-    const f = value / pow;
-    return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * pow;
-  }
-  function compact(value: number) {
-    if (value >= 999_950) return `${(value / 1e6).toFixed(2).replace(/\.?0+$/, '')}M`;
-    if (value >= 1000) return `${(value / 1000).toFixed(1).replace(/\.?0+$/, '')}K`;
-    return String(Math.round(value * 10) / 10);
-  }
   const ticks = computed(() => {
     const out: number[] = [];
     for (let i = 0; i <= 4; i++) out.push((maxY.value * i) / 4);
@@ -45,28 +37,29 @@
   });
   const points = computed(() => {
     const { w, h } = inner(),
-      n = props.buckets.length;
-    return props.buckets.map((b, i) => ({
+      n = buckets.length;
+    return buckets.map((b, i) => ({
       x: pad.left + (n === 1 ? w / 2 : (w * i) / (n - 1)),
-      ys: props.series.map((s) => pad.top + h - ((s.values[i] || 0) / maxY.value) * h),
+      ys: series.map((s) => pad.top + h - ((s.values[i] || 0) / maxY.value) * h),
       b
     }));
   });
+  const hovered = computed(() => (active.value >= 0 ? points.value[active.value] : undefined));
   const linePaths = computed(() =>
-    props.series.map((_, si) => points.value.map((p) => `${p.x},${p.ys[si]}`).join(' '))
+    series.map((_, si) => points.value.map((p) => `${p.x},${p.ys[si]}`).join(' '))
   );
   const labelSteps = computed(() => {
-    const n = props.buckets.length;
+    const n = buckets.length;
     return Math.max(1, Math.ceil(n / 6));
   });
   function axisLabel(value: string) {
     const d = new Date(value);
-    switch (props.interval) {
+    switch (interval) {
       case '15m':
       case 'hour':
-        return d.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' });
+        return formatHourMinute(d);
       case 'day':
-        return d.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
+        return formatMonthDay(d);
       case 'month':
         return `${d.getFullYear()}-${d.getMonth() + 1}`;
       default:
@@ -74,12 +67,13 @@
     }
   }
   function bucketTitle(b: { from: string; to: string }) {
-    return `${new Date(b.from).toLocaleString('zh-CN', { hour12: false })} – ${new Date(b.to).toLocaleTimeString('zh-CN', { hour12: false })}`;
+    return `${formatTime(b.from)} – ${formatClock(b.to)}`;
   }
   function pick(event: PointerEvent) {
-    const n = props.buckets.length;
+    const n = buckets.length;
     if (!n) return;
-    const svg = (event.currentTarget as SVGRectElement).ownerSVGElement!;
+    const svg = (event.currentTarget as SVGRectElement).ownerSVGElement;
+    if (!svg) return;
     const rect = svg.getBoundingClientRect();
     const x = ((event.clientX - rect.left) * width.value) / rect.width;
     const ratio = (x - pad.left) / inner().w;
@@ -92,21 +86,16 @@
     }
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
-    const n = props.buckets.length;
+    const n = buckets.length;
     if (!n) return;
-    active.value =
-      active.value < 0
-        ? event.key === 'ArrowLeft'
-          ? n - 1
-          : 0
-        : Math.max(0, Math.min(n - 1, active.value + (event.key === 'ArrowRight' ? 1 : -1)));
+    active.value = stepActive(active.value, n, event.key === 'ArrowRight' ? 1 : -1);
   }
   const tooltipStyle = computed(() => {
     const p = points.value[active.value];
     if (!p) return {};
     return { left: `${Math.max(0, Math.min(width.value - 200, p.x - 100))}px` };
   });
-  const isEmpty = computed(() => props.series.every((s) => s.values.every((v) => !v)));
+  const isEmpty = computed(() => series.every((s) => s.values.every((v) => !v)));
   function resize() {
     const el = box.value;
     if (el) width.value = Math.max(1, el.clientWidth);
@@ -123,7 +112,7 @@
   <div ref="box" class="usage-trend analysis-line">
     <div v-if="series.length > 1" class="analysis-legend" aria-hidden="false">
       <span v-for="s in series" :key="s.name" class="analysis-legend-item"
-        ><i :style="{ background: s.color }" />{{ s.name }}</span
+        ><i :data-series="s.tone" />{{ s.name }}</span
       >
     </div>
     <svg
@@ -152,20 +141,20 @@
         class="axis-text"
         text-anchor="end"
       >
-        {{ compact(t) }}
+        {{ formatCompact(t) }}
       </text>
       <polyline
         v-for="(path, si) in linePaths"
-        :key="si"
         v-show="points.length"
+        :key="si"
         :points="path"
         class="series-line"
-        :style="{ stroke: series[si]!.color }"
+        :data-series="series[si]?.tone"
       />
-      <template v-if="active >= 0 && points[active]">
+      <template v-if="hovered">
         <line
-          :x1="points[active]!.x"
-          :x2="points[active]!.x"
+          :x1="hovered.x"
+          :x2="hovered.x"
           :y1="pad.top"
           :y2="pad.top + inner().h"
           class="crosshair"
@@ -173,11 +162,11 @@
         <circle
           v-for="(s, si) in series"
           :key="si"
-          :cx="points[active]!.x"
-          :cy="points[active]!.ys[si]"
+          :cx="hovered.x"
+          :cy="hovered.ys[si]"
           r="4.5"
           class="trend-dot"
-          :fill="s.color"
+          :data-series="s.tone"
         />
       </template>
       <text
@@ -201,17 +190,10 @@
         @pointermove="pick"
       />
     </svg>
-    <div
-      v-if="active >= 0 && points[active]"
-      class="trend-tooltip"
-      :style="tooltipStyle"
-      role="status"
-    >
-      <strong>{{ bucketTitle(points[active]!.b) }}</strong>
+    <div v-if="hovered" class="trend-tooltip" :style="tooltipStyle" role="status">
+      <strong>{{ bucketTitle(hovered.b) }}</strong>
       <span v-for="s in series" :key="s.name" class="tooltip-row"
-        ><i class="tooltip-key" :style="{ background: s.color }" /><b>{{
-          props.format(s.values[active] || 0)
-        }}</b
+        ><i class="tooltip-key" :data-series="s.tone" /><b>{{ format(s.values[active] || 0) }}</b
         >{{ s.name }}</span
       >
     </div>

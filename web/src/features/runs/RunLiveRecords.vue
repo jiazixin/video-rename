@@ -1,9 +1,17 @@
 <script setup lang="ts">
+  import { formatClock } from '../../lib/format/date';
   import { computed, onUnmounted, ref, watch } from 'vue';
   import { Check, Clock3, Copy, Folder, History } from '@lucide/vue';
   import { type RecentItem, type RunItem } from './use-run-records';
+  import { errorText } from '../../app/errors';
 
-  const props = defineProps<{
+  const {
+    items,
+    recent,
+    task = 'rename',
+    active,
+    loaded
+  } = defineProps<{
     items: RunItem[];
     recent: RecentItem[];
     task?: 'rename' | 'extract';
@@ -16,14 +24,16 @@
   const now = ref(Date.now());
   let ticker: ReturnType<typeof setInterval> | undefined;
   watch(
-    () => props.active,
+    () => active,
     (active) => {
       clearInterval(ticker);
       if (active) ticker = setInterval(() => (now.value = Date.now()), 1000);
     },
     { immediate: true }
   );
-  onUnmounted(() => clearInterval(ticker));
+  onUnmounted(() => {
+    clearInterval(ticker);
+  });
 
   const duration = (ms: number) => {
     const s = Math.max(0, Math.floor(ms / 1000));
@@ -33,14 +43,22 @@
     return h ? `${h}:${pad(m)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`;
   };
   const elapsed = (from?: number) => (from ? duration(now.value - from) : '—');
-  const rename = computed(() => props.task !== 'extract');
+  const rename = computed(() => task !== 'extract');
 
   type Step = { label: string; state: 'done' | 'current' | 'pending' };
+  // Step index of a live stage: 0 start, 1 extract, 2 model, 3 commit.
+  function stagePosition(stage?: string) {
+    if (!stage) return 0;
+    if (stage === 'extracting') return 1;
+    return stage === 'committing' ? 3 : 2;
+  }
   function steps(item: RunItem): Step[] {
     const s = item.stage;
-    const position = !s ? 0 : s.stage === 'extracting' ? 1 : s.stage === 'committing' ? 3 : 2;
-    const at = (i: number): Step['state'] =>
-      i < position ? 'done' : i === position ? 'current' : 'pending';
+    const position = stagePosition(s?.stage);
+    const at = (i: number): Step['state'] => {
+      if (i < position) return 'done';
+      return i === position ? 'current' : 'pending';
+    };
     const frames = s?.frames ? `抽帧 ${s.frames} 张` : '抽帧';
     const extract = { label: position === 1 ? '抽帧中' : frames, state: at(1) };
     if (!rename.value)
@@ -65,43 +83,38 @@
     const last = item.attempts?.at(-1);
     if (!last || last.status !== 'failed') return '';
     const label = last.number === 1 ? '首次请求' : `重试第 ${last.number - 1} 次`;
-    return `${label}失败：${last.message || '未记录原因'}`;
+    return `${label}失败：${errorText(last.error) || '未记录原因'}`;
   };
   const path = (item: RunItem) => item.current_path || item.original_path;
 
-  const recentTone = (status: string) =>
-    status === 'done'
-      ? 'success'
-      : status === 'failed'
-        ? 'error'
-        : status === 'skipped'
-          ? 'warning'
-          : 'muted';
-  const recentLabel = (item: RecentItem) =>
-    item.status === 'failed'
-      ? '最终失败'
-      : item.status === 'skipped'
-        ? '已跳过'
-        : item.status === 'cancelled'
-          ? '已取消'
-          : '已完成';
+  const recentTones: Record<string, string> = {
+    done: 'success',
+    failed: 'error',
+    skipped: 'warning'
+  };
+  const recentTone = (status: string) => recentTones[status] ?? 'muted';
+  const recentLabels: Record<string, string> = {
+    failed: '最终失败',
+    skipped: '已跳过',
+    cancelled: '已取消'
+  };
+  const recentLabel = (item: RecentItem) => recentLabels[item.status] ?? '已完成';
   const recentMeta = (item: RecentItem) => {
     const parts = [recentLabel(item)];
     if (item.started_ms && item.finished_ms >= item.started_ms)
       parts.push(`用时 ${duration(item.finished_ms - item.started_ms)}`);
     if (item.attempts > 1) parts.push(`${item.attempts} 次尝试`);
-    if (item.status === 'skipped' && item.message) parts.push(item.message);
+    if (item.status === 'skipped' && item.message) parts.push(errorText(item.message));
     return parts.join(' · ');
   };
   const recentResult = (item: RecentItem) => {
     if (item.new_name && item.operation_status === 'committed') return '';
-    if (item.status === 'failed') return item.message || '未生成有效名称';
+    if (item.status === 'failed') return errorText(item.message) || '未生成有效名称';
     if (item.status === 'cancelled') return '已取消';
     if (item.status === 'skipped') return '保留原名';
     return rename.value ? '未记录改名结果' : '抽帧完成';
   };
-  const clock = (ms: number) =>
-    ms ? new Date(ms).toLocaleTimeString('zh-CN', { hour12: false }) : '—';
+  const clock = (ms: number) => (ms ? formatClock(ms) : '—');
 </script>
 
 <template>

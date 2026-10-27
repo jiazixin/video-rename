@@ -2,7 +2,6 @@ package library
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -25,7 +24,7 @@ func (l *Library) reconcileNumbering(b *Numbering, path string) error {
 		if i.Pending != "" {
 			pending := exact[i.Pending] && numberingMatch(filepath.Join(path, i.Pending), *i)
 			if current == pending {
-				return fmt.Errorf("无法唯一确定%s %s 的位置，需要人工核对", mediaLabel(b.Media), i.Old)
+				return domain.Fail(domain.KindInternal, "numbering_item_ambiguous", "file location is ambiguous; manual review needed", "media", b.Media, "name", i.Old)
 			}
 			if pending {
 				i.Current = i.Pending
@@ -35,7 +34,7 @@ func (l *Library) reconcileNumbering(b *Numbering, path string) error {
 			}
 			i.Pending = ""
 		} else if !current {
-			return fmt.Errorf("%s %s 已被外部修改，需要人工核对", mediaLabel(b.Media), i.Old)
+			return domain.Fail(domain.KindInternal, "numbering_item_modified", "file was modified externally; manual review needed", "media", b.Media, "name", i.Old)
 		}
 	}
 	return syncNumberingDir(path)
@@ -93,6 +92,8 @@ func (l *Library) recoverNumberings() error {
 	}
 	return nil
 }
+
+// RecoverNumbering resumes or rolls back the interrupted numbering id.
 func (l *Library) RecoverNumbering(id string) (Numbering, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -111,12 +112,12 @@ func (l *Library) recoverNumbering(id string) (Numbering, error) {
 		err = l.rollbackNumbering(&b, path)
 	}
 	b.Status = "rolled_back"
-	b.Error = fmt.Sprintf("中断的%s编号已恢复原名", mediaLabel(b.Media))
+	b.Error = domain.Record{Code: "numbering_interrupted_restored", Message: "interrupted numbering was rolled back", Details: map[string]any{"media": b.Media}}
 	if err != nil {
 		b.Status = "review"
-		b.Error = fmt.Sprintf("%s编号恢复未完成：%v", mediaLabel(b.Media), err)
+		b.Error = domain.Record{Code: "numbering_recovery_incomplete", Message: "numbering recovery incomplete: " + err.Error(), Details: map[string]any{"media": b.Media, "recovery": domain.RecordOf(err)}}
 		if diagnostic, ok := errors.AsType[*domain.JobError](err); ok {
-			b.ProcessingLog += "\n恢复失败现场：\n" + diagnostic.ProcessingLog
+			b.ProcessingLog += "\nrecovery failure:\n" + diagnostic.ProcessingLog
 		}
 	}
 	_, dbErr := l.DB.Exec("UPDATE image_numberings SET status=?,error=? WHERE id=?", b.Status, b.numberingErrorRecord(), id)

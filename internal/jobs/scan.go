@@ -49,7 +49,7 @@ func (m *Manager) queueFiles(ctx context.Context, batch Run, entries []library.E
 		status, message := "queued", ""
 		var finished int64
 		if e.Processed != "" && batch.Task != "extract" && batch.retry.RetryOperations[e.ID] == 0 {
-			status, message, finished = "skipped", "已处理，跳过", time.Now().UnixMilli()
+			status, message, finished = "skipped", recordSkipProcessed, time.Now().UnixMilli()
 		}
 		res, err := stmt.ExecContext(ctx, batch.ID, e.ID, e.Identity, e.Size, e.Mtime, f.path, status, message, finished)
 		if err != nil {

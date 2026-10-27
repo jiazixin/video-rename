@@ -9,7 +9,7 @@ import (
 func TestSnapshotFromInfoPreservesLstatIdentity(t *testing.T) {
 	root := t.TempDir()
 	file := filepath.Join(root, "file")
-	if err := os.WriteFile(file, []byte("snapshot"), 0600); err != nil {
+	if err := os.WriteFile(file, []byte("snapshot"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(root, "link")

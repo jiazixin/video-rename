@@ -3,6 +3,7 @@ package sampling
 import (
 	"path/filepath"
 	"testing"
+
 	"video-rename/internal/config"
 	"video-rename/internal/storage"
 )

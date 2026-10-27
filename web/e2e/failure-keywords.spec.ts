@@ -1,3 +1,4 @@
+import { defined } from './support'
 import { test, expect, type Page } from '@playwright/test'
 
 const defaults = ['命名失败', '拒绝', '无法完成', 'sorry']
@@ -112,7 +113,16 @@ for (const width of [320, 390, 1440]) {
       expect(new URL(request.url()).pathname).toBe('/api/prompts/failure-keywords')
       putCalls++
       if (failSave) {
-        await route.fulfill({ status: 500, json: { message: '测试保存失败，请重试' } })
+        await route.fulfill({
+          status: 500,
+          json: {
+            error: {
+              code: 'internal',
+              message: 'test failure',
+              details: { detail: '测试保存失败，请重试' }
+            }
+          }
+        })
       } else {
         keywords = request.postDataJSON().failure_keywords
         await route.fulfill({ json: { failure_keywords: keywords } })
@@ -145,13 +155,13 @@ for (const width of [320, 390, 1440]) {
     await page.reload()
     await expect(removeKeyword(page, '无法识别这些画面')).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-    const deletion = (await removeKeyword(page, longKeyword).boundingBox())!
+    const deletion = defined(await removeKeyword(page, longKeyword).boundingBox())
     expect(deletion.x).toBeGreaterThanOrEqual(0)
     expect(deletion.x + deletion.width).toBeLessThanOrEqual(width)
     if (width <= 760) {
       const footer = page.locator('.prompts-failure-card .processing-footer')
-      const help = (await footer.locator(':scope > .help').boundingBox())!
-      const actions = (await footer.locator('.prompts-failure-actions').boundingBox())!
+      const help = defined(await footer.locator(':scope > .help').boundingBox())
+      const actions = defined(await footer.locator('.prompts-failure-actions').boundingBox())
       expect(actions.y - (help.y + help.height)).toBeLessThanOrEqual(24)
     }
     await page.screenshot({ path: `test-results/failure-keywords-${width}.png`, fullPage: true })
@@ -168,7 +178,16 @@ test('失败关键词加载失败时禁止空草稿保存，重试后恢复', as
       return
     }
     if (failLoad) {
-      await route.fulfill({ status: 500, json: { message: '测试加载失败' } })
+      await route.fulfill({
+        status: 500,
+        json: {
+          error: {
+            code: 'internal',
+            message: 'test failure',
+            details: { detail: '测试加载失败' }
+          }
+        }
+      })
     } else {
       await route.fulfill({
         json: {

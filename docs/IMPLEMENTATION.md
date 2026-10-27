@@ -7,7 +7,7 @@
 | 路径 | 职责 |
 | --- | --- |
 | cmd/video-rename、internal/app | 命令行、构建身份、生命周期、路由和 HTTP 参数处理 |
-| internal/auth、config、storage | 会话/CSRF、部署配置、SQLite、加密密钥和实例锁 |
+| internal/auth、config、storage | 会话与跨站校验、部署配置、SQLite、加密密钥和实例锁 |
 | internal/library、rename、naming、domain、discovery | 索引、文件身份、无覆盖移动、编号、删除及恢复 |
 | internal/jobs、scheduler、pipeline | 持久队列、动态并发、暂停/重试、Cron 和媒体处理链 |
 | internal/libraryscan | 独立后台目录扫描、范围规范化、调度与停止 |
@@ -20,7 +20,7 @@
 
 ## 数据库与文件安全
 
-- `internal/storage/schema.sql` 是唯一建表来源，当前结构号 **20261005**。空数据库事务创建完整结构；不支持的旧结构拒绝打开，不迁移、不自动重建。实体 ID 使用 AUTOINCREMENT。
+- `internal/storage/schema.sql` 是唯一建表来源，当前结构号 **20261027**。空数据库事务创建完整结构；不支持的旧结构拒绝打开，不迁移、不自动重建。实体 ID 使用 AUTOINCREMENT。
 - SQLite 使用 WAL、FULL 同步、单写连接和最多四个只读连接。读池设置 `mode=ro` 与 `query_only`；所有新连接启用外键和 5 秒 busy_timeout。分页计数与数据使用同一快照，避免持有读连接时嵌套占满读池。
 - 数据库符号链接解析到真实路径后选择锁和密钥；多硬链接数据库拒绝打开。SQLite 不放在网络盘。密钥、数据库与辅助文件的权限有回归检查。
 - 请求读取及认证写入传播取消。有效会话续期最多等待写池 100 毫秒，失败不发新 Cookie；之后请求重试续期。登录失败计数与预算检查在同一锁内进行。
@@ -50,7 +50,9 @@
 ```bash
 npm --prefix web ci
 npm --prefix web run format:check
-npm --prefix web run check
+npm --prefix web run lint
+npm --prefix web run typecheck
+npm --prefix web run test
 npm --prefix web run build
 go mod verify
 go test -count=1 ./...

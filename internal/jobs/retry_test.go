@@ -63,14 +63,14 @@ func TestRetryFallbackSnapshotAndActualRequests(t *testing.T) {
 	if err = (systemsettings.Store{DB: m.DB}).Save(settings); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {
+	if err = os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	m.Prepare = func(_ context.Context, _ *config.TaskConfig, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
 		return fakeFrames(work)
 	}
 	m.Infer = pipeline.Infer
-	id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "retry-snapshot"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "retry-snapshot"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestPermanentErrorGoesDirectlyToFallback(t *testing.T) {
 	if err = (systemsettings.Store{DB: m.DB}).Save(settings); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {
+	if err = os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var calls []string
@@ -141,7 +141,7 @@ func TestPermanentErrorGoesDirectlyToFallback(t *testing.T) {
 		}
 		return "", &domain.JobError{Code: domain.CodeAPIUnauthorized, Global: true, HTTPStatus: 401}
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Key: "direct-fallback"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "direct-fallback"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestRetainedFramesSurviveRenameRestoreAndModelChange(t *testing.T) {
 	if err := m.Cache.Configure(settings.Bytes(), settings.Policy); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	extracted := 0
@@ -192,7 +192,7 @@ func TestRetainedFramesSurviveRenameRestoreAndModelChange(t *testing.T) {
 	m.Infer = func(context.Context, *config.TaskConfig, []domain.Frame) (string, error) {
 		return "第一次标题", nil
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Key: "retain-first"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "retain-first"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestRetainedFramesSurviveRenameRestoreAndModelChange(t *testing.T) {
 	m.Infer = func(context.Context, *config.TaskConfig, []domain.Frame) (string, error) {
 		return "第二次标题", nil
 	}
-	id, err = m.Create(Request{Targets: []int64{1}, Key: "retain-second"}, "manual", 0)
+	id, err = m.Create(t.Context(), Request{Targets: []int64{1}, Key: "retain-second"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestRetryDisabledExhaustionAndCancel(t *testing.T) {
 	for _, mode := range []string{"disabled", "exhausted", "cancelled"} {
 		t.Run(mode, func(t *testing.T) {
 			m, root := setup(t)
-			if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			settings := systemsettings.Default()
@@ -247,7 +247,7 @@ func TestRetryDisabledExhaustionAndCancel(t *testing.T) {
 				}
 				return "", &domain.JobError{Code: domain.CodeNamingFailed, Message: "命名失败"}
 			}
-			id, err := m.Create(Request{Targets: []int64{1}, Key: "retry-" + mode}, "manual", 0)
+			id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "retry-" + mode}, "manual", 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -269,7 +269,7 @@ func TestRetryDisabledExhaustionAndCancel(t *testing.T) {
 
 func TestUnusableFilenameRetriesBeforeCommit(t *testing.T) {
 	m, root := setup(t)
-	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	settings := systemsettings.Default()
@@ -286,7 +286,7 @@ func TestUnusableFilenameRetriesBeforeCommit(t *testing.T) {
 		}
 		return "有效标题", nil
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Key: "invalid-filename"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "invalid-filename"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

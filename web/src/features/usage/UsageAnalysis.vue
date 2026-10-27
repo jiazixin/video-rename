@@ -1,9 +1,11 @@
 <script setup lang="ts">
+  import { formatCount, formatPercent } from '../../lib/format/number';
+  import { errorText } from '../../app/errors';
   import PageNavigation from '../../components/PageNavigation.vue';
   import { computed, onUnmounted, ref, watch } from 'vue';
   import { RefreshCw, RotateCcw, ChevronRight } from '@lucide/vue';
   import { api } from '../../app/api';
-  import { formatTime } from '../../lib/date/format';
+  import { formatTime, localTimeZone } from '../../lib/format/date';
   import { statusNames } from '../../app/labels';
 
   function statusName(status: string): string {
@@ -33,7 +35,7 @@
     loading = ref(false);
   let seq = 0,
     controller: AbortController | undefined;
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const timezone = localTimeZone();
   const presets: { value: Preset; label: string }[] = [
     { value: '1h', label: '最近 1 小时' },
     { value: '3h', label: '最近 3 小时' },
@@ -53,20 +55,8 @@
     'month': '1 个月',
     'year': '1 年'
   };
-  // 处理结果三系列：成功 / 跳过 / 失败（配色已通过 CVD 与对比校验）。
-  const OUTCOME_COLORS = { done: '#0e8a5c', skipped: '#2468af', failed: '#b14545' };
-  // 耗时分布顺序色带：浅 → 深 = 短 → 长（已通过 ordinal 校验）。
-  const DURATION_RAMP = [
-    '#77c18c',
-    '#65ad79',
-    '#519866',
-    '#3d8454',
-    '#287141',
-    '#0e5e30',
-    '#004c1f',
-    '#003a0d'
-  ];
-  const LINE_COLOR = '#0e8a5c';
+  // Duration bands share an ordered ramp (--chart-duration-1..N in theme.css).
+  const durationRampSteps = 8;
   function duration(ms: number) {
     if (!ms) return '—';
     const s = ms / 1000;
@@ -79,11 +69,8 @@
     if (h) return `${h}h${String(m).padStart(2, '0')}m`;
     return `${m}m${String(total % 60).padStart(2, '0')}s`;
   }
-  function pct(n: number, d: number) {
-    return d ? `${((n / d) * 100).toFixed(1)}%` : '—';
-  }
   function rate(n: number) {
-    return n >= 100 ? Math.round(n).toLocaleString() : `${Math.round(n * 10) / 10}`;
+    return n >= 100 ? formatCount(Math.round(n)) : `${Math.round(n * 10) / 10}`;
   }
   function rangeTimes(): { from?: string; to: string } | string {
     const now = new Date();
@@ -132,19 +119,17 @@
     controller = new AbortController();
     loading.value = true;
     try {
-      const data = await api<AnalysisReport>(
-        `/runs/analytics?${params.toString()}`,
-        'GET',
-        undefined,
-        controller.signal
-      );
+      const data = await api<AnalysisReport>(`/runs/analytics?${params.toString()}`, {
+        signal: controller.signal
+      });
       if (mine === seq) {
         report.value = data;
         if (page.value !== data.batches.page) page.value = data.batches.page;
         error.value = '';
       }
     } catch (e) {
-      if (mine === seq && (e as Error).name !== 'AbortError') error.value = (e as Error).message;
+      if (mine === seq && !(e instanceof DOMException && e.name === 'AbortError'))
+        error.value = errorText(e);
     } finally {
       if (mine === seq) loading.value = false;
     }
@@ -179,7 +164,7 @@
     seq++;
     controller?.abort();
   });
-  load();
+  void load();
   const totals = computed(() => report.value?.totals);
   const terminal = computed(() => {
     const t = totals.value;
@@ -213,10 +198,22 @@
       ? Math.max(1, Math.ceil(report.value.batches.total / report.value.batches.size))
       : 1
   );
+  // Duration band codes sent by the server.
+  const bandLabels: Record<string, string> = {
+    under_5s: '5 秒内',
+    '5s_15s': '5–15 秒',
+    '15s_30s': '15–30 秒',
+    '30s_60s': '30–60 秒',
+    '1m_2m': '1–2 分钟',
+    '2m_5m': '2–5 分钟',
+    '5m_10m': '5–10 分钟',
+    over_10m: '10 分钟以上'
+  };
   const durationBands = computed(() =>
     (report.value?.distribution || []).map((band, i) => ({
       ...band,
-      color: DURATION_RAMP[i % DURATION_RAMP.length]
+      label: bandLabels[band.label] ?? band.label,
+      tone: `duration-${(i % durationRampSteps) + 1}`
     }))
   );
   function bucketHours(bucket: { from: string; to: string }) {
@@ -225,31 +222,31 @@
   const batchDurationSeries = computed(() => [
     {
       name: '平均批次耗时',
-      color: LINE_COLOR,
+      tone: 'line',
       values: (report.value?.trend || []).map((b) => b.avg_batch_ms)
     }
   ]);
   const outcomeSeries = computed(() => [
     {
       name: '成功',
-      color: OUTCOME_COLORS.done,
+      tone: 'done',
       values: (report.value?.trend || []).map((b) => b.done)
     },
     {
       name: '跳过',
-      color: OUTCOME_COLORS.skipped,
+      tone: 'skipped',
       values: (report.value?.trend || []).map((b) => b.skipped)
     },
     {
       name: '失败',
-      color: OUTCOME_COLORS.failed,
+      tone: 'failed',
       values: (report.value?.trend || []).map((b) => b.failed)
     }
   ]);
   const throughputSeries = computed(() => [
     {
       name: '吞吐',
-      color: LINE_COLOR,
+      tone: 'line',
       values: (report.value?.trend || []).map(
         (b) => (b.done + b.skipped + b.failed) / bucketHours(b)
       )
@@ -259,9 +256,15 @@
     report.value ? report.value.failures.reduce((sum, f) => sum + f.count, 0) : 0
   );
   const hasBatches = computed(() => !!totals.value && totals.value.batches > 0);
+  // The failure list cycles through its three orders.
+  const nextSorts = { recent: 'duration', duration: 'size', size: 'recent' } as const;
+  const sortNames = { recent: '按时间排序', duration: '按耗时排序', size: '按规模排序' } as const;
+  function cycleSort() {
+    sort.value = nextSorts[sort.value];
+  }
 </script>
 <template>
-  <div>
+  <div class="analysis">
     <div v-if="error" role="alert" class="notice error"
       >{{ error }}<button @click="load">重试</button></div
     >
@@ -293,11 +296,12 @@
     <template v-if="report">
       <div class="analysis-kpis">
         <div class="usage-kpi"
-          ><span>批次成功率</span><strong>{{ pct(totals?.completed || 0, terminal) }}</strong
+          ><span>批次成功率</span
+          ><strong>{{ formatPercent(totals?.completed || 0, terminal) }}</strong
           ><small>{{ totals?.completed || 0 }} / {{ terminal }} 个终态批次</small></div
         >
         <div class="usage-kpi"
-          ><span>项目成功率</span><strong>{{ pct(totals?.done || 0, attempted) }}</strong
+          ><span>项目成功率</span><strong>{{ formatPercent(totals?.done || 0, attempted) }}</strong
           ><small>{{ totals?.done || 0 }} / {{ attempted }} 个已处理项</small></div
         >
         <div class="usage-kpi"
@@ -319,11 +323,11 @@
           ><small>个 / 小时 · 区间内 {{ outcomes }} 项</small></div
         >
         <div class="usage-kpi"
-          ><span>失败率</span><strong>{{ pct(totals?.failed || 0, attempted) }}</strong
+          ><span>失败率</span><strong>{{ formatPercent(totals?.failed || 0, attempted) }}</strong
           ><small>{{ totals?.failed || 0 }} 项失败</small></div
         >
         <div class="usage-kpi"
-          ><span>跳过率</span><strong>{{ pct(totals?.skipped || 0, outcomes) }}</strong
+          ><span>跳过率</span><strong>{{ formatPercent(totals?.skipped || 0, outcomes) }}</strong
           ><small>{{ totals?.skipped || 0 }} 项跳过</small></div
         >
         <div class="usage-kpi"
@@ -393,7 +397,7 @@
               :series="outcomeSeries"
               :buckets="report.trend"
               :interval="report.range.interval"
-              :format="(v: number) => `${v.toLocaleString()} 项`"
+              :format="(v: number) => `${formatCount(v)} 项`"
               label="处理结果趋势"
               empty-text="区间内没有处理记录"
           /></div>
@@ -410,9 +414,9 @@
                       ><span class="date-time-range"
                         ><DateTime :value="b.from" /><span>至</span
                         ><DateTime :value="b.to" /></span></td
-                    ><td>{{ b.done.toLocaleString() }}</td
-                    ><td>{{ b.skipped.toLocaleString() }}</td
-                    ><td>{{ b.failed.toLocaleString() }}</td></tr
+                    ><td>{{ formatCount(b.done) }}</td
+                    ><td>{{ formatCount(b.skipped) }}</td
+                    ><td>{{ formatCount(b.failed) }}</td></tr
                   ></tbody
                 >
               </table></div
@@ -446,7 +450,7 @@
                         ><span class="date-time-range"
                           ><DateTime :value="b.from" /><span>至</span
                           ><DateTime :value="b.to" /></span></td
-                      ><td>{{ (b.done + b.skipped + b.failed).toLocaleString() }}</td
+                      ><td>{{ formatCount(b.done + b.skipped + b.failed) }}</td
                       ><td
                         >{{ rate((b.done + b.skipped + b.failed) / bucketHours(b)) }} 个/小时</td
                       ></tr
@@ -492,9 +496,9 @@
                       >{{ p.model || '未记录模型' }}</span
                     ></td
                   >
-                  <td>{{ p.batches.toLocaleString() }}</td>
+                  <td>{{ formatCount(p.batches) }}</td>
                   <td
-                    >{{ pct(p.done, p.done + p.failed)
+                    >{{ formatPercent(p.done, p.done + p.failed)
                     }}<small class="subtle"> · {{ p.done + p.skipped + p.failed }} 项</small></td
                   >
                   <td>{{ duration(p.avg_item_ms) }}</td>
@@ -517,7 +521,6 @@
               :points="report.scatter"
               :format-ms="duration"
               :status-name="statusName"
-              :color="LINE_COLOR"
           /></div>
         </div>
         <div class="panel">
@@ -532,11 +535,17 @@
             v-if="report.failures.length || report.batch_failures.length"
             class="analysis-failures"
           >
-            <div v-for="f in report.failures" :key="f.message" class="analysis-failure">
+            <div
+              v-for="f in report.failures"
+              :key="JSON.stringify(f.error)"
+              class="analysis-failure"
+            >
               <div class="usage-model-head"
-                ><strong :title="f.message">{{ f.message }}</strong
+                ><strong :title="errorText(f.error)">{{
+                  errorText(f.error) || '未提供失败原因'
+                }}</strong
                 ><span
-                  >{{ f.count.toLocaleString() }} 次 · {{ pct(f.count, totalFailures) }}</span
+                  >{{ formatCount(f.count) }} 次 · {{ formatPercent(f.count, totalFailures) }}</span
                 ></div
               >
               <div class="usage-bar-track"
@@ -550,11 +559,17 @@
             </div>
             <template v-if="report.batch_failures.length">
               <h3 class="analysis-subhead">批次级失败原因</h3>
-              <div v-for="f in report.batch_failures" :key="f.message" class="analysis-failure">
+              <div
+                v-for="f in report.batch_failures"
+                :key="JSON.stringify(f.error)"
+                class="analysis-failure"
+              >
                 <div class="usage-model-head"
-                  ><strong :title="f.message">{{ f.message }}</strong
+                  ><strong :title="errorText(f.error)">{{
+                    errorText(f.error) || '未提供失败原因'
+                  }}</strong
                   ><span
-                    >{{ f.count.toLocaleString() }} 个批次 · 最近 {{ formatTime(f.last_at) }}</span
+                    >{{ formatCount(f.count) }} 个批次 · 最近 {{ formatTime(f.last_at) }}</span
                   ></div
                 >
               </div>
@@ -569,16 +584,8 @@
               <button
                 class="table-sort"
                 :class="{ active: sort !== 'recent' }"
-                @click="
-                  sort = sort === 'recent' ? 'duration' : sort === 'duration' ? 'size' : 'recent'
-                "
-                >{{
-                  sort === 'recent'
-                    ? '按时间排序'
-                    : sort === 'duration'
-                      ? '按耗时排序'
-                      : '按规模排序'
-                }}</button
+                @click="cycleSort()"
+                >{{ sortNames[sort] }}</button
               >
               <span class="subtle"
                 >共 {{ report.batches.total }} 个批次 · 第 {{ report.batches.page }} /
@@ -625,10 +632,10 @@
                       >{{ b.task === 'extract' ? '不使用模型' : b.model || '未记录模型' }}</span
                     ></td
                   >
-                  <td>{{ b.discovered.toLocaleString() }}</td>
-                  <td>{{ b.done.toLocaleString() }}</td>
-                  <td class="subtle">{{ b.skipped.toLocaleString() }}</td>
-                  <td :class="{ 'error-text': b.failed > 0 }">{{ b.failed.toLocaleString() }}</td>
+                  <td>{{ formatCount(b.discovered) }}</td>
+                  <td>{{ formatCount(b.done) }}</td>
+                  <td class="subtle">{{ formatCount(b.skipped) }}</td>
+                  <td :class="{ 'error-text': b.failed > 0 }">{{ formatCount(b.failed) }}</td>
                   <td class="subtle date-cell"><DateTime :value="b.started || b.created" /></td>
                   <td>{{ duration(b.duration_ms) }}</td>
                   <td class="subtle">{{ duration(b.avg_item_ms) }}</td>

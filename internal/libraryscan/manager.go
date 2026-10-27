@@ -11,17 +11,23 @@ import (
 	"time"
 	"uuid"
 
+	"video-rename/internal/domain"
 	"video-rename/internal/library"
 	"video-rename/internal/systemsettings"
 )
 
-var ErrClosed = errors.New("目录扫描已关闭")
+// ErrClosed reports that the scan manager is closed.
+var ErrClosed = domain.Fail(domain.KindUnavailable, "scan_closed", "directory scan is closed")
 
+// ScanError is a directory that failed to scan. Scope replaces Path for
+// failures of the scan settings ("settings") or the scan targets ("targets").
 type ScanError struct {
-	Path    string `json:"path"`
-	Message string `json:"message"`
+	Path  string        `json:"path,omitempty"`
+	Scope string        `json:"scope,omitempty"`
+	Error domain.Record `json:"error"`
 }
 
+// Status is the state of the current or last scan round.
 type Status struct {
 	ID          string      `json:"id"`
 	Status      string      `json:"status"`
@@ -49,6 +55,7 @@ type realTimer struct{ *time.Timer }
 func (t realTimer) C() <-chan time.Time { return t.Timer.C }
 func (t realTimer) Stop()               { t.Timer.Stop() }
 
+// Manager runs background library scans.
 type Manager struct {
 	library  *library.Library
 	settings systemsettings.Store
@@ -60,7 +67,7 @@ type Manager struct {
 	loopStarted   bool
 	cancel        context.CancelFunc
 	anchor        time.Time
-	settingsError string
+	settingsError error
 	wake          chan struct{}
 	closedCh      chan struct{}
 	wg            sync.WaitGroup
@@ -71,6 +78,7 @@ type Manager struct {
 	scan     func(context.Context, int64) (library.ScanDirectoryResult, error)
 }
 
+// New creates a scan manager for l with settings.
 func New(l *library.Library, settings systemsettings.Store) *Manager {
 	return &Manager{
 		library: l, settings: settings,
@@ -84,8 +92,8 @@ func (m *Manager) snapshotLocked() Status {
 	s := m.status
 	s.Targets = slices.Clone(s.Targets)
 	s.Errors = slices.Clone(s.Errors)
-	if m.settingsError != "" {
-		s.Errors = append(s.Errors, ScanError{Path: "扫描设置", Message: m.settingsError})
+	if m.settingsError != nil {
+		s.Errors = append(s.Errors, ScanError{Scope: "settings", Error: domain.RecordOf(m.settingsError)})
 		if !m.active {
 			s.Status = "failed"
 		}
@@ -93,6 +101,7 @@ func (m *Manager) snapshotLocked() Status {
 	return s
 }
 
+// Snapshot returns the current scan status.
 func (m *Manager) Snapshot() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -121,7 +130,7 @@ func (m *Manager) SettingsChanged() {
 // children that will subsequently be covered by a selected ancestor.
 func (m *Manager) ValidateTargets(ctx context.Context, targets []int64) ([]int64, error) {
 	if len(targets) == 0 || len(targets) > 100 {
-		return nil, fmt.Errorf("请选择 1–100 个扫描目录")
+		return nil, domain.InvalidField("targets", "selection_required")
 	}
 	selected := make(map[int64]bool, len(targets))
 	unique := make([]int64, 0, len(targets))
@@ -135,10 +144,10 @@ func (m *Manager) ValidateTargets(ctx context.Context, targets []int64) ([]int64
 		}
 		e, err := m.library.IndexedEntry(id)
 		if err != nil || id <= 0 || e.Kind != "directory" {
-			return nil, fmt.Errorf("扫描目标必须为现有目录（%d）", id)
+			return nil, domain.InvalidField("targets", "not_directory")
 		}
 		if _, err = m.library.Path(id); err != nil {
-			return nil, fmt.Errorf("扫描目录不可用（%s）：%w", m.library.DisplayPath(id), err)
+			return nil, domain.Fail(domain.KindUnavailable, "scan_target_unavailable", "scan target is unavailable", "path", m.library.DisplayPath(id)).Wrap(err)
 		}
 		seen := map[int64]bool{id: true}
 		for parent := e.Parent; parent > 0; {
@@ -146,13 +155,13 @@ func (m *Manager) ValidateTargets(ctx context.Context, targets []int64) ([]int64
 				return nil, err
 			}
 			if seen[parent] || len(seen) > 1024 {
-				return nil, fmt.Errorf("目录关系无效")
+				return nil, domain.Fail(domain.KindConflict, "invalid_hierarchy", "directory hierarchy is invalid")
 			}
 			seen[parent] = true
 			ancestors[id] = append(ancestors[id], parent)
 			e, err = m.library.IndexedEntry(parent)
 			if err != nil || e.Kind != "directory" {
-				return nil, fmt.Errorf("扫描目录关系已变化，请刷新")
+				return nil, domain.Fail(domain.KindConflict, "scan_hierarchy_changed", "scan directory hierarchy changed; refresh")
 			}
 			parent = e.Parent
 		}
@@ -188,11 +197,11 @@ func (m *Manager) Start(ctx context.Context, targets []int64, source string) (St
 	settings, err := m.settings.Scan()
 	if err != nil {
 		m.mu.Lock()
-		m.settingsError = err.Error()
+		m.settingsError = err
 		m.status.NextScan = ""
 		m.mu.Unlock()
 		m.notify()
-		return m.Snapshot(), fmt.Errorf("读取扫描设置失败：%w", err)
+		return m.Snapshot(), domain.Fail(domain.KindInternal, "scan_settings_unreadable", "read scan settings").Wrap(err)
 	}
 	if len(targets) == 0 {
 		targets = settings.Targets
@@ -224,6 +233,7 @@ func (m *Manager) Start(ctx context.Context, targets []int64, source string) (St
 	return m.snapshotLocked(), nil
 }
 
+// Cancel cancels the running scan round and returns the resulting status.
 func (m *Manager) Cancel() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -234,6 +244,7 @@ func (m *Manager) Cancel() Status {
 	return m.snapshotLocked()
 }
 
+// Close cancels scanning and waits for it to stop.
 func (m *Manager) Close() {
 	m.mu.Lock()
 	if !m.closed {
@@ -295,9 +306,9 @@ func (m *Manager) Loop(ctx context.Context) {
 		m.status.NextScan = ""
 		var at time.Time
 		if err != nil {
-			m.settingsError = fmt.Sprintf("读取扫描设置失败：%v", err)
+			m.settingsError = domain.Fail(domain.KindInternal, "scan_settings_unreadable", "read scan settings").Wrap(err)
 		} else {
-			m.settingsError = ""
+			m.settingsError = nil
 			if !m.active && !m.closed {
 				at = nextScanAt(m.anchor, settings)
 			}
@@ -337,7 +348,7 @@ func (m *Manager) Loop(ctx context.Context) {
 				if !m.active && !m.closed && ctx.Err() == nil {
 					m.status = Status{Status: "failed", Source: "automatic", Targets: slices.Clone(settings.Targets),
 						Finished: m.now().UTC().Format(time.RFC3339Nano),
-						Errors:   []ScanError{{Path: "扫描范围", Message: err.Error()}}}
+						Errors:   []ScanError{{Scope: "targets", Error: domain.RecordOf(err)}}}
 					m.anchor = m.now()
 				}
 				m.mu.Unlock()
@@ -394,7 +405,7 @@ func (m *Manager) nextChild(ctx context.Context, cursor *directoryCursor) (int64
 func (m *Manager) addError(id int64, err error) {
 	path := m.library.DisplayPath(id)
 	m.mu.Lock()
-	m.status.Errors = append(m.status.Errors, ScanError{Path: path, Message: err.Error()})
+	m.status.Errors = append(m.status.Errors, ScanError{Path: path, Error: domain.RecordOf(err)})
 	m.mu.Unlock()
 }
 
@@ -421,7 +432,7 @@ func (m *Manager) scanOne(ctx context.Context, id int64, scan func(context.Conte
 			firstErr := err
 			result, err = scan(ctx, id)
 			if err != nil {
-				err = fmt.Errorf("重试扫描失败：%w；首次扫描：%v", err, firstErr)
+				err = fmt.Errorf("retried scan: %w; first scan: %w", err, firstErr)
 			}
 		}
 	}
@@ -518,7 +529,7 @@ func (m *Manager) run(ctx context.Context, targets, excluded []int64) {
 				continue
 			}
 			if len(stack) >= 1024 {
-				m.addError(child, fmt.Errorf("扫描目录层级超过 1024 层"))
+				m.addError(child, domain.Fail(domain.KindInvalid, "scan_too_deep", "directory tree deeper than 1024 levels"))
 				continue
 			}
 			skip, err := m.excluded(ctx, child, excluded)
@@ -555,7 +566,7 @@ func (m *Manager) excluded(ctx context.Context, id int64, excluded []int64) (boo
 			return true, nil
 		}
 		if seen[id] || len(seen) >= 1024 {
-			return false, fmt.Errorf("目录关系无效")
+			return false, domain.Fail(domain.KindConflict, "invalid_hierarchy", "directory hierarchy is invalid")
 		}
 		seen[id] = true
 		e, err := m.library.IndexedEntry(id)

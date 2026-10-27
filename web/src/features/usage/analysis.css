@@ -27,6 +27,47 @@
   font-size: 11px;
   color: var(--steel);
 }
+/* Series colors: elements carry data-series, the theme defines the colors. */
+.analysis [data-series='line'] {
+  --series-color: var(--chart-line);
+}
+.analysis [data-series='done'] {
+  --series-color: var(--chart-done);
+}
+.analysis [data-series='skipped'] {
+  --series-color: var(--chart-skipped);
+}
+.analysis [data-series='failed'] {
+  --series-color: var(--chart-failed);
+}
+.analysis [data-series='duration-1'] {
+  --series-color: var(--chart-duration-1);
+}
+.analysis [data-series='duration-2'] {
+  --series-color: var(--chart-duration-2);
+}
+.analysis [data-series='duration-3'] {
+  --series-color: var(--chart-duration-3);
+}
+.analysis [data-series='duration-4'] {
+  --series-color: var(--chart-duration-4);
+}
+.analysis [data-series='duration-5'] {
+  --series-color: var(--chart-duration-5);
+}
+.analysis [data-series='duration-6'] {
+  --series-color: var(--chart-duration-6);
+}
+.analysis [data-series='duration-7'] {
+  --series-color: var(--chart-duration-7);
+}
+.analysis [data-series='duration-8'] {
+  --series-color: var(--chart-duration-8);
+}
+.analysis-legend-item i,
+.analysis .tooltip-key {
+  background: var(--series-color);
+}
 .analysis-legend-item i {
   width: 14px;
   height: 3px;
@@ -34,6 +75,7 @@
   flex: none;
 }
 .series-line {
+  stroke: var(--series-color);
   fill: none;
   stroke-width: 2;
   stroke-linejoin: round;
@@ -60,10 +102,11 @@
 .analysis-hist-track {
   height: 16px;
   border-radius: 0 4px 4px 0;
-  background: #f0f2f1;
+  background: var(--palette-f0f2f1);
   overflow: hidden;
 }
 .analysis-hist-bar {
+  background: var(--series-color);
   height: 100%;
   border-radius: 0 4px 4px 0;
   min-width: 2px;
@@ -78,11 +121,16 @@
   position: static;
   text-align: center;
 }
+.analysis .trend-dot {
+  fill: var(--series-color);
+}
 .scatter-dot {
-  stroke: #fff;
+  fill: var(--chart-line);
+  stroke: var(--palette-ffffff);
   stroke-width: 2;
 }
 .scatter-halo {
+  stroke: var(--chart-line);
   fill: none;
   stroke-width: 2;
   opacity: 0.55;

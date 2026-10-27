@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import { errorText } from '../../app/errors';
   import PageNavigation from '../../components/PageNavigation.vue';
   import { ref, onMounted, onUnmounted, computed } from 'vue';
   import { Folder, ChevronRight, Home } from '@lucide/vue';
@@ -6,22 +7,21 @@
   import './directory-picker.css';
   import { api } from '../../app/api';
   import { type Page } from '../../app/contracts';
-  const props = defineProps<{ modelValue: number[] }>();
+  const model = defineModel<number[]>({ required: true });
   const emit = defineEmits<{
-    'update:modelValue': [ids: number[]];
     paths: [paths: Record<number, string>];
   }>();
   const selectedOnPage = computed(
-    () => page.value?.items.filter((e) => props.modelValue.includes(e.id)).length || 0
+    () => page.value?.items.filter((e) => model.value.includes(e.id)).length || 0
   );
   function selectPage(action: 'all' | 'invert' | 'clear') {
     if (busy.value || error.value) return;
-    const ids = new Set(props.modelValue);
+    const ids = new Set(model.value);
     for (const e of page.value?.items || []) {
       if (action === 'clear' || (action === 'invert' && ids.has(e.id))) ids.delete(e.id);
       else ids.add(e.id);
     }
-    emit('update:modelValue', [...ids]);
+    model.value = [...ids];
   }
   const pageNumber = ref(1);
   const dir = ref(1),
@@ -50,9 +50,9 @@
         paths[entry.id] = prefix ? `${prefix} / ${entry.name}` : entry.name;
       emit('paths', paths);
       pageNumber.value = result.page ?? pageNumber.value;
-      if (result.refreshing) timer = setTimeout(load, 1200);
+      if (result.refreshing) timer = setTimeout(() => void load(), 1200);
     } catch (e) {
-      if (seq === serial) error.value = (e as Error).message;
+      if (seq === serial) error.value = errorText(e);
     } finally {
       if (seq === serial) busy.value = false;
     }
@@ -60,16 +60,13 @@
   function enter(id: number) {
     dir.value = id;
     pageNumber.value = 1;
-    load();
+    void load();
   }
   function toggle(id: number) {
     if (busy.value || error.value) return;
-    emit(
-      'update:modelValue',
-      props.modelValue.includes(id)
-        ? props.modelValue.filter((x) => x !== id)
-        : [...props.modelValue, id]
-    );
+    model.value = model.value.includes(id)
+      ? model.value.filter((x) => x !== id)
+      : [...model.value, id];
   }
   onMounted(load);
   onUnmounted(() => {
@@ -91,7 +88,7 @@
         type="checkbox"
         aria-label="选择当前目录"
         :disabled="busy || !!error"
-        :checked="modelValue.includes(dir)"
+        :checked="model.includes(dir)"
         @change="toggle(dir)" /><span class="picker-current-name"
         ><span>选择当前目录</span>
         <strong :title="page?.directory.name || '整个媒体库'">{{
@@ -104,7 +101,7 @@
         type="button"
         @click="
           pageNumber = 1;
-          load();
+          void load();
         "
         >重试</button
       ></div
@@ -117,7 +114,7 @@
           type="checkbox"
           :disabled="busy || !!error"
           :aria-label="`选择 ${entry.name}`"
-          :checked="modelValue.includes(entry.id)"
+          :checked="model.includes(entry.id)"
           @change="toggle(entry.id)" /><button
           type="button"
           :aria-label="entry.name"
@@ -129,7 +126,7 @@
     ><div class="picker-bottom"
       ><span
         >本页已选 {{ selectedOnPage }} / {{ page?.items.length || 0 }} · 共选
-        {{ modelValue.length }} 个目录</span
+        {{ model.length }} 个目录</span
       ><div class="picker-selection"
         ><button
           type="button"
@@ -155,7 +152,7 @@
         next-label="下页目录"
         @change="
           pageNumber = $event;
-          load();
+          void load();
         " /></div
   ></div>
 </template>

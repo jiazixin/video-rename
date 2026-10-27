@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+
 	"video-rename/internal/config"
 	"video-rename/internal/domain"
 	"video-rename/internal/media"
@@ -24,6 +25,8 @@ func Prepare(ctx context.Context, cfg *config.TaskConfig, job domain.VideoJob, p
 	}
 	return set, nil
 }
+
+// Infer asks the configured model for a title within the per-video budget.
 func Infer(ctx context.Context, cfg *config.TaskConfig, frames []domain.Frame) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, domain.JobBudget(cfg.TimeoutDuration))
 	defer cancel()

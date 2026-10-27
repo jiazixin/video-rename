@@ -1,12 +1,13 @@
 <script setup lang="ts">
+  import { errorText } from '../../app/errors';
   import { ref, watch } from 'vue';
   import { copyText } from '../../lib/clipboard/clipboard';
-  const props = defineProps<{ message: string; diagnostics: string }>();
+  const { message, diagnostics } = defineProps<{ message: string; diagnostics: string }>();
   const copyStatus = ref(''),
     copying = ref(false);
   let copySeq = 0;
   watch(
-    () => [props.message, props.diagnostics],
+    () => [message, diagnostics],
     () => {
       copySeq++;
       copyStatus.value = '';
@@ -18,10 +19,10 @@
     copying.value = true;
     copyStatus.value = '';
     try {
-      await copyText(props.message + '\n' + props.diagnostics);
+      await copyText(message + '\n' + diagnostics);
       if (seq === copySeq) copyStatus.value = '已复制诊断';
     } catch (e) {
-      if (seq === copySeq) copyStatus.value = (e as Error).message;
+      if (seq === copySeq) copyStatus.value = errorText(e);
     } finally {
       copying.value = false;
     }

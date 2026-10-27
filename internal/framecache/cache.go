@@ -5,8 +5,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	jsonv1 "encoding/json"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -14,16 +14,17 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"video-rename/internal/config"
 	"video-rename/internal/domain"
 	"video-rename/internal/systemsettings"
-
-	"golang.org/x/sys/unix"
 )
 
 type record struct {
@@ -35,7 +36,10 @@ type record struct {
 	SucceededAt time.Time
 	Checksums   map[string]string
 }
+
+// Cache stores reusable frame sets on disk within a byte limit.
 type Cache struct {
+	logger    *slog.Logger
 	mu        sync.Mutex
 	lock      *os.File
 	root      string
@@ -48,12 +52,16 @@ type Cache struct {
 	changed   chan struct{}
 	stats     atomic.Pointer[Stats]
 }
+
+// Lease keeps a cached frame set from being evicted while it is in use.
 type Lease struct {
 	cache *Cache
 	key   string
 	Set   domain.FrameSet
 	once  sync.Once
 }
+
+// Stats describes the cache location and usage.
 type Stats struct {
 	Path     string `json:"path"`
 	Used     int64  `json:"used_bytes"`
@@ -61,25 +69,39 @@ type Stats struct {
 	Entries  int    `json:"entries"`
 }
 
-// durationOptions 让 json/v2 按 v1 的纳秒数字语义往返 time.Duration;
-// manifest 中的 FrameSet 含多个 Duration 字段,v2 默认不序列化该类型。
-var durationOptions = []json.Options{
-	jsonv1.FormatDurationAsNano(true),
-}
+// durationOptions round-trips time.Duration as integer nanoseconds, the format
+// existing manifests and cache keys use; FrameSet has several Duration fields,
+// which json/v2 does not serialize by default.
+var durationOptions = json.JoinOptions(
+	json.WithMarshalers(json.MarshalFunc(func(d time.Duration) ([]byte, error) {
+		return strconv.AppendInt(nil, int64(d), 10), nil
+	})),
+	json.WithUnmarshalers(json.UnmarshalFunc(func(raw []byte, d *time.Duration) error {
+		n, err := strconv.ParseInt(string(raw), 10, 64)
+		if err != nil {
+			return fmt.Errorf("parse duration %s: %w", raw, err)
+		}
+		*d = time.Duration(n)
+		return nil
+	})),
+)
 
+// Key returns the cache key of the frames of job extracted with cfg.
 func Key(job domain.VideoJob, cfg *config.TaskConfig) string {
 	raw, _ := json.Marshal(struct {
 		Version  int
 		Snapshot domain.Snapshot
 		Sampling config.SamplingConfig
 		Images   config.ImagesConfig
-	}{1, job.Snapshot, cfg.Sampling, cfg.Images}, durationOptions...)
+	}{1, job.Snapshot, cfg.Sampling, cfg.Images}, durationOptions)
 	h := sha256.Sum256(raw)
 	return hex.EncodeToString(h[:])
 }
-func New(base string, limit int64, policies ...systemsettings.Policy) (*Cache, error) {
+
+// New opens the frame cache under base with a byte limit.
+func New(base string, limit int64, logger *slog.Logger, policies ...systemsettings.Policy) (*Cache, error) {
 	root := config.FrameCachePath(base)
-	if err := os.MkdirAll(root, 0700); err != nil {
+	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, err
 	}
 	st, err := os.Lstat(root)
@@ -87,15 +109,15 @@ func New(base string, limit int64, policies ...systemsettings.Policy) (*Cache, e
 		return nil, err
 	}
 	if !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("截图缓存目录无效")
+		return nil, errors.New("frame cache directory is invalid")
 	}
-	lock, err := os.OpenFile(filepath.Join(root, ".lock"), os.O_CREATE|os.O_RDWR, 0600)
+	lock, err := os.OpenFile(filepath.Join(root, ".lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}
 	if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		lock.Close()
-		return nil, fmt.Errorf("截图缓存目录已被其他实例使用")
+		return nil, errors.New("frame cache directory is in use by another instance")
 	}
 	ok := false
 	defer func() {
@@ -129,12 +151,12 @@ func New(base string, limit int64, policies ...systemsettings.Policy) (*Cache, e
 		var r record
 		raw, e := os.ReadFile(filepath.Join(root, d.Name(), "manifest.json"))
 		if e == nil {
-			e = json.Unmarshal(raw, &r, durationOptions...)
+			e = json.Unmarshal(raw, &r, durationOptions)
 		}
 		if e == nil && r.Key == d.Name() {
 			e = c.validate(&r)
 		} else {
-			e = fmt.Errorf("invalid manifest")
+			e = errors.New("invalid manifest")
 		}
 		if e != nil {
 			if err = os.RemoveAll(filepath.Join(root, d.Name())); err != nil {
@@ -152,6 +174,8 @@ func New(base string, limit int64, policies ...systemsettings.Policy) (*Cache, e
 	ok = true
 	return c, nil
 }
+
+// Close releases the cache directory lock.
 func (c *Cache) Close() error { return c.lock.Close() }
 
 func validKey(key string) bool {
@@ -175,11 +199,15 @@ func (c *Cache) publishStatsLocked() {
 func (c *Cache) Stats() Stats {
 	return *c.stats.Load()
 }
+
+// Sweep evicts expired and excess cache entries.
 func (c *Cache) Sweep(now time.Time) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.pruneLocked(now, 0)
 }
+
+// Loop sweeps the cache every minute until ctx ends.
 func (c *Cache) Loop(ctx context.Context) {
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
@@ -189,7 +217,7 @@ func (c *Cache) Loop(ctx context.Context) {
 			return
 		case now := <-t.C:
 			if err := c.Sweep(now); err != nil {
-				slog.Error("清理截图缓存失败", "error", err)
+				c.logger.Error("frame_cache_clean_failed", "error", err)
 			}
 		}
 	}
@@ -222,11 +250,11 @@ func (c *Cache) pruneLocked(now time.Time, need int64) error {
 }
 func (c *Cache) persist(r *record) error {
 	dir := filepath.Join(c.root, r.Key)
-	raw, err := json.Marshal(r, durationOptions...)
+	raw, err := json.Marshal(r, durationOptions)
 	if err != nil {
 		return err
 	}
-	if err = os.WriteFile(filepath.Join(dir, "manifest.next"), raw, 0600); err != nil {
+	if err = os.WriteFile(filepath.Join(dir, "manifest.next"), raw, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(filepath.Join(dir, "manifest.next"), filepath.Join(dir, "manifest.json"))
@@ -234,20 +262,20 @@ func (c *Cache) persist(r *record) error {
 func (c *Cache) validate(r *record) error {
 	dir := filepath.Join(c.root, r.Key)
 	if len(r.Set.Frames) == 0 || len(r.Set.Frames) > 32 {
-		return fmt.Errorf("缓存截图不完整")
+		return errors.New("cached frames are incomplete")
 	}
 	// Stored paths are relative, preventing manifests from redirecting model reads elsewhere.
 	for i := range r.Set.Frames {
 		f := &r.Set.Frames[i]
 		if filepath.Base(f.Path) != f.Path || f.Path == "." {
-			return fmt.Errorf("缓存路径无效")
+			return errors.New("cache path is invalid")
 		}
 		st, err := os.Lstat(filepath.Join(dir, f.Path))
 		if err != nil {
 			return err
 		}
 		if !st.Mode().IsRegular() || st.Size() != int64(f.Bytes) || f.Bytes <= 0 || f.Bytes > 1<<20 {
-			return fmt.Errorf("缓存截图已变化")
+			return errors.New("cached frames changed")
 		}
 		data, err := os.ReadFile(filepath.Join(dir, f.Path))
 		if err != nil {
@@ -255,7 +283,7 @@ func (c *Cache) validate(r *record) error {
 		}
 		hash := sha256.Sum256(data)
 		if r.Checksums[f.Path] != hex.EncodeToString(hash[:]) {
-			return fmt.Errorf("缓存截图校验失败")
+			return errors.New("cached frame check failed")
 		}
 	}
 	var size int64
@@ -265,12 +293,12 @@ func (c *Cache) validate(r *record) error {
 		}
 		if d.IsDir() {
 			if p != dir {
-				return fmt.Errorf("缓存含未知目录")
+				return errors.New("cache contains an unknown directory")
 			}
 			return nil
 		}
 		if !d.Type().IsRegular() {
-			return fmt.Errorf("缓存含非普通文件")
+			return errors.New("cache contains a non-regular file")
 		}
 		st, e := d.Info()
 		if e == nil {
@@ -296,7 +324,7 @@ func (c *Cache) lease(r *record) *Lease {
 // build writes only under work and returns a complete, validated frame set.
 func (c *Cache) Acquire(ctx context.Context, key string, reserve int64, build func(string) (domain.FrameSet, error)) (*Lease, error) {
 	if !validKey(key) {
-		return nil, fmt.Errorf("缓存键无效")
+		return nil, errors.New("cache key is invalid")
 	}
 	for {
 		if err := ctx.Err(); err != nil {
@@ -329,7 +357,7 @@ func (c *Cache) Acquire(ctx context.Context, key string, reserve int64, build fu
 		}
 		if reserve > c.limit {
 			c.mu.Unlock()
-			return nil, fmt.Errorf("临时目录容量不足以容纳单个视频")
+			return nil, domain.Fail(domain.KindUnavailable, "temp_capacity_too_small", "temp directory capacity cannot hold one video")
 		}
 		if err := c.pruneLocked(time.Now(), reserve); err != nil {
 			c.mu.Unlock()
@@ -362,21 +390,21 @@ func (c *Cache) Acquire(ctx context.Context, key string, reserve int64, build fu
 	}
 	// Preserve only frames selected by the extractor, discarding failed/recompression intermediates.
 	dir := filepath.Join(work, "ready")
-	if err = os.Mkdir(dir, 0700); err != nil {
+	if err = os.Mkdir(dir, 0o700); err != nil {
 		return nil, err
 	}
 	for i := range set.Frames {
 		f := &set.Frames[i]
 		rel, e := filepath.Rel(work, f.Path)
 		if e != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-			return nil, fmt.Errorf("抽帧输出越界")
+			return nil, errors.New("extraction output escapes its directory")
 		}
 		st, e := os.Lstat(f.Path)
 		if e != nil {
 			return nil, e
 		}
 		if !st.Mode().IsRegular() || st.Size() != int64(f.Bytes) {
-			return nil, fmt.Errorf("抽帧输出无效")
+			return nil, errors.New("extraction output is invalid")
 		}
 		name := fmt.Sprintf("frame-%02d.jpg", i)
 		if err = os.Rename(f.Path, filepath.Join(dir, name)); err != nil {
@@ -401,7 +429,7 @@ func (c *Cache) Acquire(ctx context.Context, key string, reserve int64, build fu
 		r.Checksums[f.Path] = hex.EncodeToString(hash[:])
 	}
 	if err = c.validate(r); err == nil && r.Bytes > reserve {
-		err = fmt.Errorf("截图超出预留容量")
+		err = domain.Fail(domain.KindUnavailable, "frames_over_reservation", "frames exceed the reserved capacity")
 	}
 	if err == nil {
 		err = c.persist(r)
@@ -438,7 +466,7 @@ func (l *Lease) Release(success bool) {
 			err = c.persist(r)
 		}
 		if err != nil {
-			slog.Error("更新截图缓存失败", "error", err)
+			c.logger.Error("frame_cache_update_failed", "error", err)
 		}
 		c.signal()
 	})
@@ -469,6 +497,7 @@ func (c *Cache) expired(r *record, now time.Time) bool {
 	}
 }
 
+// ClearResult reports what clearing the cache removed.
 type ClearResult struct {
 	Deleted    int   `json:"deleted"`
 	FreedBytes int64 `json:"freed_bytes"`

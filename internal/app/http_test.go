@@ -13,7 +13,7 @@ func TestDecodeRequiresJSONObject(t *testing.T) {
 				Name string `json:"name"`
 			}
 			w := httptest.NewRecorder()
-			if decode(w, httptest.NewRequest("POST", "/", strings.NewReader(body)), &input) || w.Code != 400 {
+			if decode(w, jsonRequest("POST", "/", strings.NewReader(body)), &input) || w.Code != 400 {
 				t.Fatal("non-object or ambiguous input accepted", body, w.Code)
 			}
 		})

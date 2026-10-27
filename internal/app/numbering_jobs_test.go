@@ -18,7 +18,7 @@ func numberingRequestTest(t *testing.T, a *App, req numberingRequest, want int) 
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	a.startNumberingJob(w, httptest.NewRequest("POST", "/api/numbering/jobs", strings.NewReader(string(raw))))
+	a.startNumberingJob(w, jsonRequest("POST", "/api/numbering/jobs", strings.NewReader(string(raw))))
 	if w.Code != want {
 		t.Fatalf("%d: %s", w.Code, w.Body.String())
 	}
@@ -50,7 +50,7 @@ func TestNumberingBackgroundPreviewConfirmationAndPaging(t *testing.T) {
 	for i := range 205 {
 		name := filepath.Join(a.Library.Root, "photo-"+strings.Repeat("x", i)+".jpg")
 		// Keep filenames below filesystem length limits.
-		if err := os.WriteFile(name, []byte("image"), 0600); err != nil {
+		if err := os.WriteFile(name, []byte("image"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -106,7 +106,7 @@ func TestNumberingExplicitCancelAndLease(t *testing.T) {
 	for _, lease := range []bool{false, true} {
 		t.Run(map[bool]string{false: "close", true: "lost page"}[lease], func(t *testing.T) {
 			a, _ := markTestApp(t, 0)
-			if err := os.WriteFile(filepath.Join(a.Library.Root, "photo.jpg"), []byte("image"), 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(a.Library.Root, "photo.jpg"), []byte("image"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			entered, release := make(chan struct{}), make(chan struct{})
@@ -132,7 +132,20 @@ func TestNumberingExplicitCancelAndLease(t *testing.T) {
 				a.numberingMu.Lock()
 				a.numberingJobs[req.Key].lease = time.Now().Add(-time.Minute)
 				a.numberingMu.Unlock()
-				time.Sleep(1200 * time.Millisecond)
+				// The lease watcher checks once a second.
+				deadline := time.Now().Add(5 * time.Second)
+				for {
+					a.numberingMu.Lock()
+					status := a.numberingJobs[req.Key].status.Status
+					a.numberingMu.Unlock()
+					if status == "cancelling" {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatal("expired lease did not cancel the job")
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
 			} else {
 				r := httptest.NewRequest("POST", "/cancel", nil)
 				r.SetPathValue("key", req.Key)
@@ -165,7 +178,7 @@ func TestNumberingJobsProtectedAndShutdown(t *testing.T) {
 func TestNumberingCancelKeepsCompletedDirectories(t *testing.T) {
 	a, ids := markTestApp(t, 0)
 	for _, dir := range []string{"dir-0", "dir-1"} {
-		if err := os.WriteFile(filepath.Join(a.Library.Root, dir, "photo.jpg"), []byte("image"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(a.Library.Root, dir, "photo.jpg"), []byte("image"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}

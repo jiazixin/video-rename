@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
 	"video-rename/internal/domain"
 )
 
@@ -30,7 +31,7 @@ func TestUnreadableFramesNeverReachModel(t *testing.T) {
 				dir := t.TempDir()
 				path := filepath.Join(dir, "frame.jpg")
 				if broken == "empty" {
-					if err := os.WriteFile(path, nil, 0600); err != nil {
+					if err := os.WriteFile(path, nil, 0o600); err != nil {
 						t.Fatal(err)
 					}
 				} else if broken == "directory" {
@@ -71,7 +72,7 @@ func TestCloseReleasesIdleConnection(t *testing.T) {
 	server.Start()
 	defer server.Close()
 	path := filepath.Join(t.TempDir(), "frame.jpg")
-	if err := os.WriteFile(path, []byte("frame"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("frame"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	client := New(testConfig(t, server.URL))

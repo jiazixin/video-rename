@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
+	"log/slog"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -19,7 +20,7 @@ import (
 )
 
 func TestRunDirectoryRecords(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +50,7 @@ func TestRunDirectoryRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 	for n := 1; n <= 4; n++ {
-		if _, err := a.DB.Exec(`INSERT INTO model_attempts VALUES(3,?,1,'主模型','vision',?,'2026-10-07T00:00:00Z',100,'failed',?)`, n, n == 4, fmt.Sprintf("失败 %d", n)); err != nil {
+		if _, err := a.DB.Exec(`INSERT INTO model_attempts VALUES(3,?,1,'主模型','vision',?,'2026-10-07T00:00:00Z',100,'failed',?)`, n, n == 4, fmt.Sprintf(`{"code":"naming_failed","message":"failed %d"}`, n)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -97,6 +98,7 @@ func TestRunDirectoryRecords(t *testing.T) {
 		t.Helper()
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest("GET", "/api/runs/1/items?"+query, nil)
+		r = r.WithContext(context.WithValue(r.Context(), loggerKey{}, slog.New(slog.NewTextHandler(t.Output(), nil))))
 		r.SetPathValue("id", "1")
 		a.items(w, r)
 		if w.Code != 200 {
@@ -168,8 +170,8 @@ func TestRunDirectoryRecords(t *testing.T) {
 	if refreshed.Total != 1 || refreshed.FailedTotal != 69 || refreshed.Items[0].ID != 205 {
 		t.Fatal("live summary not updated", refreshed)
 	}
-	if _, err := a.DB.Exec(`UPDATE run_items SET status='skipped',message='已处理，跳过' WHERE id IN (1,4);
-UPDATE run_items SET status='skipped',message='文件尚不稳定，留待下次运行' WHERE id=2;
+	if _, err := a.DB.Exec(`UPDATE run_items SET status='skipped',message='{"code":"skip_processed","message":"already processed; skipped"}' WHERE id IN (1,4);
+UPDATE run_items SET status='skipped',message='{"code":"skip_unstable","message":"file not stable yet"}' WHERE id=2;
 UPDATE run_items SET status='running',started_ms=50 WHERE id=5;
 UPDATE run_items SET status='running',started_ms=10 WHERE id=7;
 UPDATE run_items SET finished_ms=100 WHERE id=8`); err != nil {
@@ -190,8 +192,10 @@ UPDATE run_items SET finished_ms=100 WHERE id=8`); err != nil {
 			Attempts     int    `json:"attempts"`
 		} `json:"recent"`
 		SkipReasons []struct {
-			Message string `json:"message"`
-			Count   int    `json:"count"`
+			Reason struct {
+				Message string `json:"message"`
+			} `json:"reason"`
+			Count int `json:"count"`
 		} `json:"skip_reasons"`
 	}
 	readCounts := func(query string) {
@@ -207,7 +211,7 @@ UPDATE run_items SET finished_ms=100 WHERE id=8`); err != nil {
 	}
 	readCounts("status=skipped")
 	if counts.Total != 3 || counts.SkippedTotal != 3 || counts.RunningTotal != 2 || counts.DoneTotal != 131 ||
-		len(counts.SkipReasons) != 2 || counts.SkipReasons[0].Message != "已处理，跳过" || counts.SkipReasons[0].Count != 2 {
+		len(counts.SkipReasons) != 2 || counts.SkipReasons[0].Reason.Message != "already processed; skipped" || counts.SkipReasons[0].Count != 2 {
 		t.Fatalf("skipped filter: %+v", counts)
 	}
 	readCounts("status=skipped&directory=" + url.QueryEscape("杭州"))
@@ -258,14 +262,14 @@ UPDATE run_items SET finished_ms=100 WHERE id=8`); err != nil {
 func automaticRunApp(t *testing.T) (*App, string) {
 	t.Helper()
 	root := t.TempDir()
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { a.Close() })
 	tools := t.TempDir()
 	for _, name := range []string{"ffmpeg", "ffprobe"} {
-		if err := os.WriteFile(filepath.Join(tools, name), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		if err := os.WriteFile(filepath.Join(tools, name), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -283,7 +287,7 @@ func automaticRunApp(t *testing.T) (*App, string) {
 	if err := (systemsettings.Store{DB: a.DB}).Save(settings); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "原视频.mp4"), []byte("isolated video fixture"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "原视频.mp4"), []byte("isolated video fixture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return a, root
@@ -294,7 +298,7 @@ func TestRunRecordsAfterAutomaticRenameAndRestore(t *testing.T) {
 	a.Jobs.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 		return "本批次标题", nil
 	}
-	run, err := a.Jobs.Create(jobs.Request{Targets: []int64{1}, Key: "record-integration"}, "manual", 0)
+	run, err := a.Jobs.Create(t.Context(), jobs.Request{Targets: []int64{1}, Key: "record-integration"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,15 +338,15 @@ func TestRunRecordsAfterAutomaticRenameAndRestore(t *testing.T) {
 		}
 	}
 	check(false, "本批次标题.mp4")
-	if _, err := a.Library.Restore(operation, "record-restore"); err != nil {
+	if _, err := a.Library.Restore(t.Context(), operation, "record-restore"); err != nil {
 		t.Fatal(err)
 	}
 	check(true, "原视频.mp4")
-	e, err := a.Library.Get(entry)
+	e, err := a.Library.Get(t.Context(), entry)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Library.Rename(entry, e.Version, "后续手动标题.mp4", "record-later-rename"); err != nil {
+	if _, err := a.Library.Rename(t.Context(), entry, e.Version, "后续手动标题.mp4", "record-later-rename"); err != nil {
 		t.Fatal(err)
 	}
 	check(true, "后续手动标题.mp4")
@@ -358,7 +362,7 @@ func TestRunRecordsLiveStage(t *testing.T) {
 		<-release
 		return "实时标题", nil
 	}
-	run, err := a.Jobs.Create(jobs.Request{Targets: []int64{1}, Key: "live-stage"}, "manual", 0)
+	run, err := a.Jobs.Create(t.Context(), jobs.Request{Targets: []int64{1}, Key: "live-stage"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,29 +1,73 @@
+import { defined } from './support'
 import { test, expect } from '@playwright/test'
 
-test('保存系统设置不移动表单，切换分类清理通知，通知渠道保存和测试使用浮动反馈', async ({ page }) => {
-  let settings = { running_batch_limit: 32, waiting_batch_limit: 1000,
-    extract_workers: 8, cache_gb: 10, stability_seconds: 30,
-    retry_enabled: false, retry_count: 0, fallback_model_id: 0,
-    success_cache_mode: 'immediate', success_cache_hours: 72, idle_cache_hours: 72 }
+test('保存系统设置不移动表单，切换分类清理通知，通知渠道保存和测试使用浮动反馈', async ({
+  page
+}) => {
+  let settings = {
+    running_batch_limit: 32,
+    waiting_batch_limit: 1000,
+    extract_workers: 8,
+    cache_gb: 10,
+    stability_seconds: 30,
+    retry_enabled: false,
+    retry_count: 0,
+    fallback_model_id: 0,
+    success_cache_mode: 'immediate',
+    success_cache_hours: 72,
+    idle_cache_hours: 72
+  }
   let fail = false
-  await page.route('**/api/system/settings', route => {
+  await page.route('**/api/system/settings', (route) => {
     if (route.request().method() === 'PUT') {
-      if (fail) return route.fulfill({ status: 500, json: { message: '保存失败，请重试' } })
+      if (fail)
+        return route.fulfill({
+          status: 500,
+          json: {
+            error: {
+              code: 'internal',
+              message: 'test failure',
+              details: { detail: '保存失败，请重试' }
+            }
+          }
+        })
       settings = route.request().postDataJSON()
       return route.fulfill({ json: settings })
     }
-    return route.fulfill({ json: { settings, cache: {
-      path: '/test/cache', used_bytes: 0, reserved_bytes: 0, entries: 0
-    } } })
+    return route.fulfill({
+      json: {
+        settings,
+        cache: {
+          path: '/test/cache',
+          used_bytes: 0,
+          reserved_bytes: 0,
+          entries: 0
+        }
+      }
+    })
   })
-  const channel = { kind: 'webhook', enabled: false, failure_only: false,
-    has_endpoint: true, has_token: false, has_secret: false, chat_id: '' }
-  await page.route('**/api/notifications', route => route.fulfill({ json: [channel] }))
-  await page.route('**/api/notifications/history?*', route => route.fulfill({ json: {
-    items: [], total: 0, page: 1, size: 50
-  } }))
-  await page.route('**/api/notifications/webhook', route => route.fulfill({ json: {} }))
-  await page.route('**/api/notifications/webhook/test', route => route.fulfill({ json: {} }))
+  const channel = {
+    kind: 'webhook',
+    enabled: false,
+    failure_only: false,
+    has_endpoint: true,
+    has_token: false,
+    has_secret: false,
+    chat_id: ''
+  }
+  await page.route('**/api/notifications', (route) => route.fulfill({ json: { items: [channel] } }))
+  await page.route('**/api/notifications/history?*', (route) =>
+    route.fulfill({
+      json: {
+        items: [],
+        total: 0,
+        page: 1,
+        size: 50
+      }
+    })
+  )
+  await page.route('**/api/notifications/webhook', (route) => route.fulfill({ json: {} }))
+  await page.route('**/api/notifications/webhook/test', (route) => route.fulfill({ json: {} }))
   await page.goto('/')
   await page.getByLabel('用户名', { exact: true }).fill('admin')
   await page.getByLabel('密码', { exact: true }).fill('test-password-123')
@@ -38,7 +82,7 @@ test('保存系统设置不移动表单，切换分类清理通知，通知渠�
   await expect(notice).toContainText('设置已保存')
   await expect(page.locator('.processing-settings .notice.success')).toHaveCount(0)
   const after = await save.boundingBox()
-  expect(Math.abs(before!.y - after!.y)).toBeLessThan(1)
+  expect(Math.abs(defined(before).y - defined(after).y)).toBeLessThan(1)
   await notice.getByRole('button', { name: '关闭提示' }).click()
   await expect(notice).toHaveCount(0)
   fail = true
@@ -58,7 +102,9 @@ test('保存系统设置不移动表单，切换分类清理通知，通知渠�
   await expect(page.locator('.toast-message').first()).toContainText('自定义测试通知已发送')
   await expect(webhook.locator('.notice.success')).toHaveCount(0)
   await page.setViewportSize({ width: 390, height: 844 })
-  expect(await notice.first().evaluate(el => el.getBoundingClientRect().right)).toBeLessThanOrEqual(390)
+  expect(
+    await notice.first().evaluate((el) => el.getBoundingClientRect().right)
+  ).toBeLessThanOrEqual(390)
   await page.screenshot({ path: 'test-results/settings-toast-mobile.png' })
   await page.getByRole('button', { name: '文件目录', exact: true }).click()
   await expect(notice).toHaveCount(0)
@@ -66,13 +112,27 @@ test('保存系统设置不移动表单，切换分类清理通知，通知渠�
 
 test('浮动提示保留重复消息、最新置顶，并独立关闭和到期', async ({ page }) => {
   // Synthetic history and restore responses keep this UI regression isolated.
-  await page.route('**/api/logs?*', route => route.fulfill({ json: {
-    items: [{ id: 1, category: 'success', action: 'manual', operation: 1,
-      old_path: '原名.mp4', new_path: '新名.mp4', created: '2026-10-02T00:00:00Z' }],
-    total: 1, page: 1,
-  } }))
-  await page.route('**/api/logs/batches', route => route.fulfill({ json: [] }))
-  await page.route('**/api/operations/1/restore', route => route.fulfill({ json: {} }))
+  await page.route('**/api/logs?*', (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: 1,
+            category: 'success',
+            action: 'manual',
+            operation: 1,
+            old_path: '原名.mp4',
+            new_path: '新名.mp4',
+            created: '2026-10-02T00:00:00Z'
+          }
+        ],
+        total: 1,
+        page: 1
+      }
+    })
+  )
+  await page.route('**/api/logs/batches', (route) => route.fulfill({ json: { items: [] } }))
+  await page.route('**/api/operations/1/restore', (route) => route.fulfill({ json: {} }))
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText: async () => {} } })
   })
@@ -97,14 +157,23 @@ test('浮动提示保留重复消息、最新置顶，并独立关闭和到期',
   await expect(messages).toHaveText(['名称已还原', '已复制运行记录详情', '已复制运行记录详情'])
   await page.clock.runFor(250)
   // CSS transitions use browser animation time, independently of the timer clock.
-  await expect.poll(() => notices.evaluateAll(elements => {
-    const bounds = elements.map(element => element.getBoundingClientRect())
-    return bounds.length === 3 && bounds.slice(1).every((rect, index) => bounds[index].bottom < rect.top)
-  })).toBe(true)
+  await expect
+    .poll(() =>
+      notices.evaluateAll((elements) => {
+        const bounds = elements.map((element) => element.getBoundingClientRect())
+        return (
+          bounds.length === 3 &&
+          bounds.slice(1).every((rect, index) => (bounds[index]?.bottom ?? Infinity) < rect.top)
+        )
+      })
+    )
+    .toBe(true)
   await page.screenshot({ path: 'test-results/toast-stack.png' })
   await page.setViewportSize({ width: 390, height: 844 })
   await page.clock.runFor(250)
-  expect(await notices.first().evaluate(element => element.getBoundingClientRect().right)).toBeLessThanOrEqual(390)
+  expect(
+    await notices.first().evaluate((element) => element.getBoundingClientRect().right)
+  ).toBeLessThanOrEqual(390)
   await page.screenshot({ path: 'test-results/toast-stack-mobile.png' })
   await notices.nth(1).getByRole('button', { name: '关闭提示' }).click()
   await page.clock.runFor(250)

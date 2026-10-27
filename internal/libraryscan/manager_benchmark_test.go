@@ -22,11 +22,11 @@ func BenchmarkRecursiveDirectoryScan(b *testing.B) {
 				root := filepath.Join(base, "media")
 				for i := range directories {
 					dir := filepath.Join(root, fmt.Sprintf("folder-%03d", i))
-					if err := os.MkdirAll(dir, 0700); err != nil {
+					if err := os.MkdirAll(dir, 0o700); err != nil {
 						b.Fatal(err)
 					}
 					for j := range filesPerDirectory {
-						if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("file-%03d.mp4", j)), []byte("video"), 0600); err != nil {
+						if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("file-%03d.mp4", j)), []byte("video"), 0o600); err != nil {
 							b.Fatal(err)
 						}
 					}

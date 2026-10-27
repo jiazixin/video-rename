@@ -3,6 +3,7 @@ package vision
 import (
 	"encoding/json/v2"
 	"strings"
+
 	"video-rename/internal/domain"
 )
 
@@ -44,17 +45,17 @@ func parseAnthropic(raw []byte, status int) (string, int, *httpJobError) {
 		} `json:"content"`
 		StopReason string `json:"stop_reason"`
 	}
-	invalid := func(message string) (string, int, *httpJobError) {
-		return "", status, &httpJobError{Code: domain.CodeAPIResponseInvalid, Message: message}
+	invalid := func(reason, message string) (string, int, *httpJobError) {
+		return "", status, &httpJobError{Code: domain.CodeAPIResponseInvalid, Message: message, Details: map[string]any{"reason": reason}}
 	}
 	if json.Unmarshal(raw, &response) != nil {
-		return invalid("响应 JSON 格式或字段类型无效")
+		return invalid("json", "response JSON or field types are invalid")
 	}
 	if response.StopReason == "max_tokens" {
-		return "", status, &httpJobError{Code: domain.CodeModelOutputTruncated, Message: "模型输出因长度截断,不作为标题"}
+		return "", status, &httpJobError{Code: domain.CodeModelOutputTruncated, Message: "model output was truncated; not used as a title"}
 	}
 	if response.StopReason != "end_turn" && response.StopReason != "stop_sequence" {
-		return invalid("模型未正常完成文本回答")
+		return invalid("not_completed", "model did not complete a text answer")
 	}
 	parts := []string{}
 	for _, p := range response.Content {
@@ -64,12 +65,12 @@ func parseAnthropic(raw []byte, status int) (string, int, *httpJobError) {
 		case "thinking", "redacted_thinking":
 			continue
 		default:
-			return invalid("响应包含非文本标题内容")
+			return invalid("non_text", "response contains non-text title content")
 		}
 	}
 	title := strings.Join(parts, "\n")
 	if strings.TrimSpace(title) == "" {
-		return invalid("模型回答为空")
+		return invalid("empty_answer", "model answer is empty")
 	}
 	return title, status, nil
 }

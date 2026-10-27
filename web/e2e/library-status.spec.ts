@@ -1,3 +1,4 @@
+import { defined } from './support'
 import { test, expect, type Page } from '@playwright/test'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -14,11 +15,7 @@ async function fixture(page: Page, name: string, files: string[], directories: s
     data: { username: 'admin', password: 'test-password-123' }
   })
   expect(login.ok()).toBe(true)
-  const session = await login.json()
-  const headers = { 'X-CSRF-Token': session.csrf }
-  expect((await page.request.post('/api/directories/1/refresh', { headers, data: {} })).ok()).toBe(
-    true
-  )
+  expect((await page.request.post('/api/directories/1/refresh', { data: {} })).ok()).toBe(true)
   let directory: Entry | undefined
   await expect
     .poll(async () => {
@@ -29,10 +26,8 @@ async function fixture(page: Page, name: string, files: string[], directories: s
       return !!directory && !result.refreshing
     })
     .toBe(true)
-  const id = directory!.id
-  expect(
-    (await page.request.post(`/api/directories/${id}/refresh`, { headers, data: {} })).ok()
-  ).toBe(true)
+  const id = defined(directory).id
+  expect((await page.request.post(`/api/directories/${id}/refresh`, { data: {} })).ok()).toBe(true)
   await expect
     .poll(async () => {
       const result = await (
@@ -50,17 +45,16 @@ async function fixture(page: Page, name: string, files: string[], directories: s
   }
   async function mark(names: string[]) {
     for (let offset = 0; offset < names.length; offset += 100) {
-      const targets = names.slice(offset, offset + 100).map((file) => entries.get(file)!.id)
+      const targets = names.slice(offset, offset + 100).map((file) => defined(entries.get(file)).id)
       const request = await page.request.post('/api/entries/processed', {
-        headers,
         data: { targets, marked: true, key: `status-${id}-${offset}` }
       })
       expect(request.ok()).toBe(true)
       await expect
         .poll(async () => {
-          const current = await (
-            await page.request.get(`/api/entries/status?ids=${targets.join(',')}`)
-          ).json()
+          const current = (
+            await (await page.request.get(`/api/entries/status?ids=${targets.join(',')}`)).json()
+          ).items
           return (
             current.length === targets.length &&
             current.every((entry: Entry) => entry.processed === 'marked')
@@ -70,13 +64,13 @@ async function fixture(page: Page, name: string, files: string[], directories: s
     }
   }
   async function rename(oldName: string, nextName: string) {
-    const entry = entries.get(oldName)!
+    const entry = defined(entries.get(oldName))
     const result = await page.request.post(`/api/entries/${entry.id}/rename`, {
-      headers,
       data: { name: nextName, version: entry.version, key: `status-rename-${entry.id}` }
     })
     expect(result.ok()).toBe(true)
-    const current = await (await page.request.get(`/api/entries/status?ids=${entry.id}`)).json()
+    const current = (await (await page.request.get(`/api/entries/status?ids=${entry.id}`)).json())
+      .items
     entries.delete(oldName)
     entries.set(nextName, current[0])
   }
@@ -89,11 +83,10 @@ async function fixture(page: Page, name: string, files: string[], directories: s
   }
   async function populateDirectory(name: string, files: string[]) {
     for (const file of files) writeFileSync(join(path, name, file), 'directory status fixture')
-    const child = entries.get(name)!
+    const child = defined(entries.get(name))
     expect(
       (
         await page.request.post(`/api/directories/${child.id}/refresh`, {
-          headers,
           data: {}
         })
       ).ok()
@@ -110,7 +103,7 @@ async function fixture(page: Page, name: string, files: string[], directories: s
       .toBe(true)
     return items
   }
-  return { id, entries, headers, mark, rename, open, populateDirectory }
+  return { id, entries, mark, rename, open, populateDirectory }
 }
 
 const rows = (page: Page) => page.locator('.file-table tbody tr')
@@ -171,11 +164,10 @@ test('处理状态表头按状态分组及自然名称双向排序，进入目�
   await setup.rename('raw2.mp4', 'a-a2.mp4')
   await setup.rename('raw10.mp4', 'a-a10.mp4')
   for (const name of ['a-folder2', 'a-folder10']) {
-    const [nested] = await setup.populateDirectory(name, ['raw.mp4'])
+    const nested = defined((await setup.populateDirectory(name, ['raw.mp4']))[0])
     expect(
       (
         await page.request.post(`/api/entries/${nested.id}/rename`, {
-          headers: setup.headers,
           data: { name: 'manual.mp4', version: nested.version, key: `nested-status-${nested.id}` }
         })
       ).ok()
@@ -251,8 +243,8 @@ test('处理状态表头按状态分组及自然名称双向排序，进入目�
   await expect(filter).toHaveText('未处理')
   await expect(names(page)).toHaveText(['a-z10.mp4', 'a-z2.mp4'])
   const filterBounds = await filter.boundingBox()
-  expect(filterBounds!.x).toBeGreaterThanOrEqual(0)
-  expect(filterBounds!.x + filterBounds!.width).toBeLessThanOrEqual(390)
+  expect(defined(filterBounds).x).toBeGreaterThanOrEqual(0)
+  expect(defined(filterBounds).x + defined(filterBounds).width).toBeLessThanOrEqual(390)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.screenshot({ path: 'test-results/library-status-mobile.png' })
 })
@@ -275,7 +267,7 @@ test('图片和音频一键编号预览遵循处理状态筛选，还原后的�
   for (const [kind, extension, unit] of [
     ['图片', 'png', '张'],
     ['音频', 'mp3', '个']
-  ]) {
+  ] as const) {
     await select(page, '类型筛选', kind)
     await select(page, '处理状态筛选', '手动命名')
     await expect(names(page)).toHaveText([`manual.${extension}`])
@@ -295,11 +287,10 @@ test('图片和音频一键编号预览遵循处理状态筛选，还原后的�
     await expect(dialog.locator('tbody tr').last()).toContainText(`pending10.${extension}`)
     await dialog.getByRole('button', { name: '取消', exact: true }).click()
   }
-  const restored = setup.entries.get('manual.mp3')!
+  const restored = defined(setup.entries.get('manual.mp3'))
   expect(
     (
       await page.request.post(`/api/operations/${restored.restore_id}/restore`, {
-        headers: setup.headers,
         data: { key: `status-restore-${restored.id}` }
       })
     ).ok()
@@ -351,20 +342,19 @@ test('未处理隐藏全部处理目录，递归标记后即时移除目录并�
   const partial = await setup.populateDirectory('部分完成', ['done.mp4', 'pending.mp4'])
   await setup.populateDirectory('待处理', ['pending.mp4'])
   await setup.populateDirectory('空目录', [])
-  const ids = [completed[0]!.id, partial.find((e) => e.name === 'done.mp4')!.id]
+  const ids = [defined(completed[0]).id, defined(partial.find((e) => e.name === 'done.mp4')).id]
   expect(
     (
       await page.request.post('/api/entries/processed', {
-        headers: setup.headers,
         data: { targets: ids, marked: true, key: `directory-status-seed-${setup.id}` }
       })
     ).ok()
   ).toBe(true)
   await expect
     .poll(async () => {
-      const current = await (
-        await page.request.get(`/api/entries/status?ids=${ids.join(',')}`)
-      ).json()
+      const current = (
+        await (await page.request.get(`/api/entries/status?ids=${ids.join(',')}`)).json()
+      ).items
       return current.every((e: Entry) => e.processed === 'marked')
     })
     .toBe(true)
@@ -425,17 +415,24 @@ for (const width of [1440, 390]) {
     const targets: number[] = []
     for (const name of ['dir1', 'dir2', 'dir3', 'dir4']) {
       const files = await setup.populateDirectory(name, ['a.mp4', 'b.mp4'])
-      targets.push(...files.filter(e => name === 'dir1' || name === 'dir3' || e.name === 'a.mp4').map(e => e.id))
+      targets.push(
+        ...files
+          .filter((e) => name === 'dir1' || name === 'dir3' || e.name === 'a.mp4')
+          .map((e) => e.id)
+      )
     }
     const result = await page.request.post('/api/entries/processed', {
-      headers: setup.headers,
       data: { targets, marked: true, key: `sort-directories-${setup.id}` }
     })
     expect(result.ok()).toBe(true)
-    await expect.poll(async () => {
-      const current = await (await page.request.get(`/api/entries/status?ids=${targets.join(',')}`)).json()
-      return current.every((e: Entry) => e.processed === 'marked')
-    }).toBe(true)
+    await expect
+      .poll(async () => {
+        const current = (
+          await (await page.request.get(`/api/entries/status?ids=${targets.join(',')}`)).json()
+        ).items
+        return current.every((e: Entry) => e.processed === 'marked')
+      })
+      .toBe(true)
     await setup.open()
     const sort = page.getByRole('button', { name: '切换处理状态排序', exact: true })
     await sort.click()

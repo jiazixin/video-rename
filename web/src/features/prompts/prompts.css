@@ -37,7 +37,7 @@
   gap: 6px 12px;
 }
 .failure-keywords-dirty {
-  color: #976126;
+  color: var(--palette-976126);
   font-size: 12px;
 }
 .failure-keywords-list {
@@ -54,11 +54,11 @@
   align-items: center;
   gap: 8px;
   max-width: 100%;
-  border: 1px solid #dfe6e1;
+  border: 1px solid var(--palette-dfe6e1);
   border-radius: 7px;
   padding: 3px 4px 3px 10px;
-  color: #43554b;
-  background: #f5f8f6;
+  color: var(--palette-43554b);
+  background: var(--palette-f5f8f6);
   font-size: 13px;
 }
 .failure-keyword > span {
@@ -72,7 +72,7 @@
   padding: 6px;
   background: transparent;
   border-color: transparent;
-  color: #63766b;
+  color: var(--palette-63766b);
 }
 .failure-keyword-add {
   display: flex;
@@ -128,21 +128,21 @@
   margin: 6px 0;
 }
 .prompts-library-head .eyebrow {
-  color: #56816b;
+  color: var(--palette-547e68);
   letter-spacing: 1.5px;
   font-size: 10px;
 }
 .prompts-library-head .help {
   font-size: 12px;
   line-height: 1.75;
-  color: #7a837d;
+  color: var(--palette-6a726d);
   margin: 0;
 }
 .prompts-library-head > button {
   flex-shrink: 0;
 }
 .prompts-library .panel {
-  border-color: #dfe6e1;
+  border-color: var(--palette-dfe6e1);
   box-shadow: none;
 }
 .prompt-card-heading {

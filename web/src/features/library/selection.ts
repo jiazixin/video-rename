@@ -20,7 +20,8 @@ export function useLibrarySelection(rows: () => Entry[]) {
     [...chosen.value.values()].filter((e) => e.restore_id && !e.task_status)
   )
   function toggle(e: Entry) {
-    chosen.value.has(e.id) ? chosen.value.delete(e.id) : chosen.value.set(e.id, e)
+    if (chosen.value.has(e.id)) chosen.value.delete(e.id)
+    else chosen.value.set(e.id, e)
   }
   let selectionAnchor: number | undefined
   function clearSelection() {

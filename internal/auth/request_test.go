@@ -23,14 +23,14 @@ func requestAuth(t *testing.T) (*Auth, http.Handler) {
 	}
 	t.Cleanup(func() { db.Close() })
 	a := New(db, config.AuthConfig{Username: "admin", Password: "test-password"})
-	return a, a.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
+	return a, testHandler(a, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
 }
 
 func TestAuthWritesHonorRequestCancellation(t *testing.T) {
 	for _, action := range []string{"login", "logout"} {
 		t.Run(action, func(t *testing.T) {
 			a, handler := requestAuth(t)
-			if _, err := a.DB.Exec("INSERT INTO sessions VALUES(?,?,?,?)", hash("valid"), "csrf", time.Now().Add(sessionLifetime).Unix(), a.fingerprint); err != nil {
+			if _, err := a.DB.Exec("INSERT INTO sessions VALUES(?,?,?)", hash("valid"), time.Now().Add(sessionLifetime).Unix(), a.fingerprint); err != nil {
 				t.Fatal(err)
 			}
 			tx, err := a.DB.BeginTx(t.Context(), nil)
@@ -42,7 +42,6 @@ func TestAuthWritesHonorRequestCancellation(t *testing.T) {
 			defer cancel()
 			r := httptest.NewRequest("POST", "http://example.test/api/auth/"+action, strings.NewReader(`{"username":"admin","password":"test-password"}`)).WithContext(ctx)
 			r.Header.Set("Content-Type", "application/json")
-			r.Header.Set("X-CSRF-Token", "csrf")
 			r.AddCookie(&http.Cookie{Name: "vr_session", Value: "valid"})
 			before := a.DB.Stats().WaitCount
 			done := make(chan *httptest.ResponseRecorder, 1)
@@ -54,7 +53,7 @@ func TestAuthWritesHonorRequestCancellation(t *testing.T) {
 			cancel()
 			select {
 			case w := <-done:
-				if w.Code == 200 || len(w.Result().Cookies()) != 0 {
+				if w.Code < 300 || len(w.Result().Cookies()) != 0 {
 					t.Fatal("cancelled write acknowledged", w.Code)
 				}
 			case <-time.After(time.Second):
@@ -71,9 +70,10 @@ func TestAuthWritesHonorRequestCancellation(t *testing.T) {
 	}
 }
 
-func TestAuthReadMethodsAndStrictLogin(t *testing.T) {
+// Login body decoding is the app layer's; see internal/app/auth_test.go.
+func TestAuthReadMethods(t *testing.T) {
 	a, handler := requestAuth(t)
-	if _, err := a.DB.Exec("INSERT INTO sessions VALUES(?,?,?,?)", hash("valid"), "csrf", time.Now().Add(sessionLifetime).Unix(), a.fingerprint); err != nil {
+	if _, err := a.DB.Exec("INSERT INTO sessions VALUES(?,?,?)", hash("valid"), time.Now().Add(sessionLifetime).Unix(), a.fingerprint); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
@@ -82,11 +82,6 @@ func TestAuthReadMethodsAndStrictLogin(t *testing.T) {
 	}{
 		{"authenticated HEAD", "HEAD", "/api/data", "", "", "valid", 204},
 		{"anonymous HEAD", "HEAD", "/api/data", "", "", "", 401},
-		{"unknown member", "POST", "/api/auth/login", `{"username":"admin","password":"test-password","extra":true}`, "application/json", "", 400},
-		{"null", "POST", "/api/auth/login", `null`, "application/json", "", 400},
-		{"trailing object", "POST", "/api/auth/login", `{"username":"admin","password":"test-password"}{}`, "application/json", "", 400},
-		{"invalid media type", "POST", "/api/auth/login", `{"username":"admin","password":"test-password"}`, "application/jsonp", "", 403},
-		{"charset", "POST", "/api/auth/login", `{"username":"admin","password":"test-password"}`, "application/json; charset=utf-8", "", 200},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequest(tc.method, "http://example.test"+tc.path, strings.NewReader(tc.body))

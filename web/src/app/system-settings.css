@@ -116,7 +116,7 @@
   min-width: 0;
 }
 .system-settings :is(.sampling-page, .notification-settings, .model-grid) .panel {
-  border-color: #dfe6e1;
+  border-color: var(--palette-dfe6e1);
   border-radius: 12px;
   box-shadow: none;
 }
@@ -126,14 +126,14 @@
   letter-spacing: -0.2px;
 }
 .system-settings :is(.sampling-page, .notification-settings, .model-toolbar) .eyebrow {
-  color: #56816b;
+  color: var(--palette-547e68);
   letter-spacing: 1.5px;
   font-size: 10px;
 }
 .system-settings :is(.sampling-page, .notification-settings, .model-grid, .model-toolbar) .help {
   font-size: 12px;
   line-height: 1.75;
-  color: #7a837d;
+  color: var(--palette-6a726d);
 }
 .system-settings :is(.sampling-card, .notification-card, .model-card) {
   padding: var(--settings-pad);
@@ -185,9 +185,9 @@
 .system-settings :is(.sampling-footer) {
   margin-top: 20px;
   padding: 18px 22px;
-  border: 1px solid #dfe6e1;
+  border: 1px solid var(--palette-dfe6e1);
   border-radius: 12px;
-  background: #f6f9f7;
+  background: var(--palette-f6f9f7);
 }
 .system-settings :is(.sampling-footer) .help {
   margin: 0;
@@ -241,7 +241,7 @@
   margin-bottom: 20px;
 }
 .system-settings .notification-note {
-  border: 1px solid #dfe6e1;
+  border: 1px solid var(--palette-dfe6e1);
   border-radius: 10px;
   padding: 14px 18px;
 }

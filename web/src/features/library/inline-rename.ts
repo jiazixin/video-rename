@@ -1,3 +1,4 @@
+import { errorText } from '../../app/errors'
 import { ref, nextTick } from 'vue'
 import { api, newRequestKey } from '../../app/api'
 import type { Entry } from '../../app/contracts'
@@ -68,15 +69,18 @@ export function useInlineRename(options: { beforeSave: () => void; onSaved: () =
     inlineError.value = ''
     options.beforeSave()
     try {
-      await api(`/entries/${e.id}/rename`, 'POST', {
-        name,
-        version: inlineVersion.value,
-        key: newRequestKey()
+      await api<unknown>(`/entries/${e.id}/rename`, {
+        method: 'POST',
+        body: {
+          name,
+          version: inlineVersion.value,
+          key: newRequestKey()
+        }
       })
       await options.onSaved()
       inlineEntry.value = undefined
     } catch (err) {
-      inlineError.value = (err as Error).message
+      inlineError.value = errorText(err)
       await nextTick()
       inlineInput.value?.focus()
     } finally {

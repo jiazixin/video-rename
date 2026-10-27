@@ -1,110 +1,192 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-// ValidateService validates deployment settings and resolves filesystem paths.
-func (c *Config) ValidateService() error {
-	if net.ParseIP(c.Listen) == nil {
-		return fmt.Errorf("listen 必须为 IP 地址")
+// FieldError reports an invalid configuration field by its YAML path.
+type FieldError struct {
+	Field   string // YAML path, e.g. "auth.password"
+	Message string
+	Err     error // underlying cause; may be nil
+}
+
+// Error implements error.
+func (e *FieldError) Error() string {
+	if e.Err == nil {
+		return e.Field + ": " + e.Message
 	}
-	if c.Port < 1 || c.Port > 65535 {
-		return fmt.Errorf("port 必须在 1–65535 之间")
+	if e.Message == "" {
+		return e.Field + ": " + e.Err.Error()
 	}
-	if strings.TrimSpace(c.Auth.Username) == "" || strings.TrimSpace(c.Auth.Password) == "" || strings.Contains(c.Auth.Password, "请替换") {
-		return fmt.Errorf("auth.username 必填，auth.password 必须非空且不能使用示例占位值")
+	return e.Field + ": " + e.Message + ": " + e.Err.Error()
+}
+
+// Unwrap returns the underlying error.
+func (e *FieldError) Unwrap() error { return e.Err }
+
+func fieldError(field, message string) error {
+	return &FieldError{Field: field, Message: message}
+}
+
+func fieldErr(field, message string, err error) error {
+	return &FieldError{Field: field, Message: message, Err: err}
+}
+
+// Validate reports the first invalid field. It reads the filesystem to check
+// path relationships but changes neither c nor any file.
+func (c Config) Validate() error {
+	_, err := c.resolve()
+	return err
+}
+
+// resolve validates c and returns a copy whose paths are absolute and free of symlinks.
+func (c Config) resolve() (Config, error) {
+	if err := c.validateFields(); err != nil {
+		return Config{}, err
 	}
-	if strings.TrimSpace(c.Path) == "" || strings.TrimSpace(c.Storage) == "" {
-		return fmt.Errorf("media-path 与 storage 必填")
-	}
-	resolve := func(p string) string {
+	abs := func(p string) string {
 		if !filepath.IsAbs(p) {
 			p = filepath.Join(c.ConfigDir, p)
 		}
 		return filepath.Clean(p)
 	}
-	c.Path = resolve(c.Path)
-	c.Storage = resolve(c.Storage)
-	if strings.TrimSpace(c.TempStorage) == "" {
-		return fmt.Errorf("tmp-storage 不能为空")
-	}
-	c.TempStorage = resolve(c.TempStorage)
-	temp, tempErr := resolveDirectory(c.TempStorage)
-	if tempErr != nil {
-		return fmt.Errorf("tmp-storage: %w", tempErr)
+	c.Path, c.Storage, c.TempStorage = abs(c.Path), abs(c.Storage), abs(c.TempStorage)
+	temp, err := resolveDirectory(c.TempStorage)
+	if err != nil {
+		return Config{}, fieldErr("tmp_storage", "", err)
 	}
 	c.TempStorage = temp
 	root, err := filepath.EvalSymlinks(c.Path)
 	if err != nil {
-		return fmt.Errorf("媒体根目录不可访问: %w", err)
+		return Config{}, fieldErr("media_path", "not accessible", err)
 	}
 	c.Path = root
-	st, err := os.Stat(c.Path)
-	if err != nil || !st.IsDir() {
-		return fmt.Errorf("media-path 必须是现有目录")
+	if st, err := os.Stat(c.Path); err != nil || !st.IsDir() {
+		return Config{}, fieldError("media_path", "must be an existing directory")
 	}
-	// Resolve the nearest existing ancestor so a symlink cannot hide storage inside media.
-	parent := c.Storage
-	suffix := ""
+	if c.Storage, err = resolveStorage(c.Storage); err != nil {
+		return Config{}, err
+	}
+	database, err := resolveExisting(c.DatabasePath())
+	if err != nil {
+		return Config{}, fieldErr("storage", "resolve database", err)
+	}
+	configDir, err := filepath.EvalSymlinks(c.ConfigDir)
+	if err != nil {
+		return Config{}, fmt.Errorf("resolve configuration directory: %w", err)
+	}
+	for _, p := range []struct{ field, message, path string }{
+		{"storage", "must be outside media_path", c.Storage},
+		{"storage", "database must be outside media_path", database},
+		{"media_path", "must not contain the configuration directory", configDir},
+		{"tmp_storage", "must be outside media_path", c.TempStorage},
+	} {
+		if within(c.Path, p.path) {
+			return Config{}, fieldError(p.field, p.message)
+		}
+	}
+	if err := c.checkFrameCache(database, configDir); err != nil {
+		return Config{}, err
+	}
+	return c, nil
+}
+
+func (c Config) validateFields() error {
+	if net.ParseIP(c.Listen) == nil {
+		return fieldError("listen", "must be an IP address")
+	}
+	if c.Port < 1 || c.Port > 65535 {
+		return fieldError("port", "must be between 1 and 65535")
+	}
+	if strings.TrimSpace(c.Auth.Username) == "" {
+		return fieldError("auth.username", "is required")
+	}
+	if strings.TrimSpace(c.Auth.Password) == "" {
+		return fieldError("auth.password", "is required")
+	}
+	// configs/config.example.yaml ships this placeholder password.
+	if strings.Contains(c.Auth.Password, "请替换") {
+		return fieldError("auth.password", "must not be the example placeholder")
+	}
+	if strings.TrimSpace(c.Path) == "" {
+		return fieldError("media_path", "is required")
+	}
+	if strings.TrimSpace(c.Storage) == "" {
+		return fieldError("storage", "is required")
+	}
+	if strings.TrimSpace(c.TempStorage) == "" {
+		return fieldError("tmp_storage", "must not be empty")
+	}
+	switch c.Log.Level {
+	case "", "debug", "info", "warn", "error": // empty means info
+	default:
+		return fieldError("log.level", "must be debug, info, warn or error")
+	}
+	if c.Log.Format != "" && c.Log.Format != "json" && c.Log.Format != "text" { // empty means json
+		return fieldError("log.format", "must be json or text")
+	}
+	return nil
+}
+
+// resolveStorage resolves the nearest existing ancestor so a symlink cannot hide storage inside media.
+func resolveStorage(storage string) (string, error) {
+	parent, suffix := storage, ""
 	for {
-		_, err = os.Lstat(parent)
+		_, err := os.Lstat(parent)
 		if err == nil {
 			break
 		}
-		if !os.IsNotExist(err) {
-			return err
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", fieldErr("storage", "", err)
 		}
 		suffix = filepath.Join(filepath.Base(parent), suffix)
 		next := filepath.Dir(parent)
 		if next == parent {
-			return fmt.Errorf("storage 路径无效")
+			return "", fieldError("storage", "invalid path")
 		}
 		parent = next
 	}
 	real, err := filepath.EvalSymlinks(parent)
 	if err != nil {
-		return err
+		return "", fieldErr("storage", "", err)
 	}
-	st, err = os.Stat(real)
-	if err != nil || !st.IsDir() {
-		return fmt.Errorf("storage 必须是目录，请填写数据目录而不是数据库文件名")
+	if st, err := os.Stat(real); err != nil || !st.IsDir() {
+		return "", fieldError("storage", "must be a data directory, not a database file name")
 	}
-	c.Storage = filepath.Join(real, suffix)
-	// Also check an existing database symlink before opening it.
-	database := c.DatabasePath()
-	if _, e := os.Lstat(database); e == nil {
-		real, e := filepath.EvalSymlinks(database)
-		if e != nil {
-			return e
-		}
-		database = real
-	} else if !os.IsNotExist(e) {
-		return e
+	return filepath.Join(real, suffix), nil
+}
+
+// resolveExisting follows a symlink at path when one exists, so an existing
+// database link is checked before it is opened.
+func resolveExisting(path string) (string, error) {
+	_, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return path, nil
 	}
-	configDir, err := filepath.EvalSymlinks(c.ConfigDir)
 	if err != nil {
-		return err
+		return "", err
 	}
-	for _, p := range []string{c.Storage, database, configDir, c.TempStorage} {
-		rel, e := filepath.Rel(c.Path, p)
-		if e == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-			return fmt.Errorf("配置、storage 与 tmp-storage 不得位于媒体根目录内")
-		}
-	}
+	return filepath.EvalSymlinks(path)
+}
+
+// checkFrameCache keeps persistent paths out of the disposable cache namespace.
+func (c Config) checkFrameCache(database, configDir string) error {
 	cachePath := FrameCachePath(c.TempStorage)
 	if st, err := os.Lstat(cachePath); err == nil && st.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("截图缓存受管目录不能是符号链接")
-	} else if err != nil && !os.IsNotExist(err) {
-		return err
+		return fieldError("tmp_storage", "managed frame cache directory must not be a symlink")
+	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fieldErr("tmp_storage", "frame cache directory", err)
 	}
 	cacheRoot, err := resolveDirectory(cachePath)
 	if err != nil {
-		return fmt.Errorf("截图缓存目录: %w", err)
+		return fieldErr("tmp_storage", "frame cache directory", err)
 	}
 	// Only the generated cache namespace is disposable. Its parent may also
 	// contain configuration or storage, but none may live inside the namespace.
@@ -112,20 +194,22 @@ func (c *Config) ValidateService() error {
 	if c.ConfigFile != "" {
 		file, err := filepath.EvalSymlinks(c.ConfigFile)
 		if err != nil {
-			return err
+			return fmt.Errorf("resolve configuration file: %w", err)
 		}
 		protected = append(protected, file)
 	}
 	for _, p := range protected {
-		rel, err := filepath.Rel(cacheRoot, p)
-		if err != nil {
-			return err
-		}
-		if rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-			return fmt.Errorf("媒体、配置与 storage 不得位于截图缓存受管目录 %s 内", cacheRoot)
+		if within(cacheRoot, p) {
+			return fieldError("tmp_storage", fmt.Sprintf("managed frame cache directory %s must not contain media, configuration or storage", cacheRoot))
 		}
 	}
 	return nil
+}
+
+// within reports whether path is dir or lies below it.
+func within(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
 }
 
 // FrameCachePath is the disposable namespace shared by validation and cleanup.
@@ -134,7 +218,7 @@ func FrameCachePath(base string) string {
 }
 
 // DatabasePath keeps the on-disk filename internal; Storage always denotes a directory.
-func (c *Config) DatabasePath() string {
+func (c Config) DatabasePath() string {
 	return filepath.Join(c.Storage, "data.sqlite")
 }
 
@@ -146,12 +230,12 @@ func resolveDirectory(path string) (string, error) {
 		if err == nil {
 			break
 		}
-		if !os.IsNotExist(err) {
+		if !errors.Is(err, fs.ErrNotExist) {
 			return "", err
 		}
 		next := filepath.Dir(parent)
 		if next == parent {
-			return "", fmt.Errorf("目录路径无效")
+			return "", errors.New("invalid directory path")
 		}
 		suffix = filepath.Join(filepath.Base(parent), suffix)
 		parent = next
@@ -165,7 +249,7 @@ func resolveDirectory(path string) (string, error) {
 		return "", err
 	}
 	if !st.IsDir() {
-		return "", fmt.Errorf("必须指定目录")
+		return "", errors.New("not a directory")
 	}
 	return filepath.Join(real, suffix), nil
 }

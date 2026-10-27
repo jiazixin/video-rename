@@ -11,7 +11,7 @@ func TestDeleteFileAndDirectory(t *testing.T) {
 	l, root, _ := fixture(t)
 	outside := filepath.Join(t.TempDir(), "keep.txt")
 	put(t, outside)
-	if err := os.MkdirAll(filepath.Join(root, "folder", "nested"), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "folder", "nested"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	put(t, filepath.Join(root, "folder", "nested", "video.mp4"))
@@ -26,14 +26,14 @@ func TestDeleteFileAndDirectory(t *testing.T) {
 	refresh(t, l, nested.ID)
 	child := entry(t, l, nested.ID, "video.mp4")
 	for _, e := range []Entry{entry(t, l, 1, "single.txt"), dir} {
-		if err := l.Delete(e.ID, e.Version); err != nil {
+		if err := l.Delete(t.Context(), e.ID, e.Version); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := os.Lstat(filepath.Join(root, e.Name)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("target still exists: %v", err)
 		}
 	}
-	if _, err := l.Get(child.ID); err == nil {
+	if _, err := l.Get(t.Context(), child.ID); err == nil {
 		t.Fatal("deleted descendant remains accessible")
 	}
 	if _, err := os.Stat(outside); err != nil {
@@ -50,21 +50,21 @@ func TestDeleteRejectsChangedAndProtectedEntries(t *testing.T) {
 	put(t, filepath.Join(root, "video.mp4"))
 	refresh(t, l, 1)
 	e := entry(t, l, 1, "video.mp4")
-	if err := l.Delete(1, 1); err == nil {
+	if err := l.Delete(t.Context(), 1, 1); err == nil {
 		t.Fatal("allowed root deletion")
 	}
-	if err := l.Delete(e.ID, e.Version+1); err == nil {
+	if err := l.Delete(t.Context(), e.ID, e.Version+1); err == nil {
 		t.Fatal("allowed stale version")
 	}
 	l.Busy = func(int64) bool { return true }
-	if err := l.Delete(e.ID, e.Version); err == nil {
+	if err := l.Delete(t.Context(), e.ID, e.Version); err == nil {
 		t.Fatal("allowed busy deletion")
 	}
 	l.Busy = nil
-	if err := os.WriteFile(filepath.Join(root, e.Name), []byte("changed"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, e.Name), []byte("changed"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := l.Delete(e.ID, e.Version); err == nil {
+	if err := l.Delete(t.Context(), e.ID, e.Version); err == nil {
 		t.Fatal("allowed changed file deletion")
 	}
 	if _, err := os.Stat(filepath.Join(root, e.Name)); err != nil {

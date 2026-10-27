@@ -8,17 +8,17 @@ import (
 	"video-rename/internal/systemsettings"
 )
 
-func (a *App) libraryScanRoutes(mux *http.ServeMux) {
+func (a *App) libraryScanRoutes(mux *router) {
 	store := systemsettings.Store{DB: a.DB}
 	mux.HandleFunc("GET /api/library/scan", func(w http.ResponseWriter, r *http.Request) {
 		settings, err := store.Scan()
 		if err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
 		paths, err := a.Library.DisplayPaths(r.Context(), append(slices.Clone(settings.Targets), settings.ExcludedTargets...))
 		if err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
 		send(w, http.StatusOK, map[string]any{"settings": settings, "status": a.Scanner.Snapshot(), "directory_paths": paths})
@@ -29,19 +29,19 @@ func (a *App) libraryScanRoutes(mux *http.ServeMux) {
 			return
 		}
 		if err := settings.Validate(); err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
 		targets, err := a.Scanner.ValidateTargets(r.Context(), settings.Targets)
 		if err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
 		settings.Targets = targets
 		if len(settings.ExcludedTargets) > 0 {
 			excluded, err := a.Scanner.ValidateTargets(r.Context(), settings.ExcludedTargets)
 			if err != nil {
-				failure(w, fmt.Errorf("排除目录无效：%w", err))
+				writeError(w, r, fmt.Errorf("excluded targets: %w", err))
 				return
 			}
 			settings.ExcludedTargets = excluded
@@ -50,7 +50,7 @@ func (a *App) libraryScanRoutes(mux *http.ServeMux) {
 		err = store.SaveScan(settings)
 		a.settingsMu.Unlock()
 		if err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
 		a.Scanner.SettingsChanged()
@@ -65,7 +65,7 @@ func (a *App) libraryScanRoutes(mux *http.ServeMux) {
 		}
 		status, err := a.Scanner.Start(a.ctx, body.Targets, "manual")
 		if err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
 		send(w, http.StatusAccepted, status)
@@ -80,7 +80,7 @@ func (a *App) libraryScanRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/directories/{id}/state", func(w http.ResponseWriter, r *http.Request) {
 		state, err := a.Library.DirectoryState(r.Context(), number(r.PathValue("id")))
 		if err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
 		send(w, http.StatusOK, state)

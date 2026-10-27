@@ -66,7 +66,7 @@ func TestFailureKeywordSnapshotPrimaryRetryAndFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := filepath.Join(root, "original.mp4")
-	if err = os.WriteFile(original, []byte("video"), 0600); err != nil {
+	if err = os.WriteFile(original, []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	m.Prepare = func(_ context.Context, _ *config.TaskConfig, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
@@ -78,7 +78,7 @@ func TestFailureKeywordSnapshotPrimaryRetryAndFallback(t *testing.T) {
 		}
 		return pipeline.Infer(ctx, cfg, frames)
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Key: "keyword-fallback-snapshot"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "keyword-fallback-snapshot"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,12 +109,12 @@ func TestFailureKeywordSnapshotPrimaryRetryAndFallback(t *testing.T) {
 		t.Fatal(attempts, err)
 	}
 	for _, attempt := range attempts[itemID] {
-		if attempt.Status != "failed" || !strings.Contains(attempt.Message, keywords[0]) {
+		if attempt.Status != "failed" || !strings.Contains(attempt.Error.Message, keywords[0]) {
 			t.Fatal("attempt did not use custom phrase", attempt)
 		}
 	}
 	var message, response string
-	if err := m.DB.QueryRow("SELECT message,raw_response FROM events WHERE run=? AND category='failure'", id).Scan(&message, &response); err != nil || !strings.Contains(message, "命名失败") || !strings.Contains(response, "I CANNOT SEE THIS SCENE") {
+	if err := m.DB.QueryRow("SELECT message,raw_response FROM events WHERE run=? AND category='failure'", id).Scan(&message, &response); err != nil || !strings.Contains(message, `"code":"naming_failed"`) || !strings.Contains(response, "I CANNOT SEE THIS SCENE") {
 		t.Fatal("missing naming failure diagnostics", message, response, err)
 	}
 }
@@ -140,14 +140,14 @@ func TestDeletedFailureKeywordsStayDeletedInQueuedBatch(t *testing.T) {
 			if _, err := settingsStore.SaveFailureKeywords(rules); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(root, "original.mp4"), []byte("video"), 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(root, "original.mp4"), []byte("video"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			m.Prepare = func(_ context.Context, _ *config.TaskConfig, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
 				return fakeFrames(work)
 			}
 			m.Infer = pipeline.Infer
-			id, err := m.Create(Request{Targets: []int64{1}, Key: "deleted-rule-snapshot"}, "manual", 0)
+			id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "deleted-rule-snapshot"}, "manual", 0)
 			if err != nil {
 				t.Fatal(err)
 			}

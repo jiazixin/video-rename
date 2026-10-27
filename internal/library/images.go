@@ -1,13 +1,16 @@
 package library
 
 import (
+	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"strings"
+
+	"video-rename/internal/domain"
 )
 
+// IsImage reports whether name has an image extension.
 func IsImage(name string) bool {
 	return strings.Contains("|jpg|jpeg|png|gif|webp|avif|bmp|", "|"+strings.TrimPrefix(strings.ToLower(filepath.Ext(name)), ".")+"|")
 }
@@ -19,13 +22,13 @@ func IsAudio(name string) bool {
 
 // AdjacentImage reads a single neighboring image from the current directory index.
 // File names are unique within a live parent; the parent/name index bounds traversal.
-func (l *Library) AdjacentImage(id int64, previous bool) (Entry, error) {
-	current, err := l.Get(id)
+func (l *Library) AdjacentImage(ctx context.Context, id int64, previous bool) (Entry, error) {
+	current, err := l.Get(ctx, id)
 	if err != nil {
 		return Entry{}, err
 	}
 	if current.Kind != "file" || !IsImage(current.Name) {
-		return Entry{}, fmt.Errorf("当前文件不是图片")
+		return Entry{}, domain.Fail(domain.KindInvalid, "not_image", "entry is not an image")
 	}
 	order, compare := "ASC", ">"
 	if previous {
@@ -40,5 +43,5 @@ func (l *Library) AdjacentImage(id int64, previous bool) (Entry, error) {
 	if err != nil {
 		return Entry{}, err
 	}
-	return l.Get(next)
+	return l.Get(ctx, next)
 }

@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,19 +13,19 @@ import (
 func TestCacheMustNotDeleteMedia(t *testing.T) {
 	base := t.TempDir()
 	root := filepath.Join(base, "video-rename-frames-v1", "pending-videos")
-	if err := os.MkdirAll(root, 0700); err != nil {
+	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	source := filepath.Join(root, "precious.mp4")
-	if err := os.WriteFile(source, []byte("user media"), 0600); err != nil {
+	if err := os.WriteFile(source, []byte("user media"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.Config{Listen: "127.0.0.1", Port: 8790, Path: root, TempStorage: base, Storage: filepath.Join(base, "state"), ConfigDir: base, Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}
-	if err := cfg.ValidateService(); err != nil {
+	if err := cfg.Validate(); err != nil {
 		t.Logf("safely rejected: %v", err)
 		return
 	}
-	cache, err := framecache.New(cfg.TempStorage, 1<<30)
+	cache, err := framecache.New(cfg.TempStorage, 1<<30, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,12 +43,12 @@ func TestCacheNamespaceProtectsPersistentPaths(t *testing.T) {
 			protected := filepath.Join(managed, "pending-important")
 			media, state, conf := filepath.Join(base, "media"), filepath.Join(base, "state"), filepath.Join(base, "conf")
 			for _, path := range []string{protected, media, state, conf} {
-				if err := os.MkdirAll(path, 0700); err != nil {
+				if err := os.MkdirAll(path, 0o700); err != nil {
 					t.Fatal(err)
 				}
 			}
 			file := filepath.Join(protected, "precious")
-			if err := os.WriteFile(file, []byte("preserve"), 0600); err != nil {
+			if err := os.WriteFile(file, []byte("preserve"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			cfg := config.Config{Listen: "127.0.0.1", Port: 8790, Path: media, Storage: state, TempStorage: base, ConfigDir: conf, Auth: config.AuthConfig{Username: "admin", Password: "test"}}
@@ -74,14 +75,14 @@ func TestCacheNamespaceProtectsPersistentPaths(t *testing.T) {
 				cfg.Storage = filepath.Join(link, "new-state")
 			case "cache-link":
 				cfg.TempStorage = filepath.Join(base, "cache-parent")
-				if err := os.Mkdir(cfg.TempStorage, 0700); err != nil {
+				if err := os.Mkdir(cfg.TempStorage, 0o700); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.Symlink(managed, config.FrameCachePath(cfg.TempStorage)); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if err := cfg.ValidateService(); err == nil {
+			if err := cfg.Validate(); err == nil {
 				t.Fatal("accepted dangerous cache overlap")
 			}
 			raw, err := os.ReadFile(file)
@@ -97,14 +98,14 @@ func TestCacheNamespaceAllowsSiblingAndParentLayouts(t *testing.T) {
 		t.Run(suffix, func(t *testing.T) {
 			base := t.TempDir()
 			media := filepath.Join(base, suffix)
-			if err := os.MkdirAll(media, 0700); err != nil {
+			if err := os.MkdirAll(media, 0o700); err != nil {
 				t.Fatal(err)
 			}
 			cfg := config.Config{Listen: "127.0.0.1", Port: 8790, Path: media, Storage: filepath.Join(base, "state"), TempStorage: base, ConfigDir: base, Auth: config.AuthConfig{Username: "a", Password: "b"}}
-			if err := cfg.ValidateService(); err != nil {
+			if err := cfg.Validate(); err != nil {
 				t.Fatal(err)
 			}
-			cache, err := framecache.New(cfg.TempStorage, 1<<20)
+			cache, err := framecache.New(cfg.TempStorage, 1<<20, slog.New(slog.DiscardHandler))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -121,24 +122,20 @@ func TestCacheNamespaceProtectsSymlinkedConfigFile(t *testing.T) {
 	media := filepath.Join(base, "media")
 	managed := filepath.Join(config.FrameCachePath(base), "pending-config")
 	for _, p := range []string{media, managed} {
-		if err := os.MkdirAll(p, 0700); err != nil {
+		if err := os.MkdirAll(p, 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
 	file := filepath.Join(managed, "config.yaml")
-	raw := []byte("listen: 127.0.0.1\nport: 8790\nmedia-path: " + media + "\nstorage: " + filepath.Join(base, "state") + "\ntmp-storage: " + base + "\nauth:\n  username: a\n  password: b\n")
-	if err := os.WriteFile(file, raw, 0600); err != nil {
+	raw := []byte("listen: 127.0.0.1\nport: 8790\nmedia_path: " + media + "\nstorage: " + filepath.Join(base, "state") + "\ntmp_storage: " + base + "\nauth:\n  username: a\n  password: b\n")
+	if err := os.WriteFile(file, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(base, "config.yaml")
 	if err := os.Symlink(file, link); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := config.Load(link)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := cfg.ValidateService(); err == nil {
+	if _, err := config.Load(config.Source{Path: link, Explicit: true, WorkDir: base}); err == nil {
 		t.Fatal("accepted config file inside disposable namespace")
 	}
 	got, err := os.ReadFile(file)

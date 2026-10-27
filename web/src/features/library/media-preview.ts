@@ -1,3 +1,4 @@
+import { errorText } from '../../app/errors'
 import { computed, ref } from 'vue'
 import { api } from '../../app/api'
 import type { Entry, Page } from '../../app/contracts'
@@ -60,8 +61,9 @@ function useMediaQueue(
 
 // "3 / 12", or "3 / 1000+" when the folder holds more than the list loads.
 function position(queue: MediaQueue | null | undefined, current: Entry | undefined) {
-  const index = current && queue ? queue.items.findIndex((e) => e.id === current.id) : -1
-  return index < 0 ? '' : `${index + 1} / ${queue!.items.length}${queue!.complete ? '' : '+'}`
+  if (!current || !queue) return ''
+  const index = queue.items.findIndex((e) => e.id === current.id)
+  return index < 0 ? '' : `${index + 1} / ${queue.items.length}${queue.complete ? '' : '+'}`
 }
 
 export function useMediaPreview(query: () => MediaQuery) {
@@ -114,9 +116,10 @@ export function useMediaPreview(query: () => MediaQuery) {
     try {
       const direction = (query().sort === 'name_desc' ? !previous : previous) ? 'previous' : 'next'
       const next = await api<Entry>(`/entries/${id}/image-neighbor?direction=${direction}`)
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- the compared state can change while awaiting
       if (request === imageSequence && preview.value?.id === id) showImage(next)
     } catch (e) {
-      if (request === imageSequence) galleryError.value = (e as Error).message
+      if (request === imageSequence) galleryError.value = errorText(e)
     } finally {
       if (request === imageSequence) imageBusy.value = false
     }
@@ -125,7 +128,7 @@ export function useMediaPreview(query: () => MediaQuery) {
     if (!preview.value || e.altKey || e.ctrlKey || e.metaKey) return
     if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
       e.preventDefault()
-      switchImage(e.key === 'ArrowLeft' || e.key === 'ArrowUp')
+      void switchImage(e.key === 'ArrowLeft' || e.key === 'ArrowUp')
     }
   }
   const videoBusy = ref(false),
@@ -199,7 +202,7 @@ export function useMediaPreview(query: () => MediaQuery) {
         last: Entry | undefined,
         found = false
       // Read the same ordered, filtered directory across page boundaries.
-      while (true) {
+      for (;;) {
         const params = new URLSearchParams({
           offset: String(offset),
           limit: '200',
@@ -210,6 +213,7 @@ export function useMediaPreview(query: () => MediaQuery) {
           generation
         })
         const result = await api<Page>(`/directories/${query().directory}/entries?${params}`)
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- the compared state can change while awaiting
         if (request !== list.token.value || list.current.value?.id !== id) return
         for (const entry of result.items) {
           if (entry.kind !== 'file' || !list.match(entry)) continue
@@ -237,7 +241,7 @@ export function useMediaPreview(query: () => MediaQuery) {
         generation = result.generation
       }
     } catch (e) {
-      if (request === list.token.value) list.notice.value = (e as Error).message
+      if (request === list.token.value) list.notice.value = errorText(e)
     } finally {
       if (request === list.token.value) list.busy.value = false
     }

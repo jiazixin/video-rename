@@ -1,12 +1,13 @@
 package app
 
 import (
-	"fmt"
 	"net/http"
+
+	"video-rename/internal/domain"
 	"video-rename/internal/library"
 )
 
-func (a *App) libraryRoutes(api *http.ServeMux) {
+func (a *App) libraryRoutes(api *router) {
 	api.HandleFunc("GET /api/directories/{id}/entries", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		var p library.Page
@@ -17,21 +18,21 @@ func (a *App) libraryRoutes(api *http.ServeMux) {
 			p, err = a.Library.ListOrdered(r.Context(), number(r.PathValue("id")), int(number(q.Get("offset"))), int(number(q.Get("limit"))), number(q.Get("generation")), q.Get("q"), q.Get("kind"), q.Get("status"), false, q.Get("sort"))
 		}
 		if err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
 		withProgress, err := a.Library.WithProgressBatch(r.Context(), append(p.Items, p.Directory))
 		if err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
 		p.Items = withProgress[:len(withProgress)-1]
 		p.Directory = withProgress[len(withProgress)-1]
-		send(w, 200, p)
+		send(w, http.StatusOK, p)
 	})
 	api.HandleFunc("POST /api/directories/{id}/refresh", func(w http.ResponseWriter, r *http.Request) {
 		a.Library.StartRefresh(a.ctx, number(r.PathValue("id")))
-		send(w, 202, map[string]bool{"ok": true})
+		w.WriteHeader(http.StatusAccepted)
 	})
 	api.HandleFunc("DELETE /api/entries/{id}", func(w http.ResponseWriter, r *http.Request) {
 		var v struct {
@@ -42,14 +43,14 @@ func (a *App) libraryRoutes(api *http.ServeMux) {
 			return
 		}
 		if !v.Confirmed {
-			failure(w, fmt.Errorf("请先确认永久删除"))
+			invalid(w, r, "confirmed", "confirmation_required")
 			return
 		}
-		if err := a.Library.Delete(number(r.PathValue("id")), v.Version); err != nil {
-			failure(w, err)
+		if err := a.Library.Delete(r.Context(), number(r.PathValue("id")), v.Version); err != nil {
+			writeError(w, r, err)
 			return
 		}
-		send(w, 200, map[string]bool{"ok": true})
+		w.WriteHeader(http.StatusNoContent)
 	})
 	api.HandleFunc("POST /api/entries/{id}/rename", func(w http.ResponseWriter, r *http.Request) {
 		var v struct {
@@ -61,21 +62,21 @@ func (a *App) libraryRoutes(api *http.ServeMux) {
 			return
 		}
 		id := number(r.PathValue("id"))
-		o, err := a.Library.Rename(id, v.Version, v.Name, v.Key)
+		o, err := a.Library.Rename(r.Context(), id, v.Version, v.Name, v.Key)
 		if err != nil {
-			_ = a.Library.Event("failure", "manual", id, 0, 0, a.Library.Relative(id), "", err.Error())
-			failure(w, err)
+			_ = a.Library.Event("failure", "manual", id, 0, 0, a.Library.Relative(id), "", domain.RecordText(err))
+			writeError(w, r, err)
 			return
 		}
-		send(w, 200, o)
+		send(w, http.StatusOK, o)
 	})
 	api.HandleFunc("GET /api/entries/{id}/history", func(w http.ResponseWriter, r *http.Request) {
 		v, err := a.Library.History(r.Context(), number(r.PathValue("id")), number(r.URL.Query().Get("before")))
 		if err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
-		send(w, 200, v)
+		send(w, http.StatusOK, v)
 	})
 	api.HandleFunc("POST /api/operations/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
 		var v struct {
@@ -84,12 +85,12 @@ func (a *App) libraryRoutes(api *http.ServeMux) {
 		if !decode(w, r, &v) {
 			return
 		}
-		o, err := a.Library.Restore(number(r.PathValue("id")), v.Key)
+		o, err := a.Library.Restore(r.Context(), number(r.PathValue("id")), v.Key)
 		if err != nil {
-			_ = a.Library.Event("failure", "restore", 0, number(r.PathValue("id")), 0, "", "", err.Error())
-			failure(w, err)
+			_ = a.Library.Event("failure", "restore", 0, number(r.PathValue("id")), 0, "", "", domain.RecordText(err))
+			writeError(w, r, err)
 			return
 		}
-		send(w, 200, o)
+		send(w, http.StatusOK, o)
 	})
 }

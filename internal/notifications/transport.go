@@ -6,13 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json/v2"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"video-rename/internal/domain"
 )
 
 func request(c Credentials, kind, title, body string) (string, any) {
@@ -66,24 +67,24 @@ func deliver(client *http.Client, c Credentials, kind, title, body string) error
 	endpoint, payload := request(c, kind, title, body)
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("通知内容编码失败")
+		return domain.Fail(domain.KindInternal, "notification_failed", "encode notification", "reason", "encode")
 	}
 	req, err := http.NewRequest("POST", endpoint, bytes.NewReader(raw))
 	if err != nil {
-		return fmt.Errorf("通知地址无效")
+		return domain.Fail(domain.KindInvalid, "notification_failed", "notification endpoint is invalid", "reason", "invalid_endpoint")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	res, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("通知连接失败或超时，请检查地址和网络")
+		return domain.Fail(domain.KindUnavailable, "notification_failed", "notification connection failed or timed out", "reason", "unreachable")
 	}
 	defer res.Body.Close()
 	raw, err = io.ReadAll(io.LimitReader(res.Body, 65537))
 	if err != nil || len(raw) > 65536 {
-		return fmt.Errorf("通知响应无法读取或过大")
+		return domain.Fail(domain.KindUnavailable, "notification_failed", "notification response unreadable or too large", "reason", "response_unreadable")
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return fmt.Errorf("通知服务返回 HTTP %d", res.StatusCode)
+		return domain.Fail(domain.KindUnavailable, "notification_failed", "notification service returned an error status", "reason", "http_status", "status", res.StatusCode)
 	}
 	if kind == "webhook" {
 		return nil
@@ -94,7 +95,7 @@ func deliver(client *http.Client, c Credentials, kind, title, body string) error
 		Code    *int  `json:"code"`
 	}
 	if json.Unmarshal(raw, &answer) != nil {
-		return fmt.Errorf("通知服务响应格式无效")
+		return domain.Fail(domain.KindUnavailable, "notification_failed", "notification response is malformed", "reason", "response_invalid")
 	}
 	switch kind {
 	case "telegram":
@@ -110,5 +111,5 @@ func deliver(client *http.Client, c Credentials, kind, title, body string) error
 			return nil
 		}
 	}
-	return fmt.Errorf("通知服务拒绝发送，请检查机器人权限、目标或安全设置")
+	return domain.Fail(domain.KindUnavailable, "notification_failed", "notification service rejected the message", "reason", "rejected")
 }

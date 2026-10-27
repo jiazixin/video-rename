@@ -1,7 +1,7 @@
 package models
 
 import (
-	"fmt"
+	"video-rename/internal/domain"
 	"video-rename/internal/storage"
 )
 
@@ -17,7 +17,7 @@ func (s Store) Duplicate(id int64) (Profile, error) {
 		return Profile{}, err
 	}
 	if count >= 200 {
-		return Profile{}, fmt.Errorf("最多保存 200 条模型配置")
+		return Profile{}, domain.Fail(domain.KindTooMany, "model_configs_full", "at most 200 model configurations")
 	}
 	res, err := tx.Exec(`INSERT INTO model_configs(title,prompt_id,created,updated,settings,api_key) SELECT substr(title,1,75)||' 副本',prompt_id,?,?,settings,api_key FROM model_configs WHERE id=?`, storage.Now(), storage.Now(), id)
 	if err != nil {
@@ -25,7 +25,7 @@ func (s Store) Duplicate(id int64) (Profile, error) {
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return Profile{}, fmt.Errorf("模型配置不存在")
+		return Profile{}, domain.Fail(domain.KindNotFound, "model_config_not_found", "model configuration does not exist")
 	}
 	next, err := res.LastInsertId()
 	if err != nil {
@@ -36,6 +36,8 @@ func (s Store) Duplicate(id int64) (Profile, error) {
 	}
 	return s.Get(next)
 }
+
+// Delete deletes model profile id if its version is still version.
 func (s Store) Delete(id, version int64) error {
 	tx, err := s.DB.Begin()
 	if err != nil {
@@ -44,27 +46,27 @@ func (s Store) Delete(id, version int64) error {
 	defer tx.Rollback()
 	var current, selected int64
 	if err = tx.QueryRow("SELECT version,is_default FROM model_configs WHERE id=?", id).Scan(&current, &selected); err != nil {
-		return fmt.Errorf("模型配置不存在")
+		return domain.Fail(domain.KindNotFound, "model_config_not_found", "model configuration does not exist")
 	}
 	if current != version {
-		return fmt.Errorf("模型配置已修改，请刷新后重试")
+		return domain.Fail(domain.KindConflict, "model_config_changed", "model configuration was modified; refresh")
 	}
 	if selected != 0 {
-		return fmt.Errorf("请先将其他模型配置设为全局默认，再删除此配置")
+		return domain.Fail(domain.KindConflict, "model_config_is_default", "the default model configuration cannot be deleted")
 	}
 	var fallback int
 	if err = tx.QueryRow("SELECT count(*) FROM system_settings WHERE json_extract(NULLIF(policy,''),'$.fallback_model_id')=?", id).Scan(&fallback); err != nil {
 		return err
 	}
 	if fallback > 0 {
-		return fmt.Errorf("请先在处理与缓存中更换或取消兜底模型，再删除此配置")
+		return domain.Fail(domain.KindConflict, "model_config_is_fallback", "the fallback model configuration cannot be deleted")
 	}
 	var plans int
 	if err = tx.QueryRow("SELECT count(*) FROM schedules WHERE model_config_id=?", id).Scan(&plans); err != nil {
 		return err
 	}
 	if plans > 0 {
-		return fmt.Errorf("有 %d 个运行计划使用此配置，请先更换计划中的模型配置", plans)
+		return domain.Fail(domain.KindConflict, "model_config_in_use", "model configuration is used by schedules", "plans", plans)
 	}
 	if _, err = tx.Exec("DELETE FROM model_configs WHERE id=?", id); err != nil {
 		return err

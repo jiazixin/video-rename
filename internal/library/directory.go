@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
 	"video-rename/internal/domain"
 )
 
@@ -19,7 +20,7 @@ func (l *Library) openDirectory(id int64) (*os.File, error) {
 	seen := map[int64]bool{}
 	for {
 		if id <= 0 || seen[id] || len(chain) > 1024 {
-			return nil, fmt.Errorf("目录关系无效")
+			return nil, errBadHierarchy
 		}
 		seen[id] = true
 		e, err := l.IndexedEntry(id)
@@ -27,10 +28,10 @@ func (l *Library) openDirectory(id int64) (*os.File, error) {
 			return nil, err
 		}
 		if e.Kind != "directory" {
-			return nil, fmt.Errorf("不是目录")
+			return nil, errNotDirectory
 		}
 		if id != 1 && (e.Name == "." || e.Name == ".." || filepath.Base(e.Name) != e.Name || e.Name == "") {
-			return nil, fmt.Errorf("非法路径")
+			return nil, errIllegalPath
 		}
 		chain = append(chain, e)
 		if id == 1 {
@@ -49,7 +50,7 @@ func (l *Library) openDirectory(id int64) (*os.File, error) {
 			dir.Close()
 		}
 		if err != nil {
-			return nil, fmt.Errorf("打开媒体目录失败: %w", err)
+			return nil, fmt.Errorf("open media directory: %w", err)
 		}
 		dir = os.NewFile(uintptr(fd), name)
 		info, err := dir.Stat()
@@ -57,7 +58,7 @@ func (l *Library) openDirectory(id int64) (*os.File, error) {
 			var snap domain.Snapshot
 			snap, err = domain.SnapshotFromInfo(info)
 			if err == nil && Identity(snap) != e.Identity {
-				err = fmt.Errorf("目录身份已变化，请刷新")
+				err = errIdentityChanged
 			}
 		}
 		if err != nil {
@@ -70,14 +71,14 @@ func (l *Library) openDirectory(id int64) (*os.File, error) {
 
 func directorySnapshot(dir *os.File, name string) (domain.Snapshot, error) {
 	if name == "." || name == ".." || filepath.Base(name) != name || name == "" {
-		return domain.Snapshot{}, fmt.Errorf("非法文件名")
+		return domain.Snapshot{}, errIllegalPath
 	}
 	var st unix.Stat_t
 	if err := unix.Fstatat(int(dir.Fd()), name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return domain.Snapshot{}, err
 	}
 	if st.Mode&unix.S_IFMT != unix.S_IFREG && st.Mode&unix.S_IFMT != unix.S_IFDIR {
-		return domain.Snapshot{}, fmt.Errorf("不允许操作符号链接或特殊文件")
+		return domain.Snapshot{}, errSymlink
 	}
 	return domain.Snapshot{Dev: uint64(st.Dev), Ino: uint64(st.Ino), Size: st.Size, ModTime: time.Unix(st.Mtim.Sec, st.Mtim.Nsec)}, nil
 }

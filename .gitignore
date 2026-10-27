@@ -4,10 +4,7 @@
 /coverage/
 /test-results/
 
-# 本地运行状态与配置；当前默认入口为 configs/config.local.yaml
-/logs/
-/config.yaml
-/config.*.yaml
+# 本地运行配置；默认入口为 configs/config.local.yaml
 /configs/config.local.yaml
 
 # 编辑器与系统文件

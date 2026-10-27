@@ -12,7 +12,7 @@ func TestMultiSelectCreatesOneRun(t *testing.T) {
 		t.Run(task, func(t *testing.T) {
 			m, root := setup(t)
 			for i := range 230 {
-				if err := os.Mkdir(filepath.Join(root, fmt.Sprintf("folder-%03d", i)), 0700); err != nil {
+				if err := os.Mkdir(filepath.Join(root, fmt.Sprintf("folder-%03d", i)), 0o700); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -37,11 +37,11 @@ func TestMultiSelectCreatesOneRun(t *testing.T) {
 				t.Fatalf("targets=%d err=%v", len(targets), err)
 			}
 			request := Request{Task: task, Targets: targets, Recursive: true, Key: "multi-select-one-run"}
-			id, err := m.Create(request, "manual", 0)
+			id, err := m.Create(t.Context(), request, "manual", 0)
 			if err != nil {
 				t.Fatal(err)
 			}
-			same, err := m.Create(request, "manual", 0)
+			same, err := m.Create(t.Context(), request, "manual", 0)
 			if err != nil || same != id {
 				t.Fatalf("repeat=%d want=%d err=%v", same, id, err)
 			}
@@ -56,7 +56,7 @@ func TestMultiSelectCreatesOneRun(t *testing.T) {
 				t.Fatalf("submission scanned items=%d err=%v", items, err)
 			}
 			request.Key = "overlapping-selection"
-			if _, err := m.Create(request, "manual", 0); err == nil {
+			if _, err := m.Create(t.Context(), request, "manual", 0); err == nil {
 				t.Fatal("overlapping active run accepted")
 			}
 		})

@@ -1,8 +1,8 @@
 //go:build integration
 
-// 真实 ffmpeg/ffprobe 集成测试。
-// 运行:go test -tags=integration ./internal/media/
-// 缺少外部工具时跳过并说明原因。
+// Integration tests with real ffmpeg and ffprobe.
+// Run: go test -tags=integration ./internal/media/
+// They skip with a reason when external tools are missing.
 package media
 
 import (
@@ -26,7 +26,7 @@ func lookTool(t *testing.T, name string) string {
 	return p
 }
 
-// genVideo 用 lavfi 源生成测试视频。
+// genVideo generates a test video from a lavfi source.
 func genVideo(t *testing.T, path, size string, d time.Duration, extra ...string) {
 	t.Helper()
 	ff := lookTool(t, "ffmpeg")
@@ -92,7 +92,7 @@ func TestIntegrationProbeAndExtractLandscape(t *testing.T) {
 		t.Fatalf("应提取 4 帧: %d (failed=%+v warn=%v)", len(set.Frames), set.Failed, set.Warn)
 	}
 	for i, fr := range set.Frames {
-		// 640x360 < 768:不放大
+		// 640x360 < 768: no upscaling
 		if fr.Width != 640 || fr.Height != 360 {
 			t.Errorf("帧 %d 尺寸 %dx%d, 期望 640x360(不放大)", i, fr.Width, fr.Height)
 		}
@@ -136,7 +136,7 @@ func TestIntegrationExtractPortrait4K(t *testing.T) {
 func TestIntegrationExtractSAR(t *testing.T) {
 	dir := t.TempDir()
 	video := filepath.Join(dir, "sar.mp4")
-	// 640x360 + SAR 2:1 → 显示 1280x360,缩放后 768x216
+	// 640x360 + SAR 2:1 → display 1280x360, scaled to 768x216
 	genVideo(t, video, "640x360", 3*time.Second, "-vf", "setsar=2/1")
 
 	prober := &Prober{FFprobePath: lookTool(t, "ffprobe")}

@@ -15,7 +15,7 @@ import (
 // dropped once the item reaches a final state.
 func TestLiveStageFollowsRetries(t *testing.T) {
 	m, root := setup(t)
-	if err := os.WriteFile(filepath.Join(root, "a.MP4"), []byte("video"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "a.MP4"), []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	m.Prepare = func(_ context.Context, _ *config.TaskConfig, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
@@ -37,7 +37,7 @@ func TestLiveStageFollowsRetries(t *testing.T) {
 		}
 		return "新标题", nil
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "live-retry"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "live-retry"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

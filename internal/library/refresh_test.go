@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+
 	"video-rename/internal/domain"
 )
 
@@ -102,7 +103,7 @@ func TestRefreshEmptyDirectoryKeepsCompleteGeneration(t *testing.T) {
 	}
 	refresh(t, l, 1)
 	after, err := l.DirectoryState(t.Context(), 1)
-	if err != nil || after.Generation != before.Generation || after.Error != "" {
+	if err != nil || after.Generation != before.Generation || after.Error.Message != "" {
 		t.Fatalf("unchanged empty directory received a new generation: before=%+v after=%+v error=%v", before, after, err)
 	}
 }
@@ -120,7 +121,7 @@ func TestRefreshMetadataChangesPublishNewGeneration(t *testing.T) {
 			}
 			old := entry(t, l, 1, "a.mp4")
 			if change == "size" {
-				if err := os.WriteFile(path, []byte("changed video fixture"), 0600); err != nil {
+				if err := os.WriteFile(path, []byte("changed video fixture"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			} else {
@@ -159,7 +160,7 @@ func TestRefreshRetryPreservesEntriesUntilCompleteObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := entry(t, l, 1, "a.mp4")
-	if err := os.WriteFile(path, []byte("changed video fixture"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("changed video fixture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := os.ReadDir(root)
@@ -179,7 +180,7 @@ func TestRefreshRetryPreservesEntriesUntilCompleteObservation(t *testing.T) {
 		t.Fatalf("partial refresh returned %v, want %v", err, wantErr)
 	}
 	partial, err := l.DirectoryState(t.Context(), 1)
-	if err != nil || partial.Generation != before.Generation || partial.Error == "" {
+	if err != nil || partial.Generation != before.Generation || partial.Error.Message == "" {
 		t.Fatalf("partial refresh lost published state: %+v %v", partial, err)
 	}
 	updated := entry(t, l, 1, old.Name)
@@ -188,7 +189,7 @@ func TestRefreshRetryPreservesEntriesUntilCompleteObservation(t *testing.T) {
 	}
 	refresh(t, l, 1)
 	after, err := l.DirectoryState(t.Context(), 1)
-	if err != nil || after.Generation == before.Generation || after.Error != "" {
+	if err != nil || after.Generation == before.Generation || after.Error.Message != "" {
 		t.Fatalf("retry mistook live entries for the published generation: before=%+v after=%+v error=%v", before, after, err)
 	}
 	current := entry(t, l, 1, old.Name)

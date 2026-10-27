@@ -2,7 +2,9 @@ package library
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,11 +14,20 @@ import (
 	"video-rename/internal/storage"
 )
 
-func (l *Library) PreviewNumberingContext(ctx context.Context, parent int64, media, query, sortBy string, settings domain.NumberingSettings) (Numbering, error) {
-	return l.PreviewNumberingFilteredContext(ctx, parent, media, query, "", sortBy, settings)
+// NumberingRequest selects the entries a numbering preview covers.
+type NumberingRequest struct {
+	Parent   int64
+	Media    string // image, audio or mixed
+	Query    string // name filter; empty for all
+	Status   string // processing status filter; empty for all
+	Sort     string
+	Settings domain.NumberingSettings
 }
 
-func (l *Library) PreviewNumberingFilteredContext(ctx context.Context, parent int64, media, query, status, sortBy string, settings domain.NumberingSettings) (Numbering, error) {
+// PreviewNumbering previews numbering of the media under req.Parent that match
+// req.Query and req.Status, in req.Sort order.
+func (l *Library) PreviewNumbering(ctx context.Context, req NumberingRequest) (Numbering, error) {
+	parent, media, query, status, sortBy, settings := req.Parent, req.Media, req.Query, req.Status, req.Sort, req.Settings
 	statusFilter, err := processingStatusFilter(status)
 	if err != nil {
 		return Numbering{}, err
@@ -43,15 +54,15 @@ func (l *Library) PreviewNumberingFilteredContext(ctx context.Context, parent in
 	if err = l.CheckAvailable(parent); err != nil {
 		return Numbering{}, err
 	}
-	dir, err := l.Get(parent)
+	dir, err := l.Get(ctx, parent)
 	if err != nil {
 		return Numbering{}, err
 	}
 	if dir.Kind != "directory" {
-		return Numbering{}, fmt.Errorf("不是目录")
+		return Numbering{}, errNotDirectory
 	}
 	if l.Busy != nil && l.Busy(parent) {
-		return Numbering{}, fmt.Errorf("目录有活动任务，请等待任务完成")
+		return Numbering{}, domain.Fail(domain.KindConflict, "descendant_busy", "a descendant has an active job")
 	}
 	path, err := l.Path(parent)
 	if err != nil {
@@ -94,7 +105,7 @@ func (l *Library) PreviewNumberingFilteredContext(ctx context.Context, parent in
 		if err := ctx.Err(); err != nil {
 			return Numbering{}, err
 		}
-		e, err := l.Get(c.id)
+		e, err := l.Get(ctx, c.id)
 		if err != nil {
 			return Numbering{}, err
 		}
@@ -105,7 +116,7 @@ func (l *Library) PreviewNumberingFilteredContext(ctx context.Context, parent in
 		if sameClass {
 			item := NumberingItem{Identity: e.Identity, Size: e.Size, Mtime: e.Mtime}
 			if !numberingMatch(filepath.Join(path, e.Name), item) {
-				return Numbering{}, fmt.Errorf("%s已变化，请刷新目录后重试", m.label)
+				return Numbering{}, domain.Fail(domain.KindConflict, "numbering_media_changed", "a file changed; refresh the directory", "media", m.value)
 			}
 		}
 		indexed[e.Name] = true
@@ -127,7 +138,7 @@ func (l *Library) PreviewNumberingFilteredContext(ctx context.Context, parent in
 			continue
 		}
 		if m.match(e.Name()) || (settings.Shared && peer.match(e.Name())) {
-			return Numbering{}, fmt.Errorf("%s索引不完整，请刷新目录后重试", m.label)
+			return Numbering{}, domain.Fail(domain.KindConflict, "numbering_index_incomplete", "the index is incomplete; refresh the directory", "media", m.value)
 		}
 	}
 	after, err := directoryFingerprint(path)
@@ -135,17 +146,17 @@ func (l *Library) PreviewNumberingFilteredContext(ctx context.Context, parent in
 		return Numbering{}, err
 	}
 	if before != after {
-		return Numbering{}, fmt.Errorf("目录已变化，请重新预览")
+		return Numbering{}, domain.Fail(domain.KindConflict, "directory_changed", "directory changed; preview again")
 	}
 	if len(selected) == 0 {
-		return Numbering{}, fmt.Errorf("当前筛选下没有可编号的%s", m.label)
+		return Numbering{}, domain.Fail(domain.KindInvalid, "numbering_nothing_selected", "no file to number in the current filter", "media", m.value)
 	}
 	items := numberingNames(selected, outside, peers, rules, peerRules.Prefix)
 	if media == "mixed" {
 		items = mixedNumberingNames(selected, outside, settings)
 	}
 	b := Numbering{ID: numberingToken(), Parent: parent, Created: storage.Now(), Status: "preview", Fingerprint: before, Media: m.value, Items: items}
-	return l.saveNumberingPreviewContext(ctx, b, path)
+	return l.saveNumberingPreview(ctx, b, path)
 }
 
 // Resolve an occupied target using only names returned by ReadDir. Looking up a
@@ -168,15 +179,15 @@ func numberingTargetMoves(name string, names map[string][]string, changed map[st
 // dialog so a conflict can be inspected before any file is renamed.
 func numberingConflict(path string, b Numbering, item NumberingItem, target os.FileInfo, candidates []string) error {
 	var detail strings.Builder
-	fmt.Fprintf(&detail, "编号目标冲突诊断\n目录：%q\n原文件名：%q\n目标文件名：%q\n媒体类型：%s\n参与文件：%d；计划改名：%d\n原文件索引身份：%s\n原文件大小：%d 字节\n原文件修改时间：%s\n", path, item.Old, item.New, b.Media, len(b.Items), b.Changed, item.Identity, item.Size, item.Mtime)
-	fmt.Fprintf(&detail, "目标类型：%s\n目标大小：%d 字节\n", kindOf(target), target.Size())
+	fmt.Fprintf(&detail, "numbering target conflict\ndirectory: %q\noriginal name: %q\ntarget name: %q\nmedia: %s\nfiles: %d; planned renames: %d\nindexed identity: %s\nsize: %d bytes\nmtime: %s\n", path, item.Old, item.New, b.Media, len(b.Items), b.Changed, item.Identity, item.Size, item.Mtime)
+	fmt.Fprintf(&detail, "target kind: %s\ntarget size: %d bytes\n", kindOf(target), target.Size())
 	if snap, err := domain.SnapshotFromInfo(target); err == nil {
-		fmt.Fprintf(&detail, "目标身份：%s\n", Identity(snap))
+		fmt.Fprintf(&detail, "target identity: %s\n", Identity(snap))
 	}
 	// Reuse the target and name candidates from the failed check. Only inspect
 	// matching names, rather than statting every unrelated file for diagnostics.
 	if len(candidates) == 0 {
-		fmt.Fprintln(&detail, "目标路径查询成功，但目录列表中没有同名或大小写匹配项；两次读取结果不一致，尚不能确定原因。")
+		fmt.Fprintln(&detail, "the target path exists, but the directory listing has no exact or case-insensitive match; the two reads disagree and the cause is unknown.")
 	}
 	for _, name := range candidates {
 		actual := target
@@ -184,34 +195,29 @@ func numberingConflict(path string, b Numbering, item NumberingItem, target os.F
 			var err error
 			actual, err = os.Lstat(filepath.Join(path, name))
 			if err != nil {
-				fmt.Fprintf(&detail, "读取大小写匹配项 %q 失败：%v\n", name, err)
+				fmt.Fprintf(&detail, "read case-insensitive match %q: %v\n", name, err)
 				continue
 			}
 		}
-		fmt.Fprintf(&detail, "与目标路径身份相同：%t\n", os.SameFile(target, actual))
+		fmt.Fprintf(&detail, "same file as the target path: %t\n", os.SameFile(target, actual))
 		if snapshot, err := domain.SnapshotFromInfo(actual); err == nil {
-			fmt.Fprintf(&detail, "实际条目身份：%s；大小：%d；修改时间：%s\n", Identity(snapshot), snapshot.Size, stamp(snapshot))
+			fmt.Fprintf(&detail, "entry identity: %s; size: %d; mtime: %s\n", Identity(snapshot), snapshot.Size, stamp(snapshot))
 		}
-		fmt.Fprintf(&detail, "占用条目实际名称：%q（%s）\n", name, kindOf(actual))
-		participation := "未参与本次编号"
+		fmt.Fprintf(&detail, "occupying entry: %q (%s)\n", name, kindOf(actual))
+		participation := "not part of this numbering"
 		for _, planned := range b.Items {
 			if planned.Old == name {
-				participation = fmt.Sprintf("参与本次编号，计划 %q → %q", planned.Old, planned.New)
+				participation = fmt.Sprintf("part of this numbering, planned %q -> %q", planned.Old, planned.New)
 				break
 			}
 		}
-		fmt.Fprintf(&detail, "占用条目状态：%s\n", participation)
+		fmt.Fprintf(&detail, "occupying entry status: %s\n", participation)
 	}
-	fmt.Fprintln(&detail, "此次预览未修改文件；程序跳过识别为目录或符号链接的条目，其名称仍可能占用编号目标。网络共享返回的文件类型可能与服务端实际类型不同。")
-	return &domain.JobError{Code: domain.CodeRenameConflict, Message: fmt.Sprintf("目标 %s 被未参与本次改名的文件或目录占用（原文件：%s）", item.New, item.Old), ProcessingLog: detail.String()}
+	fmt.Fprintln(&detail, "This preview changed no file. Entries seen as directories or symbolic links are skipped but their names can still occupy a target. Network shares can report file types that differ from the server.")
+	return &domain.JobError{Code: domain.CodeRenameConflict, Message: fmt.Sprintf("target %s is occupied by an entry outside this numbering (source %s)", item.New, item.Old), Details: map[string]any{"reason": "target_occupied", "from": item.Old, "to": item.New}, ProcessingLog: detail.String()}
 }
 
-func (l *Library) saveNumberingPreview(b Numbering, path string) (Numbering, error) {
-	return l.saveNumberingPreviewContext(context.Background(), b, path)
-}
-
-func (l *Library) saveNumberingPreviewContext(ctx context.Context, b Numbering, path string) (Numbering, error) {
-	label := mediaLabel(b.Media)
+func (l *Library) saveNumberingPreview(ctx context.Context, b Numbering, path string) (Numbering, error) {
 	changed := map[string]NumberingItem{}
 	identities := map[string]bool{}
 	for _, i := range b.Items {
@@ -219,7 +225,7 @@ func (l *Library) saveNumberingPreviewContext(ctx context.Context, b Numbering, 
 			return Numbering{}, err
 		}
 		if identities[i.Identity] {
-			return Numbering{}, fmt.Errorf("%s包含硬链接，无法安全整批编号", label)
+			return Numbering{}, domain.Fail(domain.KindConflict, "numbering_hard_link", "files with hard links cannot be numbered safely", "media", b.Media)
 		}
 		identities[i.Identity] = true
 		if i.Old != i.New {
@@ -243,8 +249,8 @@ func (l *Library) saveNumberingPreviewContext(ctx context.Context, b Numbering, 
 		i := &b.Items[idx]
 		i.Current = i.Old
 		i.Temp = ".video-rename-" + b.ID + fmt.Sprintf("-%d.tmp", idx)
-		if _, err := os.Lstat(filepath.Join(path, i.Temp)); !os.IsNotExist(err) {
-			return Numbering{}, fmt.Errorf("临时名称冲突，请重新预览")
+		if _, err := os.Lstat(filepath.Join(path, i.Temp)); !errors.Is(err, fs.ErrNotExist) {
+			return Numbering{}, domain.Fail(domain.KindConflict, "numbering_temp_conflict", "temporary name conflict; preview again")
 		}
 		if i.Old == i.New {
 			continue

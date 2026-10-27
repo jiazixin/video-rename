@@ -1,23 +1,25 @@
 package config
 
 import (
-	"fmt"
 	"math"
-	"strings"
+	"strconv"
 	"time"
+
+	"video-rename/internal/domain"
 )
 
-// Strategy 采样策略枚举。
+// Strategy is a sampling strategy.
 type Strategy string
 
+// Sampling strategies.
 const (
 	StrategyHybrid   Strategy = "hybrid"
 	StrategySize     Strategy = "size"
 	StrategyDuration Strategy = "duration"
 )
 
-// SamplingConfig 是 Web 设置及任务快照中的抽帧规则，不从部署 YAML 读取。
-// Parsed* 为校验后填充的派生值，不写入 JSON。
+// SamplingConfig holds the frame rules from Web settings and task snapshots; it is never read from the deployment YAML.
+// Parsed* fields are derived values filled by validation and not written to JSON.
 type SamplingConfig struct {
 	Strategy      string         `yaml:"strategy" json:"strategy"`
 	MaxFrames     int            `yaml:"max_frames" json:"max_frames"`
@@ -31,37 +33,37 @@ type SamplingConfig struct {
 	ParsedSize     []ParsedSizeRule     `yaml:"-" json:"-"`
 }
 
-// DurationRule 时长分档;MaxDuration 为 nil 表示兜底档。
+// DurationRule is a duration tier; a nil MaxDuration marks the fallback tier.
 type DurationRule struct {
 	MaxDuration *string `yaml:"max_duration" json:"max_duration"`
 	Frames      int     `yaml:"frames" json:"frames"`
 }
 
-// SizeRule 大小分档(MiB);MaxMiB 为 nil 表示兜底档。
+// SizeRule is a size tier in MiB; a nil MaxMiB marks the fallback tier.
 type SizeRule struct {
 	MaxMiB *int64 `yaml:"max_mib" json:"max_mib"`
 	Frames int    `yaml:"frames" json:"frames"`
 }
 
-// ImagesConfig 截图尺寸与 JPEG 质量。
+// ImagesConfig sets frame dimensions and JPEG quality.
 type ImagesConfig struct {
 	MaxDimension int `yaml:"max_dimension" json:"max_dimension"`
 	JPEGQuality  int `yaml:"jpeg_quality" json:"jpeg_quality"`
 }
 
-// ParsedDurationRule 解析后的时长档位。
+// ParsedDurationRule is a parsed duration tier.
 type ParsedDurationRule struct {
-	Max    time.Duration // 兜底档为 +Inf
+	Max    time.Duration // +Inf for the fallback tier
 	Frames int
 }
 
-// ParsedSizeRule 解析后的大小档位(字节)。
+// ParsedSizeRule is a parsed size tier in bytes.
 type ParsedSizeRule struct {
-	Max    int64 // MiB 换算为字节;兜底档为 MaxInt64
+	Max    int64 // MiB converted to bytes; MaxInt64 for the fallback tier
 	Frames int
 }
 
-// defaultDurationRules 默认时长分档。
+// defaultDurationRules are the default duration tiers.
 func defaultDurationRules() []DurationRule {
 	return []DurationRule{
 		{new("30s"), 8},
@@ -72,7 +74,7 @@ func defaultDurationRules() []DurationRule {
 	}
 }
 
-// defaultSizeRules 默认大小分档。
+// defaultSizeRules are the default size tiers.
 func defaultSizeRules() []SizeRule {
 	return []SizeRule{
 		{new(int64(50)), 3},
@@ -88,6 +90,7 @@ type FrameSettings struct {
 	Images   ImagesConfig   `json:"images"`
 }
 
+// DefaultFrameSettings returns the default frame sampling settings.
 func DefaultFrameSettings() FrameSettings {
 	return FrameSettings{
 		Sampling: SamplingConfig{
@@ -102,37 +105,38 @@ func DefaultFrameSettings() FrameSettings {
 	}
 }
 
+// Validate checks the frame settings and fills their parsed values.
 func (s *FrameSettings) Validate() error {
 	candidate := *s
 	if errs := candidate.validateSampling(); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "；"))
+		return domain.Invalid(errs...)
 	}
 	s.Sampling = candidate.Sampling
 	return nil
 }
 
-func (s *FrameSettings) validateSampling() []string {
-	var errs []string
+func (s *FrameSettings) validateSampling() []domain.FieldError {
+	var errs []domain.FieldError
 	// sampling
 	switch s.Sampling.Strategy {
 	case string(StrategyHybrid), string(StrategySize), string(StrategyDuration):
 		s.Sampling.ParsedStrategy = Strategy(s.Sampling.Strategy)
 	default:
-		errs = append(errs, fmt.Sprintf("sampling.strategy %q 必须是 hybrid/size/duration 之一", s.Sampling.Strategy))
+		errs = append(errs, domain.FieldError{Path: "sampling.strategy", Reason: "invalid_choice"})
 		s.Sampling.ParsedStrategy = StrategyHybrid
 	}
 	if s.Sampling.MaxFrames < 1 || s.Sampling.MaxFrames > 32 {
-		errs = append(errs, "sampling.max_frames 必须在 1–32 之间")
+		errs = append(errs, domain.FieldError{Path: "sampling.max_frames", Reason: "out_of_range"})
 	}
 	if math.IsNaN(s.Sampling.SkipStart) || math.IsInf(s.Sampling.SkipStart, 0) ||
 		math.IsNaN(s.Sampling.SkipEnd) || math.IsInf(s.Sampling.SkipEnd, 0) {
-		errs = append(errs, "sampling 跳过比例不是有限数值")
+		errs = append(errs, domain.FieldError{Path: "sampling.skip_start_ratio", Reason: "not_finite"})
 	} else {
 		if s.Sampling.SkipStart < 0 || s.Sampling.SkipEnd < 0 {
-			errs = append(errs, "sampling 跳过比例必须为非负数")
+			errs = append(errs, domain.FieldError{Path: "sampling.skip_start_ratio", Reason: "negative"})
 		}
 		if s.Sampling.SkipStart+s.Sampling.SkipEnd >= 1 {
-			errs = append(errs, "sampling.skip_start_ratio 与 skip_end_ratio 之和必须小于 1")
+			errs = append(errs, domain.FieldError{Path: "sampling.skip_end_ratio", Reason: "sum_too_large"})
 		}
 	}
 
@@ -145,102 +149,107 @@ func (s *FrameSettings) validateSampling() []string {
 
 	// images
 	if s.Images.MaxDimension < 128 || s.Images.MaxDimension > 2048 {
-		errs = append(errs, "images.max_dimension 必须在 128–2048 之间")
+		errs = append(errs, domain.FieldError{Path: "images.max_dimension", Reason: "out_of_range"})
 	}
 	if s.Images.JPEGQuality < 2 || s.Images.JPEGQuality > 15 {
-		errs = append(errs, "images.jpeg_quality 必须在 2–15 之间")
+		errs = append(errs, domain.FieldError{Path: "images.jpeg_quality", Reason: "out_of_range"})
 	}
 
 	return errs
 }
 
-// parseDurationRules 校验时长规则表并转换为绝对上限。
-// 规则:表非空;上限为正且严格递增;仅最后一项可以为 null。
-func parseDurationRules(rules []DurationRule) ([]ParsedDurationRule, []string) {
+// parseDurationRules validates the duration table and converts it to absolute limits.
+// Rules: the table is non-empty; limits are positive and strictly increasing; only the last entry may be null.
+func parseDurationRules(rules []DurationRule) ([]ParsedDurationRule, []domain.FieldError) {
 	if len(rules) == 0 {
-		return nil, []string{"sampling.duration_rules 不能为空"}
+		return nil, []domain.FieldError{{Path: "sampling.duration_rules", Reason: "required"}}
 	}
-	var errs []string
+	var errs []domain.FieldError
 	out := make([]ParsedDurationRule, 0, len(rules))
 	prev := time.Duration(0)
 	for i, r := range rules {
 		last := i == len(rules)-1
 		if r.MaxDuration == nil {
 			if !last {
-				errs = append(errs, fmt.Sprintf("sampling.duration_rules 第 %d 档的 max_duration 为 null,但 null 只允许出现在最后一档", i+1))
+				errs = append(errs, ruleField("sampling.duration_rules", i, "max_duration", "null_not_last"))
 			}
 			out = append(out, ParsedDurationRule{Max: time.Duration(math.MaxInt64), Frames: r.Frames})
 			continue
 		}
 		d, err := time.ParseDuration(*r.MaxDuration)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("sampling.duration_rules 第 %d 档 max_duration %q 不是有效时长", i+1, *r.MaxDuration))
+			errs = append(errs, ruleField("sampling.duration_rules", i, "max_duration", "invalid_duration"))
 			continue
 		}
 		if d <= 0 {
-			errs = append(errs, fmt.Sprintf("sampling.duration_rules 第 %d 档 max_duration 必须为正数", i+1))
+			errs = append(errs, ruleField("sampling.duration_rules", i, "max_duration", "not_positive"))
 			continue
 		}
 		if d <= prev {
-			errs = append(errs, fmt.Sprintf("sampling.duration_rules 上限必须严格递增(第 %d 档 %s 未大于前档)", i+1, *r.MaxDuration))
+			errs = append(errs, ruleField("sampling.duration_rules", i, "max_duration", "not_increasing"))
 			continue
 		}
 		prev = d
 		out = append(out, ParsedDurationRule{Max: d, Frames: r.Frames})
 	}
-	errs = append(errs, checkRuleTail(rules, func(i int) bool { return rules[i].MaxDuration != nil })...)
+	errs = append(errs, checkRuleTail("sampling.duration_rules", rules, func(i int) bool { return rules[i].MaxDuration != nil })...)
 	errs = append(errs, checkFrames("sampling.duration_rules", rules, func(i int) int { return rules[i].Frames })...)
 	return out, errs
 }
 
-// parseSizeRules 校验大小规则表;MiB = 1024 × 1024 字节。
-func parseSizeRules(rules []SizeRule) ([]ParsedSizeRule, []string) {
+// parseSizeRules validates the size table; MiB = 1024 × 1024 bytes.
+func parseSizeRules(rules []SizeRule) ([]ParsedSizeRule, []domain.FieldError) {
 	if len(rules) == 0 {
-		return nil, []string{"sampling.size_rules 不能为空"}
+		return nil, []domain.FieldError{{Path: "sampling.size_rules", Reason: "required"}}
 	}
-	var errs []string
+	var errs []domain.FieldError
 	out := make([]ParsedSizeRule, 0, len(rules))
 	var prev int64
 	for i, r := range rules {
 		last := i == len(rules)-1
 		if r.MaxMiB == nil {
 			if !last {
-				errs = append(errs, fmt.Sprintf("sampling.size_rules 第 %d 档的 max_mib 为 null,但 null 只允许出现在最后一档", i+1))
+				errs = append(errs, ruleField("sampling.size_rules", i, "max_mib", "null_not_last"))
 			}
 			out = append(out, ParsedSizeRule{Max: math.MaxInt64, Frames: r.Frames})
 			continue
 		}
 		if *r.MaxMiB <= 0 || *r.MaxMiB > math.MaxInt64/(1024*1024) {
-			errs = append(errs, fmt.Sprintf("sampling.size_rules 第 %d 档 max_mib 必须为有效的正整数且换算字节后不能溢出", i+1))
+			errs = append(errs, ruleField("sampling.size_rules", i, "max_mib", "out_of_range"))
 			continue
 		}
 		if prev != 0 && *r.MaxMiB <= prev {
-			errs = append(errs, fmt.Sprintf("sampling.size_rules 上限必须严格递增(第 %d 档 %d 未大于前档)", i+1, *r.MaxMiB))
+			errs = append(errs, ruleField("sampling.size_rules", i, "max_mib", "not_increasing"))
 			continue
 		}
 		prev = *r.MaxMiB
 		out = append(out, ParsedSizeRule{Max: *r.MaxMiB * 1024 * 1024, Frames: r.Frames})
 	}
-	errs = append(errs, checkRuleTail(rules, func(i int) bool { return rules[i].MaxMiB != nil })...)
+	errs = append(errs, checkRuleTail("sampling.size_rules", rules, func(i int) bool { return rules[i].MaxMiB != nil })...)
 	errs = append(errs, checkFrames("sampling.size_rules", rules, func(i int) int { return rules[i].Frames })...)
 	return out, errs
 }
 
-// checkRuleTail 要求表最后一档必须是 null 兜底档。
-func checkRuleTail[T any](rules []T, nonNull func(int) bool) []string {
+// checkRuleTail requires the last tier to be the null fallback tier.
+func checkRuleTail[T any](name string, rules []T, nonNull func(int) bool) []domain.FieldError {
 	if len(rules) > 0 && nonNull(len(rules)-1) {
-		return []string{"规则表最后一档必须为 null 兜底档"}
+		return []domain.FieldError{{Path: name, Reason: "last_not_null"}}
 	}
 	return nil
 }
 
-// checkFrames 校验各档 frames 在 1–32。
-func checkFrames[T any](name string, rules []T, frames func(int) int) []string {
-	var errs []string
+// ruleField names field of tier i in the rule table name.
+func ruleField(name string, i int, field, reason string) domain.FieldError {
+	return domain.FieldError{Path: name + "." + strconv.Itoa(i) + "." + field, Reason: reason}
+}
+
+// checkFrames checks that each tier's frames are within 1–32.
+func checkFrames[T any](name string, rules []T, frames func(int) int) []domain.FieldError {
+	var errs []domain.FieldError
 	for i := range rules {
 		f := frames(i)
 		if f < 1 || f > 32 {
-			errs = append(errs, fmt.Sprintf("%s 第 %d 档 frames 必须在 1–32 之间", name, i+1))
+			errs = append(errs, ruleField(name, i, "frames", "out_of_range"))
 		}
 	}
 	return errs

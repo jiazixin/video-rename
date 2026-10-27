@@ -5,15 +5,18 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
-	"fmt"
 	"strings"
 	"unicode/utf8"
+
 	"video-rename/internal/config"
+	"video-rename/internal/domain"
 	"video-rename/internal/storage"
 )
 
+// DefaultBody is the default prompt text.
 const DefaultBody = "你是一位视频标题编辑。结合整段视频的连续截图，为它创作一个自然、流畅、有辨识度的中文标题。抓住最有特点的情境或瞬间，将内容组织成完整表达，不要逐帧描述画面，也不要用名词、动作和场景堆砌关键词。可以有适度的表达创意，但不要编造人物身份、地点、关系或画面之外的事件。只输出一个标题，不加解释、引号或文件扩展名。"
 
+// Profile is a page-managed model configuration.
 type Profile struct {
 	config.ServerConfig
 	Default     bool   `json:"is_default"`
@@ -28,11 +31,16 @@ type Profile struct {
 	HasAPIKey   bool   `json:"has_api_key"`
 	Ready       bool   `json:"ready"`
 }
+
+// Store stores model profiles.
 type Store struct{ DB *storage.Store }
 
+// DefaultSettings returns the default model settings.
 func DefaultSettings() config.ServerConfig {
 	return config.ServerConfig{Workers: 2, Provider: "custom", Protocol: "openai", Timeout: "180s", Temperature: 0.7, MaxTokens: 1024}
 }
+
+// Seed creates the default prompt and model profile when none exist.
 func (s Store) Seed() error {
 	if _, err := s.DB.Exec("INSERT INTO prompts(title,body,created,updated) SELECT '默认提示词',?,?,? WHERE NOT EXISTS(SELECT 1 FROM prompts)", DefaultBody, storage.Now(), storage.Now()); err != nil {
 		return err
@@ -63,9 +71,13 @@ func (s Store) scan(row interface{ Scan(...any) error }) (p Profile, err error) 
 	p.Ready = p.Validate() == nil
 	return
 }
+
+// Get returns model profile id.
 func (s Store) Get(id int64) (Profile, error) {
 	return s.scan(s.DB.Read().QueryRow("SELECT "+columns+" FROM model_configs c LEFT JOIN prompts p ON p.id=c.prompt_id WHERE c.id=?", id))
 }
+
+// List returns all model profiles.
 func (s Store) List() ([]Profile, error) {
 	rows, err := s.DB.Read().Query("SELECT " + columns + " FROM model_configs c LEFT JOIN prompts p ON p.id=c.prompt_id ORDER BY c.id")
 	if err != nil {
@@ -87,21 +99,23 @@ func (s Store) List() ([]Profile, error) {
 // and snapshots always see the text the reference currently points at.
 func (s Store) resolve(p *Profile) error {
 	if p.PromptID <= 0 {
-		return fmt.Errorf("请选择提示词")
+		return domain.InvalidField("prompt_id", "required")
 	}
 	err := s.DB.Read().QueryRow("SELECT title,body FROM prompts WHERE id=?", p.PromptID).Scan(&p.PromptTitle, &p.Body)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("请选择提示词")
+		return domain.InvalidField("prompt_id", "required")
 	}
 	return err
 }
+
+// Validate normalizes and checks the profile.
 func (p *Profile) Validate() error {
 	p.Title = strings.TrimSpace(p.Title)
 	if p.Title == "" || utf8.RuneCountInString(p.Title) > 80 {
-		return fmt.Errorf("名称须为 1–80 字")
+		return domain.InvalidField("title", "invalid_length")
 	}
 	if p.PromptID <= 0 || strings.TrimSpace(p.Body) == "" {
-		return fmt.Errorf("请选择提示词")
+		return domain.InvalidField("prompt_id", "required")
 	}
 	var c config.TaskConfig
 	if err := c.ApplyModel(p.ServerConfig, p.Body); err != nil {
@@ -109,10 +123,12 @@ func (p *Profile) Validate() error {
 	}
 	p.ServerConfig = c.Server
 	if p.Provider != "custom" && p.Provider != "ollama" && strings.TrimSpace(p.APIKey) == "" {
-		return fmt.Errorf("请填写 API 密钥")
+		return domain.InvalidField("api_key", "required")
 	}
 	return nil
 }
+
+// Save creates or updates profile p.
 func (s Store) Save(p Profile) (Profile, error) {
 	if err := s.resolve(&p); err != nil {
 		return p, err
@@ -139,7 +155,7 @@ func (s Store) Save(p Profile) (Profile, error) {
 			return p, err
 		}
 		if n >= 200 {
-			return p, fmt.Errorf("最多保存 200 条模型配置")
+			return p, domain.Fail(domain.KindTooMany, "model_configs_full", "at most 200 model configurations")
 		}
 		res, err := tx.Exec("INSERT INTO model_configs(title,prompt_id,created,updated,settings,api_key) VALUES(?,?,?,?,?,?)", p.Title, p.PromptID, storage.Now(), storage.Now(), string(raw), secret)
 		if err != nil {
@@ -159,7 +175,7 @@ func (s Store) Save(p Profile) (Profile, error) {
 		}
 		n, _ := res.RowsAffected()
 		if n == 0 {
-			return p, fmt.Errorf("模型配置已修改或不存在，请刷新后重试")
+			return p, domain.Fail(domain.KindConflict, "model_config_changed", "model configuration was modified or deleted; refresh")
 		}
 	}
 	return s.Get(p.ID)
@@ -180,13 +196,15 @@ func (s Store) ResolveKey(p *Profile, key *string) error {
 	}
 	if old.BaseURL != p.BaseURL || old.Provider != p.Provider || old.Protocol != p.Protocol {
 		if old.HasAPIKey {
-			return fmt.Errorf("服务地址或类型已改变，请重新填写密钥，或明确清除旧密钥")
+			return domain.InvalidField("api_key", "reenter_after_endpoint_change")
 		}
 		return nil
 	}
 	p.APIKey = old.APIKey
 	return nil
 }
+
+// SetDefault makes profile id the default.
 func (s Store) SetDefault(id int64) error {
 	p, err := s.Get(id)
 	if err != nil {
@@ -210,10 +228,12 @@ func (s Store) SetDefault(id int64) error {
 	if n, err := res.RowsAffected(); err != nil {
 		return err
 	} else if n != 1 {
-		return fmt.Errorf("模型配置已修改或删除，请刷新后重试")
+		return domain.Fail(domain.KindConflict, "model_config_changed", "model configuration was modified or deleted; refresh")
 	}
 	return tx.Commit()
 }
+
+// DefaultID returns the ID of the default profile.
 func (s Store) DefaultID() (id int64, err error) {
 	err = s.DB.Read().QueryRow("SELECT id FROM model_configs WHERE is_default=1").Scan(&id)
 	return
@@ -225,6 +245,7 @@ type snapshot struct {
 	Body     string
 }
 
+// Snapshot returns the encrypted settings, key and prompt of p for a batch.
 func (s Store) Snapshot(p Profile) (string, error) {
 	raw, err := json.Marshal(snapshot{p.ServerConfig, p.APIKey, p.Body})
 	if err != nil {
@@ -232,9 +253,11 @@ func (s Store) Snapshot(p Profile) (string, error) {
 	}
 	return s.DB.Seal(string(raw))
 }
+
+// ApplySnapshot decrypts snapshot value into c.
 func (s Store) ApplySnapshot(value string, c *config.TaskConfig) error {
 	if value == "" {
-		return fmt.Errorf("任务没有模型配置快照，请重新创建任务")
+		return domain.Fail(domain.KindInvalid, "model_snapshot_missing", "run has no model configuration snapshot; create the run again")
 	}
 	plain, err := s.DB.Unseal(value)
 	if err != nil {
@@ -242,7 +265,7 @@ func (s Store) ApplySnapshot(value string, c *config.TaskConfig) error {
 	}
 	var snap snapshot
 	if err = json.Unmarshal([]byte(plain), &snap); err != nil {
-		return fmt.Errorf("模型快照无效")
+		return domain.Fail(domain.KindInvalid, "model_snapshot_invalid", "model snapshot is invalid")
 	}
 	snap.Settings.APIKey = snap.Key
 	return c.ApplyModel(snap.Settings, snap.Body)

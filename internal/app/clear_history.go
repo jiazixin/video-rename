@@ -1,7 +1,6 @@
 package app
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 )
@@ -16,11 +15,11 @@ func (a *App) clearHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if input.Category != "success" && input.Category != "failure" {
-		send(w, 400, map[string]string{"message": "请选择成功或失败记录"})
+		invalid(w, r, "category", "invalid_choice")
 		return
 	}
 	if (input.All && len(input.IDs) > 0) || (!input.All && (len(input.IDs) == 0 || len(input.IDs) > 200)) {
-		send(w, 400, map[string]string{"message": "请选择本页记录或清空当前分类"})
+		invalid(w, r, "ids", "selection_required")
 		return
 	}
 	query := "DELETE FROM events WHERE category=?"
@@ -28,7 +27,7 @@ func (a *App) clearHistory(w http.ResponseWriter, r *http.Request) {
 	if !input.All {
 		for _, id := range input.IDs {
 			if id < 1 {
-				send(w, 400, map[string]string{"message": "记录编号无效"})
+				invalid(w, r, "ids", "invalid")
 				return
 			}
 			args = append(args, id)
@@ -37,13 +36,13 @@ func (a *App) clearHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := a.DB.Exec(query, args...)
 	if err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
 	n, err := result.RowsAffected()
 	if err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
-	send(w, 200, map[string]any{"deleted": n, "message": fmt.Sprintf("已清除 %d 条记录", n)})
+	send(w, http.StatusOK, map[string]any{"deleted": n})
 }

@@ -2,7 +2,14 @@
   import { computed, ref, watch } from 'vue';
   import { ChevronLeft, ChevronRight } from '@lucide/vue';
   import type { Entry } from '../../app/contracts';
-  const props = defineProps<{
+  const {
+    entry,
+    strip,
+    busy,
+    zoom,
+    turn,
+    notice = ''
+  } = defineProps<{
     entry: Entry;
     strip: Entry[];
     busy?: boolean;
@@ -21,7 +28,7 @@
     dragging = ref(false);
   let start = { x: 0, y: 0, panX: 0, panY: 0 };
   watch(
-    () => props.entry.id,
+    () => entry.id,
     () => {
       failed.value = false;
       pan.value = { x: 0, y: 0 };
@@ -29,17 +36,16 @@
   );
   // Back to the fitted view drops any panning, so a re-zoom starts from the centre.
   watch(
-    () => props.zoom,
+    () => zoom,
     (zoom) => {
       if (zoom <= 1) pan.value = { x: 0, y: 0 };
     }
   );
   const transform = computed(
-    () =>
-      `translate(${pan.value.x}px, ${pan.value.y}px) scale(${props.zoom}) rotate(${props.turn}deg)`
+    () => `translate(${pan.value.x}px, ${pan.value.y}px) scale(${zoom}) rotate(${turn}deg)`
   );
   function grab(e: PointerEvent) {
-    if (props.zoom <= 1 || e.button !== 0) return;
+    if (zoom <= 1 || e.button !== 0) return;
     dragging.value = true;
     start = { x: e.clientX, y: e.clientY, panX: pan.value.x, panY: pan.value.y };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -52,7 +58,7 @@
     dragging.value = false;
   }
   function toggleZoom() {
-    emit('zoom', props.zoom > 1 ? 1 : 2);
+    emit('zoom', zoom > 1 ? 1 : 2);
   }
 </script>
 <template>
@@ -125,7 +131,7 @@
     place-items: center;
     overflow: hidden;
     border-radius: 10px;
-    background: radial-gradient(circle at 50% 42%, #1a2421, var(--stage));
+    background: radial-gradient(circle at 50% 42%, var(--palette-1a2421), var(--stage));
     touch-action: none;
   }
   .image-stage.zoomed {
@@ -139,14 +145,14 @@
     max-height: calc(100% - 24px);
     object-fit: contain;
     user-select: none;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 12px 40px var(--palette-rgba-0-0-0-0_5);
     transition: transform var(--motion-enter) linear;
   }
   .dragging .image-preview {
     transition: none;
   }
   .stage-error {
-    color: #ffc9c9;
+    color: var(--palette-ffc9c9);
     font-size: 13px;
     padding: 0 72px;
     text-align: center;
@@ -160,11 +166,11 @@
     border: 0;
     border-radius: 50%;
     transform: translateY(-50%);
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--palette-rgba-255-255-255-0_1);
     color: var(--stage-ink);
   }
   .image-nav:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.22);
+    background: var(--palette-rgba-255-255-255-0_22);
     border: 0;
   }
   .image-nav.previous {
@@ -176,7 +182,7 @@
   .stage-notice {
     margin: 0;
     font-size: 12px;
-    color: #ffc9c9;
+    color: var(--palette-ffc9c9);
     text-align: center;
   }
   .image-strip {
@@ -195,7 +201,7 @@
     border: 2px solid transparent;
     border-radius: 6px;
     overflow: hidden;
-    background: #000;
+    background: var(--palette-000000);
     opacity: 0.5;
     transition:
       opacity var(--motion-hover) linear,
@@ -203,7 +209,7 @@
   }
   .image-strip button:hover:not(:disabled) {
     opacity: 0.85;
-    background: #000;
+    background: var(--palette-000000);
     border-color: transparent;
   }
   .image-strip button[aria-current='true'],

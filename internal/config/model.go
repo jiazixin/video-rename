@@ -1,11 +1,12 @@
 package config
 
 import (
-	"fmt"
 	"math"
 	"net/url"
 	"strings"
 	"time"
+
+	"video-rename/internal/domain"
 )
 
 // ServerConfig is a runtime model snapshot, never a deployment YAML section.
@@ -26,11 +27,12 @@ type ServerConfig struct {
 	OmitTemperature bool    `json:"omit_temperature"`
 }
 
+// ValidateConnection checks the provider, protocol and endpoint settings of s.
 func ValidateConnection(s *ServerConfig) error {
 	switch s.Provider {
 	case "openai", "zhipu", "zhipu-coding", "deepseek", "claude", "ollama", "custom":
 	default:
-		return fmt.Errorf("请选择有效的服务类型")
+		return domain.InvalidField("provider", "invalid_choice")
 	}
 	if s.Protocol == "" {
 		s.Protocol = "openai"
@@ -39,42 +41,51 @@ func ValidateConnection(s *ServerConfig) error {
 		}
 	}
 	if s.Protocol != "openai" && s.Protocol != "anthropic" {
-		return fmt.Errorf("协议必须为 OpenAI 或 Anthropic")
+		return domain.InvalidField("protocol", "invalid_choice")
 	}
 	if s.Provider == "claude" && s.Protocol != "anthropic" || s.Provider != "claude" && s.Provider != "custom" && s.Protocol != "openai" {
-		return fmt.Errorf("协议与服务类型不匹配")
+		return domain.InvalidField("protocol", "provider_mismatch")
 	}
 	u, err := url.Parse(strings.TrimSpace(s.BaseURL))
 	if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
-		return fmt.Errorf("模型 URL 必须是无账号、查询参数和片段的 HTTP(S) 地址")
+		return domain.InvalidField("base_url", "invalid_url")
 	}
 	s.BaseURL = strings.TrimRight(u.String(), "/")
-	if len(s.BaseURL) > 2048 || len(s.APIKey) > 8192 || strings.ContainsAny(s.APIKey, "\r\n") {
-		return fmt.Errorf("URL 或密钥格式无效")
+	if len(s.BaseURL) > 2048 {
+		return domain.InvalidField("base_url", "too_long")
+	}
+	if len(s.APIKey) > 8192 || strings.ContainsAny(s.APIKey, "\r\n") {
+		return domain.InvalidField("api_key", "invalid")
 	}
 	return nil
 }
+
+// ApplyModel copies the model settings s and prompt into the task configuration
+// after validating them.
 func (c *TaskConfig) ApplyModel(s ServerConfig, prompt string) error {
 	if err := ValidateConnection(&s); err != nil {
 		return err
 	}
 	s.Model = strings.TrimSpace(s.Model)
 	if s.Model == "" || len(s.Model) > 256 {
-		return fmt.Errorf("请填写模型名称")
+		return domain.InvalidField("model", "required")
 	}
 	d, err := time.ParseDuration(s.Timeout)
 	if err != nil || d < time.Second || d > 30*time.Minute {
-		return fmt.Errorf("请求超时须在 1 秒至 30 分钟之间")
+		return domain.InvalidField("timeout", "out_of_range")
 	}
 	maxTemperature := 2.0
 	if s.Protocol == "anthropic" {
 		maxTemperature = 1
 	}
 	if math.IsNaN(s.Temperature) || math.IsInf(s.Temperature, 0) || s.Temperature < 0 || s.Temperature > maxTemperature {
-		return fmt.Errorf("温度须在 0–%g 之间", maxTemperature)
+		if maxTemperature == 1 {
+			return domain.InvalidField("temperature", "out_of_range_anthropic")
+		}
+		return domain.InvalidField("temperature", "out_of_range")
 	}
 	if s.MaxTokens < 1 || s.MaxTokens > 32768 {
-		return fmt.Errorf("输出上限须在 1–32768 之间")
+		return domain.InvalidField("max_tokens", "out_of_range")
 	}
 	if _, err := s.ThinkingFields(); err != nil {
 		return err
@@ -87,7 +98,7 @@ func (c *TaskConfig) ApplyModel(s ServerConfig, prompt string) error {
 		s.Workers = 2
 	}
 	if s.Workers < 1 || s.Workers > 32 {
-		return fmt.Errorf("并发任务数须在 1–32 之间")
+		return domain.InvalidField("workers", "out_of_range")
 	}
 	c.Workers = s.Workers
 	c.Server = s

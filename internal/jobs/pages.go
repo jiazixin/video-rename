@@ -2,13 +2,14 @@ package jobs
 
 import (
 	"context"
-	"fmt"
 	"net/url"
 	"strconv"
 	"time"
+
 	"video-rename/internal/domain"
 )
 
+// RunPage is a page of batches with the model profiles they use.
 type RunPage struct {
 	Profiles []RunProfile `json:"profiles"`
 	Items    []Run        `json:"items"`
@@ -17,6 +18,7 @@ type RunPage struct {
 	Size     int          `json:"size"`
 }
 
+// RunProfile names a model profile used by a batch.
 type RunProfile struct {
 	ID    int64  `json:"id"`
 	Title string `json:"title"`
@@ -37,7 +39,7 @@ func (m *Manager) ListPage(ctx context.Context, category, task string, page, siz
 	case "automatic":
 		where = "(r.source='schedule' OR r.plan>0)"
 	default:
-		return out, fmt.Errorf("运行分类无效")
+		return out, domain.InvalidField("category", "invalid_choice")
 	}
 	var args []any
 	switch task {
@@ -46,7 +48,7 @@ func (m *Manager) ListPage(ctx context.Context, category, task string, page, siz
 		where += " AND r.task=?"
 		args = append(args, task)
 	default:
-		return out, fmt.Errorf("任务类型无效")
+		return out, domain.InvalidField("task", "invalid_choice")
 	}
 	if len(filters) > 0 {
 		q := filters[0]
@@ -56,13 +58,13 @@ func (m *Manager) ListPage(ctx context.Context, category, task string, page, siz
 				where += " AND r.status=?"
 				args = append(args, status)
 			default:
-				return out, fmt.Errorf("批次状态无效")
+				return out, domain.InvalidField("status", "invalid_choice")
 			}
 		}
 		if profile := q.Get("profile"); profile != "" {
 			id, err := strconv.ParseInt(profile, 10, 64)
 			if err != nil || id < 0 {
-				return out, fmt.Errorf("模型配置无效")
+				return out, domain.InvalidField("profile", "invalid_number")
 			}
 			where += " AND r.model_config_id=?"
 			args = append(args, id)
@@ -72,7 +74,7 @@ func (m *Manager) ListPage(ctx context.Context, category, task string, page, siz
 			if value := q.Get(key); value != "" {
 				stamp, err := time.Parse(time.RFC3339, value)
 				if err != nil {
-					return out, fmt.Errorf("时间范围无效")
+					return out, domain.InvalidField(key, "invalid_time")
 				}
 				bounds[i] = stamp
 				op := ">="
@@ -84,13 +86,13 @@ func (m *Manager) ListPage(ctx context.Context, category, task string, page, siz
 			}
 		}
 		if !bounds[0].IsZero() && !bounds[1].IsZero() && !bounds[0].Before(bounds[1]) {
-			return out, fmt.Errorf("开始时间必须早于结束时间")
+			return out, domain.InvalidField("to", "not_after_from")
 		}
 		if duration := q.Get("duration"); duration != "" {
 			ranges := map[string][2]int{"under1": {0, 60}, "1to5": {60, 300}, "5to30": {300, 1800}, "30to60": {1800, 3600}, "over60": {3600, 0}}
 			span, ok := ranges[duration]
 			if !ok {
-				return out, fmt.Errorf("耗时范围无效")
+				return out, domain.InvalidField("duration", "invalid_choice")
 			}
 			expr := "MAX(0,unixepoch(CASE WHEN r.finished<>'' THEN r.finished WHEN r.status IN " + domain.ActiveRunStatusesSQL + " THEN ? ELSE NULL END,'subsec')-unixepoch(r.started,'subsec'))"
 			where += " AND r.started<>'' AND " + expr + ">=?"

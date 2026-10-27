@@ -2,30 +2,31 @@ package systemsettings
 
 import (
 	"encoding/json/v2"
-	"fmt"
 	"strings"
 	"unicode/utf8"
 
+	"video-rename/internal/domain"
 	"video-rename/internal/naming"
 )
 
+// DefaultFailureKeywords returns the default naming failure keywords.
 func DefaultFailureKeywords() []string { return naming.DefaultFailureKeywords() }
 
 // NormalizeFailureKeywords validates first, trims entries, and keeps the first
 // spelling when the same phrase is repeated with different letter case.
 func NormalizeFailureKeywords(values []string) ([]string, error) {
 	if values == nil {
-		return nil, fmt.Errorf("请提供失败词句数组；空数组表示关闭匹配")
+		return nil, domain.InvalidField("failure_keywords", "required")
 	}
 	if len(values) > 100 {
-		return nil, fmt.Errorf("最多保存 100 条失败词句")
+		return nil, domain.InvalidField("failure_keywords", "too_many")
 	}
 	out := make([]string, 0, len(values))
 	seen := make(map[string]bool, len(values))
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" || !utf8.ValidString(value) || utf8.RuneCountInString(value) > 200 {
-			return nil, fmt.Errorf("每条失败词句须为 1–200 字，不能只包含空白")
+			return nil, domain.InvalidField("failure_keywords", "invalid_item")
 		}
 		key := strings.ToLower(value)
 		if !seen[key] {
@@ -36,6 +37,7 @@ func NormalizeFailureKeywords(values []string) ([]string, error) {
 	return out, nil
 }
 
+// FailureKeywords returns the stored naming failure keywords.
 func (s Store) FailureKeywords() ([]string, error) {
 	policy, err := loadPolicy(s.DB.Read().QueryRow("SELECT policy FROM system_settings WHERE id=1"))
 	if err != nil {
@@ -47,6 +49,8 @@ func (s Store) FailureKeywords() ([]string, error) {
 	return NormalizeFailureKeywords(policy.FailureKeywords)
 }
 
+// SaveFailureKeywords normalizes and stores values and returns the stored
+// keywords.
 func (s Store) SaveFailureKeywords(values []string) ([]string, error) {
 	keywords, err := NormalizeFailureKeywords(values)
 	if err != nil {

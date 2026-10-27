@@ -29,6 +29,7 @@ type AnalyticsQuery struct {
 	Size     int
 }
 
+// Report is the token usage report.
 type Report struct {
 	Range      ReportRange    `json:"range"`
 	Totals     ReportTotals   `json:"totals"`
@@ -40,18 +41,24 @@ type Report struct {
 	Batches    PagedBatches   `json:"batches"`
 	Options    ReportOptions  `json:"options"`
 }
+
+// ReportRange is the time range of a report.
 type ReportRange struct {
 	From     string `json:"from"`
 	To       string `json:"to"`
 	Timezone string `json:"timezone"`
 	Interval string `json:"interval"`
 }
+
+// ReportTotals summarizes token usage in a report.
 type ReportTotals struct {
 	Tokens           int64 `json:"tokens"`
 	Records          int64 `json:"records"`
 	EstimatedRecords int64 `json:"estimated_records"`
 	Batches          int64 `json:"batches"`
 }
+
+// TrendBucket holds the token usage of one time bucket.
 type TrendBucket struct {
 	From             string `json:"from"`
 	To               string `json:"to"`
@@ -59,6 +66,8 @@ type TrendBucket struct {
 	Records          int64  `json:"records"`
 	EstimatedRecords int64  `json:"estimated_records"`
 }
+
+// ModelGroup is the token usage of one model.
 type ModelGroup struct {
 	Key              string `json:"key"`
 	Model            string `json:"model"`
@@ -69,6 +78,8 @@ type ModelGroup struct {
 	EstimatedRecords int64  `json:"estimated_records"`
 	Batches          int64  `json:"batches"`
 }
+
+// ProfileGroup is the token usage of one model profile.
 type ProfileGroup struct {
 	ID               int64  `json:"id"`
 	Title            string `json:"title"`
@@ -77,6 +88,8 @@ type ProfileGroup struct {
 	EstimatedRecords int64  `json:"estimated_records"`
 	Batches          int64  `json:"batches"`
 }
+
+// SourceGroup is the token usage of one batch source.
 type SourceGroup struct {
 	Key              string `json:"key"`
 	Tokens           int64  `json:"tokens"`
@@ -84,6 +97,8 @@ type SourceGroup struct {
 	EstimatedRecords int64  `json:"estimated_records"`
 	Batches          int64  `json:"batches"`
 }
+
+// Batch is the token usage of one batch.
 type Batch struct {
 	ID               int64  `json:"id"`
 	Model            string `json:"model"`
@@ -103,22 +118,30 @@ type Batch struct {
 	LifetimeRecords  int64  `json:"lifetime_records"`
 	LastRecordedAt   string `json:"last_recorded_at"`
 }
+
+// PagedBatches is a page of batches.
 type PagedBatches struct {
 	Items []Batch `json:"items"`
 	Total int     `json:"total"`
 	Page  int     `json:"page"`
 	Size  int     `json:"size"`
 }
+
+// ReportOptions lists the values available as report filters.
 type ReportOptions struct {
 	Models   []OptionModel   `json:"models"`
 	Profiles []OptionProfile `json:"profiles"`
 }
+
+// OptionModel is a model available as a filter.
 type OptionModel struct {
 	Key      string `json:"key"`
 	Model    string `json:"model"`
 	Provider string `json:"provider"`
 	Protocol string `json:"protocol"`
 }
+
+// OptionProfile is a model profile available as a filter.
 type OptionProfile struct {
 	ID        int64    `json:"id"`
 	Title     string   `json:"title"`

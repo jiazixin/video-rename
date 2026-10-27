@@ -18,9 +18,9 @@
   align-items: center;
   gap: 7px;
   font-size: 12px;
-  color: #2c6e56;
-  background: #eef6f1;
-  border: 1px solid #d4e6db;
+  color: var(--palette-2c6e56);
+  background: var(--palette-eef6f1);
+  border: 1px solid var(--palette-d4e6db);
   border-radius: 6px;
   padding: 7px 8px 7px 11px;
   white-space: nowrap;
@@ -31,11 +31,11 @@
   padding: 0 2px;
   font-size: 14px;
   line-height: 1;
-  color: #4d7864;
+  color: var(--palette-4d7864);
 }
 .usage-run-chip button:hover:not(:disabled) {
   background: transparent;
-  color: #1b1b1b;
+  color: var(--ink);
 }
 .usage-stack {
   display: flex;
@@ -55,7 +55,7 @@
   padding: 18px 20px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: #fcfdfd;
+  background: var(--palette-fcfdfd);
 }
 .usage-kpi span {
   font-size: 11px;
@@ -91,37 +91,37 @@
   outline: none;
 }
 .usage-trend svg:focus-visible {
-  outline: 3px solid #a8d9cb;
+  outline: 3px solid var(--palette-a8d9cb);
   outline-offset: 2px;
   border-radius: 6px;
 }
 .usage-trend .gridline {
-  stroke: #eff0f3;
+  stroke: var(--palette-eff0f3);
   stroke-width: 1;
 }
 .usage-trend .axis-text {
   font-size: 10px;
-  fill: #94979e;
+  fill: var(--palette-94979e);
   font-variant-numeric: tabular-nums;
 }
 .usage-trend .trend-area {
-  fill: #0e8a5c14;
+  fill: var(--palette-0e8a5c14);
 }
 .usage-trend .trend-line {
   fill: none;
-  stroke: #0e8a5c;
+  stroke: var(--palette-0e8a5c);
   stroke-width: 2;
   stroke-linejoin: round;
   stroke-linecap: round;
 }
 .usage-trend .crosshair {
-  stroke: #9db8ac;
+  stroke: var(--palette-9db8ac);
   stroke-width: 1;
   stroke-dasharray: 3 3;
 }
 .usage-trend .trend-dot {
-  fill: #0e8a5c;
-  stroke: #fff;
+  fill: var(--palette-0e8a5c);
+  stroke: var(--palette-ffffff);
   stroke-width: 2;
 }
 .usage-trend .hit-zone {
@@ -132,10 +132,10 @@
   position: absolute;
   top: 2px;
   pointer-events: none;
-  background: #fff;
-  border: 1px solid #dce4df;
+  background: var(--palette-ffffff);
+  border: 1px solid var(--palette-dce4df);
   border-radius: 8px;
-  box-shadow: 0 6px 22px #182c2018;
+  box-shadow: 0 6px 22px var(--palette-182c2018);
   padding: 9px 12px;
   display: flex;
   flex-direction: column;
@@ -166,7 +166,7 @@
 }
 .trend-hint {
   font-size: 10px;
-  color: #a1a4ab;
+  color: var(--palette-70747e);
   margin: 2px 0 10px;
   text-align: right;
 }
@@ -176,7 +176,7 @@
 .usage-table-toggle summary {
   cursor: pointer;
   font-size: 12px;
-  color: #4d7864;
+  color: var(--palette-4d7864);
   padding: 13px 20px;
 }
 .usage-trend-table th,
@@ -215,13 +215,13 @@
 .usage-bar-track {
   height: 8px;
   border-radius: 4px;
-  background: #f0f2f1;
+  background: var(--palette-f0f2f1);
   overflow: hidden;
 }
 .usage-bar {
   height: 100%;
   border-radius: 4px;
-  background: #0c7f52;
+  background: var(--palette-0c7f52);
   min-width: 2px;
 }
 .usage-model small {
@@ -234,7 +234,7 @@
   flex-wrap: wrap;
 }
 .usage-detail-tools .table-sort.active {
-  color: #285e47;
+  color: var(--palette-285e47);
 }
 .usage-detail-tools button {
   font-size: 11px;

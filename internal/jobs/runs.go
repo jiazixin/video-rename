@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+
+	"video-rename/internal/domain"
 )
 
+// Run is one batch with its settings and progress.
 type Run struct {
 	retry            retryPolicy
 	Task             string         `json:"task"`
@@ -29,9 +32,11 @@ type Run struct {
 	TokenCount       int64          `json:"token_count"`
 	TokenRecords     int            `json:"token_records"`
 	TokenEstimated   int            `json:"token_estimated_records"`
-	Error            string         `json:"error"`
+	Error            domain.Record  `json:"error,omitzero"`
 	Plan             int64          `json:"plan"`
 }
+
+// Request is a request to create a batch.
 type Request struct {
 	// Set only by the history retry handler; generic run JSON cannot bypass marks.
 	RetryOperations map[int64]int64 `json:"-"`
@@ -55,6 +60,8 @@ func scanRun(row interface{ Scan(...any) error }) (r Run, err error) {
 	}
 	return
 }
+
+// Get returns batch id.
 func (m *Manager) Get(ctx context.Context, id int64) (Run, error) {
 	r, err := scanRun(m.DB.Read().QueryRowContext(ctx, "SELECT "+runColumns+" FROM runs r LEFT JOIN run_token_usage u ON u.run=r.id WHERE r.id=?", id))
 	if err == nil {
@@ -66,6 +73,8 @@ func (m *Manager) Get(ctx context.Context, id int64) (Run, error) {
 	}
 	return r, err
 }
+
+// List returns the batches with IDs below before, newest first.
 func (m *Manager) List(ctx context.Context, before int64) ([]Run, error) {
 	if before <= 0 {
 		before = 1 << 62

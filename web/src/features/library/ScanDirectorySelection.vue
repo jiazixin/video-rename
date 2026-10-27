@@ -1,62 +1,59 @@
 <script setup lang="ts">
   import { computed, ref } from 'vue';
   import { Folder, Plus, X } from '@lucide/vue';
-  import Modal from '../../components/Modal.vue';
+  import ModalDialog from '../../components/ModalDialog.vue';
   import ModalTransition from '../../components/ModalTransition.vue';
   import DirectoryPicker from './DirectoryPicker.vue';
-  const props = defineProps<{
-    modelValue: number[];
+  import { displayPath } from '../../lib/format/path';
+  const { paths, title, description, empty } = defineProps<{
     paths: Record<number, string>;
     title: string;
     description: string;
     empty: string;
   }>();
-  const emit = defineEmits<{ 'update:modelValue': [ids: number[]] }>();
+  const model = defineModel<number[]>({ required: true });
   const open = ref(false),
     draft = ref<number[]>([]),
     knownPaths = ref<Record<number, string>>({});
-  const labels = computed(() => ({ ...props.paths, ...knownPaths.value }));
+  const labels = computed(() => ({ ...paths, ...knownPaths.value }));
   function choose() {
-    draft.value = [...props.modelValue];
+    draft.value = [...model.value];
     open.value = true;
   }
   function confirm() {
-    emit('update:modelValue', [...draft.value]);
+    model.value = [...draft.value];
     open.value = false;
   }
   function label(id: number) {
-    return labels.value[id] || (id === 1 ? '整个媒体库' : `目录 #${id}`);
+    const path = labels.value[id];
+    if (path) return displayPath(path);
+    return id === 1 ? '整个媒体库' : `目录 #${id}`;
   }
 </script>
 <template>
   <section class="scan-directory-selection" :aria-label="title">
     <header
       ><h3
-        >{{ title }} <span>{{ modelValue.length }} / 100</span></h3
+        >{{ title }} <span>{{ model.length }} / 100</span></h3
       ><button type="button" :aria-label="`添加${title}`" @click="choose"
         ><Plus :size="16" />添加目录</button
       ></header
     >
     <p class="help">{{ description }}</p>
-    <ul v-if="modelValue.length">
-      <li v-for="id in modelValue" :key="id"
+    <ul v-if="model.length">
+      <li v-for="id in model" :key="id"
         ><Folder :size="16" /><span :title="label(id)">{{ label(id) }}</span
         ><button
           type="button"
           class="icon-btn"
           :aria-label="`从${title}移除 ${label(id)}`"
-          @click="
-            emit(
-              'update:modelValue',
-              modelValue.filter((value) => value !== id)
-            )
-          "
+          @click="model = model.filter((value) => value !== id)"
           ><X :size="16" /></button
       ></li>
     </ul>
     <p v-else class="empty compact">{{ empty }}</p>
     <ModalTransition
-      ><Modal v-if="open" :title="`选择${title}`" wide @close="open = false">
+      ><ModalDialog v-if="open" :title="`选择${title}`" wide @close="open = false">
         <p class="help">{{ description }} 确认后加入设置草稿，保存扫描设置后生效。</p>
         <DirectoryPicker v-model="draft" @paths="Object.assign(knownPaths, $event)" />
         <p v-if="draft.length > 100" role="alert" class="notice error">最多选择 100 个目录。</p>
@@ -68,7 +65,7 @@
             ></div
           ></template
         >
-      </Modal></ModalTransition
+      </ModalDialog></ModalTransition
     >
   </section>
 </template>

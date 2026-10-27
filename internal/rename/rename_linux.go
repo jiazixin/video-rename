@@ -1,9 +1,9 @@
 //go:build linux
 
-// Package rename 封装平台专用的原子 no-replace 重命名。
-// 禁止用"检查目标不存在 → 普通 rename"替代:两步间存在竞争。
-// Linux 使用 renameat2 的 RENAME_NOREPLACE;内核或文件系统不支持时
-// 报 RENAME_UNSUPPORTED 并保留原文件,绝不退化为可能覆盖的操作。
+// Package rename provides platform-specific atomic no-replace renames.
+// Never replace it with "check that the target is absent, then rename": the two steps race.
+// Linux uses renameat2 with RENAME_NOREPLACE; when the kernel or file system lacks it,
+// it reports rename_unsupported and keeps the original file, never falling back to an overwriting operation.
 package rename
 
 import (
@@ -28,22 +28,23 @@ func mapErrno(err error, oldname, newname string) *domain.JobError {
 	}
 	errno, ok := errors.AsType[syscall.Errno](err)
 	if !ok {
-		return &domain.JobError{Code: domain.CodeRenameFailed, Message: err.Error()}
+		return &domain.JobError{Code: domain.CodeRenameFailed, Message: err.Error(), Details: map[string]any{"detail": err.Error()}}
 	}
 	switch {
 	case errno == syscall.EEXIST:
-		return &domain.JobError{Code: domain.CodeRenameConflict, Message: "目标已存在"}
+		return &domain.JobError{Code: domain.CodeRenameConflict, Message: "target exists"}
 	case errno == syscall.ENOSYS || errno == syscall.EINVAL || errno == syscall.ENOTSUP || errno == syscall.EOPNOTSUPP:
 		return &domain.JobError{
 			Code:    domain.CodeRenameUnsupported,
-			Message: "内核或文件系统不支持 RENAME_NOREPLACE,保留原文件",
+			Message: "kernel or file system does not support RENAME_NOREPLACE; original file kept",
 		}
 	case errno == syscall.EACCES || errno == syscall.EPERM:
-		return &domain.JobError{Code: domain.CodeRenamePermissionDenied, Message: errno.Error()}
+		return &domain.JobError{Code: domain.CodeRenamePermissionDenied, Message: errno.Error(), Details: map[string]any{"detail": errno.Error()}}
 	default:
 		return &domain.JobError{
 			Code:    domain.CodeRenameFailed,
-			Message: errno.Error() + " (" + oldname + " → " + newname + ")",
+			Message: errno.Error() + " (" + oldname + " -> " + newname + ")",
+			Details: map[string]any{"detail": errno.Error()},
 		}
 	}
 }

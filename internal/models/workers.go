@@ -3,7 +3,8 @@ package models
 import (
 	"context"
 	"encoding/json/v2"
-	"fmt"
+
+	"video-rename/internal/domain"
 )
 
 // Workers reads only the live scheduling limit, without loading credentials or
@@ -23,7 +24,7 @@ func (s Store) Workers(ctx context.Context, id int64) (int, error) {
 		settings.Workers = 2
 	}
 	if settings.Workers < 1 || settings.Workers > 32 {
-		return 0, fmt.Errorf("并发任务数必须在 1–32 之间")
+		return 0, domain.InvalidField("workers", "out_of_range")
 	}
 	return settings.Workers, nil
 }

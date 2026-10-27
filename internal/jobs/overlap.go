@@ -2,7 +2,6 @@ package jobs
 
 import (
 	"encoding/json/v2"
-	"fmt"
 	"maps"
 	"slices"
 
@@ -48,7 +47,7 @@ func (s *scopeIndex) parents(id int64) (map[int64]bool, error) {
 	parents := map[int64]bool{}
 	for current := id; current > 0; {
 		if parents[current] || len(parents) >= 1024 {
-			return nil, fmt.Errorf("目录关系无效")
+			return nil, domain.Fail(domain.KindConflict, "invalid_hierarchy", "directory hierarchy is invalid")
 		}
 		parents[current] = true
 		e, err := s.get(current)
@@ -150,7 +149,7 @@ func (m *Manager) checkOverlap(request Request, index *scopeIndex) error {
 		if _, err := index.get(id); err != nil {
 			for _, s := range scopes {
 				if slices.Contains(s.targets, id) {
-					return fmt.Errorf("批次 #%d 的目标状态不可用，请等待结束或取消后重试", s.id)
+					return domain.Fail(domain.KindConflict, "run_targets_unavailable", "targets of an unfinished run are unavailable", "run", s.id)
 				}
 			}
 			return err
@@ -171,7 +170,7 @@ func (m *Manager) checkOverlap(request Request, index *scopeIndex) error {
 					}
 				}
 				if covered {
-					return fmt.Errorf("所选范围与批次 #%d 重叠，该批次尚未结束，请勿重复提交", s.id)
+					return domain.Fail(domain.KindConflict, "run_overlap", "selection overlaps an unfinished run", "run", s.id)
 				}
 			}
 		}

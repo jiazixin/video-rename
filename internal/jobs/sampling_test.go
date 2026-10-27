@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
 	"video-rename/internal/config"
 	"video-rename/internal/domain"
 	"video-rename/internal/sampling"
@@ -20,10 +21,10 @@ func TestFrameSettingsFrozenForEachBatch(t *testing.T) {
 	if err := store.Save(settings); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "frames-first"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "frames-first"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,10 +46,10 @@ func TestFrameSettingsFrozenForEachBatch(t *testing.T) {
 		return "renamed", nil
 	}
 	m.Execute(t.Context(), id)
-	if err = os.WriteFile(filepath.Join(root, "b.mp4"), []byte("new video"), 0600); err != nil {
+	if err = os.WriteFile(filepath.Join(root, "b.mp4"), []byte("new video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	id, err = m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "frames-next"}, "schedule", 1)
+	id, err = m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "frames-next"}, "schedule", 1)
 	if err != nil {
 		t.Fatal(err)
 	}

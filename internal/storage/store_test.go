@@ -3,7 +3,9 @@ package storage
 import (
 	"bytes"
 	"database/sql"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +14,7 @@ import (
 
 func TestDatabaseFilesArePrivate(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Chmod(dir, 0755); err != nil {
+	if err := os.Chmod(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "private.sqlite")
@@ -21,7 +23,7 @@ func TestDatabaseFilesArePrivate(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec("INSERT INTO sessions VALUES('token','csrf',123,'fingerprint')"); err != nil {
+	if _, err := db.Exec("INSERT INTO sessions VALUES('token',123,'fingerprint')"); err != nil {
 		t.Fatal(err)
 	}
 	for _, suffix := range []string{"", ".key", ".lock", "-wal", "-shm"} {
@@ -29,7 +31,7 @@ func TestDatabaseFilesArePrivate(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.Mode().Perm() != 0600 {
+		if info.Mode().Perm() != 0o600 {
 			t.Errorf("database file %s has permissions %o, want 600", suffix, info.Mode().Perm())
 		}
 	}
@@ -88,7 +90,7 @@ func TestDatabaseAliasesShareInstanceLockAndKey(t *testing.T) {
 	if plain, err := reopened.Unseal(sealed); err != nil || plain != "alias must preserve the encryption key" {
 		t.Fatal("database alias selected a different encryption key", plain, err)
 	}
-	if _, err := os.Stat(alias + ".key"); !os.IsNotExist(err) {
+	if _, err := os.Stat(alias + ".key"); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatal("database alias created a second key", err)
 	}
 }
@@ -114,7 +116,7 @@ func TestDatabaseHardLinksAreRejectedWithoutChangingData(t *testing.T) {
 		if second, err := Open(candidate); err == nil {
 			second.Close()
 			t.Fatal("database hardlink allowed another owner")
-		} else if !strings.Contains(err.Error(), "硬链接") {
+		} else if !strings.Contains(err.Error(), "hard links") {
 			t.Fatal("database hardlink did not return an actionable error", err)
 		}
 	}
@@ -146,7 +148,7 @@ func TestDatabaseHardLinksAreRejectedWithoutChangingData(t *testing.T) {
 		}
 	}
 	for _, suffix := range []string{".key", ".lock", "-wal", "-shm"} {
-		if _, err := os.Stat(alias + suffix); !os.IsNotExist(err) {
+		if _, err := os.Stat(alias + suffix); !errors.Is(err, fs.ErrNotExist) {
 			t.Fatalf("rejecting hardlink created an alias file %s: %v", suffix, err)
 		}
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -16,7 +15,7 @@ import (
 
 func recoverExtractions(db *storage.Store) error {
 	now := storage.Now()
-	_, err := db.Exec(`UPDATE extraction_records SET status='failure',finished=?,duration_ms=MAX(0,CAST((julianday(?)-julianday(started))*86400000 AS INTEGER)),message='服务重启，抽帧已中断' WHERE status='running'`, now, now)
+	_, err := db.Exec(`UPDATE extraction_records SET status='failure',finished=?,duration_ms=MAX(0,CAST((julianday(?)-julianday(started))*86400000 AS INTEGER)),message=? WHERE status='running'`, now, now, recordExtractInterrupted)
 	return err
 }
 
@@ -65,7 +64,7 @@ func (m *Manager) prepareFramesOnce(ctx, schedule context.Context, run Run, entr
 		// The slot was admitted before pause; only cancellation stops its work.
 		cached = false
 		if err := start(); err != nil {
-			return domain.FrameSet{}, fmt.Errorf("无法记录抽帧开始: %w", err)
+			return domain.FrameSet{}, fmt.Errorf("record extraction start: %w", err)
 		}
 		return m.Prepare(ctx, cfg, job, probe, ffmpeg, work)
 	})
@@ -75,14 +74,14 @@ func (m *Manager) prepareFramesOnce(ctx, schedule context.Context, run Run, entr
 				lease.Release(false)
 				lease = nil
 			}
-			return nil, fmt.Errorf("无法记录抽帧开始: %w", recordErr)
+			return nil, fmt.Errorf("record extraction start: %w", recordErr)
 		}
 	}
 	if err == nil {
 		var current domain.Snapshot
 		current, err = domain.StatSnapshot(job.Path)
 		if err == nil && !current.Same(job.Snapshot) {
-			err = domain.SourceChangedError("视频在抽帧期间发生变化，请重新抽帧", "抽帧完成后核验原视频", job.Path, job.Snapshot, current)
+			err = domain.SourceChangedError("video changed during extraction; extract again", domain.StageAfterExtract, job.Path, job.Snapshot, current)
 		}
 		if err != nil {
 			lease.Release(true)
@@ -108,16 +107,16 @@ func (m *Manager) finishExtraction(id int64, started time.Time, cached bool, fra
 	finished := time.Now()
 	status, message, detail := "success", "", ""
 	if extractionErr != nil {
-		status, message = "failure", extractionErr.Error()
+		status, message = "failure", domain.RecordText(extractionErr)
 		if errors.Is(extractionErr, context.Canceled) {
-			message = "抽帧已取消"
+			message = recordExtractionCancelled
 		}
 		if diagnostic, ok := errors.AsType[*domain.JobError](extractionErr); ok {
 			detail = strings.TrimSpace(diagnostic.ProcessingLog + "\n" + diagnostic.StderrTail)
 		}
 	}
 	if _, err := m.DB.Exec(`UPDATE extraction_records SET status=?,finished=?,duration_ms=?,cached=?,frames=?,message=?,processing_log=? WHERE id=?`, status, finished.UTC().Format(time.RFC3339Nano), finished.Sub(started).Milliseconds(), cached, frames, extractionText(message), extractionText(detail), id); err != nil {
-		slog.Error("记录抽帧结果失败", "record", id, "error", err)
+		m.logger.Error("extraction_result_save_failed", "record_id", id, "error", err)
 	}
 }
 
@@ -125,7 +124,7 @@ func (m *Manager) extractionFailure(run Run, entry int64, path string, cause err
 	started := time.Now()
 	id, err := m.startExtraction(run, entry, path, started)
 	if err != nil {
-		slog.Error("记录抽帧失败", "run", run.ID, "error", err)
+		m.logger.Error("extraction_failure_save_failed", "run_id", run.ID, "error", err)
 		return
 	}
 	m.finishExtraction(id, started, false, 0, cause)
@@ -136,5 +135,5 @@ func extractionText(text string) string {
 	if len(text) <= limit {
 		return text
 	}
-	return strings.ToValidUTF8(text[:limit], "") + "\n…日志已截断"
+	return strings.ToValidUTF8(text[:limit], "") + "\n…log truncated"
 }

@@ -2,13 +2,14 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestRunUsageErrors(t *testing.T) {
-	for _, args := range [][]string{{"--bogus"}, {"-c"}, {"--config="}, {"config.yaml"}} {
+	for _, args := range [][]string{{"--bogus"}, {"-x"}, {"-c"}, {"--config="}, {"config.yaml"}, {"-c", "a", "-c", "b"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			if code := run(args, &stdout, &stderr); code != exitUsage {
@@ -31,6 +32,7 @@ func TestRunHelpAndVersionSkipConfiguration(t *testing.T) {
 		{[]string{"-h"}, usage},
 		{[]string{"--help"}, usage},
 		{[]string{"-c", "missing.yaml", "--help"}, usage},
+		{[]string{"--help", "--version"}, usage},
 		{[]string{"--version"}, "video-rename " + currentBuild().String() + "\n"},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
@@ -68,5 +70,49 @@ func TestRunConfigSelection(t *testing.T) {
 				t.Fatalf("stdout %q, stderr %q", stdout.String(), got)
 			}
 		})
+	}
+}
+
+func TestRunConfigFailures(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.yaml")
+	for _, tc := range []struct {
+		name   string
+		env    *string
+		args   []string
+		prefix string
+	}{
+		{"empty CONFIG_FILE", new(" "), nil, "video-rename: config: CONFIG_FILE is set but empty\n"},
+		{"explicit missing file", nil, []string{"-c", missing}, "video-rename: config: read configuration: "},
+		{"missing default file", nil, nil, "video-rename: config: configs/config.local.yaml not found and built-in defaults are incomplete: auth.username: is required\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			work := t.TempDir()
+			t.Chdir(work)
+			if tc.env != nil {
+				t.Setenv("CONFIG_FILE", *tc.env)
+			} else {
+				unsetEnv(t, "CONFIG_FILE")
+			}
+			var stdout, stderr bytes.Buffer
+			if code := run(tc.args, &stdout, &stderr); code != exitFailure {
+				t.Fatalf("exit %d, want %d", code, exitFailure)
+			}
+			got := stderr.String()
+			if stdout.Len() != 0 || !strings.HasPrefix(got, tc.prefix) || strings.Count(got, "\n") != 1 {
+				t.Fatalf("stdout %q, stderr %q", stdout.String(), got)
+			}
+			if entries, err := os.ReadDir(work); err != nil || len(entries) != 0 {
+				t.Fatalf("created %v, %v", entries, err)
+			}
+		})
+	}
+}
+
+// unsetEnv removes name for the test and restores it afterwards.
+func unsetEnv(t *testing.T, name string) {
+	t.Helper()
+	t.Setenv(name, "") // registers restoration
+	if err := os.Unsetenv(name); err != nil {
+		t.Fatal(err)
 	}
 }

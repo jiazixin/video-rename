@@ -12,6 +12,7 @@ const (
 	refreshMetadataWorkers = 4
 )
 
+// Refresh rescans directory id.
 func (l *Library) Refresh(ctx context.Context, id int64) error {
 	_, err := l.ScanDirectory(ctx, id)
 	return err

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"video-rename/internal/domain"
 	"video-rename/internal/library"
 )
 
@@ -32,9 +33,9 @@ type markJob struct {
 // HTTP request. While a result is cached, the same key returns its work and counts.
 // Clients retry existing requests through markStatus: a retired result must not
 // be mistaken for a new operation and replayed over a later opposite mark.
-func (a *App) startMark(w http.ResponseWriter, key string, targets []int64, marked bool) {
+func (a *App) startMark(w http.ResponseWriter, r *http.Request, key string, targets []int64, marked bool) {
 	if len(key) < 8 || len(key) > 128 || strings.ContainsAny(key, "/\\?#") {
-		send(w, 400, map[string]string{"message": "标记请求键无效"})
+		invalid(w, r, "key", "invalid")
 		return
 	}
 	a.markMu.Lock()
@@ -42,8 +43,12 @@ func (a *App) startMark(w http.ResponseWriter, key string, targets []int64, mark
 		a.markMu.Unlock()
 		send(w, status, body)
 	}
+	fail := func(err error) {
+		a.markMu.Unlock()
+		writeError(w, r, err)
+	}
 	if a.markClosed || a.ctx.Err() != nil {
-		reply(503, map[string]string{"message": "服务正在关闭，请稍后重试标记"})
+		fail(errShuttingDown)
 		return
 	}
 	maps.DeleteFunc(a.markJobs, func(_ string, job *markJob) bool {
@@ -51,7 +56,7 @@ func (a *App) startMark(w http.ResponseWriter, key string, targets []int64, mark
 	})
 	if job, ok := a.markJobs[key]; ok {
 		if job.marked != marked || !slices.Equal(job.targets, targets) {
-			reply(409, map[string]string{"message": "标记请求键已用于其他目标或状态"})
+			fail(domain.Fail(domain.KindConflict, "request_key_reused", "request key is used by a different request"))
 			return
 		}
 		reply(200, job.status)
@@ -60,7 +65,7 @@ func (a *App) startMark(w http.ResponseWriter, key string, targets []int64, mark
 	// Serialize mark requests so a second tab cannot interleave opposite states.
 	for _, job := range a.markJobs {
 		if job.finished.IsZero() {
-			reply(409, map[string]string{"message": "已有标记任务正在后台执行，请等待完成后重试"})
+			fail(domain.Fail(domain.KindConflict, "mark_running", "another mark job is running"))
 			return
 		}
 	}
@@ -116,10 +121,10 @@ func (a *App) markStatus(w http.ResponseWriter, r *http.Request) {
 	if !ok || !job.finished.IsZero() && time.Since(job.finished) > markResultRetention {
 		delete(a.markJobs, key)
 		a.markMu.Unlock()
-		send(w, 404, map[string]string{"message": "标记任务结果不可查询，可能已回收、过期或服务已重启；已完成的标记仍保留，请重新选择目标后重试"})
+		reject(w, r, domain.KindNotFound, "mark_result_gone", "mark result expired or the service restarted")
 		return
 	}
 	status := job.status
 	a.markMu.Unlock()
-	send(w, 200, status)
+	send(w, http.StatusOK, status)
 }

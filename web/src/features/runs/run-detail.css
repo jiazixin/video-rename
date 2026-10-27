@@ -4,50 +4,50 @@
   max-height: 88vh;
   max-height: 88dvh;
   border-radius: 12px;
-  --detail-success: #287452;
+  --detail-success: var(--tone-green-ink);
   --detail-primary: var(--detail-success);
-  --detail-error: #b14545;
-  --detail-warning: #996314;
-  --detail-muted: #69717c;
+  --detail-error: var(--tone-red-ink);
+  --detail-warning: var(--palette-996314);
+  --detail-muted: var(--palette-69717c);
 }
 .run-detail-dialog [data-tone='success'] {
   --tone: var(--detail-success);
-  --tone-bg: #f2f8f4;
+  --tone-bg: var(--palette-f2f8f4);
 }
 .run-detail-dialog [data-tone='primary'] {
   --tone: var(--detail-primary);
-  --tone-bg: #edf5ef;
+  --tone-bg: var(--palette-edf5ef);
 }
 .run-detail-dialog [data-tone='error'] {
   --tone: var(--detail-error);
-  --tone-bg: #fdf4f4;
+  --tone-bg: var(--palette-fdf4f4);
 }
 .run-detail-dialog [data-tone='warning'] {
   --tone: var(--detail-warning);
-  --tone-bg: #fff8eb;
+  --tone-bg: var(--palette-fff8eb);
 }
 .run-detail-dialog [data-tone='muted'] {
   --tone: var(--detail-muted);
-  --tone-bg: #f5f7f9;
+  --tone-bg: var(--palette-f5f7f9);
 }
 .run-detail-dialog [data-tone='pending'] {
-  --tone: #b9c1cb;
+  --tone: var(--palette-b9c1cb);
 }
 .run-detail-dialog .status-badge[data-status='scanning'] {
   --status-ink: var(--detail-primary);
-  --status-bg: #edf5ef;
-  --status-line: #d6e8dd;
+  --status-bg: var(--palette-edf5ef);
+  --status-line: var(--palette-d6e8dd);
 }
 .run-detail-dialog .status-badge[data-status='partial_failure'],
 .run-detail-dialog .status-badge[data-status='interrupted'] {
   --status-ink: var(--detail-error);
-  --status-bg: #fff0f0;
-  --status-line: #f1cece;
+  --status-bg: var(--tone-red-bg);
+  --status-line: var(--tone-red-line);
 }
 .run-detail-dialog .status-badge[data-status='cancelled'] {
   --status-ink: var(--detail-muted);
-  --status-bg: #f3f4f6;
-  --status-line: #e1e4e8;
+  --status-bg: var(--palette-f3f4f6);
+  --status-line: var(--palette-e1e4e8);
 }
 .run-detail-dialog > header {
   padding: 22px 28px;
@@ -91,7 +91,7 @@
 }
 .detail-lifecycle {
   --lifecycle-line: var(--line);
-  --lifecycle-reached-line: color-mix(in srgb, var(--detail-success) 30%, white);
+  --lifecycle-reached-line: color-mix(in srgb, var(--detail-success) 30%, var(--palette-ffffff));
   --lifecycle-pending-node: var(--ash);
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -130,11 +130,11 @@
   border: 2px solid var(--tone);
   border-radius: 50%;
   background: var(--tone);
-  color: white;
+  color: var(--palette-ffffff);
 }
 .detail-lifecycle [data-tone='pending'] .lifecycle-node {
   border-color: var(--lifecycle-pending-node);
-  background: white;
+  background: var(--palette-ffffff);
 }
 .detail-lifecycle [data-tone='primary'][data-reached]:not([aria-current]) .lifecycle-node {
   border-color: transparent;
@@ -148,7 +148,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: white;
+  background: var(--palette-ffffff);
 }
 .detail-lifecycle strong {
   font-size: 14px;
@@ -188,7 +188,7 @@
   padding: 18px 20px;
   border: 1px solid var(--line);
   border-radius: 9px;
-  background: color-mix(in srgb, var(--surface) 60%, white);
+  background: color-mix(in srgb, var(--surface) 60%, var(--palette-ffffff));
 }
 .detail-statistic[data-tone='primary'] {
   border-color: transparent;
@@ -230,7 +230,7 @@
   min-width: 0;
 }
 .metadata-separator {
-  color: #c2c7cf;
+  color: var(--palette-c2c7cf);
 }
 .metadata-model {
   min-width: 0;
@@ -243,9 +243,9 @@
   padding: 3px 8px;
   min-width: 0;
   max-width: 100%;
-  border-color: #d6e8e1;
-  color: #287452;
-  background: #f2f8f5;
+  border-color: var(--palette-d6e8e1);
+  color: var(--tone-green-ink);
+  background: var(--palette-f2f8f5);
   font-size: 12px;
 }
 .detail-prompt-tag > span {
@@ -262,8 +262,8 @@
   transform: rotate(90deg);
 }
 .detail-prompt-body {
-  background: #f8faf9;
-  border-left: 2px solid #cde6d6;
+  background: var(--palette-f8faf9);
+  border-left: 2px solid var(--tone-green-line);
   padding: 12px 16px;
   margin-bottom: 22px;
 }
@@ -282,7 +282,7 @@
   gap: 8px;
   color: var(--detail-error);
   padding: 12px 14px;
-  background: #fdf4f4;
+  background: var(--palette-fdf4f4);
   border-radius: 6px;
   margin-bottom: 20px;
   font-size: 13px;
@@ -292,12 +292,12 @@
   margin-top: 2px;
 }
 .detail-sections {
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--palette-e5e7eb);
   border-radius: 9px;
   overflow: hidden;
 }
 .detail-section + .detail-section {
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--palette-e5e7eb);
 }
 .detail-section-toggle {
   display: flex;
@@ -307,7 +307,7 @@
   padding: 16px 18px;
   border: 0;
   border-radius: 0;
-  background: #fafbfc;
+  background: var(--palette-fafbfc);
   text-align: left;
   justify-content: flex-start;
   color: var(--steel);
@@ -400,7 +400,7 @@
 }
 .detail-progress-track {
   height: 4px;
-  background: #edf0f3;
+  background: var(--palette-edf0f3);
   border-radius: 2px;
   overflow: hidden;
 }
@@ -440,7 +440,7 @@
 .detail-attempt {
   border-left: 2px solid var(--tone);
   padding: 8px 12px;
-  background: #f8fafc;
+  background: var(--palette-f8fafc);
   margin: 5px 0 8px;
 }
 .detail-attempt > strong {
@@ -499,7 +499,7 @@
 }
 .detail-copy-error {
   margin-right: auto;
-  color: #b23b35;
+  color: var(--palette-b23b35);
   font-size: 12px;
 }
 .detail-footer .modal-actions {
@@ -577,7 +577,7 @@
 .detail-record-filters button[aria-pressed='true'] {
   color: var(--detail-primary);
   border-color: var(--detail-primary);
-  background: #edf5ef;
+  background: var(--palette-edf5ef);
 }
 .detail-directory {
   border: 1px solid var(--line);
@@ -721,7 +721,7 @@
   max-width: 100%;
   padding: 4px 10px;
   border-radius: 7px;
-  background: #fbf5ea;
+  background: var(--palette-fbf5ea);
   color: var(--detail-warning);
   font-size: 12px;
   overflow-wrap: anywhere;
@@ -820,7 +820,7 @@
   background: var(--line);
 }
 .run-live-steps li[data-state='done']:not(:last-child)::after {
-  background: color-mix(in srgb, var(--detail-success) 30%, white);
+  background: color-mix(in srgb, var(--detail-success) 30%, var(--palette-ffffff));
 }
 .run-live-node {
   display: flex;
@@ -830,8 +830,8 @@
   height: 16px;
   border: 2px solid var(--ash);
   border-radius: 50%;
-  background: white;
-  color: white;
+  background: var(--palette-ffffff);
+  color: var(--palette-ffffff);
 }
 .run-live-steps [data-state='done'] .run-live-node {
   border-color: var(--detail-success);

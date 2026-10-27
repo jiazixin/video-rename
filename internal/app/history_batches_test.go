@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json/v2"
 	"fmt"
+	"log/slog"
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
@@ -88,18 +89,18 @@ func TestHistoryTokenTotalsSeekByItem(t *testing.T) {
 }
 
 func TestHistoryBatchFiltering(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer a.Close()
 	for _, category := range []string{"success", "failure"} {
 		for range 105 {
-			if _, err := a.DB.Exec("INSERT INTO events(category,action,run,old_path,message,created) VALUES(?,'automatic',7,'clip.mp4','test','2026-09-21')", category); err != nil {
+			if _, err := a.DB.Exec(`INSERT INTO events(category,action,run,old_path,message,created) VALUES(?,'automatic',7,'clip.mp4','{"code":"internal","message":"test"}','2026-09-21')`, category); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if _, err := a.DB.Exec("INSERT INTO events(category,action,run,old_path,message,created) VALUES(?,'automatic',8,'other.mp4','test','2026-09-21'),(?,'manual',0,'manual.mp4','test','2026-09-21')", category, category); err != nil {
+		if _, err := a.DB.Exec(`INSERT INTO events(category,action,run,old_path,message,created) VALUES(?,'automatic',8,'other.mp4','{"code":"internal","message":"test"}','2026-09-21'),(?,'manual',0,'manual.mp4','{"code":"internal","message":"test"}','2026-09-21')`, category, category); err != nil {
 			t.Fatal(err)
 		}
 		w := httptest.NewRecorder()
@@ -108,7 +109,7 @@ func TestHistoryBatchFiltering(t *testing.T) {
 			ID  int64 `json:"id"`
 			Run int64 `json:"run"`
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
+		if err := decodeItems(w.Body.Bytes(), &rows); err != nil {
 			t.Fatal(err)
 		}
 		if len(rows) != 100 {
@@ -146,7 +147,7 @@ func TestHistoryBatchFiltering(t *testing.T) {
 		}
 		w = httptest.NewRecorder()
 		a.logs(w, httptest.NewRequest("GET", "/api/logs?category="+category+"&run=7&before="+strconv.FormatInt(rows[len(rows)-1].ID, 10), nil))
-		if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
+		if err := decodeItems(w.Body.Bytes(), &rows); err != nil {
 			t.Fatal(err)
 		}
 		if len(rows) != 5 {
@@ -154,13 +155,13 @@ func TestHistoryBatchFiltering(t *testing.T) {
 		}
 		w = httptest.NewRecorder()
 		a.logs(w, httptest.NewRequest("GET", "/api/logs?category="+category+"&run=8&q=clip", nil))
-		if w.Body.String() != "[]" {
+		if w.Body.String() != `{"items":[]}` {
 			t.Fatalf("combined filter: %s", w.Body.String())
 		}
 	}
 	w := httptest.NewRecorder()
 	a.logBatches(w, httptest.NewRequest("GET", "/api/logs/batches", nil))
-	if w.Body.String() != "[8,7]" {
+	if w.Body.String() != `{"items":[8,7]}` {
 		t.Fatalf("batch options: %s", w.Body.String())
 	}
 	for _, run := range []string{"0", "-1", "bad"} {
@@ -178,7 +179,7 @@ func TestHistoryBatchFiltering(t *testing.T) {
 }
 
 func TestHistoryShowsBatchModelSnapshot(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,14 +204,14 @@ VALUES('manual','[]',1,'completed','now','history-model-run','旅行模型配置
 			Title  string `json:"model_config_title"`
 			Source string `json:"model_source"`
 		}
-		if err = json.Unmarshal(response.Body.Bytes(), &rows); err != nil || len(rows) != 1 || rows[0].Model != "glm-4.6v" || rows[0].Title != "旅行模型配置" || rows[0].Source != "unknown" {
+		if err = decodeItems(response.Body.Bytes(), &rows); err != nil || len(rows) != 1 || rows[0].Model != "glm-4.6v" || rows[0].Title != "旅行模型配置" || rows[0].Source != "unknown" {
 			t.Fatalf("%s model snapshot: %+v, %v", category, rows, err)
 		}
 	}
 }
 
 func TestHistoryUsesActualModelAttempt(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +307,7 @@ func TestHistoryUsesActualModelAttempt(t *testing.T) {
 					}
 					var rows []record
 					if suffix == "" {
-						err = json.Unmarshal(w.Body.Bytes(), &rows)
+						err = decodeItems(w.Body.Bytes(), &rows)
 					} else {
 						var page struct {
 							Items []record `json:"items"`

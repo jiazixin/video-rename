@@ -5,7 +5,7 @@
   font-synthesis: none;
   --ink: #1b1b1b;
   --steel: #60646c;
-  --ash: #7c7c7c;
+  --ash: #717171;
   --line: #e0e1e6;
   --mint: #19896d;
   --surface: #f7f8f9;
@@ -580,7 +580,7 @@ table {
   text-align: center;
 }
 th {
-  color: #8a8e96;
+  color: #6e727a;
   font-size: 11px;
   font-weight: 500;
   background: #fafbfc;
@@ -722,7 +722,7 @@ tbody tr:hover {
   justify-content: center;
   flex-direction: column;
   text-align: center;
-  color: #9aa49f;
+  color: #67736d;
   gap: 10px;
 }
 .empty h3 {
@@ -1107,7 +1107,7 @@ tbody tr:hover {
   background: transparent;
   border-radius: 0;
   padding: 0 2px 15px;
-  color: #969aa1;
+  color: #70757d;
   position: relative;
 }
 .log-tabs button:hover:not(:disabled),
@@ -1425,7 +1425,7 @@ tbody tr:hover {
   padding: 0;
   font-size: 11px;
   font-weight: 500;
-  color: #8a8e96;
+  color: #6e727a;
   gap: 6px;
 }
 .table-sort:hover:not(:disabled) {
@@ -1612,7 +1612,7 @@ textarea:focus-visible {
 }
 /* Status uses both text and a color signal. */
 .status-badge {
-  --status-ink: #69717c;
+  --status-ink: #676e79;
   --status-bg: #f3f4f6;
   --status-line: #e1e4e8;
   display: inline-flex;
@@ -2326,4 +2326,241 @@ button.cache-clear:hover:not(:disabled) {
     margin-left: auto;
     margin-right: auto;
   }
+}
+
+/* Usage analysis charts: the outcome series (checked for color vision deficiency
+   and contrast) and the duration ramp, light to dark = short to long. */
+:root {
+  --chart-line: #0e8a5c;
+  --chart-done: #0e8a5c;
+  --chart-skipped: #2468af;
+  --chart-failed: #b14545;
+  --chart-duration-1: #77c18c;
+  --chart-duration-2: #65ad79;
+  --chart-duration-3: #519866;
+  --chart-duration-4: #3d8454;
+  --chart-duration-5: #287141;
+  --chart-duration-6: #0e5e30;
+  --chart-duration-7: #004c1f;
+  --chart-duration-8: #003a0d;
+}
+
+/* Palette: colors used by individual components. Prefer the semantic
+   variables above; merge a palette value into one of them when it is reused. */
+:root {
+  --palette-6a726d: #6a726d;
+  --palette-6e7770: #6e7770;
+  --palette-6a736d: #6a736d;
+  --palette-000000: #000;
+  --palette-0c1110: #0c1110;
+  --palette-0c7f52: #0c7f52;
+  --palette-0e8a5c: #0e8a5c;
+  --palette-0e8a5c14: #0e8a5c14;
+  --palette-121a17: #121a17;
+  --palette-124d39: #124d39;
+  --palette-16251e26: #16251e26;
+  --palette-17191c: #17191c;
+  --palette-182c2018: #182c2018;
+  --palette-182c201a: #182c201a;
+  --palette-185c4a: #185c4a;
+  --palette-19976a: #19976a;
+  --palette-1a2421: #1a2421;
+  --palette-1c322706: #1c322706;
+  --palette-20382a12: #20382a12;
+  --palette-205c4b: #205c4b;
+  --palette-20634e: #20634e;
+  --palette-208a70: #208a70;
+  --palette-2468af: #2468af;
+  --palette-258487: #258487;
+  --palette-282d32: #282d32;
+  --palette-283c33: #283c33;
+  --palette-285c43: #285c43;
+  --palette-285e47: #285e47;
+  --palette-28649b: #28649b;
+  --palette-28654d: #28654d;
+  --palette-28684e: #28684e;
+  --palette-287257: #287257;
+  --palette-2b3035: #2b3035;
+  --palette-2c6e56: #2c6e56;
+  --palette-2e9b69: #2e9b69;
+  --palette-303940: #303940;
+  --palette-327a5b: #327a5b;
+  --palette-337756: #337756;
+  --palette-337b56: #337b56;
+  --palette-347652: #347652;
+  --palette-366ba0: #366ba0;
+  --palette-398366: #398366;
+  --palette-39866d: #39866d;
+  --palette-399874: #399874;
+  --palette-424a46: #424a46;
+  --palette-426b70: #426b70;
+  --palette-43554b: #43554b;
+  --palette-47916c: #47916c;
+  --palette-48534c: #48534c;
+  --palette-49340b1a: #49340b1a;
+  --palette-4d7864: #4d7864;
+  --palette-4fc486: #4fc486;
+  --palette-526159: #526159;
+  --palette-52665a: #52665a;
+  --palette-54715f: #54715f;
+  --palette-567261: #567261;
+  --palette-547e68: #547e68;
+  --palette-58685e: #58685e;
+  --palette-59616c: #59616c;
+  --palette-597266: #597266;
+  --palette-619982: #619982;
+  --palette-63766b: #63766b;
+  --palette-656d77: #656d77;
+  --palette-65706c: #65706c;
+  --palette-65746a: #65746a;
+  --palette-65756c: #65756c;
+  --palette-657b6c: #657b6c;
+  --palette-647369: #647369;
+  --palette-6941a5: #6941a5;
+  --palette-69717c: #69717c;
+  --palette-637368: #637368;
+  --palette-6c8479: #6c8479;
+  --palette-6e7774: #6e7774;
+  --palette-6e917a: #6e917a;
+  --palette-6fcf9f: #6fcf9f;
+  --palette-707781: #707781;
+  --palette-7251a1: #7251a1;
+  --palette-73551b: #73551b;
+  --palette-785ba0: #785ba0;
+  --palette-78827d: #78827d;
+  --palette-6b7570: #6b7570;
+  --palette-6c737c: #6c737c;
+  --palette-6e727a: #6e727a;
+  --palette-805d2a: #805d2a;
+  --palette-80621f: #80621f;
+  --palette-81aa93: #81aa93;
+  --palette-896018: #896018;
+  --palette-89928b: #89928b;
+  --palette-89bca7: #89bca7;
+  --palette-934f3e: #934f3e;
+  --palette-93a097: #93a097;
+  --palette-94979e: #94979e;
+  --palette-976126: #976126;
+  --palette-98661c: #98661c;
+  --palette-996314: #996314;
+  --palette-9ba59f: #9ba59f;
+  --palette-9ca1a8: #9ca1a8;
+  --palette-9db0a6: #9db0a6;
+  --palette-9db8ac: #9db8ac;
+  --palette-70747e: #70747e;
+  --palette-a65c33: #a65c33;
+  --palette-a8d9cb: #a8d9cb;
+  --palette-a9d8bf: #a9d8bf;
+  --palette-b23b35: #b23b35;
+  --palette-b3bab6: #b3bab6;
+  --palette-b44444: #b44444;
+  --palette-b4bbb6: #b4bbb6;
+  --palette-b9c1cb: #b9c1cb;
+  --palette-bcd7cb: #bcd7cb;
+  --palette-c2c7cf: #c2c7cf;
+  --palette-c4b2df: #c4b2df;
+  --palette-c6cad0: #c6cad0;
+  --palette-c6dcef: #c6dcef;
+  --palette-c9ced4: #c9ced4;
+  --palette-c9dfdf: #c9dfdf;
+  --palette-ccd6ce: #ccd6ce;
+  --palette-cee5db: #cee5db;
+  --palette-cfe1f6: #cfe1f6;
+  --palette-d4e6db: #d4e6db;
+  --palette-d6e8dd: #d6e8dd;
+  --palette-d6e8e1: #d6e8e1;
+  --palette-d9dde0: #d9dde0;
+  --palette-dce4df: #dce4df;
+  --palette-dce9df: #dce9df;
+  --palette-dceee5: #dceee5;
+  --palette-ddcfee: #ddcfee;
+  --palette-dfe6e0: #dfe6e0;
+  --palette-dfe6e1: #dfe6e1;
+  --palette-dfe8e3: #dfe8e3;
+  --palette-e0e7e2: #e0e7e2;
+  --palette-e1e4e8: #e1e4e8;
+  --palette-e3e9e5: #e3e9e5;
+  --palette-e3ebe6: #e3ebe6;
+  --palette-e3f2e9: #e3f2e9;
+  --palette-e4e9e6: #e4e9e6;
+  --palette-e5e7eb: #e5e7eb;
+  --palette-e5eae7: #e5eae7;
+  --palette-e5ece7: #e5ece7;
+  --palette-e6ebe8: #e6ebe8;
+  --palette-e7e9ec: #e7e9ec;
+  --palette-e8d7a6: #e8d7a6;
+  --palette-e9edf0: #e9edf0;
+  --palette-eaf7ee: #eaf7ee;
+  --palette-ebd4c6: #ebd4c6;
+  --palette-ebddd2: #ebddd2;
+  --palette-ebedee: #ebedee;
+  --palette-ecf3ef: #ecf3ef;
+  --palette-edf0ed: #edf0ed;
+  --palette-edf0ee: #edf0ee;
+  --palette-edf0f3: #edf0f3;
+  --palette-edf4fc: #edf4fc;
+  --palette-edf5ef: #edf5ef;
+  --palette-edf5f0: #edf5f0;
+  --palette-edf5fc: #edf5fc;
+  --palette-edf5ff: #edf5ff;
+  --palette-edf6f2: #edf6f2;
+  --palette-edf6f5: #edf6f5;
+  --palette-eef0f2: #eef0f2;
+  --palette-eef4f0: #eef4f0;
+  --palette-eef5f1: #eef5f1;
+  --palette-eef6f1: #eef6f1;
+  --palette-eff0f3: #eff0f3;
+  --palette-f0f1f4: #f0f1f4;
+  --palette-f0f2f1: #f0f2f1;
+  --palette-f0f8f5: #f0f8f5;
+  --palette-f1f4f2: #f1f4f2;
+  --palette-f1f7f3: #f1f7f3;
+  --palette-f2f4f5: #f2f4f5;
+  --palette-f2f8f3: #f2f8f3;
+  --palette-f2f8f4: #f2f8f4;
+  --palette-f2f8f5: #f2f8f5;
+  --palette-f3f4f6: #f3f4f6;
+  --palette-f3f6f4: #f3f6f4;
+  --palette-f4f5f6: #f4f5f6;
+  --palette-f4f8f5: #f4f8f5;
+  --palette-f5f0fc: #f5f0fc;
+  --palette-f5f7f9: #f5f7f9;
+  --palette-f5f8f6: #f5f8f6;
+  --palette-f6f9f7: #f6f9f7;
+  --palette-f6faf7: #f6faf7;
+  --palette-f7f9f8: #f7f9f8;
+  --palette-f7faf8: #f7faf8;
+  --palette-f8faf9: #f8faf9;
+  --palette-f8fafc: #f8fafc;
+  --palette-fafbfa: #fafbfa;
+  --palette-fafbfc: #fafbfc;
+  --palette-fafcfb: #fafcfb;
+  --palette-fbf5ea: #fbf5ea;
+  --palette-fbfcfb: #fbfcfb;
+  --palette-fcfdfc: #fcfdfc;
+  --palette-fcfdfd: #fcfdfd;
+  --palette-fdf4f4: #fdf4f4;
+  --palette-ffc9c9: #ffc9c9;
+  --palette-fff0eb: #fff0eb;
+  --palette-fff4df: #fff4df;
+  --palette-fff8eb: #fff8eb;
+  --palette-fffbef: #fffbef;
+  --palette-fffbf8: #fffbf8;
+  --palette-ffffff: #ffffff;
+  --palette-ffffffd9: #ffffffd9;
+  --palette-hsl-calc-var-hue-36-48-66: hsl(calc(var(--hue) + 36) 48% 66%);
+  --palette-hsl-var-hue-42-34: hsl(var(--hue) 42% 34%);
+  --palette-rgba-0-0-0-0_06: rgba(0, 0, 0, 0.06);
+  --palette-rgba-0-0-0-0_45: rgba(0, 0, 0, 0.45);
+  --palette-rgba-0-0-0-0_5: rgba(0, 0, 0, 0.5);
+  --palette-rgba-0-0-0-0_55: rgba(0, 0, 0, 0.55);
+  --palette-rgba-20-40-30-0_18: rgba(20, 40, 30, 0.18);
+  --palette-rgba-238-245-241-0_14: rgba(238, 245, 241, 0.14);
+  --palette-rgba-255-255-255-0_1: rgba(255, 255, 255, 0.1);
+  --palette-rgba-255-255-255-0_12: rgba(255, 255, 255, 0.12);
+  --palette-rgba-255-255-255-0_2: rgba(255, 255, 255, 0.2);
+  --palette-rgba-255-255-255-0_22: rgba(255, 255, 255, 0.22);
+  --palette-rgba-255-255-255-0_55: rgba(255, 255, 255, 0.55);
+  --palette-rgba-255-255-255-0_92: rgba(255, 255, 255, 0.92);
+  --palette-rgba-6-9-8-0_78: rgba(6, 9, 8, 0.78);
 }

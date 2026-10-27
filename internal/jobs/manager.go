@@ -3,6 +3,7 @@ package jobs
 
 import (
 	"context"
+	"log/slog"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -18,7 +19,9 @@ import (
 	"video-rename/internal/systemsettings"
 )
 
+// Manager owns persistent batches and the bounded media worker pool.
 type Manager struct {
+	logger       *slog.Logger
 	DB           *storage.Store
 	Library      *library.Library
 	createMu     sync.Mutex
@@ -32,6 +35,7 @@ type Manager struct {
 	Prepare      func(context.Context, *config.TaskConfig, domain.VideoJob, string, string, string) (domain.FrameSet, error)
 	Infer        func(context.Context, *config.TaskConfig, []domain.Frame) (string, error)
 	Analyze      func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error)
+	after        func(time.Duration) <-chan time.Time // time.After; replaced in tests
 }
 
 type activeRun struct {
@@ -40,7 +44,8 @@ type activeRun struct {
 	control *runControl
 }
 
-func New(db *storage.Store, l *library.Library, cfg *config.Config) (*Manager, error) {
+// New creates the batch manager and seeds the default model settings.
+func New(db *storage.Store, l *library.Library, cfg *config.Config, logger *slog.Logger) (*Manager, error) {
 	if err := (models.Store{DB: db}).Seed(); err != nil {
 		return nil, err
 	}
@@ -63,11 +68,11 @@ func New(db *storage.Store, l *library.Library, cfg *config.Config) (*Manager, e
 		}
 		temp = filepath.Join(filepath.Dir(path), ".cache")
 	}
-	cache, err := framecache.New(temp, settings.Bytes(), settings.Policy)
+	cache, err := framecache.New(temp, settings.Bytes(), logger, settings.Policy)
 	if err != nil {
 		return nil, err
 	}
-	m := &Manager{DB: db, Library: l, active: map[int64]activeRun{}, Cache: cache, Prepare: pipeline.Prepare, Infer: pipeline.Infer}
+	m := &Manager{logger: logger, DB: db, Library: l, active: map[int64]activeRun{}, Cache: cache, Prepare: pipeline.Prepare, Infer: pipeline.Infer, after: time.After}
 	l.Busy = m.Busy
 	return m, nil
 }
@@ -79,15 +84,17 @@ func interruptRuns(db *storage.Store) error {
 	}
 	defer tx.Rollback()
 	now := time.Now()
-	if _, err = tx.Exec(`UPDATE run_items SET status='cancelled',message='服务重启，处理已中断',finished_ms=?
-WHERE status IN ('queued','running') AND run IN (SELECT id FROM runs WHERE status IN `+domain.ActiveRunStatusesSQL+`)`, now.UnixMilli()); err != nil {
+	if _, err = tx.Exec(`UPDATE run_items SET status='cancelled',message=?,finished_ms=?
+WHERE status IN ('queued','running') AND run IN (SELECT id FROM runs WHERE status IN `+domain.ActiveRunStatusesSQL+`)`, recordItemInterrupted, now.UnixMilli()); err != nil {
 		return err
 	}
-	if _, err = tx.Exec("UPDATE runs SET status='interrupted',finished=?,error='服务重启，前次运行已中断' WHERE status IN "+domain.ActiveRunStatusesSQL, now.UTC().Format(time.RFC3339Nano)); err != nil {
+	if _, err = tx.Exec("UPDATE runs SET status='interrupted',finished=?,error=? WHERE status IN "+domain.ActiveRunStatusesSQL, now.UTC().Format(time.RFC3339Nano), recordRunInterrupted); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
+
+// Busy reports whether entry id lies within the scope of an unfinished batch.
 func (m *Manager) Busy(id int64) bool {
 	// Mutations affect the entry's entire subtree. Reuse the persistent scope
 	// check so queued runs, paused runs, hard links and nonrecursive targets
@@ -95,17 +102,21 @@ func (m *Manager) Busy(id int64) bool {
 	// createMu: callers may already hold Library.mu while a worker is scanning.
 	return m.checkOverlap(Request{Targets: []int64{id}, Recursive: true}, newScopeIndex(m.DB)) != nil
 }
+
+// Tools returns the paths of ffprobe and ffmpeg.
 func (m *Manager) Tools() (string, string, error) {
 	p, e := exec.LookPath("ffprobe")
 	if e != nil {
-		return "", "", &domain.JobError{Code: domain.CodeToolNotFound, Message: "未找到 ffprobe", Global: true}
+		return "", "", &domain.JobError{Code: domain.CodeToolNotFound, Message: "ffprobe not found", Details: map[string]any{"tool": "ffprobe"}, Global: true}
 	}
 	f, e := exec.LookPath("ffmpeg")
 	if e != nil {
-		return "", "", &domain.JobError{Code: domain.CodeToolNotFound, Message: "未找到 ffmpeg", Global: true}
+		return "", "", &domain.JobError{Code: domain.CodeToolNotFound, Message: "ffmpeg not found", Details: map[string]any{"tool": "ffmpeg"}, Global: true}
 	}
 	return p, f, nil
 }
+
+// Cancel cancels batch id.
 func (m *Manager) Cancel(id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -122,6 +133,8 @@ func (m *Manager) Cancel(id int64) error {
 	}
 	return err
 }
+
+// Loop starts queued batches every second until ctx ends.
 func (m *Manager) Loop(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()

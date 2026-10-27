@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
+	"log/slog"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -21,16 +22,16 @@ func markTestApp(t *testing.T, files int) (*App, []int64) {
 	root := t.TempDir()
 	for d := range 2 {
 		dir := filepath.Join(root, fmt.Sprintf("dir-%d", d))
-		if err := os.Mkdir(dir, 0700); err != nil {
+		if err := os.Mkdir(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
 		for f := range files {
-			if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("clip-%04d.mp4", f)), []byte("fixture"), 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("clip-%04d.mp4", f)), []byte("fixture"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}
 	}
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +55,7 @@ func markRequest(t *testing.T, a *App, ctx context.Context, key string, ids []in
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	a.markEntries(w, httptest.NewRequest("POST", "/api/entries/processed", strings.NewReader(string(body))).WithContext(ctx))
+	a.markEntries(w, jsonRequest("POST", "/api/entries/processed", strings.NewReader(string(body))).WithContext(ctx))
 	if w.Code != wantCode {
 		t.Fatalf("status=%d, want %d: %s", w.Code, wantCode, w.Body.String())
 	}
@@ -179,7 +180,7 @@ func TestBackgroundMarkStatusMissingAndProtected(t *testing.T) {
 	r := httptest.NewRequest("GET", "/api/entries/processed/status/missing-key", nil)
 	r.SetPathValue("key", "missing-key")
 	a.markStatus(w, r)
-	if w.Code != 404 || !strings.Contains(w.Body.String(), "已完成的标记仍保留") {
+	if w.Code != 404 || !strings.Contains(w.Body.String(), `"code":"mark_result_gone"`) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	w = httptest.NewRecorder()
@@ -287,7 +288,7 @@ func TestBackgroundMarkResultExpiresWithoutRemovingMarks(t *testing.T) {
 	r := httptest.NewRequest("GET", "/api/entries/processed/status/"+key, nil)
 	r.SetPathValue("key", key)
 	a.markStatus(w, r)
-	if w.Code != 404 || !strings.Contains(w.Body.String(), "已完成的标记仍保留") {
+	if w.Code != 404 || !strings.Contains(w.Body.String(), `"code":"mark_result_gone"`) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	a.markMu.Lock()

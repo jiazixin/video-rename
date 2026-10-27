@@ -1,4 +1,22 @@
+/** Why a copy failed; the interface maps the code to its text. */
+export type ClipboardErrorCode = 'copy_failed' | 'copy_busy' | 'copy_manual'
+
+/** A failed copyText call. message is English developer text. */
+export class ClipboardError extends Error {
+  readonly code: ClipboardErrorCode
+
+  constructor(code: ClipboardErrorCode) {
+    super(code.replaceAll('_', ' '))
+    this.name = 'ClipboardError'
+    this.code = code
+  }
+}
+
 let copying = false
+
+function copyError(code: ClipboardErrorCode): ClipboardError {
+  return new ClipboardError(code)
+}
 
 function copyWithSelection(text: string): void {
   const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -36,7 +54,9 @@ function copyWithSelection(text: string): void {
     textarea.focus({ preventScroll: true })
     textarea.select()
     textarea.setSelectionRange(0, text.length)
-    if (!document.execCommand('copy')) throw new Error('复制失败')
+    // execCommand is the only copy path on insecure LAN origins without navigator.clipboard.
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- fallback for insecure contexts
+    if (!document.execCommand('copy')) throw copyError('copy_failed')
   } finally {
     textarea.remove()
     if (selection) {
@@ -63,11 +83,17 @@ function copyWithSelection(text: string): void {
   }
 }
 
+/**
+ * Copies text, falling back to a selection-based copy on insecure origins.
+ * Failures throw ClipboardError.
+ */
 export async function copyText(text: string): Promise<void> {
   // Avoid a late fallback overwriting a newer copy while the modern API is pending.
-  if (copying) throw new Error('正在复制，请稍后重试')
+  if (copying) throw copyError('copy_busy')
   copying = true
   try {
+    // navigator.clipboard is undefined on insecure origins despite its DOM type.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- see above
     if (window.isSecureContext && navigator.clipboard?.writeText) {
       try {
         await navigator.clipboard.writeText(text)
@@ -80,7 +106,7 @@ export async function copyText(text: string): Promise<void> {
       // Keep selection and execCommand synchronous to retain the click's activation.
       copyWithSelection(text)
     } catch {
-      throw new Error('复制失败，请手动选取文本')
+      throw copyError('copy_manual')
     }
   } finally {
     copying = false

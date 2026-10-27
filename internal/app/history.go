@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"video-rename/internal/domain"
 )
 
 // Success records use the attempt that produced the title; failures use the
@@ -28,12 +30,12 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	category := q.Get("category")
 	if category != "success" && category != "failure" {
-		send(w, 400, map[string]string{"message": "请选择成功或失败日志"})
+		invalid(w, r, "category", "invalid_choice")
 		return
 	}
 	modelSource := q.Get("model_source")
 	if modelSource != "" && modelSource != "primary" && modelSource != "fallback" && modelSource != "unknown" {
-		send(w, 400, map[string]string{"message": "请选择有效的模型来源"})
+		invalid(w, r, "model_source", "invalid_choice")
 		return
 	}
 	for _, key := range []string{"from", "to"} {
@@ -43,7 +45,7 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 				stamp, err = time.Parse(time.DateOnly, value)
 			}
 			if err != nil {
-				send(w, 400, map[string]string{"message": "日期格式无效"})
+				invalid(w, r, key, "invalid_date")
 				return
 			}
 			q.Set(key, stamp.UTC().Format(time.RFC3339Nano))
@@ -54,7 +56,7 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 		var err error
 		run, err = strconv.ParseInt(q.Get("run"), 10, 64)
 		if err != nil || run <= 0 {
-			send(w, 400, map[string]string{"message": "请选择有效的运行批次"})
+			invalid(w, r, "run", "invalid_number")
 			return
 		}
 	}
@@ -100,13 +102,13 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 	}
 	tx, err := a.DB.Read().BeginTx(r.Context(), nil)
 	if err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
 	defer tx.Rollback()
 	var total int64
 	if err := tx.QueryRowContext(r.Context(), "SELECT COUNT(*)"+countFrom+where, args...).Scan(&total); err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
 	page, offset := int64(1), int64(0)
@@ -117,18 +119,19 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := tx.QueryContext(r.Context(), "SELECT e.id,e.category,e.action,e.entry,e.operation,e.run,e.old_path,e.new_path,e.message,e.created,COALESCE(r.config_summary,''),COALESCE(a.model_config_title,r.model_config_title,''),COALESCE(a.model,''),a.fallback,COALESCE((SELECT SUM(t.tokens)"+historyTokenFrom+"),0),COALESCE((SELECT MAX(t.estimated_records)"+historyTokenFrom+"),0)"+from+historyAttemptJoin+where+" AND e.id<? ORDER BY e.id DESC LIMIT ? OFFSET ?", append(args, before, limit+1, offset)...)
 	if err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
 	defer rows.Close()
 	out := []map[string]any{}
 	for rows.Next() {
 		var id, entry, op, run int64
-		var cat, action, old, new, msg, created, summary, modelTitle, attemptModel string
+		var cat, action, old, new, created, summary, modelTitle, attemptModel string
+		var msg domain.Record
 		var fallback sql.NullBool
 		var tokens, tokenEstimated int64
 		if err = rows.Scan(&id, &cat, &action, &entry, &op, &run, &old, &new, &msg, &created, &summary, &modelTitle, &attemptModel, &fallback, &tokens, &tokenEstimated); err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
 		var snapshot struct {
@@ -146,10 +149,10 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		out = append(out, map[string]any{"id": id, "category": cat, "action": action, "entry": entry, "operation": op, "run": run, "old_path": old, "new_path": new, "message": msg, "created": created, "model": snapshot.Model, "model_config_title": modelTitle, "model_source": modelSource, "tokens": tokens, "token_estimated": tokenEstimated > 0})
+		out = append(out, map[string]any{"id": id, "category": cat, "action": action, "entry": entry, "operation": op, "run": run, "old_path": old, "new_path": new, "error": msg, "created": created, "model": snapshot.Model, "model_config_title": modelTitle, "model_source": modelSource, "tokens": tokens, "token_estimated": tokenEstimated > 0})
 	}
 	if err := rows.Err(); err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
 	next := int64(0)
@@ -159,12 +162,12 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 	}
 	rows.Close()
 	if err := tx.Commit(); err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
 	if q.Get("paged") == "1" || q.Has("page") {
-		send(w, 200, map[string]any{"items": out, "total": total, "next": next, "page": page})
+		send(w, http.StatusOK, map[string]any{"items": out, "total": total, "next": next, "page": page})
 		return
 	}
-	send(w, 200, out)
+	send(w, http.StatusOK, out)
 }

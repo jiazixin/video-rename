@@ -2,19 +2,20 @@ package app
 
 import (
 	"net/http"
+
 	"video-rename/internal/config"
 	"video-rename/internal/sampling"
 )
 
-func (a *App) samplingRoutes(mux *http.ServeMux) {
+func (a *App) samplingRoutes(mux *router) {
 	store := sampling.Store{DB: a.DB}
 	mux.HandleFunc("GET /api/sampling", func(w http.ResponseWriter, r *http.Request) {
 		value, err := store.Get()
 		if err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
-		send(w, 200, value)
+		send(w, http.StatusOK, value)
 	})
 	mux.HandleFunc("PUT /api/sampling", func(w http.ResponseWriter, r *http.Request) {
 		var value config.FrameSettings
@@ -22,9 +23,9 @@ func (a *App) samplingRoutes(mux *http.ServeMux) {
 			return
 		}
 		if err := store.Save(value); err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
-		send(w, 200, value)
+		send(w, http.StatusOK, value)
 	})
 }

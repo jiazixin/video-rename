@@ -1,19 +1,21 @@
 package library
 
 import (
-	"fmt"
+	"context"
 	"path/filepath"
 
+	"video-rename/internal/domain"
 	"video-rename/internal/storage"
 )
 
+// Numbering is a numbering plan and its state.
 type Numbering struct {
 	ID            string          `json:"id"`
 	Parent        int64           `json:"parent"`
 	Status        string          `json:"status"`
 	Created       string          `json:"created"`
 	UndoOf        string          `json:"undo_of"`
-	Error         string          `json:"error"`
+	Error         domain.Record   `json:"error,omitzero"`
 	ProcessingLog string          `json:"processing_log"`
 	Total         int             `json:"total"`
 	Changed       int             `json:"changed"`
@@ -22,13 +24,17 @@ type Numbering struct {
 	Media         string          `json:"-"`
 }
 
+// Numbering returns numbering id.
 func (l *Library) Numbering(id string) (Numbering, error) {
 	var b Numbering
-	err := l.DB.QueryRow("SELECT id,parent,status,created,fingerprint,undo_of,error,media FROM image_numberings WHERE id=?", id).Scan(&b.ID, &b.Parent, &b.Status, &b.Created, &b.Fingerprint, &b.UndoOf, &b.Error, &b.Media)
+	var stored string
+	err := l.DB.QueryRow("SELECT id,parent,status,created,fingerprint,undo_of,error,media FROM image_numberings WHERE id=?", id).Scan(&b.ID, &b.Parent, &b.Status, &b.Created, &b.Fingerprint, &b.UndoOf, &stored, &b.Media)
 	if err != nil {
 		return b, err
 	}
-	b.decodeNumberingError()
+	if err = b.decodeNumberingError(stored); err != nil {
+		return b, err
+	}
 	rows, err := l.DB.Query(`SELECT entry,version,identity,size,mtime,old_name,new_name,temp_name,current_name,pending_name,operation,undo_of FROM image_numbering_items WHERE batch=? ORDER BY position`, id)
 	if err != nil {
 		return b, err
@@ -47,6 +53,8 @@ func (l *Library) Numbering(id string) (Numbering, error) {
 	b.Total = len(b.Items)
 	return b, rows.Err()
 }
+
+// NumberingHistory returns the numberings of media under parent.
 func (l *Library) NumberingHistory(parent int64, media string) ([]Numbering, error) {
 	if _, err := mediaOf(media); err != nil {
 		return nil, err
@@ -59,15 +67,20 @@ func (l *Library) NumberingHistory(parent int64, media string) ([]Numbering, err
 	result := []Numbering{}
 	for rows.Next() {
 		var b Numbering
-		if err = rows.Scan(&b.ID, &b.Parent, &b.Status, &b.Created, &b.UndoOf, &b.Error, &b.Total, &b.Changed); err != nil {
+		var stored string
+		if err = rows.Scan(&b.ID, &b.Parent, &b.Status, &b.Created, &b.UndoOf, &stored, &b.Total, &b.Changed); err != nil {
 			return nil, err
 		}
-		b.decodeNumberingError()
+		if err = b.decodeNumberingError(stored); err != nil {
+			return nil, err
+		}
 		result = append(result, b)
 	}
 	return result, rows.Err()
 }
-func (l *Library) PreviewNumberingRestore(id string) (Numbering, error) {
+
+// PreviewNumberingRestore previews undoing numbering id.
+func (l *Library) PreviewNumberingRestore(ctx context.Context, id string) (Numbering, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	original, err := l.Numbering(id)
@@ -75,7 +88,7 @@ func (l *Library) PreviewNumberingRestore(id string) (Numbering, error) {
 		return Numbering{}, err
 	}
 	if original.Status != "committed" || original.UndoOf != "" {
-		return Numbering{}, fmt.Errorf("该批次不可还原")
+		return Numbering{}, domain.Fail(domain.KindConflict, "numbering_not_restorable", "numbering batch cannot be restored")
 	}
 	if err = l.CheckAvailable(original.Parent); err != nil {
 		return Numbering{}, err
@@ -93,17 +106,17 @@ func (l *Library) PreviewNumberingRestore(id string) (Numbering, error) {
 		if i.Old == i.New {
 			continue
 		}
-		e, err := l.Get(i.Entry)
+		e, err := l.Get(ctx, i.Entry)
 		if err != nil {
 			return Numbering{}, err
 		}
 		if e.Parent != b.Parent || e.Name != i.New || e.RestoreID != i.Operation || !numberingMatch(filepath.Join(path, e.Name), i) {
-			return Numbering{}, fmt.Errorf("%s %s 已变化或有后续改名，不能整批还原", mediaLabel(b.Media), i.New)
+			return Numbering{}, domain.Fail(domain.KindConflict, "numbering_item_changed_since", "file changed or was renamed later; the batch cannot be restored", "media", b.Media, "name", i.New)
 		}
 		b.Items = append(b.Items, NumberingItem{Entry: e.ID, Version: e.Version, Identity: i.Identity, Size: i.Size, Mtime: i.Mtime, Old: i.New, New: i.Old, UndoOf: i.Operation})
 	}
 	if len(b.Items) == 0 {
-		return Numbering{}, fmt.Errorf("该批次没有需要还原的%s", mediaLabel(b.Media))
+		return Numbering{}, domain.Fail(domain.KindConflict, "numbering_nothing_to_restore", "batch has nothing to restore", "media", b.Media)
 	}
-	return l.saveNumberingPreview(b, path)
+	return l.saveNumberingPreview(ctx, b, path)
 }

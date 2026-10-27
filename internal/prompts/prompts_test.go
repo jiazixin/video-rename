@@ -1,9 +1,12 @@
 package prompts
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"video-rename/internal/domain"
 	"video-rename/internal/storage"
 )
 
@@ -67,7 +70,7 @@ func TestDeleteGuardedByModelConfigs(t *testing.T) {
 	if _, err = db.Exec("INSERT INTO model_configs(title,prompt_id,created,updated,is_default) VALUES('引用配置',?, 'now','now',1)", p.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Delete(p.ID, p.Version); err == nil || !strings.Contains(err.Error(), "1 个模型配置") {
+	if err = s.Delete(p.ID, p.Version); err == nil || !errors.Is(err, domain.Fail(domain.KindConflict, "prompt_in_use", "")) {
 		t.Fatal("referenced prompt deleted", err)
 	}
 	if _, err = db.Exec("DELETE FROM model_configs"); err != nil {

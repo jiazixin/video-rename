@@ -1,8 +1,8 @@
 //go:build darwin
 
-// Package rename 封装平台专用的原子 no-replace 重命名。
-// macOS 使用 renamex_np 的 RENAME_EXCL;不支持时报 RENAME_UNSUPPORTED
-// 并保留原文件,绝不退化为可能覆盖的操作,也不跨目录复制后删除。
+// Package rename provides platform-specific atomic no-replace renames.
+// macOS uses renamex_np with RENAME_EXCL; when unsupported it reports rename_unsupported
+// and keeps the original file, never falling back to an overwriting operation or a cross-directory copy and delete.
 package rename
 
 import (
@@ -27,22 +27,23 @@ func mapErrno(err error, oldname, newname string) *domain.JobError {
 	}
 	errno, ok := errors.AsType[syscall.Errno](err)
 	if !ok {
-		return &domain.JobError{Code: domain.CodeRenameFailed, Message: err.Error()}
+		return &domain.JobError{Code: domain.CodeRenameFailed, Message: err.Error(), Details: map[string]any{"detail": err.Error()}}
 	}
 	switch {
 	case errno == syscall.EEXIST:
-		return &domain.JobError{Code: domain.CodeRenameConflict, Message: "目标已存在"}
+		return &domain.JobError{Code: domain.CodeRenameConflict, Message: "target exists"}
 	case errno == syscall.ENOSYS || errno == syscall.EINVAL || errno == syscall.ENOTSUP || errno == syscall.EOPNOTSUPP:
 		return &domain.JobError{
 			Code:    domain.CodeRenameUnsupported,
-			Message: "内核或文件系统不支持 RENAME_EXCL,保留原文件",
+			Message: "kernel or file system does not support RENAME_EXCL; original file kept",
 		}
 	case errno == syscall.EACCES || errno == syscall.EPERM:
-		return &domain.JobError{Code: domain.CodeRenamePermissionDenied, Message: errno.Error()}
+		return &domain.JobError{Code: domain.CodeRenamePermissionDenied, Message: errno.Error(), Details: map[string]any{"detail": errno.Error()}}
 	default:
 		return &domain.JobError{
 			Code:    domain.CodeRenameFailed,
-			Message: errno.Error() + " (" + oldname + " → " + newname + ")",
+			Message: errno.Error() + " (" + oldname + " -> " + newname + ")",
+			Details: map[string]any{"detail": errno.Error()},
 		}
 	}
 }

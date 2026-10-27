@@ -56,7 +56,7 @@ func TestListPageMatchesCursorSortingAndFilters(t *testing.T) {
 		put(t, filepath.Join(root, fmt.Sprintf("clip%d.mp4", i)))
 		put(t, filepath.Join(root, fmt.Sprintf("photo%d.jpg", i)))
 	}
-	if err := os.Mkdir(filepath.Join(root, "clip-folder"), 0700); err != nil {
+	if err := os.Mkdir(filepath.Join(root, "clip-folder"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	refresh(t, l, 1)

@@ -18,7 +18,7 @@ type TaskConfig struct {
 	TimeoutDuration time.Duration
 }
 
-// PromptHash 返回 prompt 的短哈希,用于日志复现;不记录 prompt 原文。
+// PromptHash returns a short hash of prompt for reproducible logs without recording the prompt text.
 func (c *TaskConfig) PromptHash() string {
 	return shortHash(c.Prompt)
 }

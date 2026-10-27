@@ -8,9 +8,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json/v2"
 	"errors"
-	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -19,6 +17,7 @@ import (
 	"time"
 
 	"video-rename/internal/config"
+	"video-rename/internal/domain"
 	"video-rename/internal/storage"
 )
 
@@ -34,6 +33,8 @@ const (
 	secureSessionPrefix = "secure."
 )
 
+// Auth authenticates the configured administrator and manages revocable
+// sessions.
 type Auth struct {
 	DB          *storage.Store
 	Config      config.AuthConfig
@@ -43,24 +44,18 @@ type Auth struct {
 }
 
 func hash(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
-func Token() string {
-	var b [32]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic(err)
-	}
-	return hex.EncodeToString(b[:])
-}
+
+// New creates the authenticator for the administrator in cfg.
 func New(db *storage.Store, cfg config.AuthConfig) *Auth {
 	return &Auth{DB: db, Config: cfg, fingerprint: hash(cfg.Username + "\x00" + cfg.Password), attempts: map[string][]time.Time{}}
 }
-func write(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.MarshalWrite(w, v)
-}
-func fail(w http.ResponseWriter, status int, msg string) {
-	write(w, status, map[string]string{"message": msg})
-}
+
+// Failures reported to the HTTP layer.
+var (
+	ErrUnauthenticated = domain.Fail(domain.KindUnauthenticated, "unauthenticated", "login required")
+	ErrBadCredentials  = domain.Fail(domain.KindUnauthenticated, "invalid_credentials", "invalid username or password")
+	ErrRateLimited     = domain.Fail(domain.KindTooMany, "rate_limited", "too many login attempts")
+)
 
 // pruneLocked drops failure records older than one minute; caller holds mu.
 func (a *Auth) pruneLocked() {
@@ -96,131 +91,100 @@ func (a *Auth) allowLogin(ip string, failed bool) bool {
 	}
 	return true
 }
-func sameOrigin(r *http.Request) bool {
-	origin := r.Header.Get("Origin")
-	if origin == "" {
-		return r.Header.Get("Sec-Fetch-Site") != "cross-site"
-	}
-	u, err := url.Parse(origin)
+
+// Authenticate checks the session cookie of r and slides its expiry forward,
+// re-issuing the cookie on w. It returns ErrUnauthenticated without a valid
+// session.
+func (a *Auth) Authenticate(w http.ResponseWriter, r *http.Request) error {
+	cookie, err := r.Cookie("vr_session")
 	if err != nil {
-		return false
+		return ErrUnauthenticated
 	}
-	// A TLS-terminating reverse proxy may pass a validated HTTPS Origin with the
-	// original Host. Do not trust X-Forwarded-* from arbitrary clients.
-	return u.Host == r.Host && (u.Scheme == "https" || (u.Scheme == "http" && r.TLS == nil))
-}
-func (a *Auth) Middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Referrer-Policy", "same-origin")
-		readOnly := r.Method == http.MethodGet || r.Method == http.MethodHead
-		mediaType, _, mediaErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
-		if !readOnly && (!sameOrigin(r) || mediaErr != nil || mediaType != "application/json") {
-			fail(w, 403, "请求来源或格式无效")
-			return
-		}
-		if r.URL.Path == "/api/auth/login" && r.Method == "POST" {
-			a.login(w, r)
-			return
-		}
-		cookie, err := r.Cookie("vr_session")
-		var csrf string
-		var expiry int64
-		var fingerprint string
+	var expiry int64
+	var fingerprint string
+	err = a.DB.Read().QueryRowContext(r.Context(), "SELECT expires,fingerprint FROM sessions WHERE token=?", hash(cookie.Value)).Scan(&expiry, &fingerprint)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrUnauthenticated
+	}
+	if err != nil {
+		return err
+	}
+	if expiry <= time.Now().Unix() || fingerprint != a.fingerprint {
+		return ErrUnauthenticated
+	}
+	if expiry-time.Now().Unix() < int64(sessionRenewLeft/time.Second) {
+		// Renewal is best effort for an already-valid session. A busy writer
+		// must not hold up reads; a later request can retry the extension.
+		renewCtx, cancel := context.WithTimeout(r.Context(), sessionRenewTimeout)
+		_, err = a.DB.ExecContext(renewCtx, "UPDATE sessions SET expires=? WHERE token=? AND fingerprint=?", time.Now().Add(sessionLifetime).Unix(), hash(cookie.Value), a.fingerprint)
+		cancel()
 		if err == nil {
-			err = a.DB.Read().QueryRowContext(r.Context(), "SELECT csrf,expires,fingerprint FROM sessions WHERE token=?", hash(cookie.Value)).Scan(&csrf, &expiry, &fingerprint)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				fail(w, 500, "服务暂不可用")
-				return
-			}
+			// The token's hash authenticates the original cookie policy, so a
+			// proxied GET without Origin cannot downgrade an HTTPS session.
+			secure := secureCookie(r) || strings.HasPrefix(cookie.Value, secureSessionPrefix)
+			http.SetCookie(w, &http.Cookie{Name: "vr_session", Value: cookie.Value, Path: "/", MaxAge: int(sessionLifetime / time.Second), HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
 		}
-		if err != nil || expiry <= time.Now().Unix() || fingerprint != a.fingerprint {
-			fail(w, 401, "请先登录")
-			return
-		}
-		if !readOnly && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(csrf)) != 1 {
-			fail(w, 403, "请求已失效，请刷新页面")
-			return
-		}
-		if r.URL.Path != "/api/auth/logout" && expiry-time.Now().Unix() < int64(sessionRenewLeft/time.Second) {
-			// Renewal is best effort for an already-valid session. A busy writer
-			// must not hold up reads; a later request can retry the extension.
-			renewCtx, cancel := context.WithTimeout(r.Context(), sessionRenewTimeout)
-			_, err = a.DB.ExecContext(renewCtx, "UPDATE sessions SET expires=? WHERE token=? AND fingerprint=?", time.Now().Add(sessionLifetime).Unix(), hash(cookie.Value), a.fingerprint)
-			cancel()
-			if err == nil {
-				// The token's hash authenticates the original cookie policy, so a
-				// proxied GET without Origin cannot downgrade an HTTPS session.
-				secure := secureCookie(r) || strings.HasPrefix(cookie.Value, secureSessionPrefix)
-				http.SetCookie(w, &http.Cookie{Name: "vr_session", Value: cookie.Value, Path: "/", MaxAge: int(sessionLifetime / time.Second), HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
-			}
-		}
-		if r.URL.Path == "/api/auth/session" && readOnly {
-			write(w, 200, map[string]string{"username": a.Config.Username, "csrf": csrf})
-			return
-		}
-		if r.URL.Path == "/api/auth/logout" && r.Method == "POST" {
-			if _, err = a.DB.ExecContext(r.Context(), "DELETE FROM sessions WHERE token=?", hash(cookie.Value)); err != nil {
-				fail(w, 500, "退出失败")
-				return
-			}
-			http.SetCookie(w, &http.Cookie{Name: "vr_session", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: secureCookie(r)})
-			write(w, 200, map[string]bool{"ok": true})
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	}
+	return nil
 }
-func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
+
+// Username returns the configured administrator name.
+func (a *Auth) Username() string { return a.Config.Username }
+
+// Login checks the credentials, opens a session and sets its cookie on w.
+func (a *Auth) Login(w http.ResponseWriter, r *http.Request, username, password string) error {
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-	var input *struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
-	if err := json.UnmarshalRead(r.Body, &input, json.RejectUnknownMembers(true)); err != nil || input == nil {
-		fail(w, 400, "登录格式无效")
-		return
-	}
-	user, pass := hash(input.Username), hash(input.Password)
+	user, pass := hash(username), hash(password)
 	wantUser, wantPass := hash(a.Config.Username), hash(a.Config.Password)
 	valid := subtle.ConstantTimeCompare([]byte(user), []byte(wantUser))&subtle.ConstantTimeCompare([]byte(pass), []byte(wantPass)) == 1
 	if !a.allowLogin(ip, !valid) {
-		fail(w, 429, "登录尝试过于频繁，请稍后重试")
-		return
+		return ErrRateLimited
 	}
 	if !valid {
-		fail(w, 401, "账号或密码错误")
-		return
+		return ErrBadCredentials
 	}
-	token, csrf := Token(), Token()
+	token := rand.Text()
 	secure := secureCookie(r)
 	if secure {
 		token = secureSessionPrefix + token
 	}
 	tx, err := a.DB.BeginTx(r.Context(), nil)
 	if err != nil {
-		fail(w, 503, "登录暂不可用")
-		return
+		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(r.Context(), "DELETE FROM sessions WHERE expires<? OR fingerprint<>?", time.Now().Unix(), a.fingerprint)
-	if err == nil {
-		_, err = tx.ExecContext(r.Context(), "INSERT INTO sessions VALUES(?,?,?,?)", hash(token), csrf, time.Now().Add(sessionLifetime).Unix(), a.fingerprint)
+	if _, err = tx.ExecContext(r.Context(), "DELETE FROM sessions WHERE expires<? OR fingerprint<>?", time.Now().Unix(), a.fingerprint); err != nil {
+		return err
 	}
-	if err == nil {
-		err = tx.Commit()
+	if _, err = tx.ExecContext(r.Context(), "INSERT INTO sessions(token,expires,fingerprint) VALUES(?,?,?)", hash(token), time.Now().Add(sessionLifetime).Unix(), a.fingerprint); err != nil {
+		return err
 	}
-	if err != nil {
-		fail(w, 503, "登录暂不可用")
-		return
+	if err = tx.Commit(); err != nil {
+		return err
 	}
 	http.SetCookie(w, &http.Cookie{Name: "vr_session", Value: token, Path: "/", MaxAge: int(sessionLifetime / time.Second), HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
-	write(w, 200, map[string]string{"username": a.Config.Username, "csrf": csrf})
+	return nil
+}
+
+// Logout deletes the session of r and clears its cookie on w.
+func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) error {
+	if cookie, err := r.Cookie("vr_session"); err == nil {
+		if _, err = a.DB.ExecContext(r.Context(), "DELETE FROM sessions WHERE token=?", hash(cookie.Value)); err != nil {
+			return err
+		}
+	}
+	http.SetCookie(w, &http.Cookie{Name: "vr_session", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: secureCookie(r)})
+	return nil
 }
 
 func secureCookie(r *http.Request) bool {
-	return r.TLS != nil || (sameOrigin(r) && strings.HasPrefix(r.Header.Get("Origin"), "https://"))
+	return r.TLS != nil || httpsOrigin(r)
+}
+
+// httpsOrigin reports whether the browser sent an https Origin for this host,
+// as it does behind a TLS-terminating reverse proxy. X-Forwarded-* headers from
+// arbitrary clients are not trusted.
+func httpsOrigin(r *http.Request) bool {
+	u, err := url.Parse(r.Header.Get("Origin"))
+	return err == nil && u.Scheme == "https" && u.Host == r.Host
 }

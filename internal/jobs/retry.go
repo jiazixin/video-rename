@@ -48,10 +48,10 @@ func (m *Manager) freezeRetry(task string, primary int64) (retryPolicy, error) {
 	}
 	model, err := (models.Store{DB: m.DB}).Get(settings.FallbackModelID)
 	if err != nil {
-		return p, fmt.Errorf("兜底模型不可用：%w", err)
+		return p, domain.Fail(domain.KindConflict, "fallback_model_unavailable", "fallback model is unavailable").Wrap(err)
 	}
 	if err = model.Validate(); err != nil {
-		return p, fmt.Errorf("兜底模型配置无效：%w", err)
+		return p, domain.Fail(domain.KindInvalid, "fallback_model_invalid", "fallback model configuration is invalid").Wrap(err)
 	}
 	fixed, err := (systemsettings.Store{DB: m.DB}).FixedPrompt()
 	if err != nil {
@@ -187,7 +187,7 @@ func (m *Manager) inferWithRetry(ctx context.Context, run Run, entry int64, cfg 
 			return "", err
 		}
 	}
-	return "", fmt.Errorf("模型请求未完成")
+	return "", errors.New("model request did not complete")
 }
 
 // sourceUnchangedAfterWait rejects a video that changed while the item waited
@@ -198,10 +198,10 @@ func sourceUnchangedAfterWait(ctx context.Context, run Run, entry int64, job dom
 		return err
 	}
 	if !snap.Same(job.Snapshot) {
-		diagnostic := domain.SourceChangedError("视频在等待模型期间发生变化", "抽帧完成后、获取模型名额后、调用模型前", job.Path, job.Snapshot, snap)
-		diagnostic.ProcessingLog += fmt.Sprintf("批次：%d\n文件条目：%d\n模型排队时长：%s\n基准：本视频处理开始时的原文件快照；当前：取得模型名额后的原文件快照。\n本次尚未调用模型；校验对象不是截图目录或截图数量。\n", run.ID, entry, time.Since(waitStarted))
+		diagnostic := domain.SourceChangedError("video changed while waiting for the model", domain.StageBeforeRequest, job.Path, job.Snapshot, snap)
+		diagnostic.ProcessingLog += fmt.Sprintf("run: %d\nentry: %d\nwaited for model: %s\nbefore: source snapshot when processing started; after: source snapshot once a model slot was acquired.\nThe model was not called; the check covers the source video, not the frames.\n", run.ID, entry, time.Since(waitStarted))
 		if lease != nil {
-			diagnostic.ProcessingLog += fmt.Sprintf("已准备截图：%d 张\n", len(lease.Set.Frames))
+			diagnostic.ProcessingLog += fmt.Sprintf("frames prepared: %d\n", len(lease.Set.Frames))
 		}
 		return diagnostic
 	}
@@ -239,17 +239,17 @@ type modelAttemptRecord struct {
 func (m *Manager) recordModelAttempt(ctx context.Context, run Run, a modelAttemptRecord, current *config.TaskConfig, exchange domain.ModelDiagnostics) error {
 	status, message := "success", ""
 	if a.err != nil {
-		status, message = "failed", a.err.Error()
+		status, message = "failed", domain.RecordText(a.err)
 	}
 	if ctx.Err() != nil {
 		status = "cancelled"
 	}
 	if _, err := m.DB.Exec(`INSERT INTO model_attempts(item,attempt,model_config_id,model_config_title,model,fallback,started,duration_ms,status,message) VALUES(?,?,?,?,?,?,?,?,?,?)`, a.item, a.number, a.modelID, a.modelTitle, current.Server.Model, a.fallback, a.started.UTC().Format(time.RFC3339Nano), time.Since(a.started).Milliseconds(), status, message); err != nil {
-		return fmt.Errorf("保存模型尝试记录：%w", err)
+		return fmt.Errorf("save model attempt: %w", err)
 	}
 	summary, _ := json.Marshal(map[string]string{"model": current.Server.Model, "provider": current.Server.Provider, "protocol": current.Server.Protocol})
 	if err := tokenusage.RecordAttempt(m.DB, run.ID, a.item, a.number, a.modelID, a.modelTitle, string(summary), exchange.Request, exchange.Response, time.Now()); err != nil {
-		return fmt.Errorf("保存模型用量：%w", err)
+		return fmt.Errorf("save model usage: %w", err)
 	}
 	return nil
 }
@@ -282,17 +282,18 @@ func (m *Manager) waitBeforeRetry(ctx context.Context, run Run, delay time.Durat
 
 // Attempt is the public, credential-free record shown in batch details.
 type Attempt struct {
-	Number           int    `json:"number"`
-	ModelConfigID    int64  `json:"model_config_id"`
-	ModelConfigTitle string `json:"model_config_title"`
-	Model            string `json:"model"`
-	Fallback         bool   `json:"fallback"`
-	Started          string `json:"started"`
-	DurationMS       int64  `json:"duration_ms"`
-	Status           string `json:"status"`
-	Message          string `json:"message"`
+	Number           int           `json:"number"`
+	ModelConfigID    int64         `json:"model_config_id"`
+	ModelConfigTitle string        `json:"model_config_title"`
+	Model            string        `json:"model"`
+	Fallback         bool          `json:"fallback"`
+	Started          string        `json:"started"`
+	DurationMS       int64         `json:"duration_ms"`
+	Status           string        `json:"status"`
+	Error            domain.Record `json:"error,omitzero"`
 }
 
+// Attempts returns the recorded attempts of each item in items.
 func Attempts(ctx context.Context, db *storage.Store, items []int64) (map[int64][]Attempt, error) {
 	raw, err := json.Marshal(items)
 	if err != nil {
@@ -310,7 +311,7 @@ func Attempts(ctx context.Context, db *storage.Store, items []int64) (map[int64]
 	for rows.Next() {
 		var a Attempt
 		var item int64
-		if err = rows.Scan(&item, &a.Number, &a.ModelConfigID, &a.ModelConfigTitle, &a.Model, &a.Fallback, &a.Started, &a.DurationMS, &a.Status, &a.Message); err != nil {
+		if err = rows.Scan(&item, &a.Number, &a.ModelConfigID, &a.ModelConfigTitle, &a.Model, &a.Fallback, &a.Started, &a.DurationMS, &a.Status, &a.Error); err != nil {
 			return nil, err
 		}
 		out[item] = append(out[item], a)

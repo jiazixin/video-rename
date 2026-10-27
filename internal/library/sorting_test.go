@@ -13,7 +13,7 @@ func TestNaturalSortingAcrossPages(t *testing.T) {
 	for i := 120; i > 0; i-- {
 		put(t, filepath.Join(root, fmt.Sprintf("视频%d.mp4", i)))
 	}
-	if err := os.Mkdir(filepath.Join(root, "目录10"), 0700); err != nil {
+	if err := os.Mkdir(filepath.Join(root, "目录10"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	refresh(t, l, 1)
@@ -90,11 +90,11 @@ func TestMetadataSortingAndRenameTime(t *testing.T) {
 	if before.RenamedAt != "" {
 		t.Fatal("unexpected rename time")
 	}
-	op, err := l.Rename(before.ID, before.Version, "3.mp4", "sort-rename")
+	op, err := l.Rename(t.Context(), before.ID, before.Version, "3.mp4", "sort-rename")
 	if err != nil {
 		t.Fatal(err)
 	}
-	after, err := l.Get(before.ID)
+	after, err := l.Get(t.Context(), before.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestDirectoryStatusSorting(t *testing.T) {
 	groups := [][]string{{"dir2", "dir5"}, {"dir3", "dir6"}, {"dir1", "dir4"}}
 	for _, names := range groups {
 		for _, name := range names {
-			if err := os.MkdirAll(filepath.Join(root, name, "nested"), 0700); err != nil {
+			if err := os.MkdirAll(filepath.Join(root, name, "nested"), 0o700); err != nil {
 				t.Fatal(err)
 			}
 			put(t, filepath.Join(root, name, "nested", "a.mp4"))

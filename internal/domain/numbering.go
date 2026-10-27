@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -21,9 +20,13 @@ type NumberingSettings struct {
 	Shared bool                `json:"shared"` // one sequence shared by images and audio per directory
 }
 
+// DefaultMediaNumberingRules returns the default numbering rules of one media
+// type.
 func DefaultMediaNumberingRules() MediaNumberingRules {
 	return MediaNumberingRules{Padding: 1, Lowercase: true, Compact: true}
 }
+
+// DefaultNumberingSettings returns the default numbering settings.
 func DefaultNumberingSettings() NumberingSettings {
 	return NumberingSettings{Image: DefaultMediaNumberingRules(), Audio: DefaultMediaNumberingRules()}
 }
@@ -35,19 +38,19 @@ func ValidateNumberingSettings(s NumberingSettings) error {
 		name  string
 		rules MediaNumberingRules
 	}{
-		{"图片", s.Image}, {"音频", s.Audio},
+		{"image", s.Image}, {"audio", s.Audio},
 	} {
 		if class.rules.Padding < 1 || class.rules.Padding > 9 {
-			return fmt.Errorf("%s编号位数须在 1–9 之间", class.name)
+			return InvalidField(class.name+".padding", "out_of_range")
 		}
 		if len([]rune(class.rules.Prefix)) > 32 {
-			return fmt.Errorf("%s编号前缀最长 32 个字符", class.name)
+			return InvalidField(class.name+".prefix", "too_long")
 		}
 		if strings.ContainsAny(class.rules.Prefix, "/\\\x00") || strings.ContainsFunc(class.rules.Prefix, func(c rune) bool { return c < 0x20 }) {
-			return fmt.Errorf("%s编号前缀不能包含路径分隔符或控制字符", class.name)
+			return InvalidField(class.name+".prefix", "invalid_character")
 		}
 		if strings.TrimSpace(class.rules.Prefix) != class.rules.Prefix {
-			return fmt.Errorf("%s编号前缀不能以空白开头或结尾", class.name)
+			return InvalidField(class.name+".prefix", "untrimmed")
 		}
 	}
 	return nil

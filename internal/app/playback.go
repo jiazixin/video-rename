@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 var (
@@ -35,25 +36,25 @@ func (a *App) audioPlayback(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) serveMedia(w http.ResponseWriter, r *http.Request, allowed string, contentType func(string) string) {
 	id := number(r.PathValue("id"))
-	e, err := a.Library.Get(id)
+	e, err := a.Library.Get(r.Context(), id)
 	if err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
 	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(e.Name)), ".")
 	if e.Kind != "file" || !strings.Contains(allowed, "|"+ext+"|") {
-		http.Error(w, "Unsupported media type", 400)
+		invalid(w, r, "id", "unsupported_media")
 		return
 	}
-	f, err := a.Library.OpenPlayback(id)
+	f, err := a.Library.OpenPlayback(r.Context(), id)
 	if err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
@@ -63,19 +64,21 @@ func (a *App) serveMedia(w http.ResponseWriter, r *http.Request, allowed string,
 			w.Header().Set("Content-Type", t)
 		}
 	}
+	// Playback outlasts the server write timeout.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 	http.ServeContent(w, r, e.Name, st.ModTime(), f)
 }
 
 func (a *App) adjacentImage(w http.ResponseWriter, r *http.Request) {
 	direction := r.URL.Query().Get("direction")
 	if direction != "previous" && direction != "next" {
-		send(w, 400, map[string]string{"message": "无效切换方向"})
+		invalid(w, r, "direction", "invalid_choice")
 		return
 	}
-	entry, err := a.Library.AdjacentImage(number(r.PathValue("id")), direction == "previous")
+	entry, err := a.Library.AdjacentImage(r.Context(), number(r.PathValue("id")), direction == "previous")
 	if err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
-	send(w, 200, entry)
+	send(w, http.StatusOK, entry)
 }

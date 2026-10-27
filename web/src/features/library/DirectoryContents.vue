@@ -1,7 +1,11 @@
 <script setup lang="ts">
+  import { formatCount } from '../../lib/format/number';
   import { Folder, FileVideo, Image, FileAudio } from '@lucide/vue';
   import { type Entry } from '../../app/contracts';
-  defineProps<{ contents?: Entry['contents']; inline?: boolean }>();
+  const { contents = null, inline } = defineProps<{
+    contents?: Entry['contents'];
+    inline?: boolean;
+  }>();
   const types = [
     { key: 'directories', label: '子目录', icon: Folder },
     { key: 'videos', label: '视频', icon: FileVideo },
@@ -24,12 +28,12 @@
       :key="type.key"
       class="content-stat"
       :class="type.key"
-      :title="`${type.label}：${contents[type.key].toLocaleString()}`"
-      :aria-label="`${type.label}：${contents[type.key].toLocaleString()}`"
+      :title="`${type.label}：${formatCount(contents[type.key])}`"
+      :aria-label="`${type.label}：${formatCount(contents[type.key])}`"
     >
       <component :is="type.icon" :size="14" aria-hidden="true" />
       <span v-if="inline">{{ type.label }}</span>
-      <strong>{{ contents[type.key].toLocaleString() }}</strong>
+      <strong>{{ formatCount(contents[type.key]) }}</strong>
     </span>
   </div>
   <span v-else class="contents-pending" title="目录内容待统计">待统计</span>
@@ -59,7 +63,7 @@
     white-space: nowrap;
     font-size: 11px;
     line-height: 18px;
-    color: #60646c;
+    color: var(--steel);
   }
   .content-stat strong {
     margin-left: auto;
@@ -68,19 +72,19 @@
     font-size: 12px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
-    color: #303940;
+    color: var(--palette-303940);
   }
   .directories svg {
-    color: #657b6c;
+    color: var(--palette-657b6c);
   }
   .videos svg {
-    color: #366ba0;
+    color: var(--palette-366ba0);
   }
   .images svg {
-    color: #785ba0;
+    color: var(--palette-785ba0);
   }
   .audio svg {
-    color: #896018;
+    color: var(--palette-896018);
   }
   .contents-pending {
     font-size: 11px;

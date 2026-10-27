@@ -2,8 +2,9 @@ package storage
 
 import (
 	"database/sql/driver"
-	"modernc.org/sqlite"
 	"time"
+
+	"modernc.org/sqlite"
 )
 
 func init() {

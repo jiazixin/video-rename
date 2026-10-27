@@ -5,10 +5,10 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
+
 	"video-rename/internal/app"
 	"video-rename/internal/config"
 )
@@ -24,7 +24,7 @@ func main() {
 }
 
 // run reports usage and startup errors as plain text on stderr; once the
-// configuration loads, the service logs through its configured logger.
+// logger is ready, failures are logged.
 func run(args []string, stdout, stderr io.Writer) int {
 	o, err := parseArgs(args)
 	if err != nil {
@@ -40,25 +40,30 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "video-rename", build)
 		return exitOK
 	}
-	path, err := o.configPath(os.LookupEnv)
+	path, explicit, err := o.configPath(os.LookupEnv)
 	if err != nil {
 		fmt.Fprintf(stderr, "video-rename: config: %v\n", err)
 		return exitFailure
 	}
-	cfg, err := config.Load(path)
-	if err == nil {
-		err = cfg.ValidateService()
-	}
+	workDir, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintf(stderr, "video-rename: config: %v\n", err)
 		return exitFailure
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	slog.Info("starting video-rename", "version", build.String())
-	if err = app.Serve(ctx, cfg); err != nil {
-		fmt.Fprintf(stderr, "video-rename: %v\n", err)
+	cfg, err := config.Load(config.Source{Path: path, Explicit: explicit, WorkDir: workDir, LookupEnv: os.LookupEnv})
+	if err != nil {
+		fmt.Fprintf(stderr, "video-rename: config: %v\n", err)
 		return exitFailure
 	}
+	logger := newLogger(cfg.Log, stdout)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	context.AfterFunc(ctx, stop) // a second signal terminates the process
+	logger.Info("service_starting", "version", build.String())
+	if err := app.Serve(ctx, cfg, logger, build.String()); err != nil {
+		logger.Error("service_failed", "error", err)
+		return exitFailure
+	}
+	logger.Info("service_stopped")
 	return exitOK
 }

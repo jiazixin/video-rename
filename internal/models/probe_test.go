@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+
 	"video-rename/internal/config"
 )
 
@@ -92,7 +93,7 @@ func TestVisionProbeTimeout(t *testing.T) {
 	defer server.Close()
 	started := time.Now()
 	out, err := Probe(t.Context(), config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: server.URL, Model: "test", Timeout: "180s", MaxTokens: 1024}, 5*time.Second)
-	if err != nil || out.Status != "error" || out.Code != "API_TIMEOUT" {
+	if err != nil || out.Status != "error" || out.Error.Code != "api_timeout" {
 		t.Fatalf("unexpected result: %+v %v", out, err)
 	}
 	if elapsed := time.Since(started); elapsed < 4*time.Second || elapsed > 7*time.Second {
@@ -106,7 +107,7 @@ func TestVisionProbeTimeout(t *testing.T) {
 func TestVisionProbeIgnoresSavedRequestTimeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.Copy(io.Discard, r.Body)
-		time.Sleep(1200 * time.Millisecond)
+		time.Sleep(1200 * time.Millisecond) // a model slower than the saved 1s request timeout
 		json.MarshalWrite(w, map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]string{"content": "unknown"}}}})
 	}))
 	defer server.Close()

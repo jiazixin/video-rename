@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
-	"fmt"
+
 	"video-rename/internal/domain"
 )
 
@@ -47,7 +47,7 @@ func processingStatusComparison(status string) (string, error) {
 	case "unprocessed", "marked", "manual", "automatic", "restore", "queued", "scanning", "running", "paused", "cancelling":
 		match = "='" + status + "'"
 	default:
-		return "", fmt.Errorf("无效的处理状态")
+		return "", domain.InvalidField("status", "invalid_choice")
 	}
 	return match, nil
 }

@@ -1,16 +1,19 @@
 <script setup lang="ts">
+  import { formatCount } from '../../lib/format/number';
   import { computed, onUnmounted, ref, watch } from 'vue';
   import { RefreshCw, CircleStop, Folder } from '@lucide/vue';
-  import { formatTime } from '../../lib/date/format';
+  import { formatTime } from '../../lib/format/date';
   import { type LibraryScanStatus } from '../../app/contracts';
-  const props = defineProps<{
+  import { errorText } from '../../app/errors';
+  import { displayPath } from '../../lib/format/path';
+  const { status, submitting, compact } = defineProps<{
     status: LibraryScanStatus;
     submitting?: boolean;
     compact?: boolean;
   }>();
   defineEmits<{ cancel: [] }>();
-  const active = computed(() => ['scanning', 'cancelling'].includes(props.status.status));
-  const warning = computed(() => ['partial_failure', 'failed'].includes(props.status.status));
+  const active = computed(() => ['scanning', 'cancelling'].includes(status.status));
+  const warning = computed(() => ['partial_failure', 'failed'].includes(status.status));
   const label = computed(
     () =>
       ({
@@ -21,7 +24,7 @@
         partial_failure: '扫描部分失败',
         failed: '扫描失败',
         cancelled: '扫描已停止'
-      })[props.status.status]
+      })[status.status]
   );
   const now = ref(Date.now());
   let clock: ReturnType<typeof setInterval> | undefined;
@@ -34,20 +37,27 @@
     },
     { immediate: true }
   );
-  onUnmounted(() => clearInterval(clock));
+  onUnmounted(() => {
+    clearInterval(clock);
+  });
   const elapsed = computed(() => {
-    if (!props.status.started) return '';
+    if (!status.started) return '';
     const seconds = Math.max(
       0,
       Math.floor(
-        ((props.status.finished ? new Date(props.status.finished).getTime() : now.value) -
-          new Date(props.status.started).getTime()) /
+        ((status.finished ? new Date(status.finished).getTime() : now.value) -
+          new Date(status.started).getTime()) /
           1000
       )
     );
     return seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
   });
-  const number = (value: number) => value.toLocaleString('zh-CN');
+  const number = (value: number) => formatCount(value);
+  function failureScope(failure: { scope?: string; path?: string }) {
+    if (failure.scope === 'settings') return '扫描设置';
+    if (failure.scope === 'targets') return '扫描范围';
+    return displayPath(failure.path || '/');
+  }
 </script>
 <template>
   <section
@@ -100,8 +110,9 @@
     </dl>
     <div v-if="active" class="scan-path">
       <Folder :size="14" /><span class="scan-path-label">当前目录</span>
-      <span class="scan-path-value" :title="status.current_path || undefined">{{
-        status.current_path || (status.status === 'cancelling' ? '等待当前读取结束…' : '准备扫描…')
+      <span class="scan-path-value" :title="displayPath(status.current_path) || undefined">{{
+        displayPath(status.current_path) ||
+        (status.status === 'cancelling' ? '等待当前读取结束…' : '准备扫描…')
       }}</span>
     </div>
     <div class="scan-timing">
@@ -115,9 +126,9 @@
     <details v-if="status.errors?.length" class="scan-errors"
       ><summary>{{ status.errors.length }} 个目录读取失败，保留上次完整列表</summary
       ><ul
-        ><li v-for="(failure, index) in status.errors" :key="index"
-          ><strong>{{ failure.path || '媒体库' }}</strong
-          >：{{ failure.message }}</li
+        ><li v-for="failure in status.errors" :key="JSON.stringify(failure)"
+          ><strong>{{ failureScope(failure) }}</strong
+          >：{{ errorText(failure.error) }}</li
         ></ul
       ></details
     >
@@ -127,16 +138,16 @@
   .scan-status {
     min-width: 0;
     padding: 16px 18px;
-    border: 1px solid #dfe8e3;
+    border: 1px solid var(--palette-dfe8e3);
     border-radius: 9px;
-    background: #f7faf8;
+    background: var(--palette-f7faf8);
   }
   .scan-status.is-active {
-    border-color: #bcd7cb;
+    border-color: var(--palette-bcd7cb);
   }
   .scan-status.is-warning {
-    border-color: #ebd4c6;
-    background: #fffbf8;
+    border-color: var(--palette-ebd4c6);
+    background: var(--palette-fffbf8);
   }
   .scan-status-heading,
   .scan-status-identity,
@@ -161,10 +172,10 @@
     white-space: nowrap;
   }
   .is-active .scan-status-label {
-    color: #287452;
+    color: var(--tone-green-ink);
   }
   .is-warning .scan-status-label {
-    color: #a65c33;
+    color: var(--palette-a65c33);
   }
   .scan-source {
     gap: 10px;
@@ -187,7 +198,7 @@
     gap: 18px;
     margin: 12px 0 0;
     padding-top: 12px;
-    border-top: 1px solid #e3ebe6;
+    border-top: 1px solid var(--palette-e3ebe6);
   }
   .scan-metric {
     min-width: 0;
@@ -208,7 +219,7 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 14px;
     padding-left: 18px;
-    border-left: 1px solid #e3ebe6;
+    border-left: 1px solid var(--palette-e3ebe6);
   }
   .scan-changes dd {
     color: var(--steel);
@@ -223,9 +234,9 @@
     margin-top: 12px;
     padding: 7px 10px;
     border-radius: 5px;
-    background: #ecf3ef;
+    background: var(--palette-ecf3ef);
     font-size: 11px;
-    color: #597266;
+    color: var(--palette-597266);
   }
   .scan-path-label {
     flex: none;
@@ -253,8 +264,8 @@
   .scan-errors {
     margin-top: 12px;
     padding-top: 10px;
-    border-top: 1px solid #ebddd2;
-    color: #a65c33;
+    border-top: 1px solid var(--palette-ebddd2);
+    color: var(--palette-a65c33);
     font-size: 12px;
   }
   .scan-errors summary {
@@ -317,7 +328,7 @@
       grid-column: 1 / -1;
       padding: 10px 0 0;
       border-left: 0;
-      border-top: 1px solid #e3ebe6;
+      border-top: 1px solid var(--palette-e3ebe6);
     }
     .is-compact .scan-changes {
       width: 100%;

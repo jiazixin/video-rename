@@ -1,20 +1,18 @@
+import { defined, libraryDirectory } from './support'
 import { test, expect, type Page } from '@playwright/test'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 async function login(page: Page) {
-  const session = await (
-    await page.request.post('/api/auth/login', {
-      data: { username: 'admin', password: 'test-password-123' }
-    })
-  ).json()
+  await page.request.post('/api/auth/login', {
+    data: { username: 'admin', password: 'test-password-123' }
+  })
   await page.goto('/')
   await expect(page.getByRole('heading', { name: '文件目录.' })).toBeVisible()
-  return { 'X-CSRF-Token': session.csrf }
 }
 
 test('后台扫描默认一小时，范围与间隔保存后重开保持，窄屏可操作', async ({ page }) => {
-  const headers = await login(page)
+  await login(page)
   const original = (await (await page.request.get('/api/library/scan')).json()).settings
   expect(original.interval_minutes).toBe(60)
   try {
@@ -32,7 +30,9 @@ test('后台扫描默认一小时，范围与间隔保存后重开保持，窄�
     await page.reload()
     await expect(panel.getByLabel('扫描间隔（分钟）', { exact: true })).toHaveValue('120')
     await expect(panel.getByLabel('开启定时扫描', { exact: true })).toBeChecked()
-    await expect(panel.getByRole('region', { name: '扫描范围', exact: true })).toContainText('整个媒体库')
+    await expect(panel.getByRole('region', { name: '扫描范围', exact: true })).toContainText(
+      '整个媒体库'
+    )
     await panel.getByRole('button', { name: '从扫描范围移除 整个媒体库', exact: true }).click()
     await expect(panel.getByRole('button', { name: '保存扫描设置', exact: true })).toBeDisabled()
     await expect(panel.getByText('请选择 1–100 个扫描目录。', { exact: true })).toBeVisible()
@@ -50,9 +50,9 @@ test('后台扫描默认一小时，范围与间隔保存后重开保持，窄�
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     await page.screenshot({ path: 'test-results/library-scan-settings-mobile.png', fullPage: true })
   } finally {
-    expect(
-      (await page.request.put('/api/library/scan/settings', { headers, data: original })).ok()
-    ).toBe(true)
+    expect((await page.request.put('/api/library/scan/settings', { data: original })).ok()).toBe(
+      true
+    )
   }
 })
 
@@ -62,12 +62,12 @@ test('手动递归扫描发现多个目录中新视频和新子目录，不创�
     folder = join(mediaPath, name)
   mkdirSync(join(folder, '甲目录'), { recursive: true })
   mkdirSync(join(folder, '乙目录'), { recursive: true })
-  const headers = await login(page)
-  await page.request.post('/api/directories/1/refresh', { headers, data: {} })
+  await login(page)
+  await page.request.post('/api/directories/1/refresh', { data: {} })
   await page.getByRole('button', { name: '刷新', exact: true }).click()
   await page.getByRole('button', { name, exact: true }).click()
   await expect(page.getByRole('button', { name: '甲目录', exact: true })).toBeVisible()
-  const id = Number(new URL(page.url()).hash.split('/')[1])
+  const id = libraryDirectory(page.url())
   writeFileSync(join(folder, '甲目录', '新视频甲.mp4'), 'scan fixture')
   writeFileSync(join(folder, '乙目录', '新视频乙.mp4'), 'scan fixture')
   mkdirSync(join(folder, '全新目录', '深层'), { recursive: true })
@@ -85,23 +85,23 @@ test('手动递归扫描发现多个目录中新视频和新子目录，不创�
   for (const [dirName, fileName] of [
     ['甲目录', '新视频甲.mp4'],
     ['乙目录', '新视频乙.mp4']
-  ]) {
-    const child = parent.items.find((e: any) => e.name === dirName)
+  ] as const) {
+    const child = parent.items.find((e: Record<string, unknown>) => e.name === dirName)
     const files = await (
       await page.request.get(`/api/directories/${child.id}/entries?page=1`)
     ).json()
-    expect(files.items.map((e: any) => e.name)).toContain(fileName)
-    expect(files.items.find((e: any) => e.name === fileName).processed).toBe('')
+    expect(files.items.map((e: Record<string, unknown>) => e.name)).toContain(fileName)
+    expect(files.items.find((e: Record<string, unknown>) => e.name === fileName).processed).toBe('')
   }
-  const fresh = parent.items.find((e: any) => e.name === '全新目录')
+  const fresh = parent.items.find((e: Record<string, unknown>) => e.name === '全新目录')
   const nested = await (
     await page.request.get(`/api/directories/${fresh.id}/entries?page=1`)
   ).json()
-  const deep = nested.items.find((e: any) => e.name === '深层')
+  const deep = nested.items.find((e: Record<string, unknown>) => e.name === '深层')
   const deepFiles = await (
     await page.request.get(`/api/directories/${deep.id}/entries?page=1`)
   ).json()
-  expect(deepFiles.items.map((e: any) => e.name)).toEqual(['深层新增.mp4'])
+  expect(deepFiles.items.map((e: Record<string, unknown>) => e.name)).toEqual(['深层新增.mp4'])
   const afterResponse = await page.request.get('/api/runs?category=all&page=1&size=1')
   expect(afterResponse.ok()).toBe(true)
   const after = await afterResponse.json()
@@ -137,10 +137,15 @@ const idleStatus = {
   errors: []
 }
 
-for (const mode of ['auto', 'auto-delayed', 'selected', 'late-selection'])
-  test(`后台索引更新${mode === 'auto' ? '自动显示新增文件' : mode === 'auto-delayed' ? '慢速读取时静默更新' : mode === 'selected' ? '等待确认并保留勾选' : '忽略读取期间的新选择'}，离页停止轮询`, async ({
-    page
-  }) => {
+const scanModes = {
+  'auto': '自动显示新增文件',
+  'auto-delayed': '慢速读取时静默更新',
+  'selected': '等待确认并保留勾选',
+  'late-selection': '忽略读取期间的新选择'
+} as const
+
+for (const mode of ['auto', 'auto-delayed', 'selected', 'late-selection'] as const)
+  test(`后台索引更新${scanModes[mode]}，离页停止轮询`, async ({ page }) => {
     const selected = mode === 'selected',
       selectLate = mode === 'late-selection',
       delayList = selectLate || mode === 'auto-delayed'
@@ -189,7 +194,9 @@ for (const mode of ['auto', 'auto-delayed', 'selected', 'late-selection'])
         }
       })
     })
-    await page.route('**/api/entries/status?*', (route) => route.fulfill({ json: initial }))
+    await page.route('**/api/entries/status?*', (route) =>
+      route.fulfill({ json: { items: initial } })
+    )
     await page.clock.install()
     await login(page)
     await expect(page.locator('tbody tr')).toHaveCount(2)
@@ -204,7 +211,8 @@ for (const mode of ['auto', 'auto-delayed', 'selected', 'late-selection'])
               node instanceof Element &&
               (node.matches('.directory-update-notice') ||
                 node.querySelector('.directory-update-notice'))
-            ) state.directoryNotices++
+            )
+              state.directoryNotices++
       }).observe(document.body, { childList: true, subtree: true })
     })
     if (selected) {
@@ -240,7 +248,9 @@ for (const mode of ['auto', 'auto-delayed', 'selected', 'late-selection'])
     await expect(page.locator('.directory-update-notice')).toHaveCount(0)
     if (!selected && !selectLate)
       expect(
-        await page.evaluate(() => (window as typeof window & { directoryNotices: number }).directoryNotices)
+        await page.evaluate(
+          () => (window as typeof window & { directoryNotices: number }).directoryNotices
+        )
       ).toBe(0)
     await page.getByRole('button', { name: '批次记录', exact: true }).click()
     await expect(page.getByRole('heading', { name: '批次记录.' })).toBeVisible()
@@ -250,7 +260,10 @@ for (const mode of ['auto', 'auto-delayed', 'selected', 'late-selection'])
     release()
   })
 
-async function mockDirectoryUpdates(page: Page, initial = [entry(10, '保留.mp4'), entry(11, '原有.mp4')]) {
+async function mockDirectoryUpdates(
+  page: Page,
+  initial = [entry(10, '保留.mp4'), entry(11, '原有.mp4')]
+) {
   const updates = {
     generation: '1',
     refreshing: false,
@@ -271,7 +284,16 @@ async function mockDirectoryUpdates(page: Page, initial = [entry(10, '保留.mp4
     updates.requests.state++
     if (updates.failNextState) {
       updates.failNextState = false
-      return route.fulfill({ status: 500, json: { message: '暂时断开' } })
+      return route.fulfill({
+        status: 500,
+        json: {
+          error: {
+            code: 'internal',
+            message: 'test failure',
+            details: { detail: '暂时断开' }
+          }
+        }
+      })
     }
     return route.fulfill({
       json: { generation: updates.generation, refreshed: '', refreshing: false, error: '' }
@@ -295,7 +317,9 @@ async function mockDirectoryUpdates(page: Page, initial = [entry(10, '保留.mp4
       }
     })
   })
-  await page.route('**/api/entries/status?*', (route) => route.fulfill({ json: initial }))
+  await page.route('**/api/entries/status?*', (route) =>
+    route.fulfill({ json: { items: initial } })
+  )
   await page.clock.install()
   await login(page)
   await expect(page.locator('tbody tr')).toHaveCount(initial.length)
@@ -336,14 +360,21 @@ test('自动更新目录仍在刷新时，后续重试保留新勾选并提示�
   await expect(page.getByLabel('选择 保留.mp4', { exact: true })).toBeChecked()
 })
 
-for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }])
-  test(`目录更新浮动提示在${viewport.width === 390 ? '窄屏' : '桌面'}保持列表位置，多次轮询不重建通知`, async ({ page }) => {
+for (const viewport of [
+  { width: 1440, height: 1000 },
+  { width: 390, height: 844 }
+])
+  test(`目录更新浮动提示在${viewport.width === 390 ? '窄屏' : '桌面'}保持列表位置，多次轮询不重建通知`, async ({
+    page
+  }) => {
     await page.setViewportSize(viewport)
     const initial = Array.from({ length: 40 }, (_, index) => entry(10 + index, `条目_${index}.mp4`))
     const updates = await mockDirectoryUpdates(page, initial)
     await page.getByRole('button', { name: '多选', exact: true }).click()
     await page.getByLabel('选择 条目_0.mp4', { exact: true }).check()
-    await page.evaluate(() => window.scrollTo({ top: 400, behavior: 'instant' }))
+    await page.evaluate(() => {
+      window.scrollTo({ top: 400, behavior: 'instant' })
+    })
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(400)
     const before = await directoryPosition(page),
       lists = updates.requests.list
@@ -355,9 +386,9 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     expect(await directoryPosition(page)).toEqual(before)
     const noticeElement = await notice.elementHandle(),
       bounds = await notice.boundingBox()
-    expect(bounds!.x).toBeGreaterThanOrEqual(0)
-    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width)
-    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height)
+    expect(defined(bounds).x).toBeGreaterThanOrEqual(0)
+    expect(defined(bounds).x + defined(bounds).width).toBeLessThanOrEqual(viewport.width)
+    expect(defined(bounds).y + defined(bounds).height).toBeLessThanOrEqual(viewport.height)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     await page.screenshot({
       path: `test-results/directory-update-notice-${viewport.width === 390 ? 'mobile' : 'desktop'}.png`
@@ -367,16 +398,18 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     const states = updates.requests.state
     await page.clock.runFor(6000)
     await expect.poll(() => updates.requests.state).toBeGreaterThan(states)
-    expect(await noticeElement!.evaluate((element) => element.isConnected)).toBe(true)
+    expect(await noticeElement.evaluate((element) => element.isConnected)).toBe(true)
     expect(await directoryPosition(page)).toEqual(before)
     expect(updates.requests.list).toBe(lists)
     await expect(page.getByLabel('选择 条目_0.mp4', { exact: true })).toBeChecked()
 
     updates.failNextState = true
     await page.clock.runFor(6000)
-    const pollError = page.getByRole('alert').filter({ hasText: '目录更新检查失败：暂时断开' })
+    const pollError = page
+      .getByRole('alert')
+      .filter({ hasText: '目录更新检查失败：服务暂时无法完成请求（暂时断开）' })
     await expect(pollError).toBeVisible()
-    expect(await noticeElement!.evaluate((element) => element.isConnected)).toBe(true)
+    expect(await noticeElement.evaluate((element) => element.isConnected)).toBe(true)
     await page.evaluate(() => {
       Object.defineProperty(document, 'hidden', { configurable: true, value: true })
       document.dispatchEvent(new Event('visibilitychange'))
@@ -384,13 +417,13 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     const hiddenRequests = { ...updates.requests }
     await page.clock.runFor(15000)
     expect(updates.requests).toEqual(hiddenRequests)
-    expect(await noticeElement!.evaluate((element) => element.isConnected)).toBe(true)
+    expect(await noticeElement.evaluate((element) => element.isConnected)).toBe(true)
     await page.evaluate(() => {
       Reflect.deleteProperty(document, 'hidden')
       document.dispatchEvent(new Event('visibilitychange'))
     })
     await expect(pollError).toHaveCount(0)
-    expect(await noticeElement!.evaluate((element) => element.isConnected)).toBe(true)
+    expect(await noticeElement.evaluate((element) => element.isConnected)).toBe(true)
     expect(await directoryPosition(page)).toEqual(before)
 
     await notice.getByRole('button', { name: '更新文件列表', exact: true }).click()
@@ -407,12 +440,16 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
   })
 
 for (const interaction of ['editing', 'media'])
-  test(`目录更新保留${interaction === 'editing' ? '未保存的行内编辑' : '正在查看的媒体'}，操作结束后应用新列表`, async ({ page }) => {
+  test(`目录更新保留${interaction === 'editing' ? '未保存的行内编辑' : '正在查看的媒体'}，操作结束后应用新列表`, async ({
+    page
+  }) => {
     await page.route('**/api/entries/10/video', (route) => route.fulfill({ status: 204 }))
     const updates = await mockDirectoryUpdates(page)
     const editor = page.getByRole('textbox', { name: '编辑 保留.mp4', exact: true })
     if (interaction === 'editing') {
-      await page.getByRole('button', { name: '双击或按 Enter 重命名 保留.mp4', exact: true }).dblclick()
+      await page
+        .getByRole('button', { name: '双击或按 Enter 重命名 保留.mp4', exact: true })
+        .dblclick()
       await editor.fill('未保存的新标题')
     } else {
       await page.getByRole('button', { name: '播放视频 保留.mp4', exact: true }).click()
@@ -440,7 +477,9 @@ for (const interaction of ['editing', 'media'])
     await notice.getByRole('button', { name: '更新文件列表', exact: true }).click()
     await expect(page.locator('tbody tr')).toHaveCount(3)
     await expect(notice).toHaveCount(0)
-    await expect(page.getByRole('button', { name: '双击或按 Enter 重命名 保留.mp4', exact: true })).toBeVisible()
+    await expect(
+      page.getByRole('button', { name: '双击或按 Enter 重命名 保留.mp4', exact: true })
+    ).toBeVisible()
   })
 
 test('扫描失败和取消反馈清晰，不覆盖尚未保存的扫描间隔', async ({ page }) => {
@@ -454,7 +493,10 @@ test('扫描失败和取消反馈清晰，不覆盖尚未保存的扫描间隔',
   }
   await page.route('**/api/library/scan', (route) =>
     route.fulfill({
-      json: { settings: { enabled: true, interval_minutes: 60, targets: [1], excluded_targets: [] }, status }
+      json: {
+        settings: { enabled: true, interval_minutes: 60, targets: [1], excluded_targets: [] },
+        status
+      }
     })
   )
   await page.route('**/api/library/scan/cancel', (route) => {
@@ -472,7 +514,17 @@ test('扫描失败和取消反馈清晰，不覆盖尚未保存的扫描间隔',
   await expect(panel.getByLabel('扫描间隔（分钟）', { exact: true })).toHaveValue('120')
   await page.route(
     '**/api/library/scan',
-    (route) => route.fulfill({ status: 500, json: { message: 'NAS 连接中断' } }),
+    (route) =>
+      route.fulfill({
+        status: 500,
+        json: {
+          error: {
+            code: 'internal',
+            message: 'test failure',
+            details: { detail: 'NAS 连接中断' }
+          }
+        }
+      }),
     { times: 1 }
   )
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
@@ -498,7 +550,10 @@ test('扫描中长路径和大计数保持布局，范围整行且窄屏不溢�
   }
   await page.route('**/api/library/scan', (route) =>
     route.fulfill({
-      json: { settings: { enabled: true, interval_minutes: 60, targets: [1], excluded_targets: [] }, status }
+      json: {
+        settings: { enabled: true, interval_minutes: 60, targets: [1], excluded_targets: [] },
+        status
+      }
     })
   )
   await login(page)
@@ -512,18 +567,18 @@ test('扫描中长路径和大计数保持布局，范围整行且窄屏不溢�
   await expect(panel.getByRole('button', { name: '停止扫描', exact: true })).toBeEnabled()
   const fields = await panel.locator('.scan-settings-fields').boundingBox()
   const scope = await panel.locator('.scan-settings-scope').boundingBox()
-  expect(scope!.width).toBeGreaterThan(fields!.width * 0.9)
+  expect(defined(scope).width).toBeGreaterThan(defined(fields).width * 0.9)
   await panel.screenshot({ path: 'test-results/library-scan-active-desktop.png' })
   await page.setViewportSize({ width: 390, height: 844 })
   await panel.scrollIntoViewIfNeeded()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   const pathBox = await path.boundingBox()
-  expect(pathBox!.x + pathBox!.width).toBeLessThanOrEqual(390)
+  expect(defined(pathBox).x + defined(pathBox).width).toBeLessThanOrEqual(390)
   await panel.screenshot({ path: 'test-results/library-scan-active-mobile.png' })
 })
 
 test('排除目录可多选、取消、移除和保存，两个范围共用弹窗且焦点恢复', async ({ page }) => {
-  const headers = await login(page)
+  await login(page)
   const original = (await (await page.request.get('/api/library/scan')).json()).settings
   try {
     await page.getByRole('button', { name: '系统设置', exact: true }).click()
@@ -570,17 +625,24 @@ test('排除目录可多选、取消、移除和保存，两个范围共用弹�
     await page.reload()
     await expect(excluded).toContainText('未设置排除目录')
   } finally {
-    expect((await page.request.put('/api/library/scan/settings', { headers, data: original })).ok()).toBe(true)
+    expect((await page.request.put('/api/library/scan/settings', { data: original })).ok()).toBe(
+      true
+    )
   }
 })
 
 test('目录选择弹窗加载失败可重试，长路径列表在窄屏不溢出', async ({ page }) => {
   await login(page)
   const longPath = Array(20).fill('很长的目录名称').join(' / ')
-  await page.route('**/api/library/scan', route => route.fulfill({json: {
-    settings: { enabled: false, interval_minutes: 60, targets: [1], excluded_targets: [987] },
-    status: idleStatus, directory_paths: { 1: '整个媒体库', 987: longPath }
-  }}))
+  await page.route('**/api/library/scan', (route) =>
+    route.fulfill({
+      json: {
+        settings: { enabled: false, interval_minutes: 60, targets: [1], excluded_targets: [987] },
+        status: idleStatus,
+        directory_paths: { 1: '整个媒体库', 987: longPath }
+      }
+    })
+  )
   await page.getByRole('button', { name: '系统设置', exact: true }).click()
   await page.getByRole('button', { name: '后台目录扫描', exact: true }).click()
   await page.setViewportSize({ width: 320, height: 844 })
@@ -588,13 +650,27 @@ test('目录选择弹窗加载失败可重试，长路径列表在窄屏不溢�
   await expect(excluded.locator('li')).toContainText(longPath)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.screenshot({ path: 'test-results/scan-exclusions-long-320.png', fullPage: true })
-  await page.route('**/api/directories/1/entries?kind=directory*', route => route.fulfill({status: 500, json: { message: '测试目录暂时不可用' }}), {times: 1})
+  await page.route(
+    '**/api/directories/1/entries?kind=directory*',
+    (route) =>
+      route.fulfill({
+        status: 500,
+        json: {
+          error: {
+            code: 'internal',
+            message: 'test failure',
+            details: { detail: '测试目录暂时不可用' }
+          }
+        }
+      }),
+    { times: 1 }
+  )
   await excluded.getByRole('button', { name: '添加排除目录' }).click()
   const dialog = page.getByRole('dialog', { name: '选择排除目录' })
   await expect(dialog).toContainText('测试目录暂时不可用')
-  await expect(dialog.getByLabel('选择当前目录', {exact: true})).toBeDisabled()
-  await dialog.getByRole('button', {name: '重试', exact: true}).click()
-  await expect(dialog.getByLabel('选择 家庭影像', {exact: true})).toBeEnabled()
-  await dialog.getByRole('button', {name: '取消', exact: true}).click()
+  await expect(dialog.getByLabel('选择当前目录', { exact: true })).toBeDisabled()
+  await dialog.getByRole('button', { name: '重试', exact: true }).click()
+  await expect(dialog.getByLabel('选择 家庭影像', { exact: true })).toBeEnabled()
+  await dialog.getByRole('button', { name: '取消', exact: true }).click()
   await expect(excluded.locator('li')).toContainText(longPath)
 })

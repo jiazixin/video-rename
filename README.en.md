@@ -83,9 +83,9 @@ Edit `configs/config.local.yaml` with your media directory and a strong, unique 
 ```yaml
 listen: "127.0.0.1"
 port: 8790
-media-path: "/srv/videos"   # existing media root
+media_path: "/srv/videos"   # existing media root
 storage: "../data"          # SQLite and key, relative to this file's directory
-tmp-storage: "../.cache"    # rebuildable frame cache
+tmp_storage: "../.cache"    # rebuildable frame cache
 auth:
   username: "admin"
   password: "" # Set a strong, unique password.
@@ -129,9 +129,9 @@ To cross-compile, keep the same Web build and set the target for `go build`: `GO
 
 See the [configuration reference](docs/configuration.md) for every field, default, and in-app resource setting. Key points:
 
-- `-c <file>` and `--config <file>` are equivalent; naming different files with both is an error. The file is chosen as `--config` > `CONFIG_FILE` > `configs/config.local.yaml` under the working directory, and it must exist. Apart from `CONFIG_FILE`, environment variables do not override configuration.
+- `-c <file>` and `--config <file>` are equivalent; naming different files with both is an error. The file is chosen as `--config` > `CONFIG_FILE` > `configs/config.local.yaml` under the working directory. A file named by `--config` or `CONFIG_FILE` must exist, and an empty `CONFIG_FILE` is an error; when the default file is missing the built-in defaults are used, but `media_path` and `auth` have no defaults, so startup still fails and reports the missing field. Apart from `CONFIG_FILE`, environment variables do not override configuration.
 - Relative paths resolve against the configuration file's directory. The media directory must already exist, and configuration, storage, and cache must live outside it.
-- Keep media, configuration, and persistent data out of `tmp-storage/video-rename-frames-v1/`, which the application cleans automatically. Unsafe path overlaps are rejected before startup.
+- Keep media, configuration, and persistent data out of `tmp_storage/video-rename-frames-v1/`, which the application cleans automatically. Unsafe path overlaps are rejected before startup.
 - The example password cannot be used to start. Models, frame rules, prompts, notifications, and scans are configured in the Web interface.
 
 ## Deployment and data
@@ -148,6 +148,9 @@ See [operations](docs/operations.md) for batch actions, marks, retries, undo, no
 ```sh
 npm --prefix web ci
 npm --prefix web run format:check
+npm --prefix web run lint
+npm --prefix web run typecheck
+npm --prefix web run test
 npm --prefix web run build
 go vet ./...
 go test -race -count=1 ./...
@@ -165,7 +168,8 @@ On pushes to `main` and on pull requests, [CI](.github/workflows/ci.yml) runs We
 
 - Versions come from Git tags in the form `vMAJOR.MINOR.PATCH` (pre-releases such as `v1.2.0-rc.1`). Go stamps the module version at build time; untagged commits show a pseudo-version, and uncommitted changes add `+dirty`.
 - Query the version with `video-rename --version`, which prints e.g. `video-rename v1.2.0 (revision=0123456789ab)`. It and `--help` (in English) print to stdout, read no configuration and start no service.
-- Exit codes: 0 success, 2 usage error, 1 configuration, startup or runtime failure. Errors before startup are written to stderr as plain text `video-rename: <error>`; usage errors add `Run 'video-rename --help' for usage.`.
+- Exit codes: 0 success (including a clean shutdown after SIGINT/SIGTERM), 2 usage error, 1 configuration, startup or runtime failure. Usage errors are written to stderr as plain text `video-rename: <error>` followed by `Run 'video-rename --help' for usage.`; configuration errors are one English line `video-rename: config: <error>`, with field paths for validation errors, e.g. `video-rename: config: port: must be between 1 and 65535`.
+- Logs: once the configuration loads, service logs are written to stdout as JSON lines. Startup and shutdown events are `service_starting` (with `version`), `service_listening` (with `listen`), `service_stopping` and `service_stopped`; later startup or runtime failures are logged as `service_failed` and not repeated on stderr. The first SIGINT/SIGTERM starts a graceful shutdown (up to 10 seconds); a second one terminates the process.
 - Source archives without `.git` report `dev`; inject a version matching the source explicitly: `go build -trimpath -ldflags='-X main.version=v1.0.0' -o bin/video-rename ./cmd/video-rename`.
 - Pushing a standard tag triggers the [Release workflow](.github/workflows/release.yml): it checks that `--version` matches the tag, then GoReleaser builds every target and uploads the tar.gz archives and `checksums.txt`.
 
@@ -181,6 +185,7 @@ Detailed documentation is in Chinese.
 | [docs/operations.md](docs/operations.md) | Batch actions, marks, retries, undo, notifications, and backups |
 | [docs/models.md](docs/models.md) | Endpoints, image-recognition tests, keys, and thinking parameters |
 | [docs/processing.md](docs/processing.md) | Probing, sampling, frame budgets, and failure handling |
+| [docs/API.md](docs/API.md) | Contract for error responses, field errors, and job and record error codes |
 | [docs/DESIGN.md](docs/DESIGN.md) | Current architecture, data flow, persistence, and UI conventions |
 | [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md) | Module map, builds, regression and scale tests, releases, and CI |
 | [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) | Latest verification results and untested scope |
@@ -204,10 +209,16 @@ The directory baseline is maintained only in [目录规范.md](目录规范.md),
 
 | Baseline rule | Actual behavior | Reason | Scope / re-evaluate when |
 | --- | --- | --- | --- |
-| §3 Root README | Chinese `README.md` is the primary entry; the English translation is `README.en.md` | Chinese and English READMEs were requested | Both kept in sync; re-evaluate if the English version is dropped |
 | §7.1 Config entry and overrides | `-c` / `--config` > `CONFIG_FILE` > `configs/config.local.yaml` under the working directory; no per-field environment overrides | Existing CLI configuration protocol | This binary; only when the user asks to change it |
 | §11 Tool-required paths | `web/embed.go` embeds `web/dist` | The real build boundary between Go embed and Vite | Web assets; when the delivery model changes |
 | §4 `bin/` holds executables only | GoReleaser output (binaries, tar.gz, checksums, metadata) goes to `bin/release/` | An unignored root `dist/` would mark Go builds dirty, and `dist/` is reserved for Web output | Release builds; when the release tool changes |
+
+## Code exceptions
+
+| Rule | Actual practice | Reason | Scope | Re-evaluate when |
+| --- | --- | --- | --- | --- |
+| 代码规范 §3.1 user text is mapped from codes by the client | The server generates Chinese for content sent to the model (default prompt, fixed prompt, frame captions, image-recognition test instruction), the default failure keywords, notification titles and bodies (including the test notification), and the seed names of the default prompt and model configuration plus the "副本" suffix of copied configurations | Prompt content and failure keywords are data sent to the model or matched against its output, notifications go to external channels, and seed names are user-editable data; none has a client that could map codes. The admin API and all records return only codes per the [error contract](docs/API.md) | `internal/models` (`DefaultBody`, seeding and copy, `probe.go`), `internal/systemsettings` (`DefaultFixedPrompt`), the frame captions in `internal/vision/client.go`, `internal/naming/failure.go`, notification content in `internal/notifications` | Prompt content, notifications or seed data become multilingual |
+| Web代码规范 §3 enable at least `strictTypeChecked` | `@typescript-eslint/restrict-template-expressions` uses `allowNumber: true`, so template literals may interpolate numbers directly | Interpolating a number cannot produce `[object Object]` or `undefined` text, and rewriting each site as `String(n)` hurts readability; all other types still fail | `web/eslint.config.js`, all web sources and E2E tests | The rule default or the standard changes |
 
 ## Contributing
 

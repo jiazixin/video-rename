@@ -1,11 +1,11 @@
 package library
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -30,7 +30,7 @@ func TestProcessingStatusFiltersAndSortingAcrossPages(t *testing.T) {
 		put(t, filepath.Join(root, fmt.Sprintf("clip%d.mp4", i)))
 	}
 	for _, name := range []string{"folder2", "folder10"} {
-		if err := os.Mkdir(filepath.Join(root, name), 0700); err != nil {
+		if err := os.Mkdir(filepath.Join(root, name), 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -116,7 +116,7 @@ func TestProcessingStatusFiltersAndSortingAcrossPages(t *testing.T) {
 
 func TestProcessingStatusUsesLiveTaskPrecedenceAndScope(t *testing.T) {
 	l, root, _ := fixture(t)
-	if err := os.Mkdir(filepath.Join(root, "child"), 0700); err != nil {
+	if err := os.Mkdir(filepath.Join(root, "child"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	put(t, filepath.Join(root, "child", "clip.mp4"))
@@ -173,7 +173,7 @@ func TestNumberingStatusFilterKeepsHiddenNumbersAndUsesStatusSorting(t *testing.
 	settings := domain.DefaultNumberingSettings()
 	settings.Image.Compact = true
 	for _, direction := range []string{"asc", "desc"} {
-		b, err := l.PreviewNumberingFilteredContext(t.Context(), 1, "image", "", "manual", "status_"+direction, settings)
+		b, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "image", Status: "manual", Sort: "status_" + direction, Settings: settings})
 		if err != nil || b.Total != 2 || len(b.Items) != 2 {
 			t.Fatalf("filtered numbering: %+v, %v", b, err)
 		}
@@ -187,11 +187,11 @@ func TestNumberingStatusFilterKeepsHiddenNumbersAndUsesStatusSorting(t *testing.
 			}
 		}
 	}
-	b, err := l.PreviewNumberingFilteredContext(t.Context(), 1, "image", "", "manual", "status_desc", settings)
+	b, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "image", Status: "manual", Sort: "status_desc", Settings: settings})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := l.ApplyNumbering(b.ID); err != nil {
+	if _, err := l.ApplyNumbering(t.Context(), b.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"1.jpg", "2.jpg", "3.jpg", "4.jpg", "5.jpg"} {
@@ -199,7 +199,7 @@ func TestNumberingStatusFilterKeepsHiddenNumbersAndUsesStatusSorting(t *testing.
 			t.Fatalf("unexpected numbering result: %s: %v", name, err)
 		}
 	}
-	if _, err := l.PreviewNumberingFilteredContext(t.Context(), 1, "image", "", "marked", "status_asc", settings); err == nil || !strings.Contains(err.Error(), "没有可编号") {
+	if _, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "image", Status: "marked", Sort: "status_asc", Settings: settings}); err == nil || !errors.Is(err, domain.Fail(domain.KindInvalid, "numbering_nothing_selected", "")) {
 		t.Fatalf("protected marked files entered numbering: %v", err)
 	}
 }
@@ -332,7 +332,7 @@ func TestDirectoryProcessingFiltersUseSubtreesBeforePaging(t *testing.T) {
 func TestDirectoryFiltersUseLiveTaskStateAndUnknownDescendants(t *testing.T) {
 	l, root, _ := fixture(t)
 	for _, dir := range []string{"completed", "unknown/nested"} {
-		if err := os.MkdirAll(filepath.Join(root, dir), 0700); err != nil {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}

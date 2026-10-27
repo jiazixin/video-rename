@@ -8,10 +8,10 @@ import (
 	"video-rename/internal/naming"
 )
 
-// ValidateTitle 验证模型输出符合单行标题协议(docs/processing.md 第 4 节):
-//   - 只移除首尾空白及成对包裹引号;
-//   - 要求仅一个非空逻辑行;
-//   - 代码围栏、多标题列表、解释段落、空标题均为 TITLE_INVALID。
+// ValidateTitle checks that model output follows the single-line title protocol (docs/processing.md section 4):
+//   - only surrounding whitespace and one pair of wrapping quotes are removed;
+//   - exactly one non-empty logical line is required;
+//   - code fences, lists of titles, explanations and empty titles are title_invalid.
 //
 // The run's failure rules are applied first. Empty rules disable matching,
 // while nil uses defaults.
@@ -22,27 +22,27 @@ func ValidateTitle(raw string, keywords []string) (string, *domain.JobError) {
 		return "", err
 	}
 	if s == "" {
-		return "", &domain.JobError{Code: domain.CodeTitleInvalid, Message: "模型输出为空标题"}
+		return "", &domain.JobError{Code: domain.CodeTitleInvalid, Message: "model output is an empty title", Details: map[string]any{"reason": "empty"}}
 	}
 	if strings.ContainsAny(s, "\r\n") {
-		return "", &domain.JobError{Code: domain.CodeTitleInvalid, Message: "模型输出包含多行内容"}
+		return "", &domain.JobError{Code: domain.CodeTitleInvalid, Message: "model output has several lines", Details: map[string]any{"reason": "multiline"}}
 	}
 	if strings.Contains(s, "```") {
-		return "", &domain.JobError{Code: domain.CodeTitleInvalid, Message: "模型输出包含代码围栏"}
+		return "", &domain.JobError{Code: domain.CodeTitleInvalid, Message: "model output contains a code fence", Details: map[string]any{"reason": "code_fence"}}
 	}
 	if strings.Contains(s, "\x00") {
-		return "", &domain.JobError{Code: domain.CodeTitleInvalid, Message: "模型输出包含 NUL"}
+		return "", &domain.JobError{Code: domain.CodeTitleInvalid, Message: "model output contains NUL", Details: map[string]any{"reason": "nul"}}
 	}
-	// 全部由控制字符或空白组成视为无效
+	// a title made only of control characters or whitespace is invalid
 	if strings.TrimFunc(s, func(r rune) bool {
 		return unicode.IsControl(r) || unicode.IsSpace(r)
 	}) == "" {
-		return "", &domain.JobError{Code: domain.CodeTitleInvalid, Message: "模型输出仅含空白或控制字符"}
+		return "", &domain.JobError{Code: domain.CodeTitleInvalid, Message: "model output has only blanks or control characters", Details: map[string]any{"reason": "blank"}}
 	}
 	return s, nil
 }
 
-// stripPairedQuotes 移除一层成对包裹引号(含中英文引号)。
+// stripPairedQuotes removes one pair of wrapping quotes (ASCII or CJK).
 func stripPairedQuotes(s string) string {
 	for {
 		runes := []rune(strings.TrimSpace(s))

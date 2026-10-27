@@ -1,22 +1,29 @@
 <script setup lang="ts">
-  import { formatPlaybackTime } from '../../lib/date/format';
+  import { formatPlaybackTime } from '../../lib/format/date';
   import { ref, onMounted, onBeforeUnmount, computed, nextTick } from 'vue';
   import { Play, Pause, Volume2, VolumeX, Music, SkipBack, SkipForward } from '@lucide/vue';
   import type { Entry } from '../../app/contracts';
   import type { MediaQueue } from './media-preview';
-  import { formatSize } from '../../lib/bytes/format';
-  const props = defineProps<{
+  import { formatSize } from '../../lib/format/bytes';
+  const {
+    entry,
+    switching,
+    notice = '',
+    position = '',
+    queue
+  } = defineProps<{
     entry: Entry;
     switching?: boolean;
     notice?: string;
     position?: string;
+    // eslint-disable-next-line vue/require-default-prop -- undefined means still loading, null means failed
     queue?: MediaQueue | null;
   }>();
   const emit = defineEmits<{ previous: []; next: []; select: [entry: Entry] }>();
   const list = ref<HTMLElement>();
   // A stable colour per file name stands in for cover art, which the server does not extract.
   const hue = computed(() =>
-    [...props.entry.name].reduce((sum, ch) => (sum * 31 + ch.charCodeAt(0)) % 360, 7)
+    Array.from(entry.name).reduce((sum, ch) => (sum * 31 + ch.charCodeAt(0)) % 360, 7)
   );
   const audio = ref<HTMLAudioElement>(),
     paused = ref(true),
@@ -108,6 +115,10 @@
       a.load();
     }
   });
+  const queueHint = computed(() => {
+    if (queue === null) return '同目录列表读取失败，仍可用上一首 / 下一首切换。';
+    return queue ? '当前筛选下没有其他音频。' : '正在读取同目录音频…';
+  });
 </script>
 <template>
   <div class="audio-deck">
@@ -196,13 +207,7 @@
           ></li
         ></ol
       >
-      <p v-else class="list-empty">{{
-        queue === null
-          ? '同目录列表读取失败，仍可用上一首 / 下一首切换。'
-          : queue
-            ? '当前筛选下没有其他音频。'
-            : '正在读取同目录音频…'
-      }}</p>
+      <p v-else class="list-empty">{{ queueHint }}</p>
       <p class="list-hint">← → 快退 / 快进 10 秒 · 使用浏览器原生解码</p>
     </section>
   </div>
@@ -236,13 +241,13 @@
     display: grid;
     place-items: center;
     border-radius: 16px;
-    color: rgba(255, 255, 255, 0.92);
+    color: var(--palette-rgba-255-255-255-0_92);
     background: linear-gradient(
       135deg,
-      hsl(var(--hue) 42% 34%),
-      hsl(calc(var(--hue) + 36) 48% 66%)
+      var(--palette-hsl-var-hue-42-34),
+      var(--palette-hsl-calc-var-hue-36-48-66)
     );
-    box-shadow: 0 12px 26px rgba(20, 40, 30, 0.18);
+    box-shadow: 0 12px 26px var(--palette-rgba-20-40-30-0_18);
   }
   .cover .pulsing {
     animation: cover-pulse 1.6s linear infinite;
@@ -286,7 +291,7 @@
   }
   .transport button:hover:not(:disabled),
   .media-volume button:hover:not(:disabled) {
-    background: rgba(0, 0, 0, 0.06);
+    background: var(--palette-rgba-0-0-0-0_06);
     border: 0;
   }
   .transport .play,
@@ -295,7 +300,7 @@
     height: 46px;
     padding: 0;
     background: var(--tone-green-ink);
-    color: #fff;
+    color: var(--palette-ffffff);
   }
   .transport .play:hover:not(:disabled) {
     filter: brightness(1.08);
@@ -334,7 +339,7 @@
     width: 13px;
     height: 13px;
     border-radius: 50%;
-    background: #fff;
+    background: var(--palette-ffffff);
     box-shadow: 0 0 0 3px var(--tone-green-ink);
   }
   .audio-deck input::-moz-range-thumb {
@@ -342,7 +347,7 @@
     height: 10px;
     border: 0;
     border-radius: 50%;
-    background: #fff;
+    background: var(--palette-ffffff);
     box-shadow: 0 0 0 3px var(--tone-green-ink);
   }
   .deck-status {

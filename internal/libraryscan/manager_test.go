@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"video-rename/internal/domain"
 	"video-rename/internal/library"
 	"video-rename/internal/storage"
 	"video-rename/internal/systemsettings"
@@ -23,7 +24,7 @@ func fixture(t *testing.T) (*Manager, *library.Library, string, systemsettings.S
 	t.Helper()
 	base := t.TempDir()
 	root := filepath.Join(base, "media")
-	if err := os.Mkdir(root, 0700); err != nil {
+	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	db, err := storage.Open(filepath.Join(base, "state", "library.sqlite"))
@@ -43,10 +44,10 @@ func fixture(t *testing.T) (*Manager, *library.Library, string, systemsettings.S
 
 func put(t *testing.T, path string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("video"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -168,7 +169,7 @@ func TestValidateTargetsNormalizesOverlapsAndRejectsInvalidScopes(t *testing.T) 
 	if err := os.Rename(filepath.Join(root, "parent", "child"), filepath.Join(root, "parent", "old-child")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(filepath.Join(root, "parent", "child"), 0700); err != nil {
+	if err := os.Mkdir(filepath.Join(root, "parent", "child"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.ValidateTargets(t.Context(), []int64{1, child}); err == nil {
@@ -241,7 +242,7 @@ func TestDirectoryScanChangedPersistentFailureRetriesOnlyOnce(t *testing.T) {
 	if calls.Load() != 2 || s.Status != "failed" || s.Directories != 0 || s.Files != 0 || s.Added != 0 || len(s.Errors) != 1 {
 		t.Fatalf("persistent inconsistency was not bounded/reported once: calls=%d status=%+v", calls.Load(), s)
 	}
-	if !strings.Contains(s.Errors[0].Message, "第 1 次属性读取不一致") || !strings.Contains(s.Errors[0].Message, "第 2 次属性读取不一致") {
+	if s.Errors[0].Error.Code != "scan_changed" || !strings.Contains(s.Errors[0].Error.Message, "第 1 次属性读取不一致") || !strings.Contains(s.Errors[0].Error.Message, "第 2 次属性读取不一致") {
 		t.Fatalf("retry failure lost an observation: %+v", s.Errors)
 	}
 }
@@ -282,7 +283,7 @@ func TestDirectoryScanOrdinaryFailureDoesNotRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := finished(t, m)
-	if calls.Load() != 1 || s.Status != "failed" || s.Directories != 0 || s.Files != 0 || len(s.Errors) != 1 || s.Errors[0].Message != wantErr.Error() {
+	if calls.Load() != 1 || s.Status != "failed" || s.Directories != 0 || s.Files != 0 || len(s.Errors) != 1 || !strings.Contains(s.Errors[0].Error.Message, wantErr.Error()) {
 		t.Fatalf("ordinary failure was retried or misreported: calls=%d status=%+v", calls.Load(), s)
 	}
 }
@@ -374,7 +375,7 @@ func TestRootReplacementStopsRoundBeforeOtherDirectories(t *testing.T) {
 		if err := os.Rename(root, root+"-old"); err != nil {
 			return library.ScanDirectoryResult{}, err
 		}
-		if err := os.Mkdir(root, 0700); err != nil {
+		if err := os.Mkdir(root, 0o700); err != nil {
 			return library.ScanDirectoryResult{}, err
 		}
 		return library.ScanDirectoryResult{}, nil
@@ -383,7 +384,7 @@ func TestRootReplacementStopsRoundBeforeOtherDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := finished(t, m)
-	if s.Status != "failed" || calls.Load() != 1 || len(s.Errors) != 1 || s.Errors[0].Path != "整个媒体库" {
+	if s.Status != "failed" || calls.Load() != 1 || len(s.Errors) != 1 || s.Errors[0].Path != library.RootDisplayPath {
 		t.Fatalf("root change scan=%+v calls=%d", s, calls.Load())
 	}
 }
@@ -536,7 +537,7 @@ func TestStatusSlicesAreIndependentAndNeverNull(t *testing.T) {
 	}
 	s := finished(t, m)
 	s.Targets[0] = 999999
-	s.Errors = append(s.Errors, ScanError{Message: "external mutation"})
+	s.Errors = append(s.Errors, ScanError{Error: domain.Record{Message: "external mutation"}})
 	if got := m.Snapshot(); got.Targets[0] != 1 || len(got.Errors) != 0 {
 		t.Fatalf("Snapshot shared slices: %+v", got)
 	}

@@ -4,9 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
+
+	"video-rename/internal/domain"
 	"video-rename/internal/jobs"
 )
 
@@ -27,11 +28,11 @@ func (a *App) retryHistory(w http.ResponseWriter, r *http.Request) {
 		input.Category = "failure"
 	}
 	if (input.Category != "failure" && input.Category != "success") || (input.Category == "success" && input.All) || (input.All && len(input.IDs) > 0) || (!input.All && len(input.IDs) == 0) || input.ModelConfigID < 0 || len(input.Key) < 8 || len(input.Key) > 120 {
-		send(w, 400, map[string]string{"message": "请选择要重试的记录，并提供有效模型配置和请求键；成功记录仅支持明确选择后重试"})
+		invalid(w, r, "", "invalid_retry_request")
 		return
 	}
 	var records []retryRecord
-	var problems []string
+	var problems []retryProblem
 	var skipped int
 	var err error
 	if input.All {
@@ -40,10 +41,10 @@ func (a *App) retryHistory(w http.ResponseWriter, r *http.Request) {
 		records, problems, err = a.chosenRetryRecords(r.Context(), input.IDs, input.Category)
 	}
 	if err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
-	targets, retryOperations, targetProblems := a.retryTargets(records, input.Category)
+	targets, retryOperations, targetProblems := a.retryTargets(r.Context(), records, input.Category)
 	problems = append(problems, targetProblems...)
 	accepted, runs := []int64{}, []int64{}
 	if len(targets) > 0 {
@@ -51,13 +52,13 @@ func (a *App) retryHistory(w http.ResponseWriter, r *http.Request) {
 		for _, target := range targets {
 			entries = append(entries, target.entry)
 		}
-		run, err := a.Jobs.Create(jobs.Request{Targets: entries, ModelConfigID: input.ModelConfigID, Key: input.Key, RetryOperations: retryOperations}, "manual", 0)
+		run, err := a.Jobs.Create(r.Context(), jobs.Request{Targets: entries, ModelConfigID: input.ModelConfigID, Key: input.Key, RetryOperations: retryOperations}, "manual", 0)
 		if err != nil {
-			message := err.Error()
+			problem := domain.RecordOf(err)
 			if errors.Is(err, sql.ErrNoRows) {
-				message = "重试目标的索引已失效，请到文件目录刷新并重新提交命名"
+				problem = domain.Record{Code: "retry_target_stale", Message: "retry targets are no longer indexed"}
 			}
-			problems = append(problems, fmt.Sprintf("%d 个文件未提交：%s", len(targets), message))
+			problems = append(problems, retryProblem{Files: len(targets), Error: problem})
 		} else {
 			runs = append(runs, run)
 			for _, target := range targets {
@@ -66,9 +67,16 @@ func (a *App) retryHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if problems == nil {
-		problems = []string{}
+		problems = []retryProblem{}
 	}
-	send(w, 200, map[string]any{"accepted": accepted, "runs": runs, "errors": problems, "skipped": skipped})
+	send(w, http.StatusOK, map[string]any{"accepted": accepted, "runs": runs, "errors": problems, "skipped": skipped})
+}
+
+// retryProblem is a record, or a group of Files, that was not resubmitted.
+type retryProblem struct {
+	Record int64         `json:"record,omitzero"`
+	Files  int           `json:"files,omitzero"`
+	Error  domain.Record `json:"error"`
 }
 
 // retryRecord is one history event to resubmit.
@@ -105,12 +113,12 @@ func (a *App) allRetryableFailures(ctx context.Context) (records []retryRecord, 
 
 // chosenRetryRecords loads the chosen automatic records of one category and
 // reports the ones that cannot be retried.
-func (a *App) chosenRetryRecords(ctx context.Context, ids []int64, category string) (records []retryRecord, problems []string, err error) {
+func (a *App) chosenRetryRecords(ctx context.Context, ids []int64, category string) (records []retryRecord, problems []retryProblem, err error) {
 	for _, id := range ids {
 		record := retryRecord{id: id}
 		err := a.DB.Read().QueryRowContext(ctx, "SELECT entry,operation FROM events WHERE id=? AND category=? AND action='automatic' AND entry>0", id, category).Scan(&record.entry, &record.operation)
 		if errors.Is(err, sql.ErrNoRows) {
-			problems = append(problems, fmt.Sprintf("记录 #%d 不存在或不支持自动重试", id))
+			problems = append(problems, retryProblem{Record: id, Error: domain.Record{Code: "record_not_retryable", Message: "record does not exist or cannot be retried automatically"}})
 			continue
 		}
 		if err != nil {
@@ -123,13 +131,13 @@ func (a *App) chosenRetryRecords(ctx context.Context, ids []int64, category stri
 
 // retryTargets groups records by file, keeping only files that still resolve.
 // Success records also carry the operation each retry replaces.
-func (a *App) retryTargets(records []retryRecord, category string) (targets []*retryTarget, operations map[int64]int64, problems []string) {
+func (a *App) retryTargets(ctx context.Context, records []retryRecord, category string) (targets []*retryTarget, operations map[int64]int64, problems []retryProblem) {
 	operations = map[int64]int64{}
 	byEntry := map[int64]*retryTarget{}
 	for _, record := range records {
 		if category == "success" {
-			if err := a.Library.CheckAutomaticRetry(record.entry, record.operation); err != nil {
-				problems = append(problems, fmt.Sprintf("记录 #%d：%s", record.id, err))
+			if err := a.Library.CheckAutomaticRetry(ctx, record.entry, record.operation); err != nil {
+				problems = append(problems, retryProblem{Record: record.id, Error: domain.RecordOf(err)})
 				continue
 			}
 		}
@@ -138,7 +146,7 @@ func (a *App) retryTargets(records []retryRecord, category string) (targets []*r
 			continue
 		}
 		if _, err := a.Library.Path(record.entry); err != nil {
-			problems = append(problems, fmt.Sprintf("记录 #%d：%s", record.id, retryPathProblem(err)))
+			problems = append(problems, retryProblem{Record: record.id, Error: retryPathProblem(err)})
 			continue
 		}
 		target := &retryTarget{entry: record.entry, records: []int64{record.id}}
@@ -151,13 +159,13 @@ func (a *App) retryTargets(records []retryRecord, category string) (targets []*r
 	return targets, operations, problems
 }
 
-func retryPathProblem(err error) string {
+func retryPathProblem(err error) domain.Record {
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		return "文件或上级目录已不在索引中，请到文件目录刷新并重新提交命名；若文件已删除，可清除对应记录"
+		return domain.Record{Code: "entry_not_indexed", Message: "file or parent directory is no longer indexed"}
 	case errors.Is(err, os.ErrNotExist):
-		return "文件或上级目录不存在，请检查媒体挂载并刷新所在目录后重试；若文件已删除，请清除对应记录"
+		return domain.Record{Code: "entry_missing", Message: "file or parent directory does not exist"}
 	default:
-		return err.Error()
+		return domain.RecordOf(err)
 	}
 }

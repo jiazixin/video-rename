@@ -55,9 +55,9 @@ func (l *Library) DisplayPaths(ctx context.Context, ids []int64) (map[int64]stri
 		}
 		switch {
 		case cur > 1:
-			out[id] = "目录已缺失"
+			out[id] = MissingDisplayPath
 		case len(parts) == 0:
-			out[id] = "整个媒体库"
+			out[id] = RootDisplayPath
 		default:
 			slices.Reverse(parts)
 			out[id] = strings.Join(parts, " / ")

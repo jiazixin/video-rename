@@ -2,7 +2,7 @@
   padding: 24px;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: #fafcfb;
+  background: var(--palette-fafcfb);
   margin-bottom: 28px;
 }
 @media (max-width: 800px) {
@@ -58,10 +58,10 @@
   line-height: 1.7;
 }
 .manual-plan-section {
-  border-left: 3px solid var(--green, #287452);
+  border-left: 3px solid var(--green, var(--tone-green-ink));
 }
 .manual-plan-section a {
-  color: #287452;
+  color: var(--tone-green-ink);
   text-decoration: underline;
 }
 .batch-filters {
@@ -108,7 +108,7 @@
   }
 }
 .run-timeline {
-  background: white;
+  background: var(--palette-ffffff);
 }
 .run-day-label {
   display: flex;
@@ -117,11 +117,11 @@
   margin: 0;
   font-size: 11px;
   font-weight: 500;
-  color: #8a8e96;
+  color: var(--palette-6e727a);
   padding: 13px 20px 7px 18px;
 }
 .run-day-label svg {
-  color: #b3bab6;
+  color: var(--palette-b3bab6);
 }
 .run-entry + .run-day-label {
   margin-top: 0;
@@ -129,13 +129,13 @@
 }
 .run-entry {
   /* Task categories use green/violet; activity uses the original green. */
-  --task-ink: #287452;
-  --task-edge: #a9d8bf;
-  --run-accent: #2e9b69;
-  --run-accent-soft: #ccd6ce;
-  --run-ink: #287452;
-  --run-dot-ring: #a9d8bf;
-  --run-pulse: #4fc486;
+  --task-ink: var(--tone-green-ink);
+  --task-edge: var(--palette-a9d8bf);
+  --run-accent: var(--palette-2e9b69);
+  --run-accent-soft: var(--palette-ccd6ce);
+  --run-ink: var(--tone-green-ink);
+  --run-dot-ring: var(--palette-a9d8bf);
+  --run-pulse: var(--palette-4fc486);
   position: relative;
   display: grid;
   grid-template-columns: 38px 18px minmax(0, 1fr);
@@ -145,8 +145,8 @@
   border-radius: 6px;
 }
 .run-entry[data-task='extract'] {
-  --task-ink: #6941a5;
-  --task-edge: #c4b2df;
+  --task-ink: var(--palette-6941a5);
+  --task-edge: var(--palette-c4b2df);
 }
 .run-entry.is-running {
   box-shadow: inset 3px 0 0 var(--task-edge);
@@ -183,7 +183,7 @@
   top: 0;
   bottom: -12px;
   width: 1px;
-  background: #ebedee;
+  background: var(--palette-ebedee);
 }
 .run-entry.is-tail .run-node::before {
   bottom: auto;
@@ -196,7 +196,7 @@
   top: 20px;
   width: 11px;
   height: 1px;
-  background: #ebedee;
+  background: var(--palette-ebedee);
 }
 .run-node-dot {
   position: absolute;
@@ -206,9 +206,9 @@
   height: 9px;
   margin-left: -4.5px;
   border-radius: 50%;
-  background: #c9ced4;
-  border: 2px solid #fff;
-  box-shadow: 0 0 0 1px #d9dde0;
+  background: var(--palette-c9ced4);
+  border: 2px solid var(--palette-ffffff);
+  box-shadow: 0 0 0 1px var(--palette-d9dde0);
 }
 .run-entry.is-running .run-node-dot {
   background: var(--run-accent);
@@ -261,9 +261,9 @@
   border-radius: 6px;
 }
 .run-head .status-badge[data-status='scanning'] {
-  --status-ink: #2468af;
-  --status-bg: #edf5ff;
-  --status-line: #cfe1f6;
+  --status-ink: var(--palette-2468af);
+  --status-bg: var(--palette-edf5ff);
+  --status-line: var(--palette-cfe1f6);
 }
 .run-id {
   font-size: 13px;
@@ -285,7 +285,7 @@
   font-variant-numeric: tabular-nums;
 }
 .run-duration-value .run-eta-sep {
-  color: #c6cad0;
+  color: var(--palette-c6cad0);
   font-weight: 400;
 }
 .run-duration-value .run-eta {
@@ -309,7 +309,7 @@
   min-width: 0;
 }
 .run-meta-sep {
-  color: #c6cad0;
+  color: var(--palette-c6cad0);
 }
 .run-meta .table-model {
   display: inline-block;
@@ -333,7 +333,7 @@
   min-width: 120px;
   height: 4px;
   border-radius: 2px;
-  background: #eef0f2;
+  background: var(--palette-eef0f2);
   overflow: hidden;
 }
 .run-progress-fill {
@@ -361,7 +361,7 @@
   background: linear-gradient(
     100deg,
     transparent 25%,
-    rgba(255, 255, 255, 0.55) 50%,
+    var(--palette-rgba-255-255-255-0_55) 50%,
     transparent 75%
   );
   animation: run-progress-sheen 1.6s linear infinite;
@@ -412,7 +412,7 @@
 /* Outlined like the other row actions; the icon color says what the action does. */
 .run-entry .run-actions button.cancel-run {
   border-color: var(--control-line);
-  background: #fff;
+  background: var(--palette-ffffff);
   color: var(--tone-red-ink);
 }
 .run-entry .run-actions button.cancel-run:hover:not(:disabled) {

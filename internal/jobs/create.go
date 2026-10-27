@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
@@ -10,6 +11,7 @@ import (
 
 	"video-rename/internal/config"
 	"video-rename/internal/discovery"
+	"video-rename/internal/domain"
 	"video-rename/internal/models"
 	"video-rename/internal/sampling"
 	"video-rename/internal/storage"
@@ -18,17 +20,17 @@ import (
 
 // Create queues a run, or returns the run already created with the same
 // request key when the key was used for exactly the same request.
-func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
+func (m *Manager) Create(ctx context.Context, r Request, source string, plan int64) (int64, error) {
 	m.createMu.Lock()
 	defer m.createMu.Unlock()
 	if len(r.Targets) == 0 || len(r.Key) < 8 || len(r.Key) > 180 {
-		return 0, fmt.Errorf("请选择目录或文件，并提供有效请求键")
+		return 0, domain.Invalid(domain.FieldError{Path: "targets", Reason: "selection_required"}, domain.FieldError{Path: "key", Reason: "invalid"})
 	}
 	if r.Task == "" {
 		r.Task = "rename"
 	}
 	if r.Task != "rename" && r.Task != "extract" {
-		return 0, fmt.Errorf("请选择重命名或抽帧任务")
+		return 0, domain.InvalidField("task", "invalid_choice")
 	}
 	if r.Task == "extract" {
 		r.ModelConfigID = 0
@@ -55,7 +57,7 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 		return 0, err
 	}
 	for entry, operation := range r.RetryOperations {
-		if err := m.Library.CheckAutomaticRetry(entry, operation); err != nil {
+		if err := m.Library.CheckAutomaticRetry(ctx, entry, operation); err != nil {
 			return 0, err
 		}
 	}
@@ -68,7 +70,7 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 			return 0, err
 		}
 		if e.kind != "directory" && (e.kind != "file" || !discovery.IsVideoExtension(e.name)) {
-			return 0, fmt.Errorf("只能运行目录或视频文件")
+			return 0, domain.Fail(domain.KindInvalid, "target_not_runnable", "only directories and video files can run")
 		}
 	}
 	frames, err := (sampling.Store{DB: m.DB}).Get()
@@ -113,7 +115,7 @@ func (m *Manager) Create(r Request, source string, plan int64) (int64, error) {
 		return 0, err
 	}
 	if waiting >= limits.WaitingBatchLimit {
-		return 0, fmt.Errorf("等待批次已达上限（%d 个），请稍后重试或在系统设置中调整", limits.WaitingBatchLimit)
+		return 0, domain.Fail(domain.KindTooMany, "waiting_runs_full", "waiting run limit reached", "limit", limits.WaitingBatchLimit)
 	}
 	res, err := tx.Exec("INSERT INTO runs(source,targets,recursive,status,created,request_key,plan,config_summary,model_config_id,model_config_title,prompt_body,model_snapshot,sampling_snapshot,task,retry_snapshot) VALUES(?,?,?,'queued',?,?,?,?,?,?,?,?,?,?,?)", source, string(targets), r.Recursive, storage.Now(), r.Key, plan, summary, prompt.ID, prompt.Title, prompt.Body, modelSnapshot, string(frameSnapshot), r.Task, string(retryRaw))
 	if err != nil {
@@ -130,11 +132,11 @@ func validateRetryOperations(r Request, source string, plan int64) error {
 		return nil
 	}
 	if r.Task != "rename" || r.Recursive || source != "manual" || plan != 0 || len(r.RetryOperations) != len(r.Targets) {
-		return fmt.Errorf("成功记录重试只能用于明确选中的视频文件")
+		return domain.Fail(domain.KindInvalid, "retry_scope_invalid", "success record retries only apply to chosen video files")
 	}
 	for _, entry := range r.Targets {
 		if r.RetryOperations[entry] <= 0 {
-			return fmt.Errorf("成功记录重试缺少对应的命名操作")
+			return domain.Fail(domain.KindInvalid, "retry_operation_missing", "success record retry lacks its naming operation")
 		}
 	}
 	return nil
@@ -161,7 +163,7 @@ func (m *Manager) existingRun(r Request) (id int64, found bool, err error) {
 	}
 	current, _ := json.Marshal(r.Targets)
 	if oldTargets != string(current) || oldRecursive != r.Recursive || oldModelConfigID != r.ModelConfigID || oldTask != r.Task || !maps.Equal(oldRetry.RetryOperations, r.RetryOperations) {
-		return 0, false, fmt.Errorf("请求键已被不同的运行范围、任务类型、模型配置或重试记录使用")
+		return 0, false, domain.Fail(domain.KindConflict, "request_key_reused", "request key is used by a different request")
 	}
 	return id, true, nil
 }
@@ -172,9 +174,9 @@ func (m *Manager) freezeModel(id int64, cfg *config.TaskConfig) (models.Profile,
 	prompt, err := (models.Store{DB: m.DB}).Get(id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return prompt, "", fmt.Errorf("所选模型配置不存在或已删除，请重新选择模型配置")
+			return prompt, "", domain.Fail(domain.KindNotFound, "model_config_not_found", "model configuration does not exist")
 		}
-		return prompt, "", fmt.Errorf("请选择有效的模型配置: %w", err)
+		return prompt, "", fmt.Errorf("load model configuration: %w", err)
 	}
 	if err = prompt.Validate(); err != nil {
 		return prompt, "", err
@@ -188,7 +190,7 @@ func (m *Manager) freezeModel(id int64, cfg *config.TaskConfig) (models.Profile,
 	// was sent, regardless of later edits to the library or the fixed part.
 	prompt.Body = strings.TrimRight(prompt.Body, "\n") + "\n\n" + strings.TrimRight(fixed, "\n")
 	if err = cfg.ApplyModel(prompt.ServerConfig, prompt.Body); err != nil {
-		return prompt, "", fmt.Errorf("请完善模型配置: %w", err)
+		return prompt, "", domain.Fail(domain.KindInvalid, "model_config_incomplete", "model configuration is incomplete").Wrap(err)
 	}
 	snapshot, err := (models.Store{DB: m.DB}).Snapshot(prompt)
 	return prompt, snapshot, err

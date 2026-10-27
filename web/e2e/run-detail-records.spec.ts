@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 import { mockRunPages } from './run-pages'
 import { recordPage } from './run-record-pages'
+import { defined } from './support'
 
 const sampleRun = () => ({
   id: 960,
@@ -15,16 +16,21 @@ const sampleRun = () => ({
   skipped: 0,
   failed: 104
 })
+// The first 100 records are done, the last one queued and the rest failed.
+function recordStatus(i: number) {
+  if (i === 204) return 'queued'
+  return i < 100 ? 'done' : 'failed'
+}
 const records = () =>
   Array.from({ length: 205 }, (_, i) => ({
     id: i + 1,
     entry: i + 1,
-    status: i === 204 ? 'queued' : i < 100 ? 'done' : 'failed',
+    status: recordStatus(i),
     original_path: `${i < 103 ? '上海' : '杭州'} / clip-${String(i + 1).padStart(3, '0')}.mp4`,
     current_path: '当前目录 / 当前文件.mp4',
     new_name: i < 100 ? `新名称-${i}.mp4` : '',
     operation_status: i < 100 ? 'committed' : '',
-    message: i < 100 ? '' : `失败原因 ${i + 1}`,
+    message: i < 100 ? '' : 'rename_failed',
     updated_ms: 1791331200000,
     attempts: Array.from({ length: 4 }, (_, n) => ({
       number: n + 1,
@@ -34,7 +40,7 @@ const records = () =>
       started: '2026-10-07T00:00:00Z',
       duration_ms: 500,
       status: i < 100 && n === 3 ? 'success' : 'failed',
-      message: `第 ${n + 1} 次请求结果`
+      error: { code: 'api_http_error', details: { http_status: 500 + n } }
     }))
   }))
 async function open(page: Page, run = sampleRun()) {
@@ -58,7 +64,16 @@ test('目录统计覆盖整批，筛选分页保留排队文件与全部尝试',
     const query = new URL(route.request().url()).searchParams
     requests.push(query.toString())
     return fail
-      ? route.fulfill({ status: 503, json: { message: '暂时不可用' } })
+      ? route.fulfill({
+          status: 503,
+          json: {
+            error: {
+              code: 'internal',
+              message: 'test failure',
+              details: { detail: '暂时不可用' }
+            }
+          }
+        })
       : route.fulfill({ json: recordPage(items, query) })
   })
   const dialog = await open(page, run),
@@ -133,7 +148,16 @@ test('加载、错误、空记录与无失败状态不混淆', async ({ page }) 
   await page.route('**/api/runs/960/items?*', async (route) => {
     await pending
     return fail
-      ? route.fulfill({ status: 503, json: { message: '读取失败' } })
+      ? route.fulfill({
+          status: 503,
+          json: {
+            error: {
+              code: 'internal',
+              message: 'test failure',
+              details: { detail: '读取失败' }
+            }
+          }
+        })
       : route.fulfill({ json: recordPage([], new URL(route.request().url()).searchParams) })
   })
   const dialog = await open(page, run),
@@ -173,9 +197,9 @@ test('切换筛选忽略迟到响应，终态最后刷新后停止轮询', async
   await expect(body.getByLabel('运行记录分页', { exact: true })).toContainText('共 104 个文件')
   release()
   await expect(body.locator('.status-badge[data-status="done"]')).toHaveCount(0)
-  items[100].message = '最终结果已写入'
+  defined(items[100]).message = 'rename_conflict'
   run.status = 'completed'
-  await expect(body).toContainText('最终结果已写入', { timeout: 10000 })
+  await expect(body).toContainText('目标已存在', { timeout: 10000 })
   await expect(dialog.locator('.detail-header-status')).toHaveText('已完成', { timeout: 10000 })
   await page.clock.install()
   await page.clock.runFor(1000)
@@ -200,7 +224,9 @@ test('批次状态轮询不打断慢请求，收起记录取消请求并停止�
       await route.fulfill({
         json: recordPage(records(), new URL(route.request().url()).searchParams)
       })
-    } catch {}
+    } catch {
+      // The page may have closed the stale request before it was released.
+    }
   })
   const dialog = await open(page, run),
     toggle = dialog.getByRole('button', { name: /^运行记录/ })
@@ -239,7 +265,7 @@ test('多目录同名文件与未提交名称不会被混淆', async ({ page }) 
       current_path: '杭州 / clip.mp4',
       new_name: '占用名称.mp4',
       operation_status: 'failed',
-      message: '目标名称已存在'
+      message: 'rename_conflict'
     },
     {
       id: 3,
@@ -249,7 +275,7 @@ test('多目录同名文件与未提交名称不会被混淆', async ({ page }) 
       current_path: '杭州 / 不确定.mp4',
       new_name: '拟用名称.mp4',
       operation_status: 'review',
-      message: '文件可能已改名，需核对'
+      message: 'rename_evidence_mismatch'
     }
   ]
   await page.route('**/api/runs/960/items?*', (r) =>
@@ -286,7 +312,7 @@ test('处理中视图按用时排列阶段时间轴，并显示拟用名称、�
     started: new Date(now - 90000).toISOString(),
     duration_ms: 60000,
     status,
-    message
+    error: message ? { code: message } : undefined
   })
   const items = [
     {
@@ -296,7 +322,7 @@ test('处理中视图按用时排列阶段时间轴，并显示拟用名称、�
       original_path: '综艺 / 第三季 / EP07_raw.mkv',
       updated_ms: now - 18000,
       stage: {
-        stage: 'committing',
+        stage: 'committing' as const,
         since_ms: now - 1000,
         attempt: 1,
         fallback: false,
@@ -312,14 +338,14 @@ test('处理中视图按用时排列阶段时间轴，并显示拟用名称、�
       original_path: `电影 / 2024 / ${'超长原始文件名'.repeat(12)}.mp4`,
       updated_ms: now - 102000,
       stage: {
-        stage: 'model',
+        stage: 'model' as const,
         since_ms: now - 12000,
         attempt: 2,
         fallback: false,
         frames: 6,
         title: ''
       },
-      attempts: [attempt('failed', '响应超时（60s）')]
+      attempts: [attempt('failed', 'api_timeout')]
     },
     {
       id: 3,
@@ -335,7 +361,7 @@ test('处理中视图按用时排列阶段时间轴，并显示拟用名称、�
       entry: 4,
       status: 'skipped',
       original_path: '电影 / 旧片头.mp4',
-      message: '已处理，跳过',
+      message: 'skip_processed',
       updated_ms: now - 7000
     },
     {
@@ -343,7 +369,7 @@ test('处理中视图按用时排列阶段时间轴，并显示拟用名称、�
       entry: 5,
       status: 'skipped',
       original_path: '综艺 / 花絮.mp4',
-      message: '已处理，跳过',
+      message: 'skip_processed',
       updated_ms: now - 8000
     },
     {
@@ -351,7 +377,7 @@ test('处理中视图按用时排列阶段时间轴，并显示拟用名称、�
       entry: 6,
       status: 'failed',
       original_path: '综艺 / clip_009.mov',
-      message: '未生成有效名称',
+      message: 'title_invalid',
       updated_ms: now - 9000,
       attempts: [attempt('failed'), { ...attempt('failed'), number: 2 }]
     },
@@ -385,7 +411,7 @@ test('处理中视图按用时排列阶段时间轴，并显示拟用名称、�
   await expect(slow).toContainText('等待模型生成…')
   await expect(slow.locator('[aria-current="step"]')).toHaveText('重试第 1 次')
   await expect(slow.locator('[data-state="done"]')).toHaveText(['开始', '抽帧 6 张'])
-  await expect(slow).toContainText('首次请求失败：响应超时（60s）')
+  await expect(slow).toContainText('首次请求失败：模型请求或响应读取超时')
   const committing = cards.nth(1)
   await expect(committing).toContainText('拟用名称')
   await expect(committing).toContainText('嘉宾雨中拆盲盒.mkv')
@@ -398,7 +424,7 @@ test('处理中视图按用时排列阶段时间轴，并显示拟用名称、�
   await expect(recent.nth(1)).toContainText('已跳过 · 用时 0:24 · 已处理，跳过')
   await expect(recent.nth(1)).toContainText('保留原名')
   await expect(recent.nth(3)).toContainText('最终失败 · 用时 0:24 · 2 次尝试')
-  await expect(recent.nth(3)).toContainText('未生成有效名称')
+  await expect(recent.nth(3)).toContainText('清洗后的标题无效')
   await slow.scrollIntoViewIfNeeded()
   await dialog.screenshot({ path: 'test-results/run-live-desktop.png', animations: 'disabled' })
 

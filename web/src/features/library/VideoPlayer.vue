@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { formatPlaybackTime } from '../../lib/date/format';
+  import { formatPlaybackTime } from '../../lib/format/date';
   import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
   import {
     Play,
@@ -11,7 +11,15 @@
     ChevronLeft,
     ChevronRight
   } from '@lucide/vue';
-  defineProps<{ src: string; switching?: boolean; notice?: string }>();
+  const {
+    src,
+    switching,
+    notice = ''
+  } = defineProps<{
+    src: string;
+    switching?: boolean;
+    notice?: string;
+  }>();
   const emit = defineEmits<{ previous: []; next: [] }>();
   const video = ref<HTMLVideoElement>(),
     shell = ref<HTMLElement>();
@@ -26,7 +34,7 @@
   const speeds = [1, 1.25, 1.5, 2, 0.5, 0.75];
   // Cycles through the common rates; the next click after 2× drops to half speed.
   function nextSpeed() {
-    speed.value = speeds[(speeds.indexOf(speed.value) + 1) % speeds.length]!;
+    speed.value = speeds[(speeds.indexOf(speed.value) + 1) % speeds.length] ?? 1;
     if (video.value) video.value.playbackRate = speed.value;
   }
   const progress = computed(() => (duration.value ? (current.value / duration.value) * 100 : 0));
@@ -227,14 +235,14 @@
     flex: 1;
     min-height: 0;
     display: grid;
-    background: #000;
+    background: var(--palette-000000);
   }
   .video-player {
     width: 100%;
     height: 100%;
     min-height: 0;
     object-fit: contain;
-    background: #000;
+    background: var(--palette-000000);
     cursor: pointer;
   }
   .stage-play {
@@ -247,11 +255,11 @@
     border: 0;
     border-radius: 50%;
     transform: translate(-50%, -50%);
-    background: rgba(255, 255, 255, 0.92);
-    color: #0c1110;
+    background: var(--palette-rgba-255-255-255-0_92);
+    color: var(--palette-0c1110);
   }
   .stage-play:hover:not(:disabled) {
-    background: #fff;
+    background: var(--palette-ffffff);
     border: 0;
   }
   /* Previous/next: full-height strips at the edges, dim until the pointer gets close. */
@@ -282,10 +290,10 @@
     border: 0;
   }
   .episode.previous:hover:not(:disabled) {
-    background: linear-gradient(to right, rgba(0, 0, 0, 0.45), transparent);
+    background: linear-gradient(to right, var(--palette-rgba-0-0-0-0_45), transparent);
   }
   .episode.next:hover:not(:disabled) {
-    background: linear-gradient(to left, rgba(0, 0, 0, 0.45), transparent);
+    background: linear-gradient(to left, var(--palette-rgba-0-0-0-0_45), transparent);
   }
   .episode:disabled {
     opacity: 0.25;
@@ -336,7 +344,7 @@
     color: var(--stage-dim);
   }
   .bar-error {
-    color: #ffc9c9;
+    color: var(--palette-ffc9c9);
   }
   .bar-row .speed {
     min-width: 46px;
@@ -365,7 +373,7 @@
     background: linear-gradient(
       to right,
       var(--stage-accent) var(--progress),
-      rgba(255, 255, 255, 0.2) var(--progress)
+      var(--palette-rgba-255-255-255-0_2) var(--progress)
     );
     cursor: pointer;
     box-shadow: none;
@@ -386,7 +394,7 @@
     width: 13px;
     height: 13px;
     border-radius: 50%;
-    background: #fff;
+    background: var(--palette-ffffff);
     box-shadow: 0 0 0 3px var(--stage-accent);
   }
   .video-theater input::-moz-range-thumb {
@@ -394,7 +402,7 @@
     height: 10px;
     border: 0;
     border-radius: 50%;
-    background: #fff;
+    background: var(--palette-ffffff);
     box-shadow: 0 0 0 3px var(--stage-accent);
   }
   .video-theater:fullscreen {

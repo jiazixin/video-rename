@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,7 +35,7 @@ func TestBatchCompletionStatus(t *testing.T) {
 			m, root := setup(t)
 			for prefix, count := range map[string]int{"good": tc.good, "bad": tc.bad, "skip": tc.skip} {
 				for i := range count {
-					if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("%s-%d.mp4", prefix, i)), []byte("video"), 0600); err != nil {
+					if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("%s-%d.mp4", prefix, i)), []byte("video"), 0o600); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -47,17 +48,17 @@ func TestBatchCompletionStatus(t *testing.T) {
 			}
 			m.Analyze = func(_ context.Context, _ *config.TaskConfig, job domain.VideoJob, _, _ string) (string, error) {
 				if strings.HasPrefix(filepath.Base(job.Path), "bad-") {
-					return "", fmt.Errorf("fixture naming failure")
+					return "", errors.New("fixture naming failure")
 				}
 				return "renamed", nil
 			}
 			m.Prepare = func(_ context.Context, _ *config.TaskConfig, job domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
 				if strings.HasPrefix(filepath.Base(job.Path), "bad-") {
-					return domain.FrameSet{}, fmt.Errorf("fixture extraction failure")
+					return domain.FrameSet{}, errors.New("fixture extraction failure")
 				}
 				return fakeFrames(work)
 			}
-			id, err := m.Create(Request{Task: tc.task, Targets: []int64{1}, Recursive: true, Key: "completion-" + tc.name}, "manual", 0)
+			id, err := m.Create(t.Context(), Request{Task: tc.task, Targets: []int64{1}, Recursive: true, Key: "completion-" + tc.name}, "manual", 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -92,7 +93,7 @@ func TestRecoveryPreservesTerminalBatches(t *testing.T) {
 	}
 	ids := make([]int64, len(cases))
 	for i, tc := range cases {
-		res, err := m.DB.Exec(`INSERT INTO runs(source,targets,recursive,status,created,finished,done,skipped,failed,error,request_key) VALUES('manual','[1]',1,?,'created','finished',?,?,?,'original diagnostic',?)`, tc.status, tc.done, tc.skipped, tc.failed, fmt.Sprintf("recovery-%d", i))
+		res, err := m.DB.Exec(`INSERT INTO runs(source,targets,recursive,status,created,finished,done,skipped,failed,error,request_key) VALUES('manual','[1]',1,?,'created','finished',?,?,?,'{"code":"internal","message":"original diagnostic"}',?)`, tc.status, tc.done, tc.skipped, tc.failed, fmt.Sprintf("recovery-%d", i))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -110,7 +111,7 @@ func TestRecoveryPreservesTerminalBatches(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if r.Status != tc.want || r.Done != tc.done || r.Skipped != tc.skipped || r.Failed != tc.failed || r.Finished != "finished" || r.Error != "original diagnostic" {
+			if r.Status != tc.want || r.Done != tc.done || r.Skipped != tc.skipped || r.Failed != tc.failed || r.Finished != "finished" || r.Error.Message != "original diagnostic" {
 				t.Fatalf("case %d altered unexpected fields: %+v", i, r)
 			}
 		}
@@ -129,13 +130,13 @@ func TestCompletionWriteFailure(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, root := setup(t)
-			if err := os.WriteFile(filepath.Join(root, "source.mp4"), []byte("synthetic video"), 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(root, "source.mp4"), []byte("synthetic video"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			m.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 				return "new-title", nil
 			}
-			id, err := m.Create(Request{Targets: []int64{1}, Key: "completion-write-failure"}, "manual", 0)
+			id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "completion-write-failure"}, "manual", 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -154,7 +155,7 @@ func TestCompletionWriteFailure(t *testing.T) {
 			if r.Status != tc.status || itemStatus != tc.item || r.Done != tc.done {
 				t.Fatalf("inconsistent completion: run=%+v item=%s", r, itemStatus)
 			}
-			if tc.status == "failed" && !strings.Contains(r.Error, "injected storage failure") {
+			if tc.status == "failed" && !strings.Contains(r.Error.Message, "injected storage failure") {
 				t.Fatalf("lost cause: %+v", r)
 			}
 			var commits int
@@ -189,10 +190,10 @@ func TestCompletionWriteFailure(t *testing.T) {
 
 func TestCompletionRejectsUnfinishedAndRollsBackCancellation(t *testing.T) {
 	m, root := setup(t)
-	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Key: "cancel-write"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "cancel-write"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +232,7 @@ func TestCompletionRejectsUnfinishedAndRollsBackCancellation(t *testing.T) {
 func TestCompletionFailureCancelsOtherWorkers(t *testing.T) {
 	m, root := setup(t)
 	for _, name := range []string{"a.mp4", "b.mp4", "c.mp4"} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte("video"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("video"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -256,7 +257,7 @@ func TestCompletionFailureCancelsOtherWorkers(t *testing.T) {
 		stopped.Add(1)
 		return "", ctx.Err()
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Key: "concurrent-write-failure"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "concurrent-write-failure"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

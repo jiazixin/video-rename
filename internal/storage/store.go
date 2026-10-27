@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// Store is the SQLite database with a separate read pool.
 type Store struct {
 	*sql.DB
 	read    *sql.DB
@@ -23,13 +25,14 @@ type Store struct {
 	reports reportCache
 }
 
+// Open opens or creates the database at path and applies its schema.
 func Open(path string) (*Store, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
 	path = abs
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
 	// SQLite follows database symlinks. Resolve the same path before selecting
@@ -39,7 +42,7 @@ func Open(path string) (*Store, error) {
 		if err != nil {
 			return nil, err
 		}
-	} else if os.IsNotExist(err) {
+	} else if errors.Is(err, fs.ErrNotExist) {
 		parent, err := filepath.EvalSymlinks(filepath.Dir(path))
 		if err != nil {
 			return nil, err
@@ -53,18 +56,18 @@ func Open(path string) (*Store, error) {
 	var stat unix.Stat_t
 	if err := unix.Stat(path, &stat); err == nil {
 		if stat.Nlink > 1 {
-			return nil, fmt.Errorf("数据库存在多个硬链接，无法安全打开：%s", path)
+			return nil, fmt.Errorf("database has multiple hard links and cannot be opened safely: %s", path)
 		}
-	} else if !os.IsNotExist(err) {
+	} else if !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
-	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}
 	if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		lock.Close()
-		return nil, fmt.Errorf("数据库已被另一实例使用")
+		return nil, errors.New("database is in use by another instance")
 	}
 	dsn := url.URL{Scheme: "file", Path: path}
 	options := url.Values{}
@@ -87,7 +90,7 @@ func Open(path string) (*Store, error) {
 		s.Close()
 		return nil, err
 	}
-	if err = os.Chmod(path, 0600); err != nil {
+	if err = os.Chmod(path, 0o600); err != nil {
 		s.Close()
 		return nil, err
 	}
@@ -115,6 +118,7 @@ func Open(path string) (*Store, error) {
 // Writes and read-modify-write transactions must continue to use DB.
 func (s *Store) Read() *sql.DB { return s.read }
 
+// Close closes both connection pools.
 func (s *Store) Close() error {
 	var readErr error
 	if s.read != nil {
@@ -126,4 +130,6 @@ func (s *Store) Close() error {
 	}
 	return errors.Join(readErr, err)
 }
+
+// Now returns the current UTC time in RFC 3339 format with nanoseconds.
 func Now() string { return time.Now().UTC().Format(time.RFC3339Nano) }

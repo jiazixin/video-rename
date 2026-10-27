@@ -5,7 +5,7 @@
   min-width: 0;
   gap: 6px;
   padding: 10px 14px;
-  background: #f8faf9;
+  background: var(--palette-f8faf9);
 }
 .directory-picker .picker-breadcrumb button {
   min-width: 0;
@@ -20,7 +20,7 @@
   gap: 10px;
   min-height: 51px;
   padding: 12px 14px;
-  background: #fcfdfc;
+  background: var(--palette-fcfdfc);
 }
 .picker-current-name {
   display: flex;
@@ -48,7 +48,7 @@
   min-height: 47px;
   gap: 10px;
   padding: 0 14px;
-  border-bottom: 1px solid #f0f2f1;
+  border-bottom: 1px solid var(--palette-f0f2f1);
 }
 .directory-picker .picker-row:last-child {
   border-bottom: 0;
@@ -92,7 +92,7 @@
   flex-wrap: wrap;
   gap: 10px 14px;
   padding: 11px 14px;
-  background: #fcfdfc;
+  background: var(--palette-fcfdfc);
 }
 .directory-picker .picker-bottom span {
   margin-right: 0;

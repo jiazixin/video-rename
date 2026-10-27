@@ -15,7 +15,7 @@ func TestQueueFilesAtomicCountersAndDeduplication(t *testing.T) {
 		t.Run(task, func(t *testing.T) {
 			m, root := setup(t)
 			for _, name := range []string{"a.mp4", "b.mp4", "note.txt"} {
-				if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0600); err != nil {
+				if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -40,7 +40,7 @@ func TestQueueFilesAtomicCountersAndDeduplication(t *testing.T) {
 				}
 				files = append(files, e)
 			}
-			id, err := m.Create(Request{Task: task, Targets: []int64{1}, Recursive: true, Key: "queue-atomic-test"}, "manual", 0)
+			id, err := m.Create(t.Context(), Request{Task: task, Targets: []int64{1}, Recursive: true, Key: "queue-atomic-test"}, "manual", 0)
 			if err != nil {
 				t.Fatal(err)
 			}

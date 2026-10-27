@@ -12,6 +12,7 @@ import (
 	"video-rename/internal/domain"
 )
 
+// NumberingItem is one file in a numbering plan.
 type NumberingItem struct {
 	Entry     int64  `json:"entry"`
 	Old       string `json:"old_name"`
@@ -39,41 +40,34 @@ func numberingToken() string {
 // and the user-facing noun differ.
 type mediaClass struct {
 	value string
-	label string
 	match func(name string) bool
 }
 
 var numberingMedia = map[string]mediaClass{
-	"image": {"image", "图片", IsImage},
-	"audio": {"audio", "音频", IsAudio},
-	"mixed": {"mixed", "图片和音频", func(name string) bool { return IsImage(name) || IsAudio(name) }},
+	"image": {"image", IsImage},
+	"audio": {"audio", IsAudio},
+	"mixed": {"mixed", func(name string) bool { return IsImage(name) || IsAudio(name) }},
 }
 
 func mediaOf(value string) (mediaClass, error) {
 	m, ok := numberingMedia[value]
 	if !ok {
-		return mediaClass{}, fmt.Errorf("无效的媒体类型")
+		return mediaClass{}, domain.InvalidField("media", "invalid_choice")
 	}
 	return m, nil
-}
-func mediaLabel(value string) string {
-	if m, ok := numberingMedia[value]; ok {
-		return m.label
-	}
-	return "文件"
 }
 
 // Saved file snapshots can explain a fingerprint mismatch without relaxing
 // identity checks on network filesystems. Limit diagnostics for large batches.
 func numberingFingerprintFailure(path string, b Numbering, actual string) error {
 	var detail strings.Builder
-	fmt.Fprintf(&detail, "编号目录校验诊断\n目录：%q\n预览时间：%s\n预览指纹：%s\n当前指纹：%s\n", path, b.Created, numberingFingerprintLabel(b.Fingerprint), numberingFingerprintLabel(actual))
+	fmt.Fprintf(&detail, "numbering directory check\ndirectory: %q\npreviewed: %s\npreview fingerprint: %s\ncurrent fingerprint: %s\n", path, b.Created, numberingFingerprintLabel(b.Fingerprint), numberingFingerprintLabel(actual))
 	if !describeNumberingSnapshotDiff(&detail, b.Fingerprint, actual) {
-		fmt.Fprintln(&detail, "预览格式无效，无法比较目录快照。当前目录尚未开始改名，请重新预览。")
-		return &domain.JobError{Code: domain.CodeSourceChanged, Message: fmt.Sprintf("目录 %s 的预览格式无效，请重新预览", path), ProcessingLog: detail.String()}
+		fmt.Fprintln(&detail, "preview format is invalid; directory snapshots cannot be compared. No file in this directory was renamed; preview again.")
+		return &domain.JobError{Code: domain.CodeSourceChanged, Message: "numbering preview format is invalid", Details: map[string]any{"reason": "preview_invalid", "path": path}, ProcessingLog: detail.String()}
 	}
-	fmt.Fprintln(&detail, "当前目录尚未开始改名。以上为两次读取的差异，不能据此确定变化原因；请核对具体条目后重新预览。")
-	return &domain.JobError{Code: domain.CodeSourceChanged, Message: fmt.Sprintf("目录 %s 的预览校验不一致，请查看诊断详情并重新预览", path), ProcessingLog: detail.String()}
+	fmt.Fprintln(&detail, "No file in this directory was renamed. The differences above are between two reads and do not establish the cause; check the entries and preview again.")
+	return &domain.JobError{Code: domain.CodeSourceChanged, Message: "numbering preview check failed", Details: map[string]any{"reason": "preview_mismatch", "path": path}, ProcessingLog: detail.String()}
 }
 
 func (l *Library) checkNumberingAvailable(id int64) error {
@@ -91,7 +85,7 @@ func (l *Library) checkNumberingAvailable(id int64) error {
 		return err
 	}
 	if n > 0 {
-		return fmt.Errorf("该目录有未完成的编号，请先在编号记录中恢复")
+		return domain.Fail(domain.KindConflict, "numbering_pending", "directory has unfinished numbering; recover it from the numbering records")
 	}
 	return nil
 }

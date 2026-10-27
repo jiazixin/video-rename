@@ -5,17 +5,18 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
 	"video-rename/internal/config"
+	"video-rename/internal/domain"
 	"video-rename/internal/models"
 	"video-rename/internal/sampling"
 	"video-rename/internal/storage"
 	"video-rename/internal/systemsettings"
 )
 
+// Execute runs queued batch id until it finishes or parent ends.
 func (m *Manager) Execute(parent context.Context, id int64) {
 	r, err := m.Get(parent, id)
 	if err != nil || r.Status != "queued" {
@@ -45,7 +46,7 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 
 	failAt := func(e error, target int64) {
 		if err := m.failRun(id, target, e); err != nil {
-			slog.Error("保存批次失败状态失败，保留活动状态等待重启恢复", "run", id, "error", err, "cause", e)
+			m.logger.Error("run_failure_save_failed", "run_id", id, "error", err, "cause", e)
 		}
 		path, action := "", "run"
 		if target > 0 {
@@ -53,18 +54,18 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 		}
 		if r.Task == "extract" {
 			if target == 0 {
-				path = strings.Join(r.TargetNames, "、")
+				path = strings.Join(r.TargetNames, ", ")
 			}
 			m.extractionFailure(r, target, path, e)
 		} else {
 			if logErr := m.recordFailure(action, target, id, path, e); logErr != nil {
-				slog.Error("保存批次失败诊断失败", "run", id, "error", logErr)
+				m.logger.Error("run_diagnostics_save_failed", "run_id", id, "error", logErr)
 			}
 		}
 	}
 	fail := func(e error) { failAt(e, 0) }
 	if r.Task != "extract" && r.PromptBody == "" {
-		fail(fmt.Errorf("任务没有模型配置快照，请重新创建任务"))
+		fail(domain.Fail(domain.KindInvalid, "model_snapshot_missing", "run has no model configuration snapshot; create the run again"))
 		return
 	}
 	var runConfig config.TaskConfig
@@ -75,7 +76,7 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 	}
 	frames, frameErr := sampling.Parse(frameSnapshot)
 	if frameErr != nil {
-		fail(fmt.Errorf("抽帧快照无效: %w", frameErr))
+		fail(domain.Fail(domain.KindInvalid, "sampling_snapshot_invalid", "sampling snapshot is invalid").Wrap(frameErr))
 		return
 	}
 	runConfig.Sampling, runConfig.Images = frames.Sampling, frames.Images
@@ -129,11 +130,9 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 		return
 	}
 	if ctx.Err() == nil && stableDelay > 0 && pending > 0 {
-		timer := time.NewTimer(stableDelay)
 		select {
 		case <-ctx.Done():
-			timer.Stop()
-		case <-timer.C:
+		case <-m.after(stableDelay):
 		}
 	}
 	if ctx.Err() == nil {
@@ -148,6 +147,6 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 		}
 	}
 	if err = m.completeRun(id, ctx.Err() != nil); err != nil {
-		fail(fmt.Errorf("保存批次结束状态失败: %w", err))
+		fail(fmt.Errorf("save run result: %w", err))
 	}
 }

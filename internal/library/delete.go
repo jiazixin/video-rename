@@ -1,7 +1,7 @@
 package library
 
 import (
-	"fmt"
+	"context"
 	"os"
 	"path/filepath"
 
@@ -9,27 +9,27 @@ import (
 )
 
 // Delete permanently removes an entry and its contents; rename history is retained.
-func (l *Library) Delete(id, version int64) error {
+func (l *Library) Delete(ctx context.Context, id, version int64) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.broken != nil {
-		return fmt.Errorf("操作已停止，需要重启恢复: %w", l.broken)
+		return errHalted.Wrap(l.broken)
 	}
-	e, err := l.Get(id)
+	e, err := l.Get(ctx, id)
 	if err != nil {
 		return err
 	}
 	if id == 1 || (e.Kind != "file" && e.Kind != "directory") {
-		return fmt.Errorf("不能删除媒体根目录、符号链接或特殊文件")
+		return errProtectedEntry
 	}
 	if e.Version != version {
-		return fmt.Errorf("文件已变化，请刷新后重新确认删除")
+		return errChanged
 	}
 	if err := l.CheckAvailable(id); err != nil {
 		return err
 	}
 	if e.TaskStatus != "" || (l.Busy != nil && l.Busy(id)) {
-		return fmt.Errorf("该文件或目录有活动任务，请等待任务完成")
+		return errBusy
 	}
 	var active int
 	if err := l.DB.QueryRow(`WITH RECURSIVE descendants(id) AS (
@@ -39,7 +39,7 @@ func (l *Library) Delete(id, version int64) error {
 		return err
 	}
 	if active > 0 {
-		return fmt.Errorf("目录内有活动任务，请等待任务完成")
+		return domain.Fail(domain.KindConflict, "descendant_busy", "a descendant has an active job")
 	}
 	p, err := l.Path(id)
 	if err != nil {
@@ -50,7 +50,7 @@ func (l *Library) Delete(id, version int64) error {
 		return err
 	}
 	if Identity(snap) != e.Identity || (e.Kind == "file" && (snap.Size != e.Size || stamp(snap) != e.Mtime)) {
-		return fmt.Errorf("文件已变化，请刷新后重新确认删除")
+		return errChanged
 	}
 	root, err := os.OpenRoot(l.Root)
 	if err != nil {
@@ -66,17 +66,17 @@ func (l *Library) Delete(id, version int64) error {
 	}
 	l.indexEpoch.Add(1)
 	if err := root.RemoveAll(rel); err != nil {
-		return fmt.Errorf("删除未完成，目录可能已部分删除，请刷新后核对: %w", err)
+		return domain.Fail(domain.KindInternal, "delete_incomplete", "delete stopped; the directory may be partly deleted").Wrap(err)
 	}
 	_, err = l.DB.Exec(`WITH RECURSIVE descendants(id) AS (
 	 SELECT ? UNION ALL SELECT e.id FROM entries e JOIN descendants d ON e.parent=d.id
 	) UPDATE entries SET present=0,version=version+1 WHERE id IN (SELECT id FROM descendants)`, id)
 	if err != nil {
 		l.broken = err
-		return fmt.Errorf("文件已删除，但索引更新失败，请重启并刷新目录: %w", err)
+		return domain.Fail(domain.KindInternal, "delete_index_failed", "deleted, but the index update failed").Wrap(err)
 	}
 	if _, err := l.DB.Exec("DELETE FROM directory_items WHERE entry IN (SELECT id FROM entries WHERE present=0)"); err != nil {
-		return fmt.Errorf("文件已删除，列表更新失败，请刷新目录: %w", err)
+		return domain.Fail(domain.KindInternal, "delete_listing_failed", "deleted, but the listing update failed").Wrap(err)
 	}
 	return nil
 }

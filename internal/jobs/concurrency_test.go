@@ -16,7 +16,7 @@ import (
 func TestRunningBatchConcurrencyChangesAndCancellation(t *testing.T) {
 	m, root := setup(t)
 	for i := range 8 {
-		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("%d.mp4", i)), []byte("video"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("%d.mp4", i)), []byte("video"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -35,7 +35,7 @@ func TestRunningBatchConcurrencyChangesAndCancellation(t *testing.T) {
 		}
 	}
 	save(1)
-	id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "dynamic-workers"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "dynamic-workers"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestRunningBatchConcurrencyChangesAndCancellation(t *testing.T) {
 
 func TestDeletedModelUsesBatchConcurrencySnapshot(t *testing.T) {
 	m, root := setup(t)
-	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	store := models.Store{DB: m.DB}
@@ -154,7 +154,7 @@ func TestDeletedModelUsesBatchConcurrencySnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Key: "deleted-workers"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "deleted-workers"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

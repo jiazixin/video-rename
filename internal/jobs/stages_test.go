@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,14 +18,14 @@ import (
 
 func fakeFrames(work string) (domain.FrameSet, error) {
 	p := filepath.Join(work, "frame.jpg")
-	err := os.WriteFile(p, []byte("frame"), 0600)
+	err := os.WriteFile(p, []byte("frame"), 0o600)
 	return domain.FrameSet{Frames: []domain.Frame{{Path: p, Bytes: 5, Width: 1, Height: 1}}}, err
 }
 func TestStagedFailureAndCancellationReuseUntilCommit(t *testing.T) {
 	for _, cancelled := range []bool{false, true} {
 		t.Run(fmt.Sprint(cancelled), func(t *testing.T) {
 			m, root := setup(t)
-			os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600)
+			os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600)
 			var extracts atomic.Int32
 			m.Prepare = func(_ context.Context, _ *config.TaskConfig, _ domain.VideoJob, _, _, work string) (domain.FrameSet, error) {
 				extracts.Add(1)
@@ -40,9 +41,9 @@ func TestStagedFailureAndCancellationReuseUntilCommit(t *testing.T) {
 					<-ctx.Done()
 					return "", ctx.Err()
 				}
-				return "", fmt.Errorf("model unavailable")
+				return "", errors.New("model unavailable")
 			}
-			id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "cache-first"}, "manual", 0)
+			id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "cache-first"}, "manual", 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -67,7 +68,7 @@ func TestStagedFailureAndCancellationReuseUntilCommit(t *testing.T) {
 				t.Fatal("frames were not retained")
 			}
 			m.Infer = func(context.Context, *config.TaskConfig, []domain.Frame) (string, error) { return "renamed", nil }
-			id, err = m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "cache-second"}, "manual", 0)
+			id, err = m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "cache-second"}, "manual", 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -82,7 +83,7 @@ func TestStagedFailureAndCancellationReuseUntilCommit(t *testing.T) {
 func TestCrossBatchExtractionWhileModelBlockedAndSharedLimit(t *testing.T) {
 	m, root := setup(t)
 	for i := range 3 {
-		os.WriteFile(filepath.Join(root, fmt.Sprintf("%d.mp4", i)), []byte("video"), 0600)
+		os.WriteFile(filepath.Join(root, fmt.Sprintf("%d.mp4", i)), []byte("video"), 0o600)
 	}
 	if err := m.Library.Refresh(t.Context(), 1); err != nil {
 		t.Fatal(err)
@@ -143,7 +144,7 @@ func TestCrossBatchExtractionWhileModelBlockedAndSharedLimit(t *testing.T) {
 	}
 	var runs []int64
 	for _, entry := range entries {
-		id, e := m.Create(Request{Targets: []int64{entry}, Key: fmt.Sprintf("batch-%08d", entry)}, "manual", 0)
+		id, e := m.Create(t.Context(), Request{Targets: []int64{entry}, Key: fmt.Sprintf("batch-%08d", entry)}, "manual", 0)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -206,7 +207,7 @@ func TestCrossBatchExtractionWhileModelBlockedAndSharedLimit(t *testing.T) {
 func TestCancelStopsExtractionAndLeavesOtherBatchRunning(t *testing.T) {
 	m, root := setup(t)
 	for _, name := range []string{"cancel.mp4", "continue.mp4"} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte("video"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("video"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -220,11 +221,11 @@ func TestCancelStopsExtractionAndLeavesOtherBatchRunning(t *testing.T) {
 	if err := m.DB.QueryRow("SELECT id FROM entries WHERE name='continue.mp4'").Scan(&continueEntry); err != nil {
 		t.Fatal(err)
 	}
-	first, e := m.Create(Request{Targets: []int64{cancelEntry}, Key: "cancel-extraction"}, "manual", 0)
+	first, e := m.Create(t.Context(), Request{Targets: []int64{cancelEntry}, Key: "cancel-extraction"}, "manual", 0)
 	if e != nil {
 		t.Fatal(e)
 	}
-	second, e := m.Create(Request{Targets: []int64{continueEntry}, Key: "continue-extraction"}, "manual", 0)
+	second, e := m.Create(t.Context(), Request{Targets: []int64{continueEntry}, Key: "continue-extraction"}, "manual", 0)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -296,7 +297,7 @@ func TestBatchPrefetchUsesCapacityInsteadOfVideoCount(t *testing.T) {
 			m, root := setup(t)
 			const count = 140 // Cross both the old 64-item cap and the 128-item SQL page.
 			for i := range count {
-				if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("%03d.mp4", i)), []byte("video"), 0600); err != nil {
+				if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("%03d.mp4", i)), []byte("video"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -340,7 +341,7 @@ func TestBatchPrefetchUsesCapacityInsteadOfVideoCount(t *testing.T) {
 				}
 				return "renamed", nil
 			}
-			id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "capacity-prefetch"}, "manual", 0)
+			id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "capacity-prefetch"}, "manual", 0)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -2,13 +2,16 @@ package library
 
 import (
 	"database/sql/driver"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"modernc.org/sqlite"
+
 	"video-rename/internal/domain"
 )
 
@@ -29,7 +32,7 @@ func TestRenameParentReplacementDoesNotRedirectCommit(t *testing.T) {
 		t.Run(fmt.Sprintf("numbering=%v", numbering), func(t *testing.T) {
 			l, root, _ := fixture(t)
 			parent, outside := filepath.Join(root, "folder"), t.TempDir()
-			if err := os.Mkdir(parent, 0700); err != nil {
+			if err := os.Mkdir(parent, 0o700); err != nil {
 				t.Fatal(err)
 			}
 			name := "source.mp4"
@@ -46,7 +49,7 @@ func TestRenameParentReplacementDoesNotRedirectCommit(t *testing.T) {
 			var err error
 			trigger := "BEFORE INSERT ON operations"
 			if numbering {
-				batch, err = l.PreviewNumberingContext(t.Context(), dir.ID, "image", "", "name_asc", domain.DefaultNumberingSettings())
+				batch, err = l.PreviewNumbering(t.Context(), NumberingRequest{Parent: dir.ID, Media: "image", Sort: "name_asc", Settings: domain.DefaultNumberingSettings()})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -57,9 +60,9 @@ func TestRenameParentReplacementDoesNotRedirectCommit(t *testing.T) {
 				t.Fatal(err)
 			}
 			if numbering {
-				_, err = l.ApplyNumbering(batch.ID)
+				_, err = l.ApplyNumbering(t.Context(), batch.ID, nil)
 			} else {
-				_, err = l.Rename(e.ID, e.Version, "renamed.mp4", "parent-swap")
+				_, err = l.Rename(t.Context(), e.ID, e.Version, "renamed.mp4", "parent-swap")
 			}
 			if err == nil {
 				t.Fatal("replaced hierarchy must require review, not report success")
@@ -82,7 +85,7 @@ func TestAutoCommitAllocatesSuffixForHardLink(t *testing.T) {
 			source := filepath.Join(root, "source.mp4")
 			put(t, source)
 			if err := os.Link(source, filepath.Join(root, target)); err != nil {
-				if os.IsExist(err) && target == "SOURCE.mp4" {
+				if errors.Is(err, fs.ErrExist) && target == "SOURCE.mp4" {
 					t.Skip("filesystem cannot hold separate case-only names")
 				}
 				t.Fatal(err)
@@ -94,7 +97,7 @@ func TestAutoCommitAllocatesSuffixForHardLink(t *testing.T) {
 				t.Fatal(err)
 			}
 			title := strings.TrimSuffix(target, ".mp4")
-			op, err := l.AutoCommit(e.ID, snap, title, "hardlink", 0)
+			op, err := l.AutoCommit(t.Context(), e.ID, snap, title, "hardlink", 0)
 			if err != nil || op.New != title+" (2).mp4" {
 				t.Fatalf("commit: %+v, %v", op, err)
 			}

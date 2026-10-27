@@ -10,14 +10,14 @@ import (
 
 func TestDirectoryProgressRequiresCompleteIndex(t *testing.T) {
 	l, root, _ := fixture(t)
-	if err := os.Mkdir(filepath.Join(root, "nested"), 0700); err != nil {
+	if err := os.Mkdir(filepath.Join(root, "nested"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	put(t, filepath.Join(root, "a.mp4"))
 	put(t, filepath.Join(root, "nested", "b.mp4"))
 	refresh(t, l, 1)
 	get := func() *DirectoryProgress {
-		e, err := l.Get(1)
+		e, err := l.Get(t.Context(), 1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -53,7 +53,7 @@ func TestDirectoryProgressRequiresCompleteIndex(t *testing.T) {
 func TestDirectoryContentsUseLastCompleteDirectIndex(t *testing.T) {
 	l, root, _ := fixture(t)
 	directory := filepath.Join(root, "album")
-	if err := os.MkdirAll(filepath.Join(directory, "nested"), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(directory, "nested"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"clip.MP4", "photo.JPG", "song.MP3", "recording.flac", "notes.txt"} {
@@ -92,7 +92,7 @@ func TestDirectoryContentsUseLastCompleteDirectIndex(t *testing.T) {
 func TestProgressBatchOverlappingScopesAndFreshState(t *testing.T) {
 	l, root, _ := fixture(t)
 	for _, dir := range []string{"a/nested", "b", "empty"} {
-		if err := os.MkdirAll(filepath.Join(root, dir), 0700); err != nil {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -107,7 +107,7 @@ func TestProgressBatchOverlappingScopesAndFreshState(t *testing.T) {
 	nested := entry(t, l, a.ID, "nested")
 	refresh(t, l, nested.ID)
 	file := entry(t, l, a.ID, "one.MP4")
-	rootEntry, err := l.Get(1)
+	rootEntry, err := l.Get(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}

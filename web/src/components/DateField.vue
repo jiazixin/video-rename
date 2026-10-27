@@ -2,8 +2,17 @@
   import { computed, nextTick, onMounted, onUnmounted, ref, useId } from 'vue';
   import { CalendarDays, ChevronLeft, ChevronRight } from '@lucide/vue';
   import SelectField from './SelectField.vue';
-  const props = defineProps<{ modelValue: string; label: string; min?: string; max?: string }>();
-  const emit = defineEmits<{ 'update:modelValue': [string]; change: [] }>();
+  const {
+    label,
+    min = '',
+    max = ''
+  } = defineProps<{
+    label: string;
+    min?: string;
+    max?: string;
+  }>();
+  const model = defineModel<string>({ required: true });
+  const emit = defineEmits<{ change: [] }>();
   const id = useId(),
     root = ref<HTMLElement>(),
     panel = ref<HTMLElement>(),
@@ -34,10 +43,10 @@
       return { value: format(d), day: d.getDate(), outside: d.getMonth() !== month.value };
     });
   });
-  const disabled = (value: string) =>
-    !!((props.min && value < props.min) || (props.max && value > props.max));
+  const disabled = (value: string) => !!((min && value < min) || (max && value > max));
   function place() {
-    const r = trigger.value!.getBoundingClientRect(),
+    if (!trigger.value) return;
+    const r = trigger.value.getBoundingClientRect(),
       height = panel.value?.offsetHeight || 360,
       width = panel.value?.offsetWidth || 296;
     position.value = {
@@ -56,9 +65,9 @@
       close();
       return;
     }
-    let value = props.modelValue || today;
-    if (props.min && value < props.min) value = props.min;
-    if (props.max && value > props.max) value = props.max;
+    let value = model.value || today;
+    if (min && value < min) value = min;
+    if (max && value > max) value = max;
     const d = parse(value);
     year.value = d.getFullYear();
     month.value = d.getMonth();
@@ -73,7 +82,7 @@
   }
   function choose(value: string) {
     if (value && disabled(value)) return;
-    emit('update:modelValue', value);
+    model.value = value;
     emit('change');
     close();
     trigger.value?.focus();
@@ -102,7 +111,8 @@
       ArrowUp: -7,
       ArrowDown: 7
     };
-    if (event.key in shifts) d.setDate(d.getDate() + shifts[event.key]);
+    const shift = shifts[event.key];
+    if (shift !== undefined) d.setDate(d.getDate() + shift);
     else if (event.key === 'Home') d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
     else if (event.key === 'End') d.setDate(d.getDate() + 6 - ((d.getDay() + 6) % 7));
     else if (event.key === 'PageUp' || event.key === 'PageDown') {
@@ -144,13 +154,13 @@
       ref="trigger"
       type="button"
       class="date-trigger"
-      :class="{ placeholder: !modelValue }"
+      :class="{ placeholder: !model }"
       :aria-label="label"
       aria-haspopup="dialog"
       :aria-expanded="open"
       @click="show"
       @keydown.down.prevent="show"
-      ><CalendarDays :size="15" /><span>{{ modelValue || label }}</span></button
+      ><CalendarDays :size="15" /><span>{{ model || label }}</span></button
     ><Teleport to="body"
       ><Transition name="popover"
         ><section
@@ -192,10 +202,10 @@
               :class="{
                 outside: day.outside,
                 today: day.value === today,
-                selected: day.value === modelValue
+                selected: day.value === model
               }"
               :aria-label="day.value"
-              :aria-pressed="day.value === modelValue"
+              :aria-pressed="day.value === model"
               :aria-disabled="disabled(day.value)"
               :tabindex="day.value === active ? 0 : -1"
               @focus="active = day.value"

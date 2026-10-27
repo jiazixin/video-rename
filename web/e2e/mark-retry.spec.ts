@@ -1,3 +1,4 @@
+import { defined } from './support'
 import { test, expect, type Page } from '@playwright/test'
 import type { Entry } from '../src/app/contracts'
 
@@ -44,7 +45,9 @@ async function setup(page: Page, count = 1) {
       }
     })
   })
-  await page.route('**/api/entries/status?*', (route) => route.fulfill({ json: entries }))
+  await page.route('**/api/entries/status?*', (route) =>
+    route.fulfill({ json: { items: entries } })
+  )
   await page.goto('/')
   await page.getByLabel('用户名', { exact: true }).fill('admin')
   await page.getByLabel('密码', { exact: true }).fill('test-password-123')
@@ -68,7 +71,16 @@ for (const failure of ['断连', '502 JSON', '502 HTML', '409 HTML']) {
       posts.push(route.request().postDataJSON().key)
       if (failure === '断连') await route.abort('connectionreset')
       else if (failure === '502 JSON')
-        await route.fulfill({ status: 502, json: { message: '代理返回错误' } })
+        await route.fulfill({
+          status: 502,
+          json: {
+            error: {
+              code: 'internal',
+              message: 'test failure',
+              details: { detail: '代理返回错误' }
+            }
+          }
+        })
       else
         await route.fulfill({
           status: failure === '502 HTML' ? 502 : 409,
@@ -78,7 +90,7 @@ for (const failure of ['断连', '502 JSON', '502 HTML', '409 HTML']) {
     })
     await page.route('**/api/entries/processed/status/*', async (route) => {
       const requestKey = decodeURIComponent(
-        new URL(route.request().url()).pathname.split('/').pop()!
+        defined(new URL(route.request().url()).pathname.split('/').pop())
       )
       queries.push(requestKey)
       expect(route.request().method()).toBe('GET')
@@ -105,12 +117,30 @@ test('明确409拒绝后使用新请求键提交，不声称后台仍在执行',
     const requestKey = route.request().postDataJSON().key
     posts.push(requestKey)
     if (posts.length === 1)
-      await route.fulfill({ status: 409, json: { message: '已有标记任务正在执行' } })
+      await route.fulfill({
+        status: 409,
+        json: {
+          error: {
+            code: 'internal',
+            message: 'test failure',
+            details: { detail: '已有标记任务正在执行' }
+          }
+        }
+      })
     else await route.fulfill({ json: result(requestKey) })
   })
   await page.route('**/api/entries/processed/status/*', async (route) => {
     queries++
-    await route.fulfill({ status: 404, json: { message: '不应查询被拒绝任务' } })
+    await route.fulfill({
+      status: 404,
+      json: {
+        error: {
+          code: 'internal',
+          message: 'test failure',
+          details: { detail: '不应查询被拒绝任务' }
+        }
+      }
+    })
   })
   await openSingle(page)
   await confirm(page).click()
@@ -134,8 +164,19 @@ test('旧结果404后禁用原弹窗提交，关闭重新选择才创建新操�
     else await route.fulfill({ json: result(requestKey) })
   })
   await page.route('**/api/entries/processed/status/*', async (route) => {
-    queries.push(decodeURIComponent(new URL(route.request().url()).pathname.split('/').pop()!))
-    await route.fulfill({ status: 404, json: { message: '标记任务不存在' } })
+    queries.push(
+      decodeURIComponent(defined(new URL(route.request().url()).pathname.split('/').pop()))
+    )
+    await route.fulfill({
+      status: 404,
+      json: {
+        error: {
+          code: 'internal',
+          message: 'test failure',
+          details: { detail: '标记任务不存在' }
+        }
+      }
+    })
   })
   await openSingle(page)
   await confirm(page).click()
@@ -147,8 +188,17 @@ test('旧结果404后禁用原弹窗提交，关闭重新选择才创建新操�
   await expect(confirm(page)).toBeDisabled()
   await dialog(page)
     .locator('form')
-    .evaluate((form: HTMLFormElement) => form.requestSubmit())
-  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
+    .evaluate((form: HTMLFormElement) => {
+      form.requestSubmit()
+    })
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => {
+          resolve()
+        })
+      )
+  )
   expect(posts).toHaveLength(1)
   expect(queries).toEqual(posts)
   await dialog(page)
@@ -177,15 +227,25 @@ for (const failure of ['断连', '409拒绝']) {
       posts.push(body)
       if (posts.length === 2) {
         if (failure === '断连') await route.abort('connectionreset')
-        else await route.fulfill({ status: 409, json: { message: '已有标记任务正在执行' } })
+        else
+          await route.fulfill({
+            status: 409,
+            json: {
+              error: {
+                code: 'internal',
+                message: 'test failure',
+                details: { detail: '已有标记任务正在执行' }
+              }
+            }
+          })
       } else await route.fulfill({ json: result(body.key, body.targets.length) })
     })
     await page.route('**/api/entries/processed/status/*', async (route) => {
       const requestKey = decodeURIComponent(
-        new URL(route.request().url()).pathname.split('/').pop()!
+        defined(new URL(route.request().url()).pathname.split('/').pop())
       )
       queries.push(requestKey)
-      const submitted = posts.find((post) => post.key === requestKey)!
+      const submitted = defined(posts.find((post) => post.key === requestKey))
       expect(submitted).toBeTruthy()
       await route.fulfill({ json: result(requestKey, submitted.targets.length) })
     })
@@ -198,16 +258,16 @@ for (const failure of ['断连', '409拒绝']) {
     await confirm(page).click()
     await expect(dialog(page)).toHaveCount(0)
     await expect(page.getByRole('status').filter({ hasText: '已标记 101 个文件' })).toBeVisible()
-    expect(posts[0]!.targets).toEqual(entries.slice(0, 100).map((item) => item.id))
-    expect(posts[1]!.targets).toEqual([entries[100]!.id])
+    expect(defined(posts[0]).targets).toEqual(entries.slice(0, 100).map((item) => item.id))
+    expect(defined(posts[1]).targets).toEqual([defined(entries[100]).id])
     if (failure === '断连') {
       expect(posts).toHaveLength(2)
       expect(queries).toEqual(posts.map((post) => post.key))
     } else {
       expect(posts).toHaveLength(3)
-      expect(queries).toEqual([posts[0]!.key])
-      expect(posts[2]!.key).not.toBe(posts[1]!.key)
-      expect(posts[2]!.targets).toEqual(posts[1]!.targets)
+      expect(queries).toEqual([defined(posts[0]).key])
+      expect(defined(posts[2]).key).not.toBe(defined(posts[1]).key)
+      expect(defined(posts[2]).targets).toEqual(defined(posts[1]).targets)
     }
   })
 }

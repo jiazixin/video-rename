@@ -30,8 +30,11 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm --prefix web ci --ignore-scripts
       - run: npm --prefix web run format:check
-      # build runs the same strict vue-tsc check as `npm run check`.
+      - run: npm --prefix web run lint
+      - run: npm --prefix web run typecheck
+      - run: npm --prefix web run test
       - run: npm --prefix web run build
+      - run: npm --prefix web audit --audit-level=high --omit=dev
 
   go:
     name: Go 检查与测试
@@ -62,12 +65,20 @@ jobs:
       - run: go mod verify
       - name: gofmt
         run: |
-          unformatted=$(gofmt -l cmd internal web/embed.go)
+          unformatted=$(gofmt -l $(git ls-files '*.go'))
           [ -z "$unformatted" ] || { echo "$unformatted"; exit 1; }
       - run: go vet ./...
       # macOS is cross-checked only; release-snapshot also cross-compiles it.
       - run: GOOS=darwin GOARCH=arm64 go vet ./...
       - run: go test -race -count=1 ./...
+      - run: go mod tidy -diff
+      - name: goimports
+        run: |
+          unformatted=$(go run golang.org/x/tools/cmd/goimports@v0.50.0 -local video-rename -l $(git ls-files '*.go'))
+          [ -z "$unformatted" ] || { echo "$unformatted"; exit 1; }
+      - run: go vet -tags integration,scale ./...
+      - run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
       # Real FFmpeg extraction and real `go build` version stamping.
       - run: go test -tags=integration -count=1 ./internal/media ./cmd/video-rename
 

@@ -60,6 +60,7 @@ func (s *Store) CachedReport(key string, revision int64, target any) bool {
 	return ok && json.Unmarshal(e.data, target) == nil
 }
 
+// CacheReport stores report under key for data revision revision.
 func (s *Store) CacheReport(key string, revision int64, report any) {
 	var buffer reportBuffer
 	if err := json.MarshalWrite(&buffer, report); err != nil {

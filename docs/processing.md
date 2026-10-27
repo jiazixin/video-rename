@@ -6,11 +6,11 @@ Go 通过参数数组启动 ffprobe，不拼接 shell 命令。输入先转为�
 
 探测参数设计为 `-v error -show_format -show_streams -of json <absolute-path>`。使用 JSON 中的 format 与 streams 获取文件字节数、时长、视频流索引、编码尺寸、sample_aspect_ratio、旋转元信息、色彩标记及 attached_pic disposition。ffprobe 支持可供程序解析的 JSON 输出，见[官方文档](https://ffmpeg.org/ffprobe.html)。
 
-选择首个 default 且不是 attached_pic 的视频流；没有 default 则选择第一个非封面视频流。只有音轨、只有封面、无有效视频流均报 `PROBE_NO_VIDEO`。后续 FFmpeg 显式 map 该绝对流索引，不能假定一定是 `0:v:0`。
+选择首个 default 且不是 attached_pic 的视频流；没有 default 则选择第一个非封面视频流。只有音轨、只有封面、无有效视频流均报 `probe_no_video`。后续 FFmpeg 显式 map 该绝对流索引，不能假定一定是 `0:v:0`。
 
-时长优先采用所选视频流的有效 duration，缺失时使用 format.duration。只接受有限且 > 0 的秒数；都不可用则报 `PROBE_DURATION_UNKNOWN`。不自动全量解码推算时长，避免对损坏或超大文件不可控扫描。
+时长优先采用所选视频流的有效 duration，缺失时使用 format.duration。只接受有限且 > 0 的秒数；都不可用则报 `probe_duration_unknown`。不自动全量解码推算时长，避免对损坏或超大文件不可控扫描。
 
-文件字节数用 Go stat 的 size，并与 ffprobe format.size 对照；缺失 format.size 时仍可继续，明显不一致则重新核验文件是否变化，变化报 `SOURCE_CHANGED`。不依靠读取整个视频或计算全文件哈希获取大小。所有 MiB 阈值按 1024 × 1024 字节换算后比较。
+文件字节数用 Go stat 的 size，并与 ffprobe format.size 对照；缺失 format.size 时仍可继续，明显不一致则重新核验文件是否变化，变化报 `source_changed`。不依靠读取整个视频或计算全文件哈希获取大小。所有 MiB 阈值按 1024 × 1024 字节换算后比较。
 
 探测受内置 30 秒超时和 4 MiB stdout 大小上限控制；stderr 只保留最后 8 KiB 用于诊断。捕获退出码、超时及 JSON 解析错误，不将它们合并成一个不明错误。
 
@@ -74,11 +74,11 @@ FFmpeg 输入侧 seek 配合默认 accurate_seek 会从可定位点解码并丢�
 
 图片超过内置 1 MiB 上限时，在临时目录中最多做一次重新编码：尺寸缩到当前的 75%，质量参数变为 min(15, 当前 q + 3)。依然超限则视该帧失败。不能无限缩小或不受控地反复转码。
 
-成功帧数至少达到 1 就允许继续；成功日志记录 warnings 和失败采样点，并在控制台提示。低于该数量则 `EXTRACT_INSUFFICIENT_FRAMES`。零帧绝不调用模型。
+成功帧数至少达到 1 就允许继续；成功日志记录 warnings 和失败采样点，并在控制台提示。低于该数量则 `extract_insufficient_frames`。零帧绝不调用模型。
 
-base64 会使图片载荷增加到约原字节数的 4/3；程序组装 JSON 后按实际序列化字节数检查内置 16 MiB 请求体上限，包含提示词和协议开销。超限时均匀删除部分帧，保持时间顺序，直至满足预算；仍不足最低有效帧数则 `REQUEST_TOO_LARGE`。重试复用已缓存的帧集，不重新抽帧；同模型使用冻结的请求参数，兜底按其独立配置组装请求。
+base64 会使图片载荷增加到约原字节数的 4/3；程序组装 JSON 后按实际序列化字节数检查内置 16 MiB 请求体上限，包含提示词和协议开销。超限时均匀删除部分帧，保持时间顺序，直至满足预算；仍不足最低有效帧数则 `request_too_large`。重试复用已缓存的帧集，不重新抽帧；同模型使用冻结的请求参数，兜底按其独立配置组装请求。
 
-Web 运行的完整截图保存到 tmp-storage 的专属缓存目录。改名成功默认立即清理，可设置延时或不因改名删除；失败或取消保留完整结果。闲置清理默认 3 天，可修改或关闭；容量不足可提前淘汰闲置旧缓存。正在等待或调用模型的截图受租约保护。未完成的抽帧输出清理，异常退出遗留的专属 pending 工作目录在下次启动清理；缓存目录实例锁防止多进程误删。磁盘满或写图片失败属于抽帧失败。
+Web 运行的完整截图保存到 tmp_storage 的专属缓存目录。改名成功默认立即清理，可设置延时或不因改名删除；失败或取消保留完整结果。闲置清理默认 3 天，可修改或关闭；容量不足可提前淘汰闲置旧缓存。正在等待或调用模型的截图受租约保护。未完成的抽帧输出清理，异常退出遗留的专属 pending 工作目录在下次启动清理；缓存目录实例锁防止多进程误删。磁盘满或写图片失败属于抽帧失败。
 
 ## 4. 模型请求与标题校验
 
@@ -88,11 +88,11 @@ Web 运行的完整截图保存到 tmp-storage 的专属缓存目录。改名成
 
 模型参数来自页面所选配置的任务快照。OpenAI 兼容请求使用 system（所选提示词 + 固定提示词）及一条 user（截图说明、时间与图片），图片用 data:image/jpeg;base64 内联，按时间递增排列。OpenAI 官方预设使用 max_completion_tokens，其余兼容服务使用 max_tokens；temperature 可关闭发送。Claude 使用顶层 system 与一条 user，图片为 base64 source。仅发送截图，不传原视频或本机路径。详细结构见 [模型请求](model-request.md)。
 
-响应必须是有效 HTTP 2xx + 合法 JSON。读取 `choices[0].message.content`，要求非空字符串。忽略 reasoning 字段，拒绝 tool_calls 或空 choices；`finish_reason=length` 标记为 `MODEL_OUTPUT_TRUNCATED`，不将截断内容当标题。
+响应必须是有效 HTTP 2xx + 合法 JSON。读取 `choices[0].message.content`，要求非空字符串。忽略 reasoning 字段，拒绝 tool_calls 或空 choices；`finish_reason=length` 标记为 `model_output_truncated`，不将截断内容当标题。
 
-只移除首尾空白及成对包裹引号，然后按批次冻结的失败关键词进行包含匹配，忽略大小写。命中任一词或句子即为 `NAMING_FAILED`，保留原文件名；默认包括“命名失败”“拒绝”“无法完成”“sorry”。关键词可在“系统设置 → Prompt配置”增删、保存或恢复默认；保存空列表时不检查失败关键词。主模型、重试和兜底使用同一份冻结列表，后续设置修改只影响新建批次。
+只移除首尾空白及成对包裹引号，然后按批次冻结的失败关键词进行包含匹配，忽略大小写。命中任一词或句子即为 `naming_failed`，保留原文件名；默认包括“命名失败”“拒绝”“无法完成”“sorry”。关键词可在“系统设置 → Prompt配置”增删、保存或恢复默认；保存空列表时不检查失败关键词。主模型、重试和兜底使用同一份冻结列表，后续设置修改只影响新建批次。
 
-之后要求仅一个非空逻辑行。代码围栏、多标题列表、解释段落、空标题均 `TITLE_INVALID`；不随意从长答案中猜第一行。通过后再交给文件名清洗。
+之后要求仅一个非空逻辑行。代码围栏、多标题列表、解释段落、空标题均 `title_invalid`；不随意从长答案中猜第一行。通过后再交给文件名清洗。
 
 ## 5. 超时与重试
 

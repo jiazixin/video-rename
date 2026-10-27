@@ -5,12 +5,15 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
+
 	"video-rename/internal/config"
 	"video-rename/internal/storage"
 )
 
+// Store stores the global frame settings.
 type Store struct{ DB *storage.Store }
 
+// Get returns the stored frame settings.
 func (s Store) Get() (config.FrameSettings, error) {
 	var raw string
 	err := s.DB.QueryRow("SELECT settings FROM sampling_settings WHERE id=1").Scan(&raw)
@@ -24,6 +27,7 @@ func (s Store) Get() (config.FrameSettings, error) {
 	return Parse(raw)
 }
 
+// Parse decodes and validates stored frame settings.
 func Parse(raw string) (config.FrameSettings, error) {
 	var value config.FrameSettings
 	if err := json.Unmarshal([]byte(raw), &value); err != nil {
@@ -32,6 +36,7 @@ func Parse(raw string) (config.FrameSettings, error) {
 	return value, value.Validate()
 }
 
+// Save validates and stores value.
 func (s Store) Save(value config.FrameSettings) error {
 	if err := value.Validate(); err != nil {
 		return err

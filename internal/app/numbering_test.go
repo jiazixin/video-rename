@@ -3,12 +3,14 @@ package app
 import (
 	"encoding/json/v2"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
 	"video-rename/internal/config"
 	"video-rename/internal/domain"
 	"video-rename/internal/library"
@@ -16,10 +18,10 @@ import (
 
 func TestImageNumberingAPI(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "photo.PNG"), []byte("picture"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "photo.PNG"), []byte("picture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}})
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,32 +31,30 @@ func TestImageNumberingAPI(t *testing.T) {
 	}
 	handler := a.Handler()
 	var cookies []*http.Cookie
-	csrf := ""
-	request := func(method, path, body string, token bool) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(method, path, strings.NewReader(body))
+	request := func(method, path, body string, sameSite bool) *httptest.ResponseRecorder {
+		r := jsonRequest(method, path, strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
 		for _, c := range cookies {
 			r.AddCookie(c)
 		}
-		if token {
-			r.Header.Set("X-CSRF-Token", csrf)
+		if !sameSite {
+			r.Header.Set("Sec-Fetch-Site", "cross-site")
 		}
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
 		return w
 	}
-	if w := request("POST", "/api/directories/1/numberings/preview", `{}`, false); w.Code != 401 && w.Code != 403 {
+	if w := request("POST", "/api/directories/1/numberings/preview", `{}`, true); w.Code != 401 && w.Code != 403 {
 		t.Fatal(w.Code)
 	}
-	w := request("POST", "/api/auth/login", `{"username":"admin","password":"test-password"}`, false)
+	w := request("POST", "/api/auth/login", `{"username":"admin","password":"test-password"}`, true)
 	cookies = w.Result().Cookies()
 	var session map[string]string
 	if err = json.Unmarshal(w.Body.Bytes(), &session); err != nil {
 		t.Fatal(err)
 	}
-	csrf = session["csrf"]
 	if w = request("POST", "/api/directories/1/numberings/preview", `{}`, false); w.Code != 403 {
-		t.Fatal("no CSRF accepted", w.Code)
+		t.Fatal("cross-site write accepted", w.Code)
 	}
 	w = request("POST", "/api/directories/1/numberings/preview", `{"media":"image","query":"","sort":"name_desc"}`, true)
 	if w.Code != 200 {
@@ -69,7 +69,7 @@ func TestImageNumberingAPI(t *testing.T) {
 	}
 	for _, action := range []string{"apply", "restore-preview", "recover"} {
 		if w = request("POST", "/api/numberings/"+b.ID+"/"+action, `{}`, false); w.Code != 403 {
-			t.Fatal("no CSRF accepted", action, w.Code)
+			t.Fatal("cross-site write accepted", action, w.Code)
 		}
 	}
 	for range 2 {
@@ -78,7 +78,7 @@ func TestImageNumberingAPI(t *testing.T) {
 			t.Fatal(w.Code, w.Body.String())
 		}
 	}
-	w = request("GET", "/api/directories/1/numberings?media=image", "", false)
+	w = request("GET", "/api/directories/1/numberings?media=image", "", true)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "committed") {
 		t.Fatal(w.Code, w.Body.String())
 	}
@@ -100,42 +100,42 @@ func TestImageNumberingAPI(t *testing.T) {
 
 func TestNumberingSettingsAPI(t *testing.T) {
 	root := t.TempDir()
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}})
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer a.Close()
 	handler := a.Handler()
-	loginReq := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"test-password"}`))
+	loginReq := jsonRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"test-password"}`))
 	loginReq.Header.Set("Content-Type", "application/json")
 	login := httptest.NewRecorder()
 	handler.ServeHTTP(login, loginReq)
 	var session map[string]string
 	json.Unmarshal(login.Body.Bytes(), &session)
-	request := func(method, path, body string, token bool) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(method, path, strings.NewReader(body))
+	request := func(method, path, body string, sameSite bool) *httptest.ResponseRecorder {
+		r := jsonRequest(method, path, strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
 		for _, c := range login.Result().Cookies() {
 			r.AddCookie(c)
 		}
-		if token {
-			r.Header.Set("X-CSRF-Token", session["csrf"])
+		if !sameSite {
+			r.Header.Set("Sec-Fetch-Site", "cross-site")
 		}
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
 		return w
 	}
-	w := request("GET", "/api/numbering/settings", "", false)
+	w := request("GET", "/api/numbering/settings", "", true)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"padding":1`) || !strings.Contains(w.Body.String(), `"lowercase":true`) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	if w = request("PUT", "/api/numbering/settings", `{"image":{"padding":3,"lowercase":true,"prefix":"IMG_","compact":false},"audio":{"padding":1,"lowercase":false},"shared":true}`, false); w.Code != 403 {
-		t.Fatal("no CSRF accepted", w.Code)
+		t.Fatal("cross-site write accepted", w.Code)
 	}
 	if w = request("PUT", "/api/numbering/settings", `{"image":{"padding":3,"lowercase":true,"prefix":"IMG_","compact":false},"audio":{"padding":1,"lowercase":false},"shared":true}`, true); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	if w = request("GET", "/api/numbering/settings", "", false); w.Code != 200 || !strings.Contains(w.Body.String(), `"prefix":"IMG_"`) || !strings.Contains(w.Body.String(), `"shared":true`) {
+	if w = request("GET", "/api/numbering/settings", "", true); w.Code != 200 || !strings.Contains(w.Body.String(), `"prefix":"IMG_"`) || !strings.Contains(w.Body.String(), `"shared":true`) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	if w = request("PUT", "/api/numbering/settings", `{"image":{"padding":0,"lowercase":true},"audio":{"padding":1,"lowercase":true},"shared":false}`, true); w.Code == 200 {
@@ -145,9 +145,9 @@ func TestNumberingSettingsAPI(t *testing.T) {
 
 func TestAudioNumberingAPI(t *testing.T) {
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "track.MP3"), []byte("audio"), 0600)
-	os.WriteFile(filepath.Join(root, "cover.png"), []byte("cover"), 0600)
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}})
+	os.WriteFile(filepath.Join(root, "track.MP3"), []byte("audio"), 0o600)
+	os.WriteFile(filepath.Join(root, "cover.png"), []byte("cover"), 0o600)
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,19 +161,16 @@ func TestAudioNumberingAPI(t *testing.T) {
 	if unauth.Code != 401 {
 		t.Fatal("unprotected", unauth.Code)
 	}
-	loginReq := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"test-password"}`))
+	loginReq := jsonRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"test-password"}`))
 	loginReq.Header.Set("Content-Type", "application/json")
 	login := httptest.NewRecorder()
 	handler.ServeHTTP(login, loginReq)
 	request := func(method, path, body string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r := jsonRequest(method, path, strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
 		for _, c := range login.Result().Cookies() {
 			r.AddCookie(c)
 		}
-		var session map[string]string
-		json.Unmarshal(login.Body.Bytes(), &session)
-		r.Header.Set("X-CSRF-Token", session["csrf"])
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
 		return w
@@ -206,12 +203,20 @@ func TestAudioNumberingAPI(t *testing.T) {
 func TestNumberingFailurePreservesWrappedDiagnostics(t *testing.T) {
 	err := fmt.Errorf("parent/child：%w", &domain.JobError{Code: domain.CodeRenameConflict, Message: "目标被占用", ProcessingLog: "原文件名：photo.jpg\n目标类型：directory"})
 	w := httptest.NewRecorder()
-	numberingFailure(w, err)
-	var body map[string]string
+	numberingFailure(w, httptest.NewRequest("POST", "/api/numberings/x/apply", nil), err)
+	var body struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Details struct {
+				ProcessingLog string `json:"processing_log"`
+			} `json:"details"`
+		} `json:"error"`
+	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if w.Code != http.StatusConflict || body["code"] != "RENAME_CONFLICT" || !strings.Contains(body["message"], "parent/child") || !strings.Contains(body["processing_log"], "目标类型：directory") {
+	if w.Code != http.StatusConflict || body.Error.Code != "rename_conflict" || !strings.Contains(body.Error.Message, "parent/child") || !strings.Contains(body.Error.Details.ProcessingLog, "目标类型：directory") {
 		t.Fatal(w.Code, body)
 	}
 }

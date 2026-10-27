@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,7 +27,7 @@ func TestExtractionWithoutModelPreservesFilesAndReusesFrames(t *testing.T) {
 	if _, err = m.DB.Exec("DELETE FROM model_configs"); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {
+	if err = os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
@@ -39,11 +40,11 @@ func TestExtractionWithoutModelPreservesFilesAndReusesFrames(t *testing.T) {
 		return "unexpected", nil
 	}
 	request := Request{Task: "extract", Targets: []int64{1}, Recursive: true, Key: "pre-extract"}
-	id, err := m.Create(request, "manual", 0)
+	id, err := m.Create(t.Context(), request, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if same, err := m.Create(request, "manual", 0); err != nil || same != id {
+	if same, err := m.Create(t.Context(), request, "manual", 0); err != nil || same != id {
 		t.Fatal("extraction request is not idempotent", same, err)
 	}
 	m.Execute(t.Context(), id)
@@ -70,12 +71,12 @@ func TestExtractionWithoutModelPreservesFilesAndReusesFrames(t *testing.T) {
 	}
 	request.Task = "rename"
 	request.ModelConfigID = profile.ID
-	if _, err = m.Create(request, "manual", 0); err == nil {
+	if _, err = m.Create(t.Context(), request, "manual", 0); err == nil {
 		t.Fatal("request key accepted a different task")
 	}
 	m.Infer = func(context.Context, *config.TaskConfig, []domain.Frame) (string, error) { return "renamed", nil }
 	request.Key = "rename-after-extract"
-	id, err = m.Create(request, "manual", 0)
+	id, err = m.Create(t.Context(), request, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +95,7 @@ func TestExtractionFailuresAreIndependentOfInferenceAndMarkedState(t *testing.T)
 		t.Run(task, func(t *testing.T) {
 			m, root := setup(t)
 			for _, name := range []string{"good.mp4", "bad.mp4"} {
-				if err := os.WriteFile(filepath.Join(root, name), []byte("video"), 0600); err != nil {
+				if err := os.WriteFile(filepath.Join(root, name), []byte("video"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -113,9 +114,9 @@ func TestExtractionFailuresAreIndependentOfInferenceAndMarkedState(t *testing.T)
 				return fakeFrames(work)
 			}
 			m.Infer = func(context.Context, *config.TaskConfig, []domain.Frame) (string, error) {
-				return "", fmt.Errorf("model failed")
+				return "", errors.New("model failed")
 			}
-			id, err := m.Create(Request{Task: task, Targets: []int64{1}, Key: "mixed-extraction"}, "manual", 0)
+			id, err := m.Create(t.Context(), Request{Task: task, Targets: []int64{1}, Key: "mixed-extraction"}, "manual", 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -137,7 +138,7 @@ func TestExtractionFailuresAreIndependentOfInferenceAndMarkedState(t *testing.T)
 
 func TestExtractionCancellationAndInterruptedRecords(t *testing.T) {
 	m, root := setup(t)
-	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	started := make(chan struct{})
@@ -146,7 +147,7 @@ func TestExtractionCancellationAndInterruptedRecords(t *testing.T) {
 		<-ctx.Done()
 		return domain.FrameSet{}, ctx.Err()
 	}
-	id, err := m.Create(Request{Task: "extract", Targets: []int64{1}, Key: "cancel-frames"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Task: "extract", Targets: []int64{1}, Key: "cancel-frames"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +167,7 @@ func TestExtractionCancellationAndInterruptedRecords(t *testing.T) {
 		t.Fatal("cancel did not drain extraction")
 	}
 	var status, message string
-	if err = m.DB.QueryRow("SELECT status,message FROM extraction_records WHERE run=?", id).Scan(&status, &message); err != nil || status != "failure" || message != "抽帧已取消" {
+	if err = m.DB.QueryRow("SELECT status,message FROM extraction_records WHERE run=?", id).Scan(&status, &message); err != nil || status != "failure" || !strings.Contains(message, `"code":"extraction_cancelled"`) {
 		t.Fatal(status, message, err)
 	}
 	if _, err = m.startExtraction(Run{}, 0, "interrupted.mp4", time.Now().Add(-time.Minute)); err != nil {
@@ -189,14 +190,14 @@ func TestExtractionScansBeyondLibraryPagesAndFreezesSampling(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := range 105 {
-		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("clip-%03d.mp4", i)), []byte("video"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("clip-%03d.mp4", i)), []byte("video"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Mkdir(filepath.Join(root, "nested"), 0700); err != nil {
+	if err := os.Mkdir(filepath.Join(root, "nested"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "nested", "child.mp4"), []byte("video"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "nested", "child.mp4"), []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
@@ -207,11 +208,11 @@ func TestExtractionScansBeyondLibraryPagesAndFreezesSampling(t *testing.T) {
 		calls.Add(1)
 		return fakeFrames(work)
 	}
-	id, err := m.Create(Request{Task: "extract", Targets: []int64{1}, Key: "extract-all-pages"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Task: "extract", Targets: []int64{1}, Key: "extract-all-pages"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "rename-overlap"}, "manual", 0); err == nil {
+	if _, err = m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "rename-overlap"}, "manual", 0); err == nil {
 		t.Fatal("rename overlapped queued extraction")
 	}
 	changed := original
@@ -228,7 +229,7 @@ func TestExtractionScansBeyondLibraryPagesAndFreezesSampling(t *testing.T) {
 	if err = settings.Save(original); err != nil {
 		t.Fatal(err)
 	}
-	id, err = m.Create(Request{Task: "extract", Targets: []int64{1}, Recursive: true, Key: "extract-nested"}, "manual", 0)
+	id, err = m.Create(t.Context(), Request{Task: "extract", Targets: []int64{1}, Recursive: true, Key: "extract-nested"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

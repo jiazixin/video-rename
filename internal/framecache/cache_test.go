@@ -2,7 +2,9 @@ package framecache
 
 import (
 	"context"
-	"fmt"
+	"errors"
+	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,12 +18,12 @@ import (
 
 func build(work string) (domain.FrameSet, error) {
 	p := filepath.Join(work, "frame.jpg")
-	err := os.WriteFile(p, []byte("frame"), 0600)
+	err := os.WriteFile(p, []byte("frame"), 0o600)
 	return domain.FrameSet{Frames: []domain.Frame{{Path: p, Bytes: 5, Width: 1, Height: 1}}}, err
 }
 func mustCache(t *testing.T, root string, limit int64) *Cache {
 	t.Helper()
-	c, e := New(root, limit)
+	c, e := New(root, limit, slog.New(slog.DiscardHandler))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -50,7 +52,7 @@ func TestReuseRestartCorruptionAndSuccessfulRemoval(t *testing.T) {
 	}
 	lease.Release(false)
 	// Same length corruption must not be reused.
-	if err = os.WriteFile(path, []byte("other"), 0600); err != nil {
+	if err = os.WriteFile(path, []byte("other"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	calls := 0
@@ -59,7 +61,7 @@ func TestReuseRestartCorruptionAndSuccessfulRemoval(t *testing.T) {
 		t.Fatal(err, calls)
 	}
 	lease.Release(true)
-	if _, err = os.Stat(path); !os.IsNotExist(err) {
+	if _, err = os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatal("successful frames retained", err)
 	}
 }
@@ -86,7 +88,7 @@ func TestCapacityWaitCancellationEvictionAndPinnedExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = os.Stat(a.Set.Frames[0].Path); !os.IsNotExist(err) {
+	if _, err = os.Stat(a.Set.Frames[0].Path); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatal("idle cache not evicted")
 	}
 	b.Release(false)
@@ -100,11 +102,11 @@ func TestCapacityWaitCancellationEvictionAndPinnedExpiry(t *testing.T) {
 func TestPartialFailureCleanedAndUnknownFilesUntouched(t *testing.T) {
 	base := t.TempDir()
 	sentinel := filepath.Join(base, "personal.txt")
-	os.WriteFile(sentinel, []byte("keep"), 0600)
+	os.WriteFile(sentinel, []byte("keep"), 0o600)
 	c := mustCache(t, base, 1000000)
 	_, err := c.Acquire(t.Context(), strings.Repeat("a", 64), 100000, func(work string) (domain.FrameSet, error) {
 		build(work)
-		return domain.FrameSet{}, fmt.Errorf("cancelled extraction")
+		return domain.FrameSet{}, errors.New("cancelled extraction")
 	})
 	if err == nil || c.Stats().Reserved != 0 || c.Stats().Entries != 0 {
 		t.Fatal(err, c.Stats())
@@ -116,7 +118,7 @@ func TestPartialFailureCleanedAndUnknownFilesUntouched(t *testing.T) {
 	if b, _ := os.ReadFile(sentinel); string(b) != "keep" {
 		t.Fatal("unrelated file changed")
 	}
-	if _, err = New(base, 1000000); err == nil {
+	if _, err = New(base, 1000000, slog.New(slog.DiscardHandler)); err == nil {
 		t.Fatal("second process cache accepted")
 	}
 }
@@ -169,7 +171,7 @@ func TestRetentionPoliciesAndRestart(t *testing.T) {
 			base := t.TempDir()
 			policy := systemsettings.Default().Policy
 			policy.SuccessCacheMode, policy.SuccessCacheHours, policy.IdleCacheHours = mode, 120, 0
-			c, err := New(base, 1000000, policy)
+			c, err := New(base, 1000000, slog.New(slog.DiscardHandler), policy)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -193,7 +195,7 @@ func TestRetentionPoliciesAndRestart(t *testing.T) {
 			}
 			c.mu.Unlock()
 			c.Close()
-			c, err = New(base, 1000000, policy)
+			c, err = New(base, 1000000, slog.New(slog.DiscardHandler), policy)
 			if err != nil {
 				t.Fatal(err)
 			}

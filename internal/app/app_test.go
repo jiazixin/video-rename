@@ -4,31 +4,38 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"fmt"
+	"log/slog"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
 	"video-rename/internal/config"
 )
 
 func TestMissingRecordFailureUsesReadableMessage(t *testing.T) {
 	for _, err := range []error{sql.ErrNoRows, fmt.Errorf("load record: %w", sql.ErrNoRows)} {
 		w := httptest.NewRecorder()
-		failure(w, err)
-		var result map[string]string
+		writeError(w, httptest.NewRequest("GET", "/api/entries/1", nil), err)
+		var result struct {
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
 		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 			t.Fatal(err)
 		}
-		if w.Code != 404 || result["code"] != "NOT_FOUND" || result["request_id"] == "" || result["message"] != "请求的记录不存在或已删除，请刷新页面后重试" {
+		if w.Code != 404 || result.Error.Code != "not_found" || result.Error.Message == "" {
 			t.Fatal(w.Code, w.Body.String())
 		}
 	}
 }
 
 func TestHistoryDateFiltersCompareInstants(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,9 +74,9 @@ func TestHistoryDateFiltersCompareInstants(t *testing.T) {
 
 func TestStaticSPAAndProtectedAPI(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "media")
-	os.Mkdir(root, 0700)
+	os.Mkdir(root, 0o700)
 	cfg := &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}
-	a, err := New(cfg)
+	a, err := New(cfg, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,6 +88,9 @@ func TestStaticSPAAndProtectedAPI(t *testing.T) {
 		if w.Code != 200 || w.Header().Get("Content-Type") != "text/html; charset=utf-8" {
 			t.Fatalf("%s: %d %s", p, w.Code, w.Body.String())
 		}
+		if got := w.Header().Get("Content-Security-Policy"); got != contentSecurityPolicy {
+			t.Fatalf("%s: got CSP %q, want %q", p, got, contentSecurityPolicy)
+		}
 	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("GET", "/api/system", nil))
@@ -91,7 +101,7 @@ func TestStaticSPAAndProtectedAPI(t *testing.T) {
 
 func TestDataDirectoryPersistenceAndShortPasswordLogin(t *testing.T) {
 	cfg := &config.Config{Path: t.TempDir(), Storage: filepath.Join(t.TempDir(), "state", "nested"), Auth: config.AuthConfig{Username: "admin", Password: "x"}}
-	a, err := New(cfg)
+	a, err := New(cfg, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +123,7 @@ func TestDataDirectoryPersistenceAndShortPasswordLogin(t *testing.T) {
 	if err = a.Close(); err != nil {
 		t.Fatal(err)
 	}
-	a, err = New(cfg)
+	a, err = New(cfg, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +137,7 @@ func TestDataDirectoryPersistenceAndShortPasswordLogin(t *testing.T) {
 		t.Fatal("data not preserved", err)
 	}
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"x"}`))
+	r := jsonRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"x"}`))
 	r.Header.Set("Content-Type", "application/json")
 	a.Handler().ServeHTTP(w, r)
 	if w.Code != 200 {

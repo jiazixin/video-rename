@@ -3,8 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
-	"log/slog"
 	"net/http"
 	"reflect"
 	"slices"
@@ -25,17 +23,23 @@ type numberingRequest struct {
 	Batches []string `json:"batches"`
 	Preview string   `json:"preview"`
 }
+
+// numberingStatus reports a numbering job. During preview Directory is the
+// directory being scanned; during apply DirectoryDone of DirectoryTotal files
+// of the current directory are renamed.
 type numberingStatus struct {
-	Key           string `json:"key"`
-	Status        string `json:"status"`
-	Phase         string `json:"phase"`
-	Path          string `json:"path"`
-	Directories   int    `json:"directories"`
-	Files         int    `json:"files"`
-	Done          int    `json:"done"`
-	Total         int    `json:"total"`
-	Error         string `json:"error"`
-	ProcessingLog string `json:"processing_log"`
+	Key            string        `json:"key"`
+	Status         string        `json:"status"`
+	Phase          string        `json:"phase"`
+	Directory      int64         `json:"directory,omitzero"`
+	DirectoryDone  int           `json:"directory_done,omitzero"`
+	DirectoryTotal int           `json:"directory_total,omitzero"`
+	Directories    int           `json:"directories"`
+	Files          int           `json:"files"`
+	Done           int           `json:"done"`
+	Total          int           `json:"total"`
+	Error          domain.Record `json:"error,omitzero"`
+	ProcessingLog  string        `json:"processing_log"`
 }
 type numberingJob struct {
 	request  numberingRequest
@@ -47,7 +51,7 @@ type numberingJob struct {
 	result   []library.DirectoryNumbering
 }
 
-func (a *App) numberingJobRoutes(api *http.ServeMux) {
+func (a *App) numberingJobRoutes(api *router) {
 	api.HandleFunc("POST /api/numbering/jobs", a.startNumberingJob)
 	api.HandleFunc("GET /api/numbering/jobs/{key}", a.numberingJobStatus)
 	api.HandleFunc("POST /api/numbering/jobs/{key}/cancel", a.cancelNumberingJob)
@@ -62,13 +66,13 @@ func (a *App) startNumberingJob(w http.ResponseWriter, r *http.Request) {
 		(req.Action != "preview" && req.Action != "apply") || req.Parent < 1 ||
 		(req.Action == "apply" && ((len(req.Batches) == 0 && req.Preview == "") || len(req.Batches) > 1000 || (len(req.Batches) > 0 && req.Preview != ""))) ||
 		(req.Action == "preview" && (len(req.Batches) > 0 || req.Preview != "")) {
-		send(w, 400, map[string]string{"message": "编号任务参数无效"})
+		invalid(w, r, "", "invalid_numbering_request")
 		return
 	}
 	a.numberingMu.Lock()
 	defer a.numberingMu.Unlock()
 	if a.numberingClosed || a.ctx.Err() != nil {
-		send(w, 503, map[string]string{"message": "服务正在关闭"})
+		writeError(w, r, errShuttingDown)
 		return
 	}
 	for key, job := range a.numberingJobs {
@@ -78,31 +82,31 @@ func (a *App) startNumberingJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if job := a.numberingJobs[req.Key]; job != nil {
 		if job.request.Action == "" {
-			send(w, 200, job.status)
+			send(w, http.StatusOK, job.status)
 			return
 		}
 		if !reflect.DeepEqual(job.request, req) {
-			send(w, 409, map[string]string{"message": "请求键已用于其他编号任务"})
+			reject(w, r, domain.KindConflict, "request_key_reused", "request key is used by a different request")
 			return
 		}
-		send(w, 200, job.status)
+		send(w, http.StatusOK, job.status)
 		return
 	}
 	for _, job := range a.numberingJobs {
 		if job.finished.IsZero() {
-			send(w, 409, map[string]string{"message": "上一编号任务仍在处理或安全停止，请稍后重试"})
+			reject(w, r, domain.KindConflict, "numbering_running", "another numbering job is running or stopping")
 			return
 		}
 	}
 	if len(a.numberingJobs) >= 64 {
-		send(w, 429, map[string]string{"message": "近期编号任务过多，请稍后重试"})
+		reject(w, r, domain.KindTooMany, "numbering_jobs_full", "too many recent numbering jobs")
 		return
 	}
 	batchIDs := slices.Clone(req.Batches)
 	if req.Preview != "" {
 		source := a.numberingJobs[req.Preview]
 		if source == nil || source.status.Status != "completed" || source.request.Action != "preview" || source.request.Parent != req.Parent {
-			send(w, 409, map[string]string{"message": "预览已过期或不属于当前目录，请重新预览"})
+			reject(w, r, domain.KindConflict, "preview_stale", "preview expired or belongs to another directory")
 			return
 		}
 		for _, b := range source.result {
@@ -111,7 +115,7 @@ func (a *App) startNumberingJob(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if len(batchIDs) == 0 {
-			send(w, 400, map[string]string{"message": "没有需要编号的文件"})
+			reject(w, r, domain.KindInvalid, "nothing_to_number", "no files need numbering")
 			return
 		}
 	}
@@ -152,7 +156,7 @@ func (a *App) runNumberingJob(ctx context.Context, job *numberingJob) {
 		if err == nil {
 			result, err = a.Library.PreviewNumberingTreeWithProgress(ctx, job.request.Parent, settings, func(id int64, dirs, files int) {
 				update(func(s *numberingStatus) {
-					s.Path = fmt.Sprintf("目录 #%d", id)
+					s.Directory = id
 					s.Directories = dirs
 					s.Files = files
 				})
@@ -165,10 +169,10 @@ func (a *App) runNumberingJob(ctx context.Context, job *numberingJob) {
 				break
 			}
 			var b library.Numbering
-			b, err = a.Library.ApplyNumberingContext(ctx, id, func(done, total int) {
+			b, err = a.Library.ApplyNumbering(ctx, id, func(done, total int) {
 				update(func(s *numberingStatus) {
 					s.Phase = "apply"
-					s.Path = fmt.Sprintf("当前目录 %d / %d 个文件", done, total)
+					s.DirectoryDone, s.DirectoryTotal = done, total
 				})
 			})
 			if err != nil {
@@ -183,7 +187,7 @@ func (a *App) runNumberingJob(ctx context.Context, job *numberingJob) {
 	job.status.Status = "completed"
 	if err != nil {
 		job.status.Status = "failed"
-		job.status.Error = err.Error()
+		job.status.Error = domain.RecordOf(err)
 		if ctx.Err() != nil {
 			job.status.Status = "cancelled"
 		}
@@ -191,7 +195,7 @@ func (a *App) runNumberingJob(ctx context.Context, job *numberingJob) {
 			job.status.ProcessingLog = diagnostic.ProcessingLog
 		}
 		if job.status.Status == "failed" {
-			slog.Warn("numbering failed", "error", err.Error(), "diagnostic", job.status.ProcessingLog)
+			a.logger.Warn("numbering_failed", "error", err, "diagnostic", job.status.ProcessingLog)
 		}
 	} else if ctx.Err() != nil && job.request.Action == "preview" {
 		job.status.Status = "cancelled"
@@ -204,11 +208,11 @@ func (a *App) numberingJobStatus(w http.ResponseWriter, r *http.Request) {
 	defer a.numberingMu.Unlock()
 	job := a.numberingJobs[r.PathValue("key")]
 	if job == nil {
-		send(w, 404, map[string]string{"message": "编号任务已过期或服务已重启，请重新预览；已完成的编号可在记录中查看"})
+		reject(w, r, domain.KindNotFound, "numbering_job_gone", "numbering job expired or the service restarted")
 		return
 	}
 	job.lease = time.Now()
-	send(w, 200, job.status)
+	send(w, http.StatusOK, job.status)
 }
 func (a *App) cancelNumberingJob(w http.ResponseWriter, r *http.Request) {
 	a.numberingMu.Lock()
@@ -217,7 +221,7 @@ func (a *App) cancelNumberingJob(w http.ResponseWriter, r *http.Request) {
 	if job == nil {
 		key := r.PathValue("key")
 		if len(key) < 8 || len(key) > 128 || strings.ContainsAny(key, "/\\?#") {
-			send(w, 400, map[string]string{"message": "请求键无效"})
+			invalid(w, r, "key", "invalid")
 			return
 		}
 		// A close can overtake the submission request on another connection.
@@ -227,14 +231,14 @@ func (a *App) cancelNumberingJob(w http.ResponseWriter, r *http.Request) {
 		if len(a.numberingJobs) < 64 {
 			a.numberingJobs[key] = &numberingJob{finished: time.Now(), status: numberingStatus{Key: key, Status: "cancelled"}}
 		}
-		send(w, 200, map[string]string{"status": "cancelled"})
+		send(w, http.StatusOK, map[string]string{"status": "cancelled"})
 		return
 	}
 	if job.finished.IsZero() {
 		job.status.Status = "cancelling"
 		job.cancel()
 	}
-	send(w, 200, job.status)
+	send(w, http.StatusOK, job.status)
 }
 
 type numberingPreviewItem struct {
@@ -245,14 +249,14 @@ type numberingPreviewItem struct {
 func (a *App) numberingJobResult(w http.ResponseWriter, r *http.Request) {
 	offset := int(number(r.URL.Query().Get("offset")))
 	if offset < 0 {
-		send(w, 400, map[string]string{"message": "分页参数无效"})
+		invalid(w, r, "offset", "invalid_number")
 		return
 	}
 	a.numberingMu.Lock()
 	job := a.numberingJobs[r.PathValue("key")]
 	if job == nil || job.status.Status != "completed" {
 		a.numberingMu.Unlock()
-		send(w, 409, map[string]string{"message": "预览尚未完成或已过期"})
+		reject(w, r, domain.KindConflict, "preview_not_ready", "preview not completed or expired")
 		return
 	}
 	batches := slices.Clone(job.result)
@@ -267,5 +271,5 @@ func (a *App) numberingJobResult(w http.ResponseWriter, r *http.Request) {
 		total += len(b.Items)
 		b.Items = nil
 	}
-	send(w, 200, map[string]any{"batches": batches, "items": items, "total": total})
+	send(w, http.StatusOK, map[string]any{"batches": batches, "items": items, "total": total})
 }

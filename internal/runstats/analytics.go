@@ -1,4 +1,4 @@
-// Package runstats aggregates batch performance for the 数据分析 tab: batch
+// Package runstats aggregates batch performance for the analytics tab: batch
 // and item outcome rates, durations, throughput and failure groupings.
 package runstats
 
@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"video-rename/internal/domain"
 	"video-rename/internal/storage"
 	"video-rename/internal/timebucket"
 )
@@ -32,6 +33,7 @@ type AnalysisQuery struct {
 	Size       int
 }
 
+// Report is the batch performance report.
 type Report struct {
 	Range         ReportRange    `json:"range"`
 	Totals        ReportTotals   `json:"totals"`
@@ -44,12 +46,16 @@ type Report struct {
 	Batches       PagedBatches   `json:"batches"`
 	Options       ReportOptions  `json:"options"`
 }
+
+// ReportRange is the time range of a report.
 type ReportRange struct {
 	From     string `json:"from"`
 	To       string `json:"to"`
 	Timezone string `json:"timezone"`
 	Interval string `json:"interval"`
 }
+
+// ReportTotals summarizes the batches in a report.
 type ReportTotals struct {
 	Batches           int64   `json:"batches"`
 	Completed         int64   `json:"completed"`
@@ -68,6 +74,8 @@ type ReportTotals struct {
 	P95ItemMs         int64   `json:"p95_item_ms"`
 	ThroughputPerHour float64 `json:"throughput_per_hour"`
 }
+
+// TrendBucket holds the batch outcomes of one time bucket.
 type TrendBucket struct {
 	From            string `json:"from"`
 	To              string `json:"to"`
@@ -77,10 +85,14 @@ type TrendBucket struct {
 	Skipped         int64  `json:"skipped"`
 	Failed          int64  `json:"failed"`
 }
+
+// DistBucket is one bar of a distribution.
 type DistBucket struct {
 	Label string `json:"label"`
 	Count int64  `json:"count"`
 }
+
+// ProfilePerf is the performance of one model profile.
 type ProfilePerf struct {
 	ID                int64   `json:"id"`
 	Title             string  `json:"title"`
@@ -96,6 +108,8 @@ type ProfilePerf struct {
 	P95ItemMs         int64   `json:"p95_item_ms"`
 	ThroughputPerHour float64 `json:"throughput_per_hour"`
 }
+
+// ScatterPoint is one batch in the duration scatter chart.
 type ScatterPoint struct {
 	Run          int64  `json:"run"`
 	Task         string `json:"task"`
@@ -105,11 +119,16 @@ type ScatterPoint struct {
 	Source       string `json:"source"`
 	ProfileTitle string `json:"profile_title"`
 }
+
+// FailureGroup counts failures with one code and reason. Error is the first
+// failure seen in the group.
 type FailureGroup struct {
-	Message string `json:"message"`
-	Count   int64  `json:"count"`
-	LastAt  string `json:"last_at"`
+	Error  domain.Record `json:"error"`
+	Count  int64         `json:"count"`
+	LastAt string        `json:"last_at"`
 }
+
+// BatchRow is one batch in the report table.
 type BatchRow struct {
 	ID           int64  `json:"id"`
 	Task         string `json:"task"`
@@ -130,15 +149,21 @@ type BatchRow struct {
 	DurationMs   int64  `json:"duration_ms"`
 	AvgItemMs    int64  `json:"avg_item_ms"`
 }
+
+// PagedBatches is a page of report batches.
 type PagedBatches struct {
 	Items []BatchRow `json:"items"`
 	Total int        `json:"total"`
 	Page  int        `json:"page"`
 	Size  int        `json:"size"`
 }
+
+// ReportOptions lists the values available as report filters.
 type ReportOptions struct {
 	Profiles []OptionProfile `json:"profiles"`
 }
+
+// OptionProfile is a model profile available as a filter.
 type OptionProfile struct {
 	ID    int64  `json:"id"`
 	Title string `json:"title"`
@@ -214,33 +239,31 @@ func parseConfigSummary(summary string) (model, provider, protocol string) {
 }
 
 // durationBands mirrors the fixed item-duration bands shown in the histogram.
+// Labels are band codes the web client maps to text.
 var durationBands = []struct {
 	max   int64
 	label string
 }{
-	{5_000, "5 秒内"},
-	{15_000, "5–15 秒"},
-	{30_000, "15–30 秒"},
-	{60_000, "30–60 秒"},
-	{120_000, "1–2 分钟"},
-	{300_000, "2–5 分钟"},
-	{600_000, "5–10 分钟"},
-	{0, "10 分钟以上"},
+	{5_000, "under_5s"},
+	{15_000, "5s_15s"},
+	{30_000, "15s_30s"},
+	{60_000, "30s_60s"},
+	{120_000, "1m_2m"},
+	{300_000, "2m_5m"},
+	{600_000, "5m_10m"},
+	{0, "over_10m"},
 }
 
-// normalizeMessage groups raw error text: keep the first line, trim and cap
-// the length so near-identical failures collapse into one bucket.
-func normalizeMessage(message string) string {
-	message = strings.SplitN(message, "\n", 2)[0]
-	message = strings.TrimSpace(message)
-	runes := []rune(message)
-	if len(runes) > 100 {
-		runes = append(runes[:100], '…')
+// failureKey groups a stored failure record by its code and reason.
+func failureKey(record domain.Record) (string, domain.Record) {
+	if record.Code == "" {
+		record.Code = domain.CodeInternal
 	}
-	if len(runes) == 0 {
-		return "未提供失败原因"
+	key := record.Code
+	if reason, ok := record.Details["reason"].(string); ok {
+		key += ":" + reason
 	}
-	return string(runes)
+	return key, record
 }
 
 func percentile(sorted []int64, fraction float64) int64 {
@@ -451,18 +474,23 @@ func (t itemTiming) averageMs() int64 {
 
 // failureAcc tallies one normalized failure message while scanning.
 type failureAcc struct {
-	message string
-	count   int64
-	lastMs  int64
+	record domain.Record
+	count  int64
+	lastMs int64
 }
 
 type failureGroups map[string]*failureAcc
 
 func (groups failureGroups) add(message string, atMs int64) {
-	key := normalizeMessage(message)
+	stored, err := domain.ParseRecord(message)
+	if err != nil {
+		// A record that cannot be read still counts as one internal failure.
+		stored = domain.Record{Code: domain.CodeInternal}
+	}
+	key, record := failureKey(stored)
 	group := groups[key]
 	if group == nil {
-		group = &failureAcc{message: key}
+		group = &failureAcc{record: record}
 		groups[key] = group
 	}
 	group.count++
@@ -708,13 +736,16 @@ func sortedProfiles(profiles map[int64]*ProfilePerf) []ProfilePerf {
 func sortedFailures(groups failureGroups, limit int) []FailureGroup {
 	out := make([]FailureGroup, 0, len(groups))
 	for group := range maps.Values(groups) {
-		out = append(out, FailureGroup{Message: group.message, Count: group.count, LastAt: time.UnixMilli(group.lastMs).UTC().Format(time.RFC3339)})
+		out = append(out, FailureGroup{Error: group.record, Count: group.count, LastAt: time.UnixMilli(group.lastMs).UTC().Format(time.RFC3339)})
 	}
 	slices.SortFunc(out, func(a, b FailureGroup) int {
 		if c := cmp.Compare(b.Count, a.Count); c != 0 {
 			return c
 		}
-		return cmp.Compare(a.Message, b.Message)
+		if c := cmp.Compare(a.Error.Code, b.Error.Code); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Error.Message, b.Error.Message)
 	})
 	if len(out) > limit {
 		out = out[:limit]

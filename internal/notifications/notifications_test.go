@@ -6,7 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,6 +16,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+
 	"video-rename/internal/storage"
 )
 
@@ -85,7 +88,7 @@ func service(t *testing.T) *Service {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	return New(db)
+	return New(db, slog.New(slog.DiscardHandler))
 }
 func addRun(t *testing.T, s *Service, status string, failed int) int64 {
 	t.Helper()
@@ -129,7 +132,7 @@ func TestQueueFilteringRetriesAndSecretPreservation(t *testing.T) {
 		if !strings.Contains(body, fmt.Sprintf("批次编号：#%d", id)) || !strings.Contains(body, "失败：1") || !strings.Contains(body, "10s") {
 			t.Error(title, body)
 		}
-		return fmt.Errorf("mock offline")
+		return errors.New("mock offline")
 	}
 	for range 4 {
 		s.DB.Exec("UPDATE notification_deliveries SET next_attempt='2000-01-01T00:00:00Z'")

@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,11 +23,11 @@ func setup(t *testing.T) (*Manager, string) {
 	t.Helper()
 	base := t.TempDir()
 	root := filepath.Join(base, "media")
-	if err := os.Mkdir(root, 0700); err != nil {
+	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	for _, tool := range []string{"ffmpeg", "ffprobe"} {
-		if err := os.WriteFile(filepath.Join(base, tool), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		if err := os.WriteFile(filepath.Join(base, tool), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -40,7 +41,7 @@ func setup(t *testing.T) (*Manager, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := New(db, l, &config.Config{})
+	m, err := New(db, l, &config.Config{}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +63,7 @@ func setup(t *testing.T) (*Manager, string) {
 }
 func TestAutomaticRenameSkipRestoreAndOverlap(t *testing.T) {
 	m, root := setup(t)
-	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
@@ -70,11 +71,11 @@ func TestAutomaticRenameSkipRestoreAndOverlap(t *testing.T) {
 		calls.Add(1)
 		return "新的标题", nil
 	}
-	id, err := m.Create(Request{Targets: []int64{1, 1}, Recursive: true, Key: "test-run-1"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1, 1}, Recursive: true, Key: "test-run-1"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	same, err := m.Create(Request{Targets: []int64{1, 1}, Recursive: true, Key: "test-run-1"}, "manual", 0)
+	same, err := m.Create(t.Context(), Request{Targets: []int64{1, 1}, Recursive: true, Key: "test-run-1"}, "manual", 0)
 	if err != nil || same != id {
 		t.Fatal("request not idempotent")
 	}
@@ -86,7 +87,7 @@ func TestAutomaticRenameSkipRestoreAndOverlap(t *testing.T) {
 	if _, err = os.Stat(filepath.Join(root, "新的标题.mp4")); err != nil {
 		t.Fatal(err)
 	}
-	id, err = m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "test-run-2"}, "manual", 0)
+	id, err = m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "test-run-2"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,10 +100,10 @@ func TestAutomaticRenameSkipRestoreAndOverlap(t *testing.T) {
 	if err = m.DB.QueryRow("SELECT id FROM operations WHERE source='automatic' AND status='committed'").Scan(&op); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = m.Library.Restore(op, "test-restore"); err != nil {
+	if _, err = m.Library.Restore(t.Context(), op, "test-restore"); err != nil {
 		t.Fatal(err)
 	}
-	id, err = m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "test-run-3"}, "manual", 0)
+	id, err = m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "test-run-3"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +116,7 @@ func TestAutomaticRenameSkipRestoreAndOverlap(t *testing.T) {
 func TestRunTokenCountAccumulatesAndSurvivesHistoryDeletion(t *testing.T) {
 	m, root := setup(t)
 	for _, name := range []string{"a.mp4", "b.mp4"} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte("video"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("video"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -127,7 +128,7 @@ func TestRunTokenCountAccumulatesAndSurvivesHistoryDeletion(t *testing.T) {
 		domain.CaptureModelDiagnostics(ctx, domain.TitleResult{RawRequest: `{"_local_context":{"text_tokens_estimate":75}}`, RawResponse: response})
 		return "renamed-" + filepath.Base(job.Path), nil
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Key: "token-count-run"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "token-count-run"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +147,7 @@ func TestRunTokenCountAccumulatesAndSurvivesHistoryDeletion(t *testing.T) {
 }
 func TestManualProtectsFileAndCancel(t *testing.T) {
 	m, root := setup(t)
-	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.Library.Refresh(t.Context(), 1); err != nil {
@@ -154,15 +155,15 @@ func TestManualProtectsFileAndCancel(t *testing.T) {
 	}
 	var eid int64
 	m.DB.QueryRow("SELECT id FROM entries WHERE name='a.mp4'").Scan(&eid)
-	e, _ := m.Library.Get(eid)
-	if _, err := m.Library.Rename(e.ID, e.Version, "manual.mp4", "manual-test"); err != nil {
+	e, _ := m.Library.Get(t.Context(), eid)
+	if _, err := m.Library.Rename(t.Context(), e.ID, e.Version, "manual.mp4", "manual-test"); err != nil {
 		t.Fatal(err)
 	}
 	m.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 		t.Error("protected file analyzed")
 		return "", nil
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Key: "manual-protection"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "manual-protection"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +172,7 @@ func TestManualProtectsFileAndCancel(t *testing.T) {
 	if r.Skipped != 1 {
 		t.Fatalf("%+v", r)
 	}
-	id, err = m.Create(Request{Targets: []int64{1}, Key: "cancel-before-run"}, "manual", 0)
+	id, err = m.Create(t.Context(), Request{Targets: []int64{1}, Key: "cancel-before-run"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,11 +196,11 @@ func TestToolsDisappearingStopsBatch(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, name := range []string{"a.mp4", "b.mp4", "c.mp4"} {
-				if err := os.WriteFile(filepath.Join(root, name), []byte("video"), 0600); err != nil {
+				if err := os.WriteFile(filepath.Join(root, name), []byte("video"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
-			id, err := m.Create(Request{Targets: []int64{1}, Key: "vanished-tool-batch"}, "manual", 0)
+			id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "vanished-tool-batch"}, "manual", 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -210,7 +211,7 @@ func TestToolsDisappearingStopsBatch(t *testing.T) {
 			}
 			m.Execute(t.Context(), id)
 			r, err := m.Get(t.Context(), id)
-			if err != nil || r.Status != "failed" || r.Failed != 1 || r.Discovered != 3 || !strings.Contains(r.Error, string(domain.CodeToolNotFound)) {
+			if err != nil || r.Status != "failed" || r.Failed != 1 || r.Discovered != 3 || !strings.Contains(r.Error.Message, string(domain.CodeToolNotFound)) {
 				t.Fatalf("global tool failure did not stop dispatch: %+v, %v", r, err)
 			}
 			var cancelled int
@@ -223,11 +224,11 @@ func TestToolsDisappearingStopsBatch(t *testing.T) {
 func TestChangedDuringAnalysisDoesNotRename(t *testing.T) {
 	m, root := setup(t)
 	p := filepath.Join(root, "a.mp4")
-	os.WriteFile(p, []byte("video"), 0600)
+	os.WriteFile(p, []byte("video"), 0o600)
 	m.Analyze = func(_ context.Context, _ *config.TaskConfig, j domain.VideoJob, _, _ string) (string, error) {
-		return "changed", os.WriteFile(j.Path, []byte("different content"), 0600)
+		return "changed", os.WriteFile(j.Path, []byte("different content"), 0o600)
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Key: "source-changing"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "source-changing"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,14 +243,14 @@ func TestChangedDuringAnalysisDoesNotRename(t *testing.T) {
 }
 func TestCancelInFlight(t *testing.T) {
 	m, root := setup(t)
-	os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600)
+	os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600)
 	started := make(chan struct{})
 	m.Analyze = func(ctx context.Context, _ *config.TaskConfig, _ domain.VideoJob, _, _ string) (string, error) {
 		close(started)
 		<-ctx.Done()
 		return "", ctx.Err()
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Key: "cancel-in-flight"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "cancel-in-flight"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +278,7 @@ func TestCancelInFlight(t *testing.T) {
 func TestPromptSnapshotAndIsolation(t *testing.T) {
 	m, root := setup(t)
 	for _, name := range []string{"a.mp4", "b.mp4"} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte("video"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("video"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -291,7 +292,7 @@ func TestPromptSnapshotAndIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := Request{Targets: []int64{1}, ModelConfigID: prompt.ID, Key: "snapshot-run"}
-	id, err := m.Create(request, "manual", 0)
+	id, err := m.Create(t.Context(), request, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,16 +308,16 @@ func TestPromptSnapshotAndIsolation(t *testing.T) {
 	if _, err = store.Save(prompt); err != nil {
 		t.Fatal(err)
 	}
-	if again, err := m.Create(request, "manual", 0); err != nil || again != id {
+	if again, err := m.Create(t.Context(), request, "manual", 0); err != nil || again != id {
 		t.Fatal(again, err)
 	}
 	request.ModelConfigID = 1
-	if _, err = m.Create(request, "manual", 0); err == nil {
+	if _, err = m.Create(t.Context(), request, "manual", 0); err == nil {
 		t.Fatal("different prompt accepted with same key")
 	}
 	request.Key = "invalid-prompt"
 	request.ModelConfigID = 9999
-	if _, err = m.Create(request, "manual", 0); err == nil {
+	if _, err = m.Create(t.Context(), request, "manual", 0); err == nil {
 		t.Fatal("missing prompt accepted")
 	}
 	var calls atomic.Int32
@@ -340,7 +341,7 @@ func TestPromptSnapshotAndIsolation(t *testing.T) {
 	}
 	request.Key = "next-prompt"
 	request.ModelConfigID = prompt.ID
-	next, err := m.Create(request, "manual", 0)
+	next, err := m.Create(t.Context(), request, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +365,7 @@ func TestGlobalDefaultUsedByNewRuns(t *testing.T) {
 	if err = store.SetDefault(p.ID); err != nil {
 		t.Fatal(err)
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Key: "default-selection"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "default-selection"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +384,7 @@ func TestGlobalDefaultUsedByNewRuns(t *testing.T) {
 
 func TestManuallyMarkedFilesSkipAndCanBeReenabled(t *testing.T) {
 	m, root := setup(t)
-	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	result := m.Library.SetProcessed(t.Context(), []int64{1}, true)
@@ -399,7 +400,7 @@ func TestManuallyMarkedFilesSkipAndCanBeReenabled(t *testing.T) {
 		if i == 1 {
 			m.Library.SetProcessed(t.Context(), []int64{1}, false)
 		}
-		id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: key}, "manual", 0)
+		id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: key}, "manual", 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -416,13 +417,13 @@ func TestManuallyMarkedFilesSkipAndCanBeReenabled(t *testing.T) {
 
 func TestNamingFailureKeepsFileAndRecordsFailure(t *testing.T) {
 	m, root := setup(t)
-	if err := os.WriteFile(filepath.Join(root, "original.mp4"), []byte("video"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "original.mp4"), []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	m.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 		return "", &domain.JobError{Code: domain.CodeNamingFailed, Message: "命名失败：模型表示无法生成符合要求的标题，已保留原文件名", RawResponse: "命名失败"}
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "naming-failure-test"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "naming-failure-test"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -450,14 +451,14 @@ func TestNamingFailureKeepsFileAndRecordsFailure(t *testing.T) {
 }
 func TestRunItemsRecordProcessingTiming(t *testing.T) {
 	m, root := setup(t)
-	if err := os.WriteFile(filepath.Join(root, "timed.mp4"), []byte("video"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "timed.mp4"), []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	m.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 		time.Sleep(20 * time.Millisecond)
 		return "计时标题", nil
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "timing-run-1"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "timing-run-1"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +472,7 @@ func TestRunItemsRecordProcessingTiming(t *testing.T) {
 	}
 	// The already-processed file is skipped during the next scan: it gets a
 	// completion timestamp for attribution but never a processing start.
-	id, err = m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "timing-run-2"}, "manual", 0)
+	id, err = m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "timing-run-2"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -486,10 +487,10 @@ func TestRunItemsRecordProcessingTiming(t *testing.T) {
 
 func TestRestartFinalizesPendingItems(t *testing.T) {
 	m, root := setup(t)
-	if err := os.WriteFile(filepath.Join(root, "clip.mp4"), []byte("video"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "clip.mp4"), []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	id, err := m.Create(Request{Task: "extract", Targets: []int64{1}, Key: "restart-test"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Task: "extract", Targets: []int64{1}, Key: "restart-test"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

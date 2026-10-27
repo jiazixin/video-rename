@@ -3,27 +3,45 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=26.0.0"
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "vue-tsc --noEmit && vite build",
-    "check": "vue-tsc --noEmit",
-    "test:e2e": "playwright test",
-    "format": "prettier --write \"src/**/*.{vue,css,ts}\"",
-    "format:check": "prettier --check \"src/**/*.{vue,css,ts}\""
+    "build": "vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "lint": "eslint . --max-warnings 0 && stylelint \"src/**/*.{css,vue}\" --max-warnings 0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.5",
     "@lucide/vue": "1.52.0",
-    "vue": "^3.5.13"
+    "vue": "^3.5.13",
+    "vue-router": "^4.6.4"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.63.0",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/user-event": "^14.6.8",
+    "@testing-library/vue": "^8.1.0",
+    "@types/node": "^26.6.5",
     "@vitejs/plugin-vue": "^6.0.9",
+    "@vue/eslint-config-prettier": "^10.2.0",
+    "@vue/eslint-config-typescript": "^14.9.0",
+    "eslint": "^10.13.0",
+    "eslint-plugin-vue": "^10.11.1",
+    "jsdom": "^30.1.3",
+    "postcss-html": "^2.0.0",
     "prettier": "3.9.9",
+    "stylelint": "^17.16.0",
     "typescript": "6.0.3",
+    "typescript-eslint": "^8.72.0",
     "vite": "^8.3.3",
+    "vitest": "^5.0.5",
     "vue-tsc": "^3.3.12"
   }
 }

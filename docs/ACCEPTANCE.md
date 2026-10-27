@@ -31,6 +31,34 @@
 
 修正：测试把合成根目录的刷新时间写为未来时间，不再受 30 秒过期检查影响。验证：在列表断言前临时加入 31 秒等待后该测试通过（等待已移除）；`go test -race -count=1 ./internal/library` 通过。
 
+## 接口约定对齐（2026-10-27，未提交）
+
+按 [代码规范.md](../代码规范.md) 第 5 节调整，项目未上线，不保留旧接口：错误码改为小写（`internal` 等），新增未认证、无权限两类；运行记录严格解析为 JSON 编码的错误记录，不再兼容纯文本；会话表去掉 `csrf` 列（`schemaVersion` 20261027）；配置键改为 `media_path`/`tmp_storage`，新增 `log.level`/`log.format`；认证改为 `Authenticate`/`Login`/`Logout`，登出返回 204；新增 `/healthz` 与 `/api/info`；列表统一返回 `{"items": [...]}`；数字型路径/查询参数非法时返回 400 `invalid_argument`；非 JSON 请求体返回 415，过大返回 413；日志器由构造参数注入。前端改用 `apiItems` 读取列表（含计划预览），错误文本按新错误码；e2e 夹具改为编码记录与 `{items}` 列表。
+
+验证：Go 全套检查（gofmt、goimports、vet、staticcheck、race 测试、govulncheck）通过；vue-tsc、lint、vitest 21 项通过；重新构建 `web/dist` 与 `bin/video-rename` 后 Playwright 184 项全部通过。首轮全量 e2e 有 15 项失败（直接调用期望裸数组、旧消息夹具、`processing_log` 位置），第二轮剩 2 项（计划预览仍按数组读取、测试直接读取日志列表），均已修正后重跑通过。
+
+## 代码规范与目录规范对齐（2026-10-27）
+
+按 [代码规范.md](../代码规范.md)、Go / Web / Vue 技术栈规范与 [目录规范.md](../目录规范.md) 逐条整改：
+
+- Go：15 个带连字符的文件改为下划线命名；`framecache` 不再混用 JSON v1/v2（改用 v2 自定义编解码，manifest 与缓存键字节不变，已用临时测试对比）；`%v` 包装错误、无参 `fmt.Errorf`、`os.IsNotExist`/`IsExist` 全部改正；文件权限统一为 `0o600` 写法；删除 `Library` 中“无 ctx + `XxxContext`”的成对 API，`Get`、`PreviewNumbering(ctx, NumberingRequest)`、`ApplyNumbering`、`AutoCommit` 等改为 ctx 首参，并沿 `jobs.Create`、`Scheduler.Save`/`Tick` 与 HTTP 处理器传递；应用编号使用 `context.WithoutCancel`，关闭阶段不再用 `context.Background()`；稳定等待可注入计时器，暂停与租约测试改为轮询断言；页面与 API 统一使用规范的默认 CSP（去掉 `'unsafe-inline'` 与 `data:`），并有测试断言。
+- Web：全局提示改为 `app/use-toast.ts` 的 `useToast()` 与 `App.vue` 中唯一的 `ToastNotice`，离开页面时立即撤下本页提示；用户文案统一经 `errorText`（`error-text.ts` 改为内部码表 `server-codes.ts`，`displayPath` 移至 `lib/format/path.ts`）；剪贴板使用自有 `ClipboardError`，`lib` 不再依赖 `app`；图表颜色移入 `theme.css` 的 `--chart-*` 变量；去掉脚本与模板中的嵌套三元并启用 `no-nested-ternary`；去掉模板非空断言、补全空 `catch` 注释、时区统一用 `localTimeZone()`；`LibraryPage` 拆出删除、批量操作、标记三个弹窗组件。修复 `AudioPlayer` 把“读取中”显示为“读取失败”的问题。
+- 目录与文档：`SystemSettings.vue` 改名 `SystemSettingsPage.vue`；`.gitignore` 去掉旧路径；README 目录例外去掉冗余行，代码例外登记 ESLint `allowNumber`；`DESIGN.md` 登记断点、提示与图表配色约定，修正 `Modal`、`error-text.ts` 旧引用。
+
+本机 macOS / arm64，Go 1.27.3，Node.js 26。
+
+| 命令或检查 | 结果 |
+| --- | --- |
+| `go mod verify`、`go mod tidy -diff`、gofmt、goimports | 通过 |
+| `go vet`（本机、darwin/arm64、linux/amd64、`-tags integration,scale`）、staticcheck | 通过 |
+| `go test -race -count=1 ./...`、`go test -tags=integration ./internal/media ./cmd/video-rename` | 通过 |
+| `govulncheck ./...`、linux/amd64 交叉编译 | 无漏洞；可构建 |
+| `npm --prefix web run format:check`、`lint`、`typecheck`、`test`（25 项）、`build`、`npm audit --omit=dev` | 通过，0 漏洞 |
+| 无头 Chromium 逐页检查（隔离夹具服务器） | 新 CSP 下无违规 |
+| 全量 `npm --prefix web run test:e2e`（重新构建 `web/dist` 与 `bin/video-rename` 后） | 184 通过、0 失败（10.2 分钟）。上一轮全量有 1 项失败：离开页面时提示随页面淡出而未立即消失，改为路由离开即撤下本页提示后通过 |
+
+保留未改：E2E 中约 600 处 CSS 定位器未改为 `getByRole`/`getByLabel`；`LibraryPage`（1913 行）与 `RunsPage`（1056 行）未进一步拆分。另发现 `models.Store.Get` 等 I/O 方法缺少 ctx、`App` 与 `Library` 在结构体中保存 context，属 Go 规范第 5 节的存量差异，本轮未处理。
+
 ## 验证边界
 
 未运行规模测试（`-tags=scale`、`scale_large`）。未在 Linux 实机运行二进制，交叉编译只证明可构建；Node.js 26 与 Go 1.27.3 的 GitHub Actions 结果以推送后的运行页面为准。`npm outdated` 列出的小版本更新（如 vite 8.3.5、vue 3.5.44、vue-tsc 3.3.13）本轮未升级。

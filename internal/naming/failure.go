@@ -23,7 +23,8 @@ func FailureTitleError(raw string, keywords []string) *domain.JobError {
 		if keyword != "" && strings.Contains(title, strings.ToLower(keyword)) {
 			return &domain.JobError{
 				Code:    domain.CodeNamingFailed,
-				Message: fmt.Sprintf("命名失败：模型标题包含失败词句 %q，已保留原文件名", keyword),
+				Message: fmt.Sprintf("model title contains failure keyword %q; original name kept", keyword),
+				Details: map[string]any{"keyword": keyword},
 			}
 		}
 	}

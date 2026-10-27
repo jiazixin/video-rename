@@ -1,4 +1,6 @@
 <script setup lang="ts">
+  import { formatCount, formatPercent } from '../../lib/format/number';
+  import { errorText } from '../../app/errors';
   import { computed, nextTick, ref } from 'vue';
   import {
     Check,
@@ -14,20 +16,21 @@
     Play,
     Clock3
   } from '@lucide/vue';
-  import Modal from '../../components/Modal.vue';
+  import ModalDialog from '../../components/ModalDialog.vue';
   import StatusBadge from '../../components/StatusBadge.vue';
   import DateTime from '../../components/DateTime.vue';
   import SelectField from '../../components/SelectField.vue';
   import PageNavigation from '../../components/PageNavigation.vue';
-  import { clockPart, formatTime } from '../../lib/date/format';
+  import { formatClock, formatTime } from '../../lib/format/date';
   import { statusNames } from '../../app/labels';
   import { isActiveRunStatus, type Run } from '../../app/contracts';
+  import { displayPath } from '../../lib/format/path';
   import { copyText } from '../../lib/clipboard/clipboard';
   import { useRunRecords, type RecordFilter, type RunItem } from './use-run-records';
   import RunLiveRecords from './RunLiveRecords.vue';
   import './run-detail.css';
 
-  const props = defineProps<{
+  const { run, elapsed } = defineProps<{
     run: Run;
     elapsed: string;
   }>();
@@ -37,7 +40,7 @@
     cancel: [];
     notice: [message: string];
   }>();
-  const active = computed(() => isActiveRunStatus(props.run.status));
+  const active = computed(() => isActiveRunStatus(run.status));
   const sections = ref({ records: true, config: false });
   const {
     state: records,
@@ -45,7 +48,7 @@
     filter,
     directory
   } = useRunRecords(
-    () => props.run.id,
+    () => run.id,
     () => sections.value.records,
     () => active.value
   );
@@ -91,8 +94,10 @@
     skipped: '跳过',
     failed: '失败'
   };
-  const groupCount = (stats?: (typeof records.directories)[number]) =>
-    !stats ? 0 : filter.value === 'all' ? stats.total : stats[filter.value];
+  const groupCount = (stats?: (typeof records.directories)[number]) => {
+    if (!stats) return 0;
+    return filter.value === 'all' ? stats.total : stats[filter.value];
+  };
   const captions: Record<RecordFilter, string> = {
     all: '按提交时的目录分组，包含排队文件；失败次数在文件内展开。',
     running: '正在处理的文件按开始时间排列，最久的在前；下方是最近结束的文件。',
@@ -117,21 +122,16 @@
   }
   const promptOpen = ref(false);
   const copyError = ref('');
-  const processed = computed(
-    () => (props.run.done || 0) + (props.run.skipped || 0) + (props.run.failed || 0)
-  );
-  const percent = (n: number) =>
-    props.run.discovered > 0
-      ? `${Math.min(100, (n / props.run.discovered) * 100).toFixed(1)}%`
-      : '—';
+  const processed = computed(() => (run.done || 0) + (run.skipped || 0) + (run.failed || 0));
+  const percent = (n: number) => formatPercent(Math.min(n, run.discovered), run.discovered);
   const progress = computed(() =>
-    props.run.discovered > 0 ? Math.min(100, (processed.value / props.run.discovered) * 100) : 0
+    run.discovered > 0 ? Math.min(100, (processed.value / run.discovered) * 100) : 0
   );
   const stats = computed(() => [
-    { label: '已完成', value: props.run.done || 0, tone: 'success' },
-    { label: '已跳过', value: props.run.skipped || 0, tone: 'muted' },
-    { label: '失败', value: props.run.failed || 0, tone: 'error' },
-    { label: '总任务', value: props.run.discovered || 0, tone: 'primary' }
+    { label: '已完成', value: run.done || 0, tone: 'success' },
+    { label: '已跳过', value: run.skipped || 0, tone: 'muted' },
+    { label: '失败', value: run.failed || 0, tone: 'error' },
+    { label: '总任务', value: run.discovered || 0, tone: 'primary' }
   ]);
   const tone = (status: string) => {
     if (['done', 'completed', 'success'].includes(status)) return 'success';
@@ -140,16 +140,33 @@
     if (['running', 'scanning'].includes(status)) return 'primary';
     return 'muted';
   };
-  const clock = (stamp?: string) => (stamp ? clockPart(stamp) : '—');
+  const clock = (stamp?: string) => (stamp ? formatClock(stamp) : '—');
+  const processingLabels: Record<string, string> = {
+    paused: '已暂停',
+    scanning: '扫描与检查',
+    cancelling: '正在取消'
+  };
+  function submittedTone(r: Run) {
+    if (r.status === 'queued') return 'warning';
+    return r.created ? 'primary' : 'pending';
+  }
+  function processingValue(r: Run) {
+    if (r.started) return `${active.value ? '已运行' : '运行'} ${elapsed}`;
+    return r.status === 'scanning' ? '正在扫描目标目录' : '等待开始';
+  }
+  function processingTone(r: Run, stateTone: string) {
+    if (active.value && r.status !== 'queued') return stateTone;
+    return r.started ? 'primary' : 'pending';
+  }
   const lifecycle = computed(() => {
-    const r = props.run;
+    const r = run;
     const ended = !active.value;
     const stateTone = tone(r.status);
     const steps = [
       {
         label: '提交',
         value: clock(r.created),
-        tone: r.status === 'queued' ? 'warning' : r.created ? 'primary' : 'pending',
+        tone: submittedTone(r),
         reached: !!r.created,
         current: r.status === 'queued'
       },
@@ -161,20 +178,9 @@
         current: false
       },
       {
-        label:
-          r.status === 'paused'
-            ? '已暂停'
-            : r.status === 'scanning'
-              ? '扫描与检查'
-              : r.status === 'cancelling'
-                ? '正在取消'
-                : '处理中',
-        value: r.started
-          ? `${active.value ? '已运行' : '运行'} ${props.elapsed}`
-          : r.status === 'scanning'
-            ? '正在扫描目标目录'
-            : '等待开始',
-        tone: active.value && r.status !== 'queued' ? stateTone : r.started ? 'primary' : 'pending',
+        label: processingLabels[r.status] ?? '处理中',
+        value: processingValue(r),
+        tone: processingTone(r, stateTone),
         reached: !!r.started,
         current: active.value && r.status !== 'queued'
       },
@@ -192,35 +198,33 @@
     }));
   });
   const targetNames = computed(() =>
-    props.run.targets.map((target, i) => props.run.target_names?.[i] || `条目 #${target}`)
+    run.targets.map((target, i) =>
+      run.target_names?.[i] ? displayPath(run.target_names[i]) : `条目 #${target}`
+    )
   );
   const retryLimit = computed(() =>
-    props.run.request_config?.retry_enabled ? (props.run.request_config.retry_count ?? 0) : 0
+    run.request_config?.retry_enabled ? (run.request_config.retry_count ?? 0) : 0
   );
   const path = (item: RunItem) => item.current_path || item.original_path || `文件 #${item.entry}`;
   const lastAttempt = (item: RunItem) => item.attempts?.at(-1);
   const attemptSummary = (item: RunItem) => {
     const last = lastAttempt(item);
-    if (last?.status === 'success')
-      return last.fallback
-        ? '兜底成功'
-        : (item.attempts?.length || 0) > 1
-          ? '重试成功'
-          : '主模型成功';
+    if (last?.status === 'success') {
+      if (last.fallback) return '兜底成功';
+      return (item.attempts?.length || 0) > 1 ? '重试成功' : '主模型成功';
+    }
     if (item.status === 'running') return '处理中';
     if (item.status === 'cancelled') return '已取消';
     return item.status === 'failed' ? '请求失败' : '请求记录';
   };
   const itemStamp = (item: RunItem) =>
     item.updated_ms ? new Date(item.updated_ms).toISOString() : lastAttempt(item)?.started;
-  const nameLabel = (item: RunItem) =>
-    item.new_name && item.operation_status !== 'committed'
-      ? item.operation_status === 'failed'
-        ? '拟用名称 · 改名失败'
-        : '拟用名称 · 待核对'
-      : '新文件名';
+  const nameLabel = (item: RunItem) => {
+    if (!item.new_name || item.operation_status === 'committed') return '新文件名';
+    return item.operation_status === 'failed' ? '拟用名称 · 改名失败' : '拟用名称 · 待核对';
+  };
   const nameValue = (item: RunItem) => {
-    if (props.run.task === 'extract') return '— 独立抽帧，不改名';
+    if (run.task === 'extract') return '— 独立抽帧，不改名';
     if (item.new_name) return item.new_name;
     if (item.status === 'queued') return '— 等待处理';
     if (item.status === 'running') return '— 处理中';
@@ -243,12 +247,30 @@
       await copyText(value);
       emit('notice', '路径已复制');
     } catch (e) {
-      copyError.value = (e as Error).message;
+      copyError.value = errorText(e);
     }
   }
+  function stepState(step: { current: boolean; reached: boolean }) {
+    if (step.current) return '当前阶段';
+    return step.reached ? '已到达' : '未到达';
+  }
+  const recordsSummary = computed(() => {
+    if (records.loaded) return `${records.all_total} 个文件 · ${records.directories.length} 个目录`;
+    return records.error ? '读取失败' : '正在读取…';
+  });
+  const recordsPageSummary = computed(() => {
+    if (records.loaded) return `共 ${records.total} 个文件 · 每页 100 项`;
+    return records.error ? '读取失败' : '正在读取…';
+  });
+  const attemptStatuses: Record<string, string> = { success: '成功', cancelled: '已取消' };
+  const attemptStatus = (status: string) => attemptStatuses[status] ?? '失败';
+  const triggerLabel = computed(() => {
+    if (run.source === 'schedule') return '定时触发';
+    return run.plan ? '计划立即运行' : '手动触发';
+  });
 </script>
 <template>
-  <Modal :title="`运行 #${run.id}`" wide class="run-detail-dialog" @close="emit('close')">
+  <ModalDialog :title="`运行 #${run.id}`" wide class="run-detail-dialog" @close="emit('close')">
     <template #header>
       <StatusBadge class="detail-header-status" :status="run.status">{{
         statusNames[run.status] || run.status
@@ -261,12 +283,12 @@
     <div class="run-detail">
       <ol class="detail-lifecycle" aria-label="批次生命周期">
         <li
-          v-for="(step, i) in lifecycle"
-          :key="i"
+          v-for="step in lifecycle"
+          :key="step.label"
           :data-tone="step.tone"
           :data-reached="step.reached || undefined"
           :data-link-reached="step.linkReached || undefined"
-          :aria-label="`${step.label} · ${step.current ? '当前阶段' : step.reached ? '已到达' : '未到达'}`"
+          :aria-label="`${step.label} · ${stepState(step)}`"
           :aria-current="step.current ? 'step' : undefined"
           :class="{ 'is-live': step.current && run.status === 'running' }"
         >
@@ -290,7 +312,7 @@
           class="detail-statistic"
           :data-tone="stat.tone"
         >
-          <strong>{{ stat.value.toLocaleString() }}</strong
+          <strong>{{ formatCount(stat.value) }}</strong
           ><span :title="i === 3 ? '已发现任务' : undefined"
             ><span>{{ stat.label }}</span
             ><small v-if="i < 3">{{ percent(stat.value) }}</small></span
@@ -311,28 +333,28 @@
             class="detail-prompt-tag"
             :aria-expanded="promptOpen"
             aria-controls="run-prompt-snapshot"
-            @click="promptOpen = !promptOpen"
             :title="`提示词快照 · 配置：${run.model_config_title || '未记录'}`"
+            @click="promptOpen = !promptOpen"
             ><ChevronRight :size="13" :class="{ 'is-open': promptOpen }" /><span
               >提示词快照 · {{ run.model_config_title || '查看内容' }}</span
             ></button
           >
         </template>
       </div>
-      <div v-if="promptOpen" ref="promptBody" id="run-prompt-snapshot" class="detail-prompt-body"
+      <div v-if="promptOpen" id="run-prompt-snapshot" ref="promptBody" class="detail-prompt-body"
         ><p class="detail-caption">创建批次时保存的完整提示词</p><pre>{{ run.prompt_body }}</pre>
       </div>
       <div v-if="run.task === 'extract'" class="detail-metadata"
         ><span>独立抽帧 · 不使用模型</span></div
       >
       <div v-if="run.error" role="alert" class="detail-run-error"
-        ><CircleAlert :size="16" /><span>{{ run.error }}</span></div
+        ><CircleAlert :size="16" /><span>{{ errorText(run.error) }}</span></div
       >
       <div class="detail-batch-progress">
         <div
           ><span>批次处理进度 <small>含完成、跳过与失败</small></span
           ><strong
-            >{{ processed.toLocaleString() }} / {{ (run.discovered || 0).toLocaleString()
+            >{{ formatCount(processed) }} / {{ formatCount(run.discovered || 0)
             }}<span>{{ percent(processed) }}</span></strong
           ></div
         >
@@ -355,13 +377,7 @@
             @click="sections.records = !sections.records"
           >
             <FileText :size="17" /><strong>运行记录</strong
-            ><span class="section-summary">{{
-              records.loaded
-                ? `${records.all_total} 个文件 · ${records.directories.length} 个目录`
-                : records.error
-                  ? '读取失败'
-                  : '正在读取…'
-            }}</span
+            ><span class="section-summary">{{ recordsSummary }}</span
             ><ChevronRight :size="16" :class="{ 'is-open': sections.records }" />
           </button>
           <div
@@ -390,8 +406,9 @@
               class="detail-skip-reasons"
               aria-label="跳过原因"
             >
-              <li v-for="reason in records.skip_reasons" :key="reason.message"
-                >{{ reason.message || '未记录原因' }} <strong>{{ reason.count }}</strong></li
+              <li v-for="reason in records.skip_reasons" :key="JSON.stringify(reason.reason)"
+                >{{ errorText(reason.reason) || '未记录原因' }}
+                <strong>{{ reason.count }}</strong></li
               >
             </ul>
             <div v-if="records.error" class="detail-record-error" role="alert"
@@ -477,7 +494,9 @@
                       ><dd>{{ nameValue(item) }}</dd></div
                     ></dl
                   >
-                  <p v-if="item.message" class="detail-record-message">{{ item.message }}</p>
+                  <p v-if="item.message" class="detail-record-message">{{
+                    errorText(item.message)
+                  }}</p>
                   <div v-if="item.attempts?.length" class="attempt-history">
                     <button
                       class="detail-attempt-toggle"
@@ -505,14 +524,8 @@
                           ><dd>{{ attempt.model_config_title }} · {{ attempt.model }}</dd
                           ><dt>开始时间</dt><dd><DateTime :value="attempt.started" /></dd
                           ><dt>耗时</dt><dd>{{ attempt.duration_ms }} ms</dd><dt>请求状态</dt
-                          ><dd>{{
-                            attempt.status === 'success'
-                              ? '成功'
-                              : attempt.status === 'cancelled'
-                                ? '已取消'
-                                : '失败'
-                          }}</dd
-                          ><dt>错误信息</dt><dd>{{ attempt.message || '—' }}</dd></dl
+                          ><dd>{{ attemptStatus(attempt.status) }}</dd
+                          ><dt>错误信息</dt><dd>{{ errorText(attempt.error) || '—' }}</dd></dl
                         ></div
                       >
                     </div>
@@ -527,13 +540,7 @@
               >{{ emptyText }}</p
             >
             <div class="pagination" aria-label="运行记录分页"
-              ><span class="subtle">{{
-                records.loaded
-                  ? `共 ${records.total} 个文件 · 每页 100 项`
-                  : records.error
-                    ? '读取失败'
-                    : '正在读取…'
-              }}</span
+              ><span class="subtle">{{ recordsPageSummary }}</span
               ><PageNavigation
                 :page="records.page"
                 :total-pages="Math.ceil(records.total / 100)"
@@ -559,7 +566,7 @@
           /></button>
           <div v-show="sections.config" id="run-detail-config" class="detail-section-content"
             ><div class="detail-targets"
-              ><span v-for="(target, i) in targetNames" :key="i"
+              ><span v-for="target in targetNames" :key="target"
                 ><Folder :size="15" /><span :title="target">{{ target }}</span></span
               ><small class="detail-recursive">{{
                 run.recursive ? '包含子目录' : '仅所选目标的当前层'
@@ -569,10 +576,7 @@
                 ><dt>任务类型</dt
                 ><dd>{{ run.task === 'extract' ? '独立抽帧' : '自动命名' }}</dd></div
               ><div
-                ><dt>触发方式</dt
-                ><dd>{{
-                  run.source === 'schedule' ? '定时触发' : run.plan ? '计划立即运行' : '手动触发'
-                }}</dd></div
+                ><dt>触发方式</dt><dd>{{ triggerLabel }}</dd></div
               >
               <template v-if="run.task !== 'extract'"
                 ><div
@@ -630,5 +634,5 @@
         ></div
       ></template
     >
-  </Modal>
+  </ModalDialog>
 </template>

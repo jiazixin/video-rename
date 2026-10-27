@@ -1,8 +1,9 @@
 package storage
 
 import (
-	"modernc.org/sqlite"
 	"strings"
+
+	"modernc.org/sqlite"
 )
 
 func init() { sqlite.MustRegisterCollationUtf8("NATURAL_NAME", naturalName) }

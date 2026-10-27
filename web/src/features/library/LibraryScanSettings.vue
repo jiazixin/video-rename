@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import ToastNotice from '../../components/ToastNotice.vue';
+  import { useToast } from '../../app/use-toast';
   import { computed, onMounted, ref, watch } from 'vue';
   import { RefreshCw, Save } from '@lucide/vue';
   import { type LibraryScanSettings } from '../../app/contracts';
@@ -8,7 +8,7 @@
   import { useLibraryScan } from './library-scan';
   const scan = useLibraryScan();
   const { state, error, actionError, submitting, scanning } = scan;
-  const toast = ref<InstanceType<typeof ToastNotice>>();
+  const toast = useToast();
   const form = ref<LibraryScanSettings>(),
     saved = ref('');
   const dirty = computed(() => !!form.value && JSON.stringify(form.value) !== saved.value);
@@ -32,13 +32,12 @@
       excluded_targets: [...result.excluded_targets]
     };
     saved.value = JSON.stringify(form.value);
-    toast.value?.show('扫描设置已保存。自动扫描在后台运行，关闭网页仍会继续。');
+    toast.show('扫描设置已保存。自动扫描在后台运行，关闭网页仍会继续。');
   }
   onMounted(scan.startPolling);
 </script>
 <template>
   <section class="panel library-scan-settings">
-    <ToastNotice ref="toast" />
     <header
       ><span class="eyebrow">媒体索引</span><h2>后台目录扫描</h2
       ><p class="help"
@@ -150,9 +149,9 @@
     gap: 18px 28px;
     padding: 14px 16px;
     margin-bottom: 22px;
-    border: 1px solid #e5eae7;
+    border: 1px solid var(--palette-e5eae7);
     border-radius: 8px;
-    background: #f8faf9;
+    background: var(--palette-f8faf9);
   }
   .scan-settings-options label {
     margin: 0;

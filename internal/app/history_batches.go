@@ -10,7 +10,7 @@ func (a *App) logBatches(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := a.DB.Read().QueryContext(r.Context(), query)
 	if err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
 	defer rows.Close()
@@ -18,14 +18,14 @@ func (a *App) logBatches(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
-			failure(w, err)
+			writeError(w, r, err)
 			return
 		}
 		out = append(out, id)
 	}
 	if err := rows.Err(); err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
-	send(w, 200, out)
+	send(w, http.StatusOK, out)
 }

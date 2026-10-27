@@ -4,19 +4,23 @@ import (
 	"cmp"
 	"context"
 	"encoding/json/v2"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"slices"
 	"time"
+
 	"video-rename/internal/config"
+	"video-rename/internal/domain"
 )
 
+// AvailableModel is a model offered by a provider.
 type AvailableModel struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
+
+// Discovery lists the models offered by a provider.
 type Discovery struct {
 	Models    []AvailableModel `json:"models"`
 	Truncated bool             `json:"truncated"`
@@ -26,7 +30,7 @@ type Discovery struct {
 func Discover(ctx context.Context, s config.ServerConfig, timeout time.Duration) (Discovery, error) {
 	out := Discovery{Models: []AvailableModel{}}
 	if timeout != 5*time.Second && timeout != 10*time.Second && timeout != 15*time.Second {
-		return out, fmt.Errorf("检测超时只能选择 5s、10s 或 15s")
+		return out, domain.InvalidField("timeout", "invalid_choice")
 	}
 	if err := config.ValidateConnection(&s); err != nil {
 		return out, err
@@ -46,7 +50,7 @@ func Discover(ctx context.Context, s config.ServerConfig, timeout time.Duration)
 		}
 		req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 		if err != nil {
-			return out, fmt.Errorf("模型检测请求无效")
+			return out, domain.Fail(domain.KindInvalid, "discovery_request_invalid", "model list request is invalid")
 		}
 		req.Header.Set("Accept", "application/json")
 		if s.Protocol == "anthropic" {
@@ -60,23 +64,23 @@ func Discover(ctx context.Context, s config.ServerConfig, timeout time.Duration)
 		resp, err := client.Do(req)
 		if err != nil {
 			if ctx.Err() == context.DeadlineExceeded {
-				return out, fmt.Errorf("模型列表检测超时（%s），请重试或检查服务", timeout)
+				return out, domain.Fail(domain.KindUnavailable, "discovery_timeout", "model list request timed out", "timeout", timeout.String())
 			}
-			return out, fmt.Errorf("无法连接模型服务，请检查地址、网络和超时")
+			return out, domain.Fail(domain.KindUnavailable, "discovery_unreachable", "cannot connect to the model service")
 		}
 		raw, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
 		resp.Body.Close()
 		if err != nil {
 			if ctx.Err() == context.DeadlineExceeded {
-				return out, fmt.Errorf("模型列表检测超时（%s），请重试或检查服务", timeout)
+				return out, domain.Fail(domain.KindUnavailable, "discovery_timeout", "model list request timed out", "timeout", timeout.String())
 			}
-			return out, fmt.Errorf("读取模型列表失败")
+			return out, domain.Fail(domain.KindUnavailable, "discovery_read_failed", "read model list")
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return out, fmt.Errorf("模型列表接口返回 HTTP %d，请检查 URL、密钥及服务是否支持 /models", resp.StatusCode)
+			return out, domain.Fail(domain.KindUnavailable, "discovery_http_error", "model list endpoint returned an error status", "status", resp.StatusCode)
 		}
 		if len(raw) > 1<<20 {
-			return out, fmt.Errorf("模型列表响应超过 1 MiB 上限")
+			return out, domain.Fail(domain.KindUnavailable, "discovery_too_large", "model list response exceeds 1 MiB")
 		}
 		var data struct {
 			Data []struct {
@@ -87,7 +91,7 @@ func Discover(ctx context.Context, s config.ServerConfig, timeout time.Duration)
 			LastID  string `json:"last_id"`
 		}
 		if json.Unmarshal(raw, &data) != nil || data.Data == nil {
-			return out, fmt.Errorf("服务未返回有效的模型列表；可手动填写模型名称")
+			return out, domain.Fail(domain.KindUnavailable, "discovery_invalid", "service returned no valid model list")
 		}
 		for _, m := range data.Data {
 			if m.ID == "" || len(m.ID) > 256 || seen[m.ID] {
@@ -107,7 +111,7 @@ func Discover(ctx context.Context, s config.ServerConfig, timeout time.Duration)
 			break
 		}
 		if data.LastID == "" || data.LastID == after {
-			return out, fmt.Errorf("模型列表分页游标无效")
+			return out, domain.Fail(domain.KindUnavailable, "discovery_cursor_invalid", "model list page cursor is invalid")
 		}
 		after = data.LastID
 		if page == 9 {

@@ -3,23 +3,29 @@ package notifications
 
 import (
 	"encoding/json/v2"
-	"fmt"
+	"log/slog"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
+
+	"video-rename/internal/domain"
 	"video-rename/internal/storage"
 )
 
+// Kinds lists the supported notification channel kinds.
 var Kinds = []string{"dingtalk", "wecom", "bark", "telegram", "webhook"}
-var Names = map[string]string{"wecom": "企业微信", "telegram": "Telegram", "dingtalk": "钉钉", "bark": "Bark", "webhook": "Webhook"}
 
+// Credentials holds the secret settings of a channel.
 type Credentials struct {
 	Endpoint string `json:"endpoint"`
 	Token    string `json:"token"`
 	Secret   string `json:"secret"`
 	ChatID   string `json:"chat_id"`
 }
+
+// Channel is a notification channel as shown in settings, without credentials.
 type Channel struct {
 	Kind        string `json:"kind"`
 	Enabled     bool   `json:"enabled"`
@@ -29,6 +35,8 @@ type Channel struct {
 	HasSecret   bool   `json:"has_secret"`
 	ChatID      string `json:"chat_id"`
 }
+
+// Input is a change to a notification channel.
 type Input struct {
 	Kind        string `json:"kind"`
 	Enabled     bool   `json:"enabled"`
@@ -36,13 +44,21 @@ type Input struct {
 	Credentials
 	ClearSecret bool `json:"clear_secret"`
 }
+
+// Service stores channel settings and delivers batch summaries.
 type Service struct {
-	DB   *storage.Store
-	mu   sync.Mutex
-	Send func(Credentials, string, string, string) error
+	logger *slog.Logger
+	DB     *storage.Store
+	mu     sync.Mutex
+	Send   func(Credentials, string, string, string) error
 }
 
-func New(db *storage.Store) *Service { s := &Service{DB: db}; s.Send = sendMessage; return s }
+// New creates the notification service.
+func New(db *storage.Store, logger *slog.Logger) *Service {
+	s := &Service{logger: logger, DB: db}
+	s.Send = sendMessage
+	return s
+}
 func (s *Service) get(kind string) (Channel, Credentials, error) {
 	c := Channel{Kind: kind}
 	var encrypted string
@@ -52,11 +68,11 @@ func (s *Service) get(kind string) (Channel, Credentials, error) {
 	}
 	raw, err := s.DB.Unseal(encrypted)
 	if err != nil {
-		return c, Credentials{}, fmt.Errorf("通知凭据无法解密，请核对数据库密钥")
+		return c, Credentials{}, domain.Fail(domain.KindInternal, "notification_credentials_unreadable", "notification credentials cannot be decrypted; check the database key")
 	}
 	var secret Credentials
 	if err = json.Unmarshal([]byte(raw), &secret); err != nil {
-		return c, secret, fmt.Errorf("通知配置无效")
+		return c, secret, domain.Fail(domain.KindInternal, "notification_config_invalid", "stored notification configuration is invalid")
 	}
 	c.ChatID = secret.ChatID
 	c.HasEndpoint = secret.Endpoint != ""
@@ -64,6 +80,8 @@ func (s *Service) get(kind string) (Channel, Credentials, error) {
 	c.HasSecret = secret.Secret != ""
 	return c, secret, nil
 }
+
+// List returns the notification channels.
 func (s *Service) List() ([]Channel, error) {
 	out := []Channel{}
 	for _, kind := range Kinds {
@@ -84,35 +102,37 @@ func (s *Service) List() ([]Channel, error) {
 	return out, nil
 }
 func validate(kind string, c Credentials) error {
-	if Names[kind] == "" {
-		return fmt.Errorf("不支持的通知渠道")
+	if !slices.Contains(Kinds, kind) {
+		return errUnsupportedChannel
 	}
 	if kind == "telegram" {
 		if !regexp.MustCompile(`^[0-9]+:[A-Za-z0-9_-]+$`).MatchString(c.Token) || strings.TrimSpace(c.ChatID) == "" {
-			return fmt.Errorf("请填写有效的 Bot Token 和 Chat ID")
+			return domain.InvalidField("token", "telegram_incomplete")
 		}
 		return nil
 	}
 	u, err := url.Parse(c.Endpoint)
 	if err != nil || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.Fragment != "" {
-		return fmt.Errorf("请填写有效的 HTTP/HTTPS 推送地址")
+		return domain.InvalidField("endpoint", "invalid_url")
 	}
 	if kind == "bark" && strings.Trim(u.Path, "/") == "" {
-		return fmt.Errorf("Bark 地址须以设备 Key 结尾")
+		return domain.InvalidField("endpoint", "bark_key_required")
 	}
 	if kind == "wecom" && (u.Scheme != "https" || u.Host != "qyapi.weixin.qq.com" || u.Path != "/cgi-bin/webhook/send" || u.Query().Get("key") == "") {
-		return fmt.Errorf("请填写企业微信群机器人的完整 Webhook 地址")
+		return domain.InvalidField("endpoint", "wecom_webhook_required")
 	}
 	if kind == "dingtalk" && (u.Scheme != "https" || u.Host != "oapi.dingtalk.com" || u.Path != "/robot/send" || u.Query().Get("access_token") == "") {
-		return fmt.Errorf("请填写钉钉群机器人的完整 Webhook 地址")
+		return domain.InvalidField("endpoint", "dingtalk_webhook_required")
 	}
 	return nil
 }
+
+// Save applies v to its channel.
 func (s *Service) Save(v Input) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if Names[v.Kind] == "" {
-		return fmt.Errorf("不支持的通知渠道")
+	if !slices.Contains(Kinds, v.Kind) {
+		return errUnsupportedChannel
 	}
 	var exists int
 	if err := s.DB.QueryRow("SELECT count(*) FROM notification_channels WHERE kind=?", v.Kind).Scan(&exists); err != nil {
@@ -174,10 +194,16 @@ func (s *Service) Save(v Input) error {
 	}
 	return tx.Commit()
 }
+
+// errUnsupportedChannel rejects an unknown notification channel.
+var errUnsupportedChannel = domain.Fail(domain.KindInvalid, "unsupported_channel", "unsupported notification channel")
+
+// Test sends a test message through the channel of kind. The message is
+// notification content, a recorded exception to the error-code rule.
 func (s *Service) Test(kind string) error {
 	_, c, err := s.get(kind)
 	if err != nil {
-		return fmt.Errorf("请先保存此渠道配置")
+		return domain.Fail(domain.KindConflict, "notification_not_configured", "save this channel first")
 	}
 	if err = validate(kind, c); err != nil {
 		return err

@@ -4,26 +4,27 @@ import (
 	"bytes"
 	"encoding/json/v2"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
+
 	"video-rename/internal/config"
 	"video-rename/internal/systemsettings"
 )
 
 func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 	cfg := &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}
-	a, err := New(cfg)
+	a, err := New(cfg, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer a.Close()
 	h := a.Handler()
 	var cookie *http.Cookie
-	csrf := ""
-	call := func(method, path string, payload any, authorized bool) *httptest.ResponseRecorder {
+	call := func(method, path string, payload any, sameSite bool) *httptest.ResponseRecorder {
 		raw, _ := json.Marshal(payload)
 		r := httptest.NewRequest(method, "http://example.com"+path, bytes.NewReader(raw))
 		r.Header.Set("Content-Type", "application/json")
@@ -31,27 +32,26 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 		if cookie != nil {
 			r.AddCookie(cookie)
 		}
-		if authorized {
-			r.Header.Set("X-CSRF-Token", csrf)
+		if !sameSite {
+			r.Header.Set("Sec-Fetch-Site", "cross-site")
 		}
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		return w
 	}
 	var w *httptest.ResponseRecorder
-	if w = call("GET", "/api/prompts", nil, false); w.Code != 401 {
+	if w = call("GET", "/api/prompts", nil, true); w.Code != 401 {
 		t.Fatal("unauthenticated list allowed", w.Code)
 	}
-	w = call("POST", "/api/auth/login", map[string]string{"username": "admin", "password": "test-password-123"}, false)
+	w = call("POST", "/api/auth/login", map[string]string{"username": "admin", "password": "test-password-123"}, true)
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	cookie = w.Result().Cookies()[0]
 	var auth map[string]string
 	json.Unmarshal(w.Body.Bytes(), &auth)
-	csrf = auth["csrf"]
 	if w = call("POST", "/api/prompts", map[string]any{"title": "旅行", "body": "描述旅行风景"}, false); w.Code != 403 {
-		t.Fatal("missing CSRF accepted", w.Code)
+		t.Fatal("cross-site write accepted", w.Code)
 	}
 	for _, path := range []string{"/api/prompts/not-a-number", "/api/prompts/0", "/api/model-configs/0", "/api/schedules/0"} {
 		if w = call("PATCH", path, map[string]any{}, true); w.Code != 400 {
@@ -81,7 +81,7 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 		t.Fatal("failure keyword defaults missing from payload", w.Body.String())
 	}
 	if w = call("PUT", "/api/prompts/failure-keywords", map[string]any{"failure_keywords": []string{}}, false); w.Code != http.StatusForbidden {
-		t.Fatal("failure keyword save missing CSRF accepted", w.Code)
+		t.Fatal("cross-site failure keyword save accepted", w.Code)
 	}
 	for _, payload := range []any{
 		map[string]any{},
@@ -100,7 +100,7 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 		t.Fatal("rejected request changed rules", got, err)
 	}
 	for _, keywords := range [][]string{{" "}, {strings.Repeat("字", 201)}, make([]string, 101)} {
-		if w = call("PUT", "/api/prompts/failure-keywords", map[string]any{"failure_keywords": keywords}, true); w.Code != http.StatusConflict {
+		if w = call("PUT", "/api/prompts/failure-keywords", map[string]any{"failure_keywords": keywords}, true); w.Code != http.StatusBadRequest {
 			t.Fatal("invalid failure keywords accepted", keywords, w.Code, w.Body.String())
 		}
 	}
@@ -129,7 +129,7 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 	if w = call("PUT", "/api/prompts/fixed", map[string]any{"fixed_prompt": "只输出标题。", "unknown": true}, true); w.Code != 400 {
 		t.Fatal("unknown member accepted", w.Code)
 	}
-	if w = call("PUT", "/api/prompts/fixed", map[string]any{"fixed_prompt": "  "}, true); w.Code != 409 {
+	if w = call("PUT", "/api/prompts/fixed", map[string]any{"fixed_prompt": "  "}, true); w.Code != 400 {
 		t.Fatal("blank fixed prompt accepted", w.Code)
 	}
 	if w = call("PUT", "/api/prompts/fixed", map[string]any{"fixed_prompt": "只输出标题。"}, true); w.Code != 200 || !strings.Contains(w.Body.String(), "只输出标题。") {
@@ -161,10 +161,10 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 	}
 	json.Unmarshal(w.Body.Bytes(), &saved)
 	unbound := map[string]any{"title": "缺提示词", "provider": "custom", "protocol": "openai", "base_url": "http://localhost:8080/v1", "model": "vision", "temperature": 0, "max_tokens": 128, "timeout": "10s"}
-	if w = call("POST", "/api/model-configs", unbound, true); w.Code != 409 || !strings.Contains(w.Body.String(), "请选择提示词") {
+	if w = call("POST", "/api/model-configs", unbound, true); w.Code != 400 || !strings.Contains(w.Body.String(), `"path":"prompt_id"`) {
 		t.Fatal("profile without prompt accepted", w.Code, w.Body.String())
 	}
-	if w = call("DELETE", fmt.Sprintf("/api/prompts/%d", entry.ID), map[string]any{"version": entry.Version}, true); w.Code != 409 || !strings.Contains(w.Body.String(), "1 个模型配置") {
+	if w = call("DELETE", fmt.Sprintf("/api/prompts/%d", entry.ID), map[string]any{"version": entry.Version}, true); w.Code != 409 || !strings.Contains(w.Body.String(), `"configs":1`) {
 		t.Fatal("referenced prompt deleted", w.Code, w.Body.String())
 	}
 	if w = call("DELETE", fmt.Sprintf("/api/prompts/%d", entry.ID), map[string]any{"version": entry.Version + 1}, true); w.Code != 409 {
@@ -176,7 +176,7 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 	if w = call("PATCH", fmt.Sprintf("/api/model-configs/%d", saved.ID), profile, true); w.Code != 200 {
 		t.Fatal("profile could not switch prompt", w.Code, w.Body.String())
 	}
-	if w = call("DELETE", fmt.Sprintf("/api/prompts/%d", entry.ID), map[string]any{"version": entry.Version}, true); w.Code != 200 {
+	if w = call("DELETE", fmt.Sprintf("/api/prompts/%d", entry.ID), map[string]any{"version": entry.Version}, true); w.Code != http.StatusNoContent {
 		t.Fatal("unreferenced prompt delete failed", w.Code, w.Body.String())
 	}
 }

@@ -1,15 +1,18 @@
 <script setup lang="ts">
+  import { errorText } from '../../app/errors';
   import PageNavigation from '../../components/PageNavigation.vue';
-  import ToastNotice from '../../components/ToastNotice.vue';
+  import { useToast } from '../../app/use-toast';
   import { computed, onMounted, onUnmounted, ref } from 'vue';
   import { AlertCircle, CheckCircle2, Copy, Search, RefreshCw, Trash2 } from '@lucide/vue';
-  import { api } from '../../app/api';
+  import { api, apiItems } from '../../app/api';
+  import type { ServerRecord } from '../../app/contracts';
+  import { displayPath } from '../../lib/format/path';
   import { copyText } from '../../lib/clipboard/clipboard';
   import { vTabIndicator } from '../../lib/motion/tab-indicator';
   import DateTime from '../../components/DateTime.vue';
   import DateField from '../../components/DateField.vue';
   import SelectField from '../../components/SelectField.vue';
-  import Modal from '../../components/Modal.vue';
+  import ModalDialog from '../../components/ModalDialog.vue';
   import ModalTransition from '../../components/ModalTransition.vue';
 
   type RecordItem = {
@@ -24,12 +27,12 @@
     duration_ms: number;
     cached: boolean;
     frames: number;
-    message: string;
+    error?: ServerRecord;
   };
   type Group = { items: RecordItem[]; total: number; next: number; page?: number };
   type Report = { success: Group; failure: Group; running: number };
   type Category = 'success' | 'failure';
-  const toast = ref<InstanceType<typeof ToastNotice>>();
+  const toast = useToast();
   const groups = [
     { id: 'success' as Category, label: '抽帧成功' },
     { id: 'failure' as Category, label: '抽帧失败' }
@@ -77,6 +80,7 @@
     ].join('');
   }
   function pathParts(path: string) {
+    if (path !== displayPath(path)) return { directory: '媒体库', name: displayPath(path) };
     const i = path.lastIndexOf('/');
     return {
       directory: i < 0 ? '媒体库' : path.slice(0, i) || '媒体库',
@@ -100,8 +104,8 @@
         to: to.value ? new Date(to.value + 'T23:59:59.999').toISOString() : ''
       });
       const [data, ids] = await Promise.all([
-        api<Report>(`/extractions?${params}`, 'GET', undefined, controller.signal),
-        api<number[]>('/logs/batches?category=extraction', 'GET', undefined, controller.signal)
+        api<Report>(`/extractions?${params}`, { signal: controller.signal }),
+        apiItems<number>('/logs/batches?category=extraction', { signal: controller.signal })
       ]);
       if (n === seq) {
         report.value = data;
@@ -114,7 +118,7 @@
           batches.value = [...ids, Number(run.value)].sort((a, b) => b - a);
       }
     } catch (e) {
-      if (n === seq) error.value = (e as Error).message;
+      if (n === seq) error.value = errorText(e);
     } finally {
       if (n === seq) busy.value = false;
     }
@@ -122,7 +126,7 @@
   function reset() {
     clearTimeout(debounce);
     pages.value = { success: 1, failure: 1 };
-    load();
+    void load();
   }
   function search() {
     clearTimeout(debounce);
@@ -130,7 +134,7 @@
   }
   function changePage(group: Category, value: number) {
     pages.value[group] = value;
-    load();
+    void load();
   }
   async function inspect(row: RecordItem) {
     selected.value = row;
@@ -143,7 +147,7 @@
       const result = await api<{ processing_log: string }>(`/extractions/${row.id}`);
       if (n === detailSeq) diagnostics.value = result.processing_log;
     } catch (e) {
-      if (n === detailSeq) detailError.value = (e as Error).message;
+      if (n === detailSeq) detailError.value = errorText(e);
     } finally {
       if (n === detailSeq) detailBusy.value = false;
     }
@@ -155,9 +159,9 @@
     copyError.value = '';
     try {
       await copyText(JSON.stringify({ ...row, processing_log: diagnostics.value }, null, 2));
-      if (selected.value === row) toast.value?.show('已复制抽帧详情');
+      if (selected.value === row) toast.show('已复制抽帧详情');
     } catch (e) {
-      if (selected.value === row) copyError.value = (e as Error).message;
+      if (selected.value === row) copyError.value = errorText(e);
     } finally {
       copying.value = false;
     }
@@ -170,18 +174,21 @@
     clearing.value = true;
     clearError.value = '';
     try {
-      const result = await api('/extractions/clear', 'POST', { all: true });
-      toast.value?.show(result.message);
+      const result = await api<{ deleted: number }>('/extractions/clear', {
+        method: 'POST',
+        body: { all: true }
+      });
+      toast.show(`已清除 ${result.deleted} 条抽帧记录`);
       clearOpen.value = false;
       reset();
     } catch (e) {
-      clearError.value = (e as Error).message;
+      clearError.value = errorText(e);
     } finally {
       clearing.value = false;
     }
   }
   const timer = setInterval(() => {
-    if (!busy.value && document.visibilityState === 'visible') load();
+    if (!busy.value && document.visibilityState === 'visible') void load();
   }, 3000);
   onMounted(load);
   onUnmounted(() => {
@@ -223,7 +230,6 @@
       <div v-if="error" role="alert" class="notice error"
         >{{ error }}<button @click="load">重试</button></div
       >
-      <ToastNotice ref="toast" />
       <div class="panel filterbar extraction-filters">
         <div class="search-input"
           ><Search :size="16" /><input
@@ -290,7 +296,7 @@
                 <td v-if="group.id === 'success'"
                   ><span>{{ row.cached ? '复用缓存' : '抽帧完成' }} · {{ row.frames }} 帧</span></td
                 ><td v-else class="extraction-reason"
-                  ><p>{{ row.message || '抽帧失败' }}</p
+                  ><p>{{ errorText(row.error) || '抽帧失败' }}</p
                   ><button class="text-button" @click="inspect(row)">详细原因</button></td
                 >
               </tr></tbody
@@ -320,7 +326,7 @@
       </section>
     </div>
     <ModalTransition
-      ><Modal
+      ><ModalDialog
         v-if="selected"
         title="抽帧失败详情"
         wide
@@ -330,18 +336,18 @@
         "
       >
         <dl class="detail-list"
-          ><dt>文件</dt><dd>{{ selected.path }}</dd
+          ><dt>文件</dt><dd>{{ displayPath(selected.path) }}</dd
           ><dt>批次</dt><dd>{{ selected.run ? `#${selected.run}` : '—' }}</dd
           ><dt>开始时间</dt><dd><DateTime :value="selected.started" /></dd><dt>结束时间</dt
           ><dd><DateTime :value="selected.finished" /></dd><dt>总耗时</dt
           ><dd>{{ duration(selected.duration_ms) }}</dd
-          ><dt>失败原因</dt><dd>{{ selected.message }}</dd></dl
+          ><dt>失败原因</dt><dd>{{ errorText(selected.error) }}</dd></dl
         >
         <p v-if="detailBusy" role="status">正在读取详细原因…</p
         ><div v-if="detailError" class="notice error" role="alert"
           >{{ detailError }}<button @click="inspect(selected)">重试</button></div
         ><pre v-if="diagnostics" class="extraction-diagnostics">{{ diagnostics }}</pre
-        ><p v-else-if="!detailBusy && !detailError" class="help">{{ selected.message }}</p>
+        ><p v-else-if="!detailBusy && !detailError" class="help">{{ errorText(selected.error) }}</p>
         <div v-if="copyError" class="notice error" role="alert">{{ copyError }}</div>
         <div class="modal-actions"
           ><button :disabled="detailBusy || copying" @click="copy"
@@ -355,10 +361,10 @@
             >关闭</button
           ></div
         >
-      </Modal></ModalTransition
+      </ModalDialog></ModalTransition
     >
     <ModalTransition
-      ><Modal v-if="clearOpen" title="清除抽帧记录" @close="!clearing && (clearOpen = false)"
+      ><ModalDialog v-if="clearOpen" title="清除抽帧记录" @close="!clearing && (clearOpen = false)"
         ><p>清除全部已结束的抽帧成功和失败记录（含其他页）。</p
         ><p class="help">正在抽帧的记录保留。清除日志后，已有截图缓存仍可使用。</p
         ><div v-if="clearError" class="notice error" role="alert">{{ clearError }}</div
@@ -367,7 +373,7 @@
           ><button class="cancel-run" :disabled="clearing" @click="clear">{{
             clearing ? '正在清除…' : '确认清除'
           }}</button></div
-        ></Modal
+        ></ModalDialog
       ></ModalTransition
     >
   </section>
@@ -391,10 +397,10 @@
     color: var(--ink);
   }
   .extraction-group[aria-label='抽帧成功'] h2 {
-    color: #0e8a5c;
+    color: var(--palette-0e8a5c);
   }
   .extraction-group[aria-label='抽帧失败'] h2 {
-    color: #b14545;
+    color: var(--tone-red-ink);
   }
   .extraction-table {
     min-width: 1080px;

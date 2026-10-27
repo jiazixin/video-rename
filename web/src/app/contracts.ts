@@ -1,4 +1,11 @@
-export interface Entry {
+/** An error or outcome record: a code, its English message and details. */
+export type ServerRecord = {
+  code?: string
+  message?: string
+  details?: Record<string, unknown>
+}
+
+export type Entry = {
   progress?: { total: number; processed: number; unknown: number; active: number }
   contents?: { directories: number; videos: number; images: number; audio: number } | null
   id: number
@@ -13,7 +20,7 @@ export interface Entry {
   restore_id: number
   task_status: string
 }
-export interface Page {
+export type Page = {
   page?: number
   total: number
   items: Entry[]
@@ -21,23 +28,23 @@ export interface Page {
   generation: string
   refreshing: boolean
   refreshed: string
-  error: string
+  error?: ServerRecord
   directory: Entry
   breadcrumbs: Entry[]
 }
-export interface DirectoryState {
+export type DirectoryState = {
   generation: string
   refreshing: boolean
   refreshed: string
-  error: string
+  error?: ServerRecord
 }
-export interface LibraryScanSettings {
+export type LibraryScanSettings = {
   excluded_targets: number[]
   enabled: boolean
   interval_minutes: number
   targets: number[]
 }
-export interface LibraryScanStatus {
+export type LibraryScanStatus = {
   id: string
   status:
     'idle' | 'scanning' | 'cancelling' | 'completed' | 'partial_failure' | 'failed' | 'cancelled'
@@ -52,14 +59,15 @@ export interface LibraryScanStatus {
   added: number
   changed: number
   removed: number
-  errors: { path: string; message: string }[]
+  /** scope replaces path for failures of the scan settings or targets. */
+  errors: { path?: string; scope?: 'settings' | 'targets'; error: ServerRecord }[]
 }
-export interface LibraryScanState {
+export type LibraryScanState = {
   directory_paths: Record<number, string>
   settings: LibraryScanSettings
   status: LibraryScanStatus
 }
-export interface Run {
+export type Run = {
   task?: 'rename' | 'extract'
   target_names?: string[]
   started?: string
@@ -96,10 +104,10 @@ export interface Run {
   token_count: number
   token_records: number
   token_estimated_records: number
-  error: string
+  error?: ServerRecord
   plan: number
 }
-export interface Plan {
+export type Plan = {
   task?: 'rename' | 'extract'
   model_config_id: number
   target_names?: string[]
@@ -112,10 +120,10 @@ export interface Plan {
   timezone: string
   enabled: boolean
   next: string
-  last: string
+  last?: ServerRecord
   version: number
 }
-export interface ModelProfile {
+export type ModelProfile = {
   workers: number
   thinking: string
   thinking_adapter: string
@@ -141,7 +149,7 @@ export interface ModelProfile {
   created: string
   updated: string
 }
-export interface PromptProfile {
+export type PromptProfile = {
   id: number
   title: string
   body: string
@@ -149,20 +157,20 @@ export interface PromptProfile {
   created: string
   updated: string
 }
-export interface UsageTotals {
+export type UsageTotals = {
   tokens: number
   records: number
   estimated_records: number
   batches: number
 }
-export interface UsageBucket {
+export type UsageBucket = {
   from: string
   to: string
   tokens: number
   records: number
   estimated_records: number
 }
-export interface UsageModel {
+export type UsageModel = {
   key: string
   model: string
   provider: string
@@ -172,7 +180,7 @@ export interface UsageModel {
   estimated_records: number
   batches: number
 }
-export interface UsageProfile {
+export type UsageProfile = {
   id: number
   title: string
   tokens: number
@@ -180,14 +188,14 @@ export interface UsageProfile {
   estimated_records: number
   batches: number
 }
-export interface UsageSource {
+export type UsageSource = {
   key: string
   tokens: number
   records: number
   estimated_records: number
   batches: number
 }
-export interface UsageBatch {
+export type UsageBatch = {
   id: number
   model: string
   provider: string
@@ -206,7 +214,7 @@ export interface UsageBatch {
   lifetime_records: number
   last_recorded_at: string
 }
-export interface UsageReport {
+export type UsageReport = {
   range: { from: string; to: string; timezone: string; interval: string }
   totals: UsageTotals
   trend: UsageBucket[]
@@ -220,7 +228,7 @@ export interface UsageReport {
     profiles: { id: number; title: string; model_keys: string[]; deleted: boolean }[]
   }
 }
-export interface AnalysisTotals {
+export type AnalysisTotals = {
   batches: number
   completed: number
   partial_failure: number
@@ -238,7 +246,7 @@ export interface AnalysisTotals {
   p95_item_ms: number
   throughput_per_hour: number
 }
-export interface AnalysisBucket {
+export type AnalysisBucket = {
   from: string
   to: string
   finished_batches: number
@@ -247,11 +255,11 @@ export interface AnalysisBucket {
   skipped: number
   failed: number
 }
-export interface AnalysisDist {
+export type AnalysisDist = {
   label: string
   count: number
 }
-export interface AnalysisProfile {
+export type AnalysisProfile = {
   id: number
   title: string
   model: string
@@ -266,7 +274,7 @@ export interface AnalysisProfile {
   p95_item_ms: number
   throughput_per_hour: number
 }
-export interface AnalysisScatter {
+export type AnalysisScatter = {
   task: 'rename' | 'extract'
   run: number
   items: number
@@ -275,12 +283,12 @@ export interface AnalysisScatter {
   source: string
   profile_title: string
 }
-export interface AnalysisFailure {
-  message: string
+export type AnalysisFailure = {
+  error: ServerRecord
   count: number
   last_at: string
 }
-export interface AnalysisBatch {
+export type AnalysisBatch = {
   task: 'rename' | 'extract'
   id: number
   status: string
@@ -300,7 +308,7 @@ export interface AnalysisBatch {
   duration_ms: number
   avg_item_ms: number
 }
-export interface AnalysisReport {
+export type AnalysisReport = {
   range: { from: string; to: string; timezone: string; interval: string }
   totals: AnalysisTotals
   trend: AnalysisBucket[]
@@ -324,7 +332,7 @@ const activeRunStatuses: readonly string[] = [
 export const isActiveRunStatus = (status: string) => activeRunStatuses.includes(status)
 
 /** One rename operation of an entry, as listed by /entries/{id}/history. */
-export interface Operation {
+export type Operation = {
   id: number
   entry: number
   parent: number
@@ -336,12 +344,12 @@ export interface Operation {
   undo_of: number
   undone: boolean
   created: string
-  error: string
+  error?: ServerRecord
   run: number
 }
 
 /** One success or failure record of /logs. */
-export interface LogRecord {
+export type LogRecord = {
   id: number
   category: string
   action: string
@@ -350,7 +358,7 @@ export interface LogRecord {
   run: number
   old_path: string
   new_path: string
-  message: string
+  error?: ServerRecord
   created: string
   model: string
   model_config_title: string
@@ -359,26 +367,26 @@ export interface LogRecord {
   tokens: number
   token_estimated: boolean
 }
-export interface LogPage {
+export type LogPage = {
   items: LogRecord[]
   total: number
   next: number
   page: number
 }
-export interface LogRetryResult {
+export type LogRetryResult = {
   accepted: number[]
   runs: number[]
-  errors: string[]
+  /** A record, or a group of files, that was not resubmitted. */
+  errors: { record?: number; files?: number; error: ServerRecord }[]
   skipped: number
 }
 
 /** Result of the model configuration's image recognition test. */
-export interface ProbeResult {
-  status: string
+export type ProbeResult = {
+  status: 'passed' | 'mismatch' | 'error'
   answer: string
   expected: string
-  message: string
-  code?: string
+  error?: ServerRecord
   http_status?: number
   elapsed_ms: number
 }

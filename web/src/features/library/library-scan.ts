@@ -1,3 +1,4 @@
+import { errorText } from '../../app/errors'
 import { computed, onUnmounted, ref } from 'vue'
 import { api } from '../../app/api'
 import {
@@ -29,16 +30,19 @@ export function useLibraryScan(onPoll?: (signal: AbortSignal) => Promise<void>) 
       current = new AbortController()
     controller = current
     try {
-      const result = await api<LibraryScanState>('/library/scan', 'GET', undefined, current.signal)
+      const result = await api<LibraryScanState>('/library/scan', { signal: current.signal })
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- the compared state can change while awaiting
       if (request !== serial || !active || current.signal.aborted) return
       state.value = result
       error.value = ''
     } catch (e) {
       if (request === serial && !current.signal.aborted)
-        error.value = `扫描状态读取失败：${(e as Error).message}`
+        error.value = `扫描状态读取失败：${errorText(e)}`
     }
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- the compared state can change while awaiting
     if (request === serial && active && !current.signal.aborted) {
       await onPoll?.(current.signal)
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- the compared state can change while awaiting
       if (request === serial && active && !document.hidden)
         timer = setTimeout(() => void refresh(), 5000)
     }
@@ -68,12 +72,12 @@ export function useLibraryScan(onPoll?: (signal: AbortSignal) => Promise<void>) 
     submitting.value = true
     actionError.value = ''
     try {
-      const status = await api<LibraryScanStatus>(path, 'POST', body)
+      const status = await api<LibraryScanStatus>(path, { method: 'POST', body })
       if (state.value) state.value.status = status
       void refresh()
       return status
     } catch (e) {
-      actionError.value = (e as Error).message
+      actionError.value = errorText(e)
     } finally {
       submitting.value = false
     }
@@ -83,12 +87,15 @@ export function useLibraryScan(onPoll?: (signal: AbortSignal) => Promise<void>) 
     submitting.value = true
     actionError.value = ''
     try {
-      const saved = await api<LibraryScanSettings>('/library/scan/settings', 'PUT', settings)
+      const saved = await api<LibraryScanSettings>('/library/scan/settings', {
+        method: 'PUT',
+        body: settings
+      })
       if (state.value) state.value.settings = saved
       void refresh()
       return saved
     } catch (e) {
-      actionError.value = (e as Error).message
+      actionError.value = errorText(e)
     } finally {
       submitting.value = false
     }

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json/v2"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,7 +26,7 @@ func TestSettingsReloadReadsWhileWriterBusy(t *testing.T) {
 }
 
 func testSettingsReloadReadsWhileWriterBusy(t *testing.T, renewalDue bool) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}})
+	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +55,7 @@ func testSettingsReloadReadsWhileWriterBusy(t *testing.T, renewalDue bool) {
 
 	handler := a.Handler()
 	login := httptest.NewRecorder()
-	loginRequest := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"admin","password":"test-password"}`))
+	loginRequest := jsonRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"admin","password":"test-password"}`))
 	loginRequest.Header.Set("Content-Type", "application/json")
 	handler.ServeHTTP(login, loginRequest)
 	if login.Code != http.StatusOK {
@@ -62,9 +63,8 @@ func testSettingsReloadReadsWhileWriterBusy(t *testing.T, renewalDue bool) {
 	}
 	var session struct {
 		Username string `json:"username"`
-		CSRF     string `json:"csrf"`
 	}
-	if err := json.Unmarshal(login.Body.Bytes(), &session); err != nil || session.Username != "admin" || session.CSRF == "" {
+	if err := json.Unmarshal(login.Body.Bytes(), &session); err != nil || session.Username != "admin" {
 		t.Fatalf("login session: %+v err=%v", session, err)
 	}
 	cookies := login.Result().Cookies()
@@ -98,7 +98,7 @@ func testSettingsReloadReadsWhileWriterBusy(t *testing.T, renewalDue bool) {
 	if _, err := tx.ExecContext(t.Context(), "UPDATE model_configs SET title='uncommitted profile',settings=? WHERE id=?", string(raw), profile.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.ExecContext(t.Context(), "UPDATE sessions SET csrf='uncommitted-csrf',expires=0"); err != nil {
+	if _, err := tx.ExecContext(t.Context(), "UPDATE sessions SET expires=0"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -165,7 +165,6 @@ func testSettingsReloadReadsWhileWriterBusy(t *testing.T, renewalDue bool) {
 		case "/api/auth/session":
 			var got struct {
 				Username string `json:"username"`
-				CSRF     string `json:"csrf"`
 			}
 			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got != session {
 				t.Errorf("session did not read committed values: got=%+v err=%v", got, err)
@@ -190,7 +189,7 @@ func testSettingsReloadReadsWhileWriterBusy(t *testing.T, renewalDue bool) {
 			}
 		case "/api/model-configs":
 			var got []models.Profile
-			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || len(got) != 1 || got[0].ID != profile.ID || got[0].Title != profile.Title || got[0].Model != profile.Model || !got[0].Default {
+			if err := decodeItems(w.Body.Bytes(), &got); err != nil || len(got) != 1 || got[0].ID != profile.ID || got[0].Title != profile.Title || got[0].Model != profile.Model || !got[0].Default {
 				t.Errorf("models did not read committed profile: got=%+v err=%v", got, err)
 			}
 		case "/api/numbering/settings":
@@ -206,9 +205,8 @@ func testSettingsReloadReadsWhileWriterBusy(t *testing.T, renewalDue bool) {
 	if err := tx.QueryRowContext(t.Context(), "SELECT extract_workers FROM system_settings WHERE id=1").Scan(&heldWorkers); err != nil || heldWorkers != 21 {
 		t.Errorf("requests did not leave the writer transaction open: workers=%d err=%v", heldWorkers, err)
 	}
-	var committedCSRF string
 	var expiry int64
-	if err := a.DB.Read().QueryRowContext(t.Context(), "SELECT csrf,expires FROM sessions").Scan(&committedCSRF, &expiry); err != nil || committedCSRF != session.CSRF || expiry != committedExpiry {
-		t.Errorf("requests changed the committed session while the writer was held: csrf_matches=%t expiry=%d want=%d err=%v", committedCSRF == session.CSRF, expiry, committedExpiry, err)
+	if err := a.DB.Read().QueryRowContext(t.Context(), "SELECT expires FROM sessions").Scan(&expiry); err != nil || expiry != committedExpiry {
+		t.Errorf("requests changed the committed session while the writer was held: expiry=%d want=%d err=%v", expiry, committedExpiry, err)
 	}
 }

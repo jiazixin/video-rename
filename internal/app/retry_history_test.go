@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
+	"log/slog"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+
 	"video-rename/internal/config"
 	"video-rename/internal/domain"
 	"video-rename/internal/jobs"
@@ -18,7 +21,7 @@ import (
 )
 
 func TestRetryHistoryRejectsUnsupportedAndKeepsFailures(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,10 +30,10 @@ func TestRetryHistoryRejectsUnsupportedAndKeepsFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	a.retryHistory(w, httptest.NewRequest("POST", "/api/logs/retry", strings.NewReader(`{"ids":[1,2,999],"key":"retry-test-request"}`)))
+	a.retryHistory(w, jsonRequest("POST", "/api/logs/retry", strings.NewReader(`{"ids":[1,2,999],"key":"retry-test-request"}`)))
 	var result struct {
-		Accepted []int64  `json:"accepted"`
-		Errors   []string `json:"errors"`
+		Accepted []int64        `json:"accepted"`
+		Errors   []retryProblem `json:"errors"`
 	}
 	if err = json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
@@ -43,7 +46,7 @@ func TestRetryHistoryRejectsUnsupportedAndKeepsFailures(t *testing.T) {
 		t.Fatal(n, err)
 	}
 	w = httptest.NewRecorder()
-	r := httptest.NewRequest("POST", "/api/logs/retry", strings.NewReader(`{"ids":[2],"key":"retry-test-request"}`))
+	r := jsonRequest("POST", "/api/logs/retry", strings.NewReader(`{"ids":[2],"key":"retry-test-request"}`))
 	r.Header.Set("Content-Type", "application/json")
 	a.Handler().ServeHTTP(w, r)
 	if w.Code != 401 {
@@ -53,7 +56,7 @@ func TestRetryHistoryRejectsUnsupportedAndKeepsFailures(t *testing.T) {
 
 func TestRetryHistoryBatchesAndRemovesOnlyAfterSuccess(t *testing.T) {
 	root := t.TempDir()
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +65,7 @@ func TestRetryHistoryBatchesAndRemovesOnlyAfterSuccess(t *testing.T) {
 	for _, name := range []string{"ffmpeg", "ffprobe"} {
 		if err = os.WriteFile(filepath.Join(tools, name), []byte(`#!/bin/sh
 exit 0
-`), 0700); err != nil {
+`), 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -76,7 +79,7 @@ exit 0
 		t.Fatal(err)
 	}
 	for _, name := range []string{"a.mp4", "b.mp4"} {
-		if err = os.WriteFile(filepath.Join(root, name), []byte("video"), 0600); err != nil {
+		if err = os.WriteFile(filepath.Join(root, name), []byte("video"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -90,11 +93,11 @@ exit 0
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	a.retryHistory(w, httptest.NewRequest("POST", "/api/logs/retry", strings.NewReader(`{"ids":[1,2,3],"key":"batch-retry-request"}`)))
+	a.retryHistory(w, jsonRequest("POST", "/api/logs/retry", strings.NewReader(`{"ids":[1,2,3],"key":"batch-retry-request"}`)))
 	var result struct {
-		Accepted []int64  `json:"accepted"`
-		Runs     []int64  `json:"runs"`
-		Errors   []string `json:"errors"`
+		Accepted []int64        `json:"accepted"`
+		Runs     []int64        `json:"runs"`
+		Errors   []retryProblem `json:"errors"`
 	}
 	if err = json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
@@ -125,7 +128,7 @@ exit 0
 
 func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 	root := t.TempDir()
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +152,7 @@ func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := range 205 {
-		if err = os.WriteFile(filepath.Join(root, fmt.Sprintf("clip-%03d.mp4", i)), []byte("video"), 0600); err != nil {
+		if err = os.WriteFile(filepath.Join(root, fmt.Sprintf("clip-%03d.mp4", i)), []byte("video"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -169,11 +172,11 @@ func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	invalid := httptest.NewRecorder()
-	a.retryHistory(invalid, httptest.NewRequest("POST", "/api/logs/retry", strings.NewReader(`{"all":true,"model_config_id":99999,"key":"invalid-profile-request"}`)))
+	a.retryHistory(invalid, jsonRequest("POST", "/api/logs/retry", strings.NewReader(`{"all":true,"model_config_id":99999,"key":"invalid-profile-request"}`)))
 	var rejected struct {
-		Accepted []int64  `json:"accepted"`
-		Runs     []int64  `json:"runs"`
-		Errors   []string `json:"errors"`
+		Accepted []int64        `json:"accepted"`
+		Runs     []int64        `json:"runs"`
+		Errors   []retryProblem `json:"errors"`
 	}
 	if err = json.Unmarshal(invalid.Body.Bytes(), &rejected); err != nil {
 		t.Fatal(err)
@@ -181,16 +184,16 @@ func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 	if invalid.Code != 200 || len(rejected.Accepted) != 0 || len(rejected.Runs) != 0 || len(rejected.Errors) == 0 {
 		t.Fatal(invalid.Body.String())
 	}
-	if strings.Contains(invalid.Body.String(), "sql:") || !strings.Contains(invalid.Body.String(), "模型配置不存在或已删除") {
+	if strings.Contains(invalid.Body.String(), "sql:") || !strings.Contains(invalid.Body.String(), `"code":"model_config_not_found"`) {
 		t.Fatal(invalid.Body.String())
 	}
 	w := httptest.NewRecorder()
-	a.retryHistory(w, httptest.NewRequest("POST", "/api/logs/retry", strings.NewReader(`{"all":true,"model_config_id":2,"key":"all-failures-request"}`)))
+	a.retryHistory(w, jsonRequest("POST", "/api/logs/retry", strings.NewReader(`{"all":true,"model_config_id":2,"key":"all-failures-request"}`)))
 	var result struct {
-		Accepted []int64  `json:"accepted"`
-		Runs     []int64  `json:"runs"`
-		Errors   []string `json:"errors"`
-		Skipped  int      `json:"skipped"`
+		Accepted []int64        `json:"accepted"`
+		Runs     []int64        `json:"runs"`
+		Errors   []retryProblem `json:"errors"`
+		Skipped  int            `json:"skipped"`
 	}
 	if err = json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
@@ -223,12 +226,12 @@ func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 	}
 	// Repeating the same request before completion reuses the queued runs.
 	repeated := httptest.NewRecorder()
-	a.retryHistory(repeated, httptest.NewRequest("POST", "/api/logs/retry", strings.NewReader(`{"all":true,"model_config_id":2,"key":"all-failures-request"}`)))
+	a.retryHistory(repeated, jsonRequest("POST", "/api/logs/retry", strings.NewReader(`{"all":true,"model_config_id":2,"key":"all-failures-request"}`)))
 	repeatedResult := result
 	if err = json.Unmarshal(repeated.Body.Bytes(), &repeatedResult); err != nil {
 		t.Fatal(err)
 	}
-	if repeated.Code != 200 || !slices.Equal(repeatedResult.Runs, result.Runs) || !slices.Equal(repeatedResult.Accepted, result.Accepted) || !slices.Equal(repeatedResult.Errors, result.Errors) || repeatedResult.Skipped != result.Skipped {
+	if repeated.Code != 200 || !slices.Equal(repeatedResult.Runs, result.Runs) || !slices.Equal(repeatedResult.Accepted, result.Accepted) || !reflect.DeepEqual(repeatedResult.Errors, result.Errors) || repeatedResult.Skipped != result.Skipped {
 		t.Fatal(repeated.Body.String())
 	}
 	// A selection larger than 200 records also produces one batch.
@@ -240,7 +243,7 @@ func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	selection := httptest.NewRecorder()
-	a.retryHistory(selection, httptest.NewRequest("POST", "/api/logs/retry", strings.NewReader(string(payload))))
+	a.retryHistory(selection, jsonRequest("POST", "/api/logs/retry", strings.NewReader(string(payload))))
 	if err = json.Unmarshal(selection.Body.Bytes(), &repeatedResult); err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +259,7 @@ func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	single := httptest.NewRecorder()
-	a.retryHistory(single, httptest.NewRequest("POST", "/api/logs/retry", strings.NewReader(`{"ids":[1],"model_config_id":1,"key":"single-file-retry"}`)))
+	a.retryHistory(single, jsonRequest("POST", "/api/logs/retry", strings.NewReader(`{"ids":[1],"model_config_id":1,"key":"single-file-retry"}`)))
 	if err = json.Unmarshal(single.Body.Bytes(), &repeatedResult); err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +273,7 @@ func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 }
 
 func TestRetryAllHistoryEmptyAndInvalidScope(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +291,7 @@ func TestRetryAllHistoryEmptyAndInvalidScope(t *testing.T) {
 		{`{"category":"invalid","ids":[1],"key":"invalid-category-request"}`, 400},
 	} {
 		w := httptest.NewRecorder()
-		a.retryHistory(w, httptest.NewRequest("POST", "/api/logs/retry", strings.NewReader(tc.body)))
+		a.retryHistory(w, jsonRequest("POST", "/api/logs/retry", strings.NewReader(tc.body)))
 		if w.Code != tc.code {
 			t.Fatal(tc.body, w.Code, w.Body.String())
 		}
@@ -299,7 +302,7 @@ func TestRetryHistoryMissingFilesDoNotBlockValidTargets(t *testing.T) {
 	for _, all := range []bool{true, false} {
 		t.Run(fmt.Sprintf("all=%t", all), func(t *testing.T) {
 			root := t.TempDir()
-			a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+			a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -312,11 +315,11 @@ func TestRetryHistoryMissingFilesDoNotBlockValidTargets(t *testing.T) {
 			if _, err = (models.Store{DB: a.DB}).Save(profile); err != nil {
 				t.Fatal(err)
 			}
-			if err = os.Mkdir(filepath.Join(root, "parent"), 0700); err != nil {
+			if err = os.Mkdir(filepath.Join(root, "parent"), 0o700); err != nil {
 				t.Fatal(err)
 			}
 			for _, name := range []string{"valid.mp4", "unindexed.mp4", "deleted.mp4", "parent/nested.mp4"} {
-				if err = os.WriteFile(filepath.Join(root, name), []byte("video"), 0600); err != nil {
+				if err = os.WriteFile(filepath.Join(root, name), []byte("video"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -355,12 +358,12 @@ func TestRetryHistoryMissingFilesDoNotBlockValidTargets(t *testing.T) {
 				t.Fatal(err)
 			}
 			w := httptest.NewRecorder()
-			a.retryHistory(w, httptest.NewRequest("POST", "/api/logs/retry", strings.NewReader(string(body))))
+			a.retryHistory(w, jsonRequest("POST", "/api/logs/retry", strings.NewReader(string(body))))
 			var result struct {
-				Accepted []int64  `json:"accepted"`
-				Runs     []int64  `json:"runs"`
-				Errors   []string `json:"errors"`
-				Skipped  int      `json:"skipped"`
+				Accepted []int64        `json:"accepted"`
+				Runs     []int64        `json:"runs"`
+				Errors   []retryProblem `json:"errors"`
+				Skipped  int            `json:"skipped"`
 			}
 			if err = json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 				t.Fatal(err)
@@ -375,7 +378,7 @@ func TestRetryHistoryMissingFilesDoNotBlockValidTargets(t *testing.T) {
 			if len(result.Errors) != wantErrors || result.Skipped != wantSkipped || strings.Contains(w.Body.String(), "sql:") || strings.Contains(w.Body.String(), "no such file") {
 				t.Fatal(w.Body.String())
 			}
-			if !strings.Contains(w.Body.String(), "文件或上级目录已不在索引中") || !strings.Contains(w.Body.String(), "文件或上级目录不存在") {
+			if !strings.Contains(w.Body.String(), `"code":"entry_not_indexed"`) || !strings.Contains(w.Body.String(), `"code":"entry_missing"`) {
 				t.Fatal(w.Body.String())
 			}
 			run, err := a.Jobs.Get(t.Context(), result.Runs[0])
@@ -393,14 +396,14 @@ func TestRetryHistoryMissingFilesDoNotBlockValidTargets(t *testing.T) {
 func setupSuccessfulHistoryRetry(t *testing.T) (*App, int64, int64, int64) {
 	t.Helper()
 	root := t.TempDir()
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { a.Close() })
 	tools := t.TempDir()
 	for _, name := range []string{"ffmpeg", "ffprobe"} {
-		if err := os.WriteFile(filepath.Join(tools, name), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		if err := os.WriteFile(filepath.Join(tools, name), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -420,7 +423,7 @@ func setupSuccessfulHistoryRetry(t *testing.T) (*App, int64, int64, int64) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "original.mp4")
-	if err := os.WriteFile(path, []byte("video"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.Library.Refresh(t.Context(), 1); err != nil {
@@ -434,7 +437,7 @@ func setupSuccessfulHistoryRetry(t *testing.T) (*App, int64, int64, int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	op, err := a.Library.AutoCommit(entry, snap, "first-title", "initial-auto-name", 0)
+	op, err := a.Library.AutoCommit(t.Context(), entry, snap, "first-title", "initial-auto-name", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,23 +454,23 @@ func TestRetrySuccessHistoryPreservesProtection(t *testing.T) {
 			a, entry, event, operation := setupSuccessfulHistoryRetry(t)
 			body := fmt.Sprintf(`{"category":"success","ids":[%d,%d],"model_config_id":1,"key":"success-history-retry"}`, event, event)
 			w := httptest.NewRecorder()
-			a.retryHistory(w, httptest.NewRequest("POST", "/api/logs/retry", strings.NewReader(body)))
+			a.retryHistory(w, jsonRequest("POST", "/api/logs/retry", strings.NewReader(body)))
 			var result struct {
-				Accepted []int64  `json:"accepted"`
-				Runs     []int64  `json:"runs"`
-				Errors   []string `json:"errors"`
+				Accepted []int64        `json:"accepted"`
+				Runs     []int64        `json:"runs"`
+				Errors   []retryProblem `json:"errors"`
 			}
 			if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || len(result.Runs) != 1 || len(result.Accepted) != 2 || len(result.Errors) != 0 {
 				t.Fatal(w.Body.String(), err)
 			}
 			// Submitting a retry never removes the mark, and repeating it while
 			// queued reuses the batch rather than granting a second permission.
-			e, err := a.Library.Get(entry)
+			e, err := a.Library.Get(t.Context(), entry)
 			if err != nil || e.Processed != "automatic" || e.RestoreID != operation {
 				t.Fatal(e, err)
 			}
 			repeated := httptest.NewRecorder()
-			a.retryHistory(repeated, httptest.NewRequest("POST", "/api/logs/retry", strings.NewReader(body)))
+			a.retryHistory(repeated, jsonRequest("POST", "/api/logs/retry", strings.NewReader(body)))
 			var repeat struct {
 				Runs []int64 `json:"runs"`
 			}
@@ -509,7 +512,7 @@ func TestRetrySuccessHistoryPreservesProtection(t *testing.T) {
 			if err != nil || calls != 1 || (run.Done == 1) != (outcome == "success") {
 				t.Fatal(run, calls, err)
 			}
-			e, err = a.Library.Get(entry)
+			e, err = a.Library.Get(t.Context(), entry)
 			if err != nil || e.Processed == "" {
 				t.Fatal("protection was removed", e, err)
 			}
@@ -517,7 +520,7 @@ func TestRetrySuccessHistoryPreservesProtection(t *testing.T) {
 				if e.Name != "second-title.mp4" || e.RestoreID == operation || e.Processed != "automatic" {
 					t.Fatal(e)
 				}
-				if err := a.Library.CheckAutomaticRetry(entry, operation); err == nil {
+				if err := a.Library.CheckAutomaticRetry(t.Context(), entry, operation); err == nil {
 					t.Fatal("superseded record can still authorize a retry")
 				}
 			} else if e.Name != "first-title.mp4" || e.RestoreID != operation {
@@ -527,7 +530,7 @@ func TestRetrySuccessHistoryPreservesProtection(t *testing.T) {
 			if err := a.DB.QueryRow("SELECT count(*) FROM events WHERE id=?", event).Scan(&originals); err != nil || originals != 1 {
 				t.Fatal("original success record was removed", originals, err)
 			}
-			ordinary, err := a.Jobs.Create(jobs.Request{Targets: []int64{entry}, ModelConfigID: 1, Key: "ordinary-after-retry"}, "manual", 0)
+			ordinary, err := a.Jobs.Create(t.Context(), jobs.Request{Targets: []int64{entry}, ModelConfigID: 1, Key: "ordinary-after-retry"}, "manual", 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -544,7 +547,7 @@ func TestRetrySuccessHistoryRejectsStaleAndProtectedRecords(t *testing.T) {
 	for _, change := range []string{"marked", "manual", "restored", "content-changed"} {
 		t.Run(change, func(t *testing.T) {
 			a, entry, event, operation := setupSuccessfulHistoryRetry(t)
-			e, err := a.Library.Get(entry)
+			e, err := a.Library.Get(t.Context(), entry)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -557,15 +560,15 @@ func TestRetrySuccessHistoryRejectsStaleAndProtectedRecords(t *testing.T) {
 					t.Fatal(result)
 				}
 			case "manual":
-				if _, err := a.Library.Rename(entry, e.Version, "manual-title.mp4", "manual-after-success"); err != nil {
+				if _, err := a.Library.Rename(t.Context(), entry, e.Version, "manual-title.mp4", "manual-after-success"); err != nil {
 					t.Fatal(err)
 				}
 			case "restored":
-				if _, err := a.Library.Restore(operation, "restore-before-retry"); err != nil {
+				if _, err := a.Library.Restore(t.Context(), operation, "restore-before-retry"); err != nil {
 					t.Fatal(err)
 				}
 			case "content-changed":
-				if err := os.WriteFile(filepath.Join(a.Library.Root, e.Name), []byte("changed video content"), 0600); err != nil {
+				if err := os.WriteFile(filepath.Join(a.Library.Root, e.Name), []byte("changed video content"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 				if err := a.Library.Refresh(t.Context(), 1); err != nil {
@@ -574,10 +577,10 @@ func TestRetrySuccessHistoryRejectsStaleAndProtectedRecords(t *testing.T) {
 			}
 			w := httptest.NewRecorder()
 			body := fmt.Sprintf(`{"category":"success","ids":[%d],"key":"protected-success-retry"}`, event)
-			a.retryHistory(w, httptest.NewRequest("POST", "/api/logs/retry", strings.NewReader(body)))
+			a.retryHistory(w, jsonRequest("POST", "/api/logs/retry", strings.NewReader(body)))
 			var result struct {
-				Runs   []int64  `json:"runs"`
-				Errors []string `json:"errors"`
+				Runs   []int64        `json:"runs"`
+				Errors []retryProblem `json:"errors"`
 			}
 			if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || len(result.Runs) != 0 || len(result.Errors) != 1 {
 				t.Fatal(w.Body.String(), err)
@@ -591,7 +594,7 @@ func TestRetrySuccessPermissionCannotApplyToGenericRuns(t *testing.T) {
 		w := httptest.NewRecorder()
 		body := fmt.Sprintf(`{"targets":[1],"key":"generic-run-request","%s":{"1":1}}`, field)
 		var input jobs.Request
-		if decode(w, httptest.NewRequest("POST", "/api/runs", strings.NewReader(body)), &input) || w.Code != 400 {
+		if decode(w, jsonRequest("POST", "/api/runs", strings.NewReader(body)), &input) || w.Code != 400 {
 			t.Fatal("generic run JSON accepted retry permission", w.Code, input)
 		}
 	}
@@ -607,7 +610,7 @@ func TestRetrySuccessPermissionCannotApplyToGenericRuns(t *testing.T) {
 		{entry, false, "manual", 1},
 		{1, false, "manual", 0},
 	} {
-		_, err := a.Jobs.Create(jobs.Request{Targets: []int64{tc.target}, Recursive: tc.recursive, Key: "restricted-retry-scope", RetryOperations: map[int64]int64{tc.target: operation}}, tc.source, tc.plan)
+		_, err := a.Jobs.Create(t.Context(), jobs.Request{Targets: []int64{tc.target}, Recursive: tc.recursive, Key: "restricted-retry-scope", RetryOperations: map[int64]int64{tc.target: operation}}, tc.source, tc.plan)
 		if err == nil {
 			t.Fatalf("retry permission escaped selected-file scope: %+v", tc)
 		}

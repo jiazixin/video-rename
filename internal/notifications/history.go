@@ -2,6 +2,7 @@ package notifications
 
 import "context"
 
+// HistoryPage is a page of notification deliveries.
 type HistoryPage struct {
 	Items []Delivery `json:"items"`
 	Total int        `json:"total"`

@@ -1,13 +1,16 @@
 package models
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
 	"video-rename/internal/config"
+	"video-rename/internal/domain"
 )
 
 func TestDiscoverProtocolsAndRedirectProtection(t *testing.T) {
@@ -68,7 +71,7 @@ func TestDiscoverTimeout(t *testing.T) {
 			defer server.Close()
 			started := time.Now()
 			_, err := Discover(t.Context(), config.ServerConfig{Provider: "custom", BaseURL: server.URL}, 5*time.Second)
-			if err == nil || !strings.Contains(err.Error(), "模型列表检测超时（5s）") {
+			if err == nil || !errors.Is(err, domain.Fail(domain.KindUnavailable, "discovery_timeout", "")) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if elapsed := time.Since(started); elapsed < 4*time.Second || elapsed > 7*time.Second {

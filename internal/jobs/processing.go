@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"path/filepath"
 	"time"
 
@@ -88,9 +87,6 @@ func (m *Manager) scan(ctx context.Context, batch Run, id int64) error {
 	}
 }
 
-// unstableSkip is the skip reason of a file that changed since discovery.
-const unstableSkip = "文件尚不稳定，留待下次运行"
-
 func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.TaskConfig, extracted func()) (result error) {
 	run := batch.ID
 	if ctx.Err() != nil {
@@ -99,13 +95,13 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.T
 	defer m.clearStage(it.ID)
 	finish := func(status, msg string) {
 		if err := m.finishItem(run, it.ID, status, msg); err != nil {
-			result = fmt.Errorf("保存文件处理结果失败: %w", err)
+			result = fmt.Errorf("save item result: %w", err)
 		}
 	}
-	e, p, snap, skip, err := m.checkItem(batch, it)
+	e, p, snap, skip, err := m.checkItem(ctx, batch, it)
 	if skip != "" {
-		if skip == unstableSkip && batch.Task == "extract" {
-			m.extractionFailure(batch, it.Entry, m.Library.DisplayPath(it.Entry), errors.New(unstableSkip))
+		if skip == recordSkipUnstable && batch.Task == "extract" {
+			m.extractionFailure(batch, it.Entry, m.Library.DisplayPath(it.Entry), errUnstable)
 		}
 		finish("skipped", skip)
 		return
@@ -123,7 +119,7 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.T
 		}
 	}
 	if ctx.Err() != nil && !committed {
-		finish("cancelled", "已取消")
+		finish("cancelled", recordCancelled)
 		return
 	}
 	if err != nil {
@@ -134,17 +130,17 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.T
 		} else {
 			rel, _ := filepath.Rel(m.Library.Root, p)
 			if logErr := m.recordFailure("automatic", it.Entry, run, rel, err); logErr != nil {
-				slog.Error("保存视频失败诊断失败", "run", run, "entry", it.Entry, "error", logErr)
+				m.logger.Error("video_diagnostics_save_failed", "run_id", run, "entry_id", it.Entry, "error", logErr)
 			}
 		}
-		finish("failed", err.Error())
+		finish("failed", domain.RecordText(err))
 		if je, ok := errors.AsType[*domain.JobError](err); (ok && je.Global) || m.Library.Halted() {
 			m.mu.Lock()
 			if r, ok := m.active[run]; ok {
 				r.cancel()
 			}
 			m.mu.Unlock()
-			_, writeErr := m.DB.Exec("UPDATE runs SET error=? WHERE id=?", err.Error(), run)
+			_, writeErr := m.DB.Exec("UPDATE runs SET error=? WHERE id=?", domain.RecordText(err), run)
 			result = errors.Join(result, writeErr)
 		}
 		return
@@ -155,14 +151,14 @@ func (m *Manager) process(ctx context.Context, batch Run, it item, cfg *config.T
 
 // checkItem resolves an item's file and confirms it is unchanged since
 // discovery. A non-empty skip reason means the item is not processed.
-func (m *Manager) checkItem(batch Run, it item) (e library.Entry, path string, snap domain.Snapshot, skip string, err error) {
+func (m *Manager) checkItem(ctx context.Context, batch Run, it item) (e library.Entry, path string, snap domain.Snapshot, skip string, err error) {
 	retryOperation := batch.retry.RetryOperations[it.Entry]
-	e, err = m.Library.Get(it.Entry)
+	e, err = m.Library.Get(ctx, it.Entry)
 	if err == nil && e.Processed != "" && batch.Task != "extract" && retryOperation == 0 {
-		return e, "", snap, "已处理，跳过", nil
+		return e, "", snap, recordSkipProcessed, nil
 	}
 	if err == nil && retryOperation > 0 {
-		err = m.Library.CheckAutomaticRetry(it.Entry, retryOperation)
+		err = m.Library.CheckAutomaticRetry(ctx, it.Entry, retryOperation)
 	}
 	if err == nil {
 		path, err = m.Library.Path(it.Entry)
@@ -171,7 +167,7 @@ func (m *Manager) checkItem(batch Run, it item) (e library.Entry, path string, s
 		snap, err = domain.StatSnapshot(path)
 	}
 	if err == nil && (library.Identity(snap) != it.Identity || snap.Size != it.Size || snap.ModTime.UTC().Format(time.RFC3339Nano) != it.Mtime) {
-		return e, path, snap, unstableSkip, nil
+		return e, path, snap, recordSkipUnstable, nil
 	}
 	return e, path, snap, "", err
 }
@@ -212,9 +208,9 @@ func (m *Manager) runItemTask(ctx context.Context, batch Run, it item, e library
 	m.setStage(it.ID, "committing")
 	requestKey := fmt.Sprintf("run:%d:item:%d", batch.ID, it.ID)
 	if operation := batch.retry.RetryOperations[e.ID]; operation > 0 {
-		_, err = m.Library.RetryAutoCommit(e.ID, snap, title, requestKey, batch.ID, operation, exchange)
+		_, err = m.Library.RetryAutoCommit(ctx, e.ID, snap, title, requestKey, batch.ID, operation, exchange)
 	} else {
-		_, err = m.Library.AutoCommit(e.ID, snap, title, requestKey, batch.ID, exchange)
+		_, err = m.Library.AutoCommit(ctx, e.ID, snap, title, requestKey, batch.ID, exchange)
 	}
 	return lease, err == nil, false, err
 }

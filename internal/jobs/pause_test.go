@@ -31,7 +31,7 @@ func waitPauseTest(t *testing.T, condition func() bool) {
 func TestPauseReleasesQueuedFramesAndLetsOtherBatchFinish(t *testing.T) {
 	m, root := setup(t)
 	for _, dir := range []string{"first", "second"} {
-		if err := os.Mkdir(filepath.Join(root, dir), 0700); err != nil {
+		if err := os.Mkdir(filepath.Join(root, dir), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		count := 1
@@ -39,7 +39,7 @@ func TestPauseReleasesQueuedFramesAndLetsOtherBatchFinish(t *testing.T) {
 			count = 4
 		}
 		for i := range count {
-			if err := os.WriteFile(filepath.Join(root, dir, fmt.Sprintf("%d.mp4", i)), []byte("video"), 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(root, dir, fmt.Sprintf("%d.mp4", i)), []byte("video"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -81,11 +81,11 @@ func TestPauseReleasesQueuedFramesAndLetsOtherBatchFinish(t *testing.T) {
 		}
 		return "renamed", nil
 	}
-	first, err := m.Create(Request{Targets: []int64{firstEntry}, Recursive: true, Key: "pause-first"}, "manual", 0)
+	first, err := m.Create(t.Context(), Request{Targets: []int64{firstEntry}, Recursive: true, Key: "pause-first"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := m.Create(Request{Targets: []int64{secondEntry}, Recursive: true, Key: "pause-second"}, "manual", 0)
+	second, err := m.Create(t.Context(), Request{Targets: []int64{secondEntry}, Recursive: true, Key: "pause-second"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestPauseReleasesQueuedFramesAndLetsOtherBatchFinish(t *testing.T) {
 	if err = m.Pause(first); err != nil {
 		t.Fatal("pause must be idempotent", err)
 	}
-	if _, err = m.Create(Request{Targets: []int64{firstEntry}, Recursive: true, Key: "pause-overlap"}, "manual", 0); err == nil {
+	if _, err = m.Create(t.Context(), Request{Targets: []int64{firstEntry}, Recursive: true, Key: "pause-overlap"}, "manual", 0); err == nil {
 		t.Fatal("paused scope lost overlap protection")
 	}
 	if _, err = m.Library.RestoreBatch(ctx, first); err == nil {
@@ -123,7 +123,7 @@ func TestPauseReleasesQueuedFramesAndLetsOtherBatchFinish(t *testing.T) {
 	if err != nil || page.Total != 1 || page.Items[0].ID != first {
 		t.Fatal(page, err)
 	}
-	directory, err := m.Library.Get(firstEntry)
+	directory, err := m.Library.Get(t.Context(), firstEntry)
 	if err != nil || directory.TaskStatus != "paused" {
 		t.Fatal(directory, err)
 	}
@@ -140,8 +140,8 @@ func TestPauseReleasesQueuedFramesAndLetsOtherBatchFinish(t *testing.T) {
 
 func TestQueuedPauseResumeCancelAndRecovery(t *testing.T) {
 	m, root := setup(t)
-	os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600)
-	id, err := m.Create(Request{Targets: []int64{1}, Key: "queued-pause"}, "manual", 0)
+	os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "queued-pause"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestQueuedPauseResumeCancelAndRecovery(t *testing.T) {
 	if err = m.Pause(id); err == nil {
 		t.Fatal("paused a cancelled run")
 	}
-	id, err = m.Create(Request{Targets: []int64{1}, Key: "paused-recovery"}, "manual", 0)
+	id, err = m.Create(t.Context(), Request{Targets: []int64{1}, Key: "paused-recovery"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestQueuedPauseResumeCancelAndRecovery(t *testing.T) {
 func TestPauseExtractionAndCancelWhilePaused(t *testing.T) {
 	m, root := setup(t)
 	for i := range 3 {
-		os.WriteFile(filepath.Join(root, fmt.Sprintf("%d.mp4", i)), []byte("video"), 0600)
+		os.WriteFile(filepath.Join(root, fmt.Sprintf("%d.mp4", i)), []byte("video"), 0o600)
 	}
 	settings := systemsettings.Default()
 	settings.StabilitySeconds = 0
@@ -212,7 +212,7 @@ func TestPauseExtractionAndCancelWhilePaused(t *testing.T) {
 		}
 		return fakeFrames(work)
 	}
-	id, err := m.Create(Request{Task: "extract", Targets: []int64{1}, Key: "extract-pause"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Task: "extract", Targets: []int64{1}, Key: "extract-pause"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,19 +230,19 @@ func TestPauseExtractionAndCancelWhilePaused(t *testing.T) {
 	}
 	close(allow)
 	waitPauseTest(t, func() bool { r, _ := m.Get(t.Context(), id); return r.Done == 1 })
-	time.Sleep(50 * time.Millisecond)
-	if calls.Load() != 1 {
-		t.Fatal("paused extraction kept dispatching")
-	}
 	if err = m.Cancel(id); err != nil {
 		t.Fatal(err)
 	}
 	waitPauseTest(t, func() bool { r, _ := m.Get(t.Context(), id); return r.Status == "cancelled" })
+	// Every extraction dispatched between the pause and the cancellation counts.
+	if calls.Load() != 1 {
+		t.Fatal("paused extraction kept dispatching")
+	}
 }
 
 func TestPausePreservesRetrySequence(t *testing.T) {
 	m, root := setup(t)
-	os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600)
+	os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600)
 	var calls atomic.Int32
 	entered, allow := make(chan struct{}), make(chan struct{})
 	m.Analyze = func(ctx context.Context, _ *config.TaskConfig, _ domain.VideoJob, _, _ string) (string, error) {
@@ -257,7 +257,7 @@ func TestPausePreservesRetrySequence(t *testing.T) {
 		}
 		return "renamed", nil
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Key: "retry-pause"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "retry-pause"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestPausePreservesRetrySequence(t *testing.T) {
 func TestPauseDuringStabilityKeepsFrozenCandidates(t *testing.T) {
 	m, root := setup(t)
 	path := filepath.Join(root, "a.mp4")
-	if err := os.WriteFile(path, []byte("video"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	settings := systemsettings.Default()
@@ -303,7 +303,12 @@ func TestPauseDuringStabilityKeepsFrozenCandidates(t *testing.T) {
 		calls.Add(1)
 		return "renamed", nil
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Key: "stability-pause"}, "manual", 0)
+	waiting, stable := make(chan struct{}), make(chan time.Time)
+	m.after = func(time.Duration) <-chan time.Time {
+		close(waiting)
+		return stable
+	}
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "stability-pause"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,16 +316,23 @@ func TestPauseDuringStabilityKeepsFrozenCandidates(t *testing.T) {
 	done := make(chan struct{})
 	go func() { defer close(done); m.Execute(ctx, id) }()
 	defer func() { cancel(); <-done }()
-	waitPauseTest(t, func() bool { r, _ := m.Get(t.Context(), id); return r.Discovered == 1 })
+	<-waiting
 	if err = m.Pause(id); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(1100 * time.Millisecond)
+	stable <- time.Now()
+	// The stability wait ends by recording the running phase; the paused status must survive it.
+	waitPauseTest(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		active, ok := m.active[id]
+		return ok && active.control.phase == "running"
+	})
 	r, _ := m.Get(t.Context(), id)
 	if r.Status != "paused" || calls.Load() != 0 {
 		t.Fatal("stability completion overwrote pause", r, calls.Load())
 	}
-	if err = os.WriteFile(path, []byte("video changed while paused"), 0600); err != nil {
+	if err = os.WriteFile(path, []byte("video changed while paused"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err = m.Resume(id); err != nil {

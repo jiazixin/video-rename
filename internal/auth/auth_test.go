@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
 	"video-rename/internal/config"
+	"video-rename/internal/domain"
 	"video-rename/internal/storage"
 )
 
@@ -30,7 +32,7 @@ func TestSessionValidationWhileWriterBusy(t *testing.T) {
 		{"expired", a.fingerprint, time.Now().Add(-time.Hour).Unix()},
 		{"changed-password", "other-fingerprint", freshExpiry},
 	} {
-		if _, err := db.Exec("INSERT INTO sessions VALUES(?,?,?,?)", hash(session.token), "committed-csrf", session.expiry, session.fingerprint); err != nil {
+		if _, err := db.Exec("INSERT INTO sessions VALUES(?,?,?)", hash(session.token), session.expiry, session.fingerprint); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -42,15 +44,15 @@ func TestSessionValidationWhileWriterBusy(t *testing.T) {
 	if _, err := tx.Exec("DELETE FROM sessions WHERE token=?", hash("valid")); err != nil {
 		t.Fatal(err)
 	}
-	handler := a.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	handler := testHandler(a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
 	for _, tc := range []struct {
-		name, path, method, token, csrf string
-		status                          int
+		name, path, method, token, fetchSite string
+		status                               int
 	}{
 		{"session", "/api/auth/session", "GET", "valid", "", 200},
 		{"authenticated request", "/api/data", "GET", "valid", "", 204},
-		{"authenticated mutation", "/api/data", "POST", "valid", "committed-csrf", 204},
-		{"invalid CSRF", "/api/data", "POST", "valid", "wrong-csrf", 403},
+		{"authenticated mutation", "/api/data", "POST", "valid", "same-origin", 204},
+		{"cross-site mutation", "/api/data", "POST", "valid", "cross-site", 403},
 		{"unknown token", "/api/data", "GET", "unknown", "", 401},
 		{"expired token", "/api/data", "GET", "expired", "", 401},
 		{"changed password", "/api/data", "GET", "changed-password", "", 401},
@@ -58,7 +60,9 @@ func TestSessionValidationWhileWriterBusy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			request := httptest.NewRequest(tc.method, "http://example.test"+tc.path, strings.NewReader("{}"))
 			request.Header.Set("Content-Type", "application/json")
-			request.Header.Set("X-CSRF-Token", tc.csrf)
+			if tc.fetchSite != "" {
+				request.Header.Set("Sec-Fetch-Site", tc.fetchSite)
+			}
 			request.AddCookie(&http.Cookie{Name: "vr_session", Value: tc.token})
 			done := make(chan *httptest.ResponseRecorder, 1)
 			go func() {
@@ -76,7 +80,7 @@ func TestSessionValidationWhileWriterBusy(t *testing.T) {
 				}
 				if tc.path == "/api/auth/session" {
 					var session map[string]string
-					if err := json.Unmarshal(response.Body.Bytes(), &session); err != nil || session["csrf"] != "committed-csrf" {
+					if err := json.Unmarshal(response.Body.Bytes(), &session); err != nil || session["username"] != "admin" {
 						t.Fatal("session did not use committed credentials", session, err)
 					}
 				}
@@ -107,7 +111,7 @@ func TestSessionValidationReadWaitHonorsCancellation(t *testing.T) {
 	}
 	defer db.Close()
 	a := New(db, config.AuthConfig{Username: "admin", Password: "test-password"})
-	if _, err := db.Exec("INSERT INTO sessions VALUES(?,?,?,?)", hash("valid"), "csrf", time.Now().Add(sessionLifetime).Unix(), a.fingerprint); err != nil {
+	if _, err := db.Exec("INSERT INTO sessions VALUES(?,?,?)", hash("valid"), time.Now().Add(sessionLifetime).Unix(), a.fingerprint); err != nil {
 		t.Fatal(err)
 	}
 	var held []*sql.Conn
@@ -127,7 +131,7 @@ func TestSessionValidationReadWaitHonorsCancellation(t *testing.T) {
 	defer cancel()
 	request := httptest.NewRequest("GET", "http://example.test/api/auth/session", nil).WithContext(ctx)
 	request.AddCookie(&http.Cookie{Name: "vr_session", Value: "valid"})
-	handler := a.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	handler := testHandler(a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
 	done := make(chan *httptest.ResponseRecorder, 1)
 	before := db.Read().Stats().WaitCount
 	go func() {
@@ -151,7 +155,7 @@ func TestSessionValidationReadWaitHonorsCancellation(t *testing.T) {
 	cancel()
 	select {
 	case response := <-done:
-		if response.Code != 500 || !strings.Contains(response.Body.String(), "服务暂不可用") {
+		if response.Code != 500 || !strings.Contains(response.Body.String(), `"code":"internal"`) {
 			t.Fatalf("cancelled query response=%d body=%s", response.Code, response.Body.String())
 		}
 	case <-time.After(time.Second):
@@ -176,7 +180,7 @@ func TestSessionRenewalWhileWriterBusy(t *testing.T) {
 			a := New(db, config.AuthConfig{Username: "admin", Password: "test-password"})
 			token := secureSessionPrefix + "valid"
 			expiry := time.Now().Add(time.Hour).Unix()
-			if _, err := db.Exec("INSERT INTO sessions VALUES(?,?,?,?)", hash(token), "committed-csrf", expiry, a.fingerprint); err != nil {
+			if _, err := db.Exec("INSERT INTO sessions VALUES(?,?,?)", hash(token), expiry, a.fingerprint); err != nil {
 				t.Fatal(err)
 			}
 			tx, err := db.BeginTx(t.Context(), nil)
@@ -187,7 +191,7 @@ func TestSessionRenewalWhileWriterBusy(t *testing.T) {
 			if _, err := tx.Exec("UPDATE sessions SET expires=0 WHERE token=?", hash(token)); err != nil {
 				t.Fatal(err)
 			}
-			handler := a.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+			handler := testHandler(a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
 			request := func(ctx context.Context) *http.Request {
 				r := httptest.NewRequest("GET", "http://example.test/api/auth/session", nil).WithContext(ctx)
 				r.AddCookie(&http.Cookie{Name: "vr_session", Value: token})
@@ -244,7 +248,7 @@ func TestSessionRenewalWhileWriterBusy(t *testing.T) {
 				t.Fatalf("busy renewal changed authentication or issued a cookie: status=%d cookies=%v", response.Code, response.Result().Cookies())
 			}
 			var session map[string]string
-			if err := json.Unmarshal(response.Body.Bytes(), &session); err != nil || session["username"] != "admin" || session["csrf"] != "committed-csrf" {
+			if err := json.Unmarshal(response.Body.Bytes(), &session); err != nil || session["username"] != "admin" {
 				t.Fatalf("busy renewal did not preserve committed session: %+v err=%v", session, err)
 			}
 			var storedExpiry int64
@@ -267,21 +271,23 @@ func TestSessionRenewalWhileWriterBusy(t *testing.T) {
 	}
 }
 
-func TestSessionCSRFAndLogout(t *testing.T) {
+func TestSessionCrossOriginAndLogout(t *testing.T) {
 	db, e := storage.Open(filepath.Join(t.TempDir(), "db.sqlite"))
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer db.Close()
 	a := New(db, config.AuthConfig{Username: "admin", Password: "test-password-123"})
-	h := a.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
-	call := func(path, method, body string, c *http.Cookie, csrf, origin string) *httptest.ResponseRecorder {
+	h := testHandler(a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	call := func(path, method, body string, c *http.Cookie, fetchSite, origin string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, "http://example.test"+path, strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
 		if c != nil {
 			r.AddCookie(c)
 		}
-		r.Header.Set("X-CSRF-Token", csrf)
+		if fetchSite != "" {
+			r.Header.Set("Sec-Fetch-Site", fetchSite)
+		}
 		if origin != "" {
 			r.Header.Set("Origin", origin)
 		}
@@ -300,18 +306,16 @@ func TestSessionCSRFAndLogout(t *testing.T) {
 	if len(cookies) != 1 || !cookies[0].HttpOnly {
 		t.Fatal("missing protected cookie")
 	}
-	var sess map[string]string
-	json.Unmarshal(w.Body.Bytes(), &sess)
-	if w = call("/api/data", "POST", "{}", cookies[0], "", ""); w.Code != 403 {
-		t.Fatal("missing csrf allowed")
+	if w = call("/api/data", "POST", "{}", cookies[0], "cross-site", ""); w.Code != 403 {
+		t.Fatal("cross-site write allowed")
 	}
-	if w = call("/api/data", "POST", "{}", cookies[0], sess["csrf"], "https://evil.test"); w.Code != 403 {
+	if w = call("/api/data", "POST", "{}", cookies[0], "", "https://evil.test"); w.Code != 403 {
 		t.Fatal("cross origin allowed")
 	}
-	if w = call("/api/data", "POST", "{}", cookies[0], sess["csrf"], ""); w.Code != 204 {
+	if w = call("/api/data", "POST", "{}", cookies[0], "same-origin", "http://example.test"); w.Code != 204 {
 		t.Fatal(w.Code)
 	}
-	if w = call("/api/auth/logout", "POST", "{}", cookies[0], sess["csrf"], ""); w.Code != 200 {
+	if w = call("/api/auth/logout", "POST", "{}", cookies[0], "", ""); w.Code != http.StatusNoContent {
 		t.Fatal(w.Code)
 	}
 	if w = call("/api/data", "GET", "", cookies[0], "", ""); w.Code != 401 {
@@ -326,7 +330,7 @@ func TestSessionSlidingRenewal(t *testing.T) {
 	}
 	defer db.Close()
 	a := New(db, config.AuthConfig{Username: "admin", Password: "test-password-123"})
-	h := a.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	h := testHandler(a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
 	login := func() *http.Cookie {
 		r := httptest.NewRequest("POST", "http://example.test/api/auth/login", strings.NewReader(`{"username":"admin","password":"test-password-123"}`))
 		r.Header.Set("Content-Type", "application/json")
@@ -402,7 +406,7 @@ func TestLoginRateLimitCountsFailuresOnly(t *testing.T) {
 	}
 	defer db.Close()
 	a := New(db, config.AuthConfig{Username: "admin", Password: "test-password-123"})
-	h := a.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	h := testHandler(a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	login := func(user, pass string) int {
 		r := httptest.NewRequest("POST", "http://example.test/api/auth/login", strings.NewReader(`{"username":"`+user+`","password":"`+pass+`"}`))
 		r.Header.Set("Content-Type", "application/json")
@@ -410,13 +414,13 @@ func TestLoginRateLimitCountsFailuresOnly(t *testing.T) {
 		h.ServeHTTP(w, r)
 		return w.Code
 	}
-	// 成功登录不计入限流:合法用户短时间内反复登录不受影响。
+	// successful logins do not count toward the rate limit: a valid user may log in repeatedly.
 	for i := range 12 {
 		if code := login("admin", "test-password-123"); code != 200 {
 			t.Fatalf("成功登录 #%d 不应被限流, got %d", i+1, code)
 		}
 	}
-	// 只有连续失败才计入:10 次失败后进入限流。
+	// only consecutive failures count: 10 failures trigger the limit.
 	for i := range 10 {
 		if code := login("admin", "wrong-password"); code != 401 {
 			t.Fatalf("失败登录 #%d 应为 401, got %d", i+1, code)
@@ -443,7 +447,7 @@ func TestCookieSecuritySurvivesProxyRenewal(t *testing.T) {
 			}
 			defer db.Close()
 			a := New(db, config.AuthConfig{Username: "admin", Password: "test-password"})
-			handler := a.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+			handler := testHandler(a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
 			login := httptest.NewRequest("POST", tc.url+"/api/auth/login", strings.NewReader(`{"username":"admin","password":"test-password"}`))
 			login.Header.Set("Content-Type", "application/json")
 			login.Header.Set("Origin", tc.origin)
@@ -471,13 +475,12 @@ func TestCookieSecuritySurvivesProxyRenewal(t *testing.T) {
 				t.Fatalf("renewal=%d cookies=%v", response.Code, refreshed)
 			}
 			var renewed map[string]string
-			if err := json.Unmarshal(response.Body.Bytes(), &renewed); err != nil || renewed["csrf"] != session["csrf"] {
-				t.Fatal("renewal changed CSRF token", renewed, err)
+			if err := json.Unmarshal(response.Body.Bytes(), &renewed); err != nil || renewed["username"] != "admin" {
+				t.Fatal("renewal changed the session", renewed, err)
 			}
 			post := httptest.NewRequest("POST", "http://example.test/api/data", strings.NewReader("{}"))
 			post.AddCookie(refreshed[0])
 			post.Header.Set("Content-Type", "application/json")
-			post.Header.Set("X-CSRF-Token", session["csrf"])
 			response = httptest.NewRecorder()
 			handler.ServeHTTP(response, post)
 			if response.Code != 204 {
@@ -487,7 +490,7 @@ func TestCookieSecuritySurvivesProxyRenewal(t *testing.T) {
 			response = httptest.NewRecorder()
 			handler.ServeHTTP(response, post)
 			if response.Code != 403 {
-				t.Fatal("forged origin bypassed CSRF", response.Code)
+				t.Fatal("forged origin bypassed the cross-origin check", response.Code)
 			}
 			forged := *cookies[0]
 			forged.Value = secureSessionPrefix + forged.Value
@@ -500,4 +503,60 @@ func TestCookieSecuritySurvivesProxyRenewal(t *testing.T) {
 			}
 		})
 	}
+}
+
+// testHandler composes the session checks the way the app's router does:
+// cross-site writes are rejected, /api/auth/login, session and logout are
+// answered here, and other requests reach next only with a valid session.
+func testHandler(a *Auth, next http.Handler) http.Handler {
+	writeErr := func(w http.ResponseWriter, err error) {
+		status, code := http.StatusInternalServerError, "internal"
+		if e, ok := domain.AsError(err); ok {
+			code = e.Code
+			switch e.Kind {
+			case domain.KindUnauthenticated:
+				status = http.StatusUnauthorized
+			case domain.KindTooMany:
+				status = http.StatusTooManyRequests
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.MarshalWrite(w, map[string]any{"error": map[string]string{"code": code}})
+	}
+	protection := http.NewCrossOriginProtection()
+	return protection.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/auth/login" {
+			var input struct {
+				Username string `json:"username"`
+				Password string `json:"password"`
+			}
+			if err := json.UnmarshalRead(r.Body, &input); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if err := a.Login(w, r, input.Username, input.Password); err != nil {
+				writeErr(w, err)
+				return
+			}
+			_ = json.MarshalWrite(w, map[string]string{"username": a.Username()})
+			return
+		}
+		if err := a.Authenticate(w, r); err != nil {
+			writeErr(w, err)
+			return
+		}
+		switch r.URL.Path {
+		case "/api/auth/session":
+			_ = json.MarshalWrite(w, map[string]string{"username": a.Username()})
+		case "/api/auth/logout":
+			if err := a.Logout(w, r); err != nil {
+				writeErr(w, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			next.ServeHTTP(w, r)
+		}
+	}))
 }

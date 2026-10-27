@@ -1,16 +1,19 @@
 import { ref, onBeforeUnmount, onDeactivated } from 'vue'
-import { api, ApiError, newRequestKey, session } from '../../app/api'
+import { api, apiOnExit, ApiError, newRequestKey } from '../../app/api'
+import type { ServerRecord } from '../../app/contracts'
 
 type NumberingTask = {
   key: string
   status: string
   phase: string
-  path: string
+  directory?: number
+  directory_done?: number
+  directory_total?: number
   directories: number
   files: number
   done: number
   total: number
-  error: string
+  error?: ServerRecord
   processing_log: string
 }
 export function useNumberingTask() {
@@ -21,16 +24,7 @@ export function useNumberingTask() {
     const task = active
     active = undefined
     task.controller.abort()
-    void fetch(`/api/numbering/jobs/${task.key}/cancel`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      keepalive: true,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(session.value ? { 'X-CSRF-Token': session.value.csrf } : {})
-      },
-      body: '{}'
-    }).catch(() => {})
+    apiOnExit(`/numbering/jobs/${task.key}/cancel`)
   }
   async function run(
     parent: number,
@@ -43,17 +37,16 @@ export function useNumberingTask() {
     const signal = task.controller.signal
     progress.value = action === 'preview' ? '正在扫描目录并生成预览…' : '正在核对文件并编号…'
     try {
-      let state = await api<NumberingTask>(
-        '/numbering/jobs',
-        'POST',
-        { key: task.key, parent, action, batches, preview },
+      let state = await api<NumberingTask>('/numbering/jobs', {
+        method: 'POST',
+        body: { key: task.key, parent, action, batches, preview },
         signal
-      )
+      })
       while (state.status === 'running' || state.status === 'cancelling') {
         progress.value =
           action === 'preview'
-            ? `正在生成预览：已扫描 ${state.directories} 个目录、${state.files} 个文件${state.path ? ' · ' + state.path : ''}`
-            : `正在编号：已完成 ${state.done} / ${state.total} 个目录、${state.files} 个文件${state.path ? ' · ' + state.path : ''}`
+            ? `正在生成预览：已扫描 ${state.directories} 个目录、${state.files} 个文件${state.directory ? ` · 目录 #${state.directory}` : ''}`
+            : `正在编号：已完成 ${state.done} / ${state.total} 个目录、${state.files} 个文件${state.directory_total ? ` · 当前目录 ${state.directory_done ?? 0} / ${state.directory_total} 个文件` : ''}`
         await new Promise<void>((resolve, reject) => {
           const abort = () => {
             clearTimeout(timer)
@@ -66,13 +59,16 @@ export function useNumberingTask() {
           signal.addEventListener('abort', abort, { once: true })
           if (signal.aborted) abort()
         })
-        state = await api<NumberingTask>(`/numbering/jobs/${task.key}`, 'GET', undefined, signal)
+        state = await api<NumberingTask>(`/numbering/jobs/${task.key}`, { signal })
       }
       if (state.status !== 'completed')
-        throw new ApiError(
-          `${state.error || '编号任务已停止'}${action === 'apply' ? `。已完成 ${state.done} 个目录、${state.files} 个文件；其余目录未继续执行。` : ''}`,
-          state.processing_log
-        )
+        throw new ApiError(`numbering ${action} stopped`, {
+          status: 0,
+          code: action === 'apply' ? 'numbering_apply_stopped' : 'numbering_preview_stopped',
+          requestId: '',
+          details: { done: state.done, files: state.files, cause: state.error },
+          processingLog: state.processing_log
+        })
       return state
     } catch (e) {
       if (active === task) cancel()

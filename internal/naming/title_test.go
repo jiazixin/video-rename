@@ -20,14 +20,14 @@ func TestCleanTitleBasic(t *testing.T) {
 		{"标题。。。", ".mp4", "标题"},
 		{"标题...", ".mp4", "标题"},
 		{"...隐藏", ".mp4", "隐藏"},
-		{"视频.mp4", ".mp4", "视频"},        // 末尾同扩展名去一次
-		{"视频.MP4", ".mp4", "视频"},        // 忽略大小写
-		{"CON", ".mp4", "_CON"},         // Windows 保留名
-		{"COM1", ".mp4", "_COM1"},       // 保留名
-		{"con.副标题", ".mp4", "_con.副标题"}, // 保留名后接点
+		{"视频.mp4", ".mp4", "视频"},        // trailing extension removed once
+		{"视频.MP4", ".mp4", "视频"},        // case-insensitive
+		{"CON", ".mp4", "_CON"},         // Windows reserved name
+		{"COM1", ".mp4", "_COM1"},       // reserved name
+		{"con.副标题", ".mp4", "_con.副标题"}, // reserved name followed by a dot
 		{"多  余   空白", ".mp4", "多 余 空白"},
 		{"重__复___下划线", ".mp4", "重_复_下划线"},
-		{"a\u200bb", ".mp4", "ab"}, // 零宽空格(Cf)删除
+		{"a\u200bb", ".mp4", "ab"}, // zero-width space (Cf) removed
 		{"带\x00NUL", ".mp4", "带NUL"},
 		{"带\n换行", ".mp4", "带换行"},
 		{"日本語のタイトル", ".mkv", "日本語のタイトル"},
@@ -46,7 +46,7 @@ func TestCleanTitleBasic(t *testing.T) {
 }
 
 func TestCleanTitleInvalid(t *testing.T) {
-	// 特殊字符被替换为 _,因此 "/" 清洗为 "_" 仍是合法标题
+	// special characters become _, so "/" cleans to "_", which is still a valid title
 	for _, in := range []string{"", "   ", "...", "。。。"} {
 		if _, jerr := CleanTitle(in, ".mp4"); jerr == nil {
 			t.Errorf("%q 清洗后应无效", in)
@@ -55,7 +55,7 @@ func TestCleanTitleInvalid(t *testing.T) {
 }
 
 func TestCleanTitleNFC(t *testing.T) {
-	// "가" 的分解形式(NFD)应被组合为 NFC
+	// the decomposed (NFD) form of "가" must be composed to NFC
 	nfd := "가" // decomposed
 	got, jerr := CleanTitle(nfd, ".mp4")
 	if jerr != nil {
@@ -86,7 +86,7 @@ func TestCleanTitlePreservesLongTitles(t *testing.T) {
 }
 
 func TestTruncateToBytes(t *testing.T) {
-	// 中文每字 3 字节;预算 9 → 3 字
+	// each CJK character is 3 bytes; a budget of 9 keeps 3 characters
 	got, jerr := TruncateToBytes("四个中文字", 9, ".mp4")
 	if jerr != nil {
 		t.Fatal(jerr)
@@ -94,7 +94,7 @@ func TestTruncateToBytes(t *testing.T) {
 	if got != "四个中" {
 		t.Errorf("got %q", got)
 	}
-	// 截断后尾部空格与句点去除
+	// trailing spaces and periods are removed after truncation
 	got, _ = TruncateToBytes("ab 。 c", 2, ".mp4")
 	if got != "ab" {
 		t.Errorf("got %q", got)
@@ -144,7 +144,7 @@ func TestAllocateLargeModelTitle(t *testing.T) {
 		if attempt == 1 && !strings.HasSuffix(name, " (2).mp4") {
 			t.Fatalf("missing conflict suffix: %q", name)
 		}
-		if err := os.WriteFile(result.Target, []byte("occupied"), 0600); err != nil {
+		if err := os.WriteFile(result.Target, []byte("occupied"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -196,8 +196,8 @@ func TestAllocateUnchangedCaseOnly(t *testing.T) {
 	dir := t.TempDir()
 	job, _ := newFile(t, dir, "Beach.mp4")
 	a := NewAllocator()
-	// 大小写不敏感卷上 "beach.mp4" 与源是同一文件 → unchanged;
-	// 大小写敏感卷上不存在该路径 → 分配新目标。
+	// on a case-insensitive volume "beach.mp4" is the source file → unchanged;
+	// on a case-sensitive volume the path does not exist → a new target is allocated.
 	res, jerr := a.Allocate(dir, "beach", ".mp4", job)
 	if jerr != nil {
 		t.Fatal(jerr)
@@ -208,7 +208,7 @@ func TestAllocateUnchangedCaseOnly(t *testing.T) {
 func TestAllocateConflictSuffix(t *testing.T) {
 	dir := t.TempDir()
 	job, _ := newFile(t, dir, "source.mp4")
-	// 占位同名目标
+	// occupy the same-name target
 	if err := os.WriteFile(filepath.Join(dir, "海边散步.mp4"), []byte("occupied"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +258,7 @@ func TestAllocateCaseInsensitiveReservation(t *testing.T) {
 func TestAllocateByteBudgetWithSuffix(t *testing.T) {
 	dir := t.TempDir()
 	job, _ := newFile(t, dir, "s.mp4")
-	// 超长标题及冲突后缀都必须遵守完整文件名的字节上限。
+	// long titles and conflict suffixes must both respect the byte limit of the complete file name.
 	a := NewAllocator()
 	title, err := CleanTitle(strings.Repeat("字", 100), ".mp4")
 	if err != nil {
@@ -272,7 +272,7 @@ func TestAllocateByteBudgetWithSuffix(t *testing.T) {
 	if len(base) > MaxFilenameBytes {
 		t.Errorf("文件名 %d 字节超限: %q", len(base), base)
 	}
-	// 后缀路径:占用首个候选
+	// suffix path: occupy the first candidate
 	os.WriteFile(res.Target, []byte("x"), 0o644)
 	res2, jerr := a.Allocate(dir, title, ".mp4", job)
 	if jerr != nil {
@@ -299,12 +299,12 @@ func TestAllocateConflictExhausted(t *testing.T) {
 	}
 	a := NewAllocator()
 	if _, jerr := a.Allocate(dir, "题", ".mp4", job); jerr == nil {
-		// 100 个占用不会耗尽 9999;此处仅验证大量占用下仍可分配
+		// 100 occupied names cannot exhaust 9999; this only checks allocation under heavy occupation
 		t.Log("100 个占用未耗尽,符合预期")
 	}
 }
 
-// fmt_Sprintf 生成 "题 (n)"。
+// fmt_Sprintf returns "题 (n)".
 func fmt_Sprintf(n int) string {
 	return "题 (" + itoa(n+1) + ")"
 }

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
 	"video-rename/internal/config"
 	"video-rename/internal/domain"
 )
@@ -13,14 +14,14 @@ import (
 func TestBatchRestoreAndRetry(t *testing.T) {
 	m, root := setup(t)
 	for _, name := range []string{"a.MP4", "b.mp4"} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte("video"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("video"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	m.Analyze = func(_ context.Context, _ *config.TaskConfig, j domain.VideoJob, _, _ string) (string, error) {
 		return "new-" + filepath.Base(j.Path), nil
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "restore-batch"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "restore-batch"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +29,7 @@ func TestBatchRestoreAndRetry(t *testing.T) {
 		t.Fatal("active batch accepted")
 	}
 	m.Execute(t.Context(), id)
-	if err = os.WriteFile(filepath.Join(root, "a.MP4"), []byte("conflict"), 0600); err != nil {
+	if err = os.WriteFile(filepath.Join(root, "a.MP4"), []byte("conflict"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	result, err := m.Library.RestoreBatch(t.Context(), id)
@@ -59,13 +60,13 @@ func TestBatchRestoreAndRetry(t *testing.T) {
 
 func TestMediaDiagnosticsPersist(t *testing.T) {
 	m, root := setup(t)
-	if err := os.WriteFile(filepath.Join(root, "bad.mp4"), []byte("video"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "bad.mp4"), []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	m.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 		return "", &domain.JobError{Code: domain.CodeExtractInsufficientFrames, Message: "计划 20 帧全部失败", ProcessingLog: "采样时间 1s · 首次抽帧\nffmpeg 退出码 1: Invalid data"}
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "diagnostic-run"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "diagnostic-run"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,13 +79,13 @@ func TestMediaDiagnosticsPersist(t *testing.T) {
 
 func TestBatchRestoreDoesNotUndoLaterRename(t *testing.T) {
 	m, root := setup(t)
-	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	m.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
 		return "automatic", nil
 	}
-	id, err := m.Create(Request{Targets: []int64{1}, Recursive: true, Key: "later-change"}, "manual", 0)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "later-change"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,11 +94,11 @@ func TestBatchRestoreDoesNotUndoLaterRename(t *testing.T) {
 	if err = m.DB.QueryRow("SELECT entry FROM operations WHERE run=?", id).Scan(&entryID); err != nil {
 		t.Fatal(err)
 	}
-	e, err := m.Library.Get(entryID)
+	e, err := m.Library.Get(t.Context(), entryID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = m.Library.Rename(e.ID, e.Version, "later.mp4", "later-manual"); err != nil {
+	if _, err = m.Library.Rename(t.Context(), e.ID, e.Version, "later.mp4", "later-manual"); err != nil {
 		t.Fatal(err)
 	}
 	result, err := m.Library.RestoreBatch(t.Context(), id)

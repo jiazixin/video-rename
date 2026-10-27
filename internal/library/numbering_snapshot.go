@@ -62,9 +62,9 @@ func decodeNumberingSnapshot(raw string) (numberingDirectorySnapshot, bool) {
 }
 func numberingFingerprintLabel(raw string) string {
 	if snapshot, ok := decodeNumberingSnapshot(raw); ok {
-		return fmt.Sprintf("v%d:%s（%d 个条目）", snapshot.Version, snapshot.Hash, len(snapshot.Entries))
+		return fmt.Sprintf("v%d:%s (%d entries)", snapshot.Version, snapshot.Hash, len(snapshot.Entries))
 	}
-	return "无效目录快照"
+	return "invalid directory snapshot"
 }
 
 // Compare the captured snapshots, not a second filesystem read that might
@@ -92,22 +92,22 @@ func describeNumberingSnapshotDiff(detail *strings.Builder, before, after string
 	for _, a := range old.Entries {
 		b, exists := byName[a.Name]
 		if !exists {
-			report("条目 %q：当前目录列表中缺失；预览类型=%s，身份=%s\n", a.Name, a.Type, a.Identity)
+			report("entry %q: missing from the current listing; preview kind=%s, identity=%s\n", a.Name, a.Type, a.Identity)
 			continue
 		}
 		delete(byName, a.Name)
 		if a != b {
-			report("条目 %q：类型 %s → %s；身份(dev:inode) %s → %s；大小 %d → %d；修改时间 %s → %s\n", a.Name, a.Type, b.Type, a.Identity, b.Identity, a.Size, b.Size, a.Mtime, b.Mtime)
+			report("entry %q: kind %s -> %s; identity (dev:inode) %s -> %s; size %d -> %d; mtime %s -> %s\n", a.Name, a.Type, b.Type, a.Identity, b.Identity, a.Size, b.Size, a.Mtime, b.Mtime)
 		}
 	}
 	for _, b := range current.Entries {
 		if _, exists := byName[b.Name]; exists {
-			report("新增条目 %q：类型=%s；身份=%s；大小=%d；修改时间=%s\n", b.Name, b.Type, b.Identity, b.Size, b.Mtime)
+			report("new entry %q: kind=%s; identity=%s; size=%d; mtime=%s\n", b.Name, b.Type, b.Identity, b.Size, b.Mtime)
 		}
 	}
-	fmt.Fprintf(detail, "总计 %d 个差异条目，最多展示 20 项。以上为预览与本次校验实际读到的值。\n", count)
+	fmt.Fprintf(detail, "%d entries differ (at most 20 shown); values are those read by the preview and by this check.\n", count)
 	if count == 0 {
-		fmt.Fprintln(detail, "逐条快照一致，但指纹格式或摘要不同；请重新预览。")
+		fmt.Fprintln(detail, "entries match, but the fingerprint format or digest differs; preview again.")
 	}
 	return true
 }

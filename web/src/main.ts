@@ -4,4 +4,5 @@ import '@fontsource/inter/latin-500.css'
 import '@fontsource/inter/latin-600.css'
 import './styles/theme.css'
 import App from './app/App.vue'
-createApp(App).mount('#app')
+import { router } from './app/router'
+createApp(App).use(router).mount('#app')

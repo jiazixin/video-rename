@@ -1,7 +1,9 @@
+import { errorText } from '../../app/errors'
 import { onUnmounted, reactive, ref, watch } from 'vue'
 import { api } from '../../app/api'
+import type { ServerRecord } from '../../app/contracts'
 
-export interface Attempt {
+export type Attempt = {
   number: number
   model_config_title: string
   model: string
@@ -9,9 +11,9 @@ export interface Attempt {
   started: string
   duration_ms: number
   status: string
-  message: string
+  error?: ServerRecord
 }
-export interface LiveStage {
+export type LiveStage = {
   stage: 'extracting' | 'model_wait' | 'model' | 'retry_wait' | 'committing'
   since_ms: number
   attempt: number
@@ -19,7 +21,7 @@ export interface LiveStage {
   frames: number
   title: string
 }
-export interface RunItem {
+export type RunItem = {
   id: number
   entry: number
   status: string
@@ -30,15 +32,15 @@ export interface RunItem {
   new_name: string
   operation_status: string
   undone: boolean
-  message: string
+  message?: ServerRecord
   updated_ms?: number
-  attempts: Attempt[]
+  attempts?: Attempt[]
   stage?: LiveStage
 }
-export interface RecentItem {
+export type RecentItem = {
   id: number
   status: string
-  message: string
+  message?: ServerRecord
   directory: string
   original_name: string
   new_name: string
@@ -48,12 +50,12 @@ export interface RecentItem {
   finished_ms: number
   attempts: number
 }
-interface SkipReason {
-  message: string
+type SkipReason = {
+  reason: ServerRecord
   count: number
 }
 export type RecordFilter = 'all' | 'running' | 'done' | 'skipped' | 'failed'
-interface RunDirectory {
+type RunDirectory = {
   path: string
   total: number
   done: number
@@ -63,7 +65,7 @@ interface RunDirectory {
   skipped: number
   cancelled: number
 }
-interface RecordPage {
+type RecordPage = {
   items: RunItem[]
   directories: RunDirectory[]
   total: number
@@ -126,17 +128,11 @@ export function useRunRecords(runID: () => number, enabled: () => boolean, activ
     if (filter.value !== 'all') query.set('status', filter.value)
     if (directory.value !== 'all') query.set('directory', directory.value.slice(5))
     try {
-      const page = await api<RecordPage>(
-        `/runs/${id}/items?${query}`,
-        'GET',
-        undefined,
-        abort.signal
-      )
+      const page = await api<RecordPage>(`/runs/${id}/items?${query}`, { signal: abort.signal })
       if (!alive || request !== sequence || id !== runID() || !enabled()) return
       Object.assign(state, { recent: [], skip_reasons: [] }, page, { loaded: true, error: '' })
     } catch (error) {
-      if (!abort.signal.aborted && alive && request === sequence)
-        state.error = (error as Error).message
+      if (!abort.signal.aborted && alive && request === sequence) state.error = errorText(error)
     } finally {
       if (alive && request === sequence) {
         state.busy = false
@@ -159,6 +155,7 @@ export function useRunRecords(runID: () => number, enabled: () => boolean, activ
     [runID, enabled, active],
     ([id, open], previous) => {
       cancel()
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- previous is undefined on the first watcher run despite its type
       if (previous && id !== previous[0]) {
         filter.value = active() ? 'running' : 'all'
         state.items = []

@@ -1,17 +1,17 @@
 .action-extract {
-  --action-ink: #28649b;
-  --action-bg: #edf5fc;
-  --action-border: #c6dcef;
+  --action-ink: var(--palette-28649b);
+  --action-bg: var(--palette-edf5fc);
+  --action-border: var(--palette-c6dcef);
 }
 .action-name {
-  --action-ink: #7251a1;
-  --action-bg: #f5f0fc;
-  --action-border: #ddcfee;
+  --action-ink: var(--palette-7251a1);
+  --action-bg: var(--palette-f5f0fc);
+  --action-border: var(--palette-ddcfee);
 }
 .action-number {
-  --action-ink: #426b70;
-  --action-bg: #edf6f5;
-  --action-border: #c9dfdf;
+  --action-ink: var(--palette-426b70);
+  --action-bg: var(--palette-edf6f5);
+  --action-border: var(--palette-c9dfdf);
 }
 .action-mark {
   --action-ink: var(--tone-green-ink);

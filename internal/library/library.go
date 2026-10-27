@@ -19,6 +19,7 @@ import (
 	"video-rename/internal/storage"
 )
 
+// Entry is one indexed file or directory.
 type Entry struct {
 	Progress   *DirectoryProgress `json:"progress,omitempty"`
 	Contents   *DirectoryContents `json:"contents"`
@@ -35,6 +36,8 @@ type Entry struct {
 	Processed  string             `json:"processed"`
 	RestoreID  int64              `json:"restore_id"`
 }
+
+// Library maps real media entries and coordinates all file system changes.
 type Library struct {
 	progressCacheMu sync.Mutex
 	progressCache   map[int64]directDirectoryCache
@@ -54,8 +57,11 @@ type Library struct {
 	RefreshContext  context.Context
 }
 
+// Identity returns the device and inode identity of s.
 func Identity(s domain.Snapshot) string { return fmt.Sprintf("%d:%d", s.Dev, s.Ino) }
 func stamp(s domain.Snapshot) string    { return s.ModTime.UTC().Format(time.RFC3339Nano) }
+
+// New opens the library rooted at root.
 func New(db *storage.Store, root string) (*Library, error) {
 	snap, err := domain.StatSnapshot(root)
 	if err != nil {
@@ -64,7 +70,7 @@ func New(db *storage.Store, root string) (*Library, error) {
 	var old, ident string
 	err = db.QueryRow("SELECT root,identity FROM library WHERE id=1").Scan(&old, &ident)
 	if err == nil && (old != root || ident != Identity(snap)) {
-		return nil, fmt.Errorf("数据库绑定的媒体根目录已变化，请核对挂载与配置")
+		return nil, errors.New("media root bound to the database changed; check the mount and configuration")
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
@@ -84,11 +90,9 @@ func New(db *storage.Store, root string) (*Library, error) {
 	}
 	return l, nil
 }
-func (l *Library) Get(id int64) (Entry, error) {
-	return l.GetContext(context.Background(), id)
-}
 
-func (l *Library) GetContext(ctx context.Context, id int64) (Entry, error) {
+// Get returns entry id.
+func (l *Library) Get(ctx context.Context, id int64) (Entry, error) {
 	entries, err := l.GetBatch(ctx, []int64{id})
 	if err != nil {
 		return Entry{}, err
@@ -159,7 +163,7 @@ func (l *Library) indexedSnapshot(id int64) (Entry, error) {
 // Path checks every ancestor, including mount identity; symlinks are never followed.
 func (l *Library) Path(id int64) (string, error) {
 	if id <= 0 {
-		return "", fmt.Errorf("目录关系无效")
+		return "", errBadHierarchy
 	}
 	e, err := l.indexedSnapshot(id)
 	if err != nil {
@@ -175,15 +179,15 @@ func (l *Library) pathForEntry(e Entry) (string, error) {
 	seen := map[int64]bool{}
 	for e.ID != 1 {
 		if e.ID <= 0 || seen[e.ID] || len(chain) > 1024 {
-			return "", fmt.Errorf("目录关系无效")
+			return "", errBadHierarchy
 		}
 		seen[e.ID] = true
 		if e.Name == "" || filepath.Base(e.Name) != e.Name || strings.ContainsAny(e.Name, "/\\") {
-			return "", fmt.Errorf("非法路径")
+			return "", errIllegalPath
 		}
 		chain = append(chain, e)
 		if e.Parent <= 0 {
-			return "", fmt.Errorf("目录关系无效")
+			return "", errBadHierarchy
 		}
 		var err error
 		e, err = l.indexedSnapshot(e.Parent)
@@ -193,7 +197,7 @@ func (l *Library) pathForEntry(e Entry) (string, error) {
 	}
 	rs, err := domain.StatSnapshot(l.Root)
 	if err != nil || Identity(rs) != e.Identity {
-		return "", fmt.Errorf("媒体根目录不可用或挂载已变化")
+		return "", errRootUnavailable
 	}
 	p := l.Root
 	for _, entry := range slices.Backward(chain) {
@@ -203,7 +207,7 @@ func (l *Library) pathForEntry(e Entry) (string, error) {
 			return "", err
 		}
 		if st.Mode()&os.ModeSymlink != 0 {
-			return "", fmt.Errorf("不允许操作符号链接")
+			return "", errSymlink
 		}
 		s, err := domain.SnapshotFromInfo(st)
 		if err != nil {
@@ -214,13 +218,15 @@ func (l *Library) pathForEntry(e Entry) (string, error) {
 			_, parseErr := fmt.Sscanf(entry.Identity, "%d:%d", &before.Dev, &before.Ino)
 			before.Size = entry.Size
 			before.ModTime, _ = time.Parse(time.RFC3339Nano, entry.Mtime)
-			diagnostic := domain.SourceChangedError("文件身份已变化，请刷新目录", "路径及祖先目录身份校验（仅设备号与 inode 参与判定）", p, before, s)
-			diagnostic.ProcessingLog += fmt.Sprintf("条目：%d\n类型：%s\n索引身份：%q\n索引身份解析错误：%v\n目录大小或修改时间变化本身不会触发此次身份错误。\n", entry.ID, entry.Kind, entry.Identity, parseErr)
+			diagnostic := domain.SourceChangedError("file identity changed; refresh the directory", domain.StagePathIdentity, p, before, s)
+			diagnostic.ProcessingLog += fmt.Sprintf("entry: %d\nkind: %s\nindexed identity: %q\nidentity parse error: %v\nsize or mtime changes of a directory alone do not cause this identity error.\n", entry.ID, entry.Kind, entry.Identity, parseErr)
 			return "", diagnostic
 		}
 	}
 	return p, nil
 }
+
+// Relative returns the path of entry id relative to the library root.
 func (l *Library) Relative(id int64) string {
 	p, e := l.Path(id)
 	if e != nil {
@@ -241,6 +247,9 @@ func kindOf(st os.FileInfo) string {
 	}
 	return "other"
 }
+
+// StartRefresh rescans directory id in the background unless it is already
+// being refreshed or scanned.
 func (l *Library) StartRefresh(ctx context.Context, id int64) {
 	l.refreshMu.Lock()
 	if l.refreshing[id] || l.scanning[id] || l.closed || ctx.Err() != nil {
@@ -261,17 +270,18 @@ func (l *Library) StartRefresh(ctx context.Context, id int64) {
 	l.refreshMu.Unlock()
 }
 
+// Page is a page of directory entries.
 type Page struct {
-	Total       int     `json:"total"`
-	Number      int     `json:"page,omitzero"`
-	Items       []Entry `json:"items"`
-	Next        int     `json:"next"`
-	Generation  int64   `json:"generation,string"`
-	Refreshing  bool    `json:"refreshing"`
-	Refreshed   string  `json:"refreshed"`
-	Error       string  `json:"error"`
-	Directory   Entry   `json:"directory"`
-	Breadcrumbs []Entry `json:"breadcrumbs"`
+	Total       int           `json:"total"`
+	Number      int           `json:"page,omitzero"`
+	Items       []Entry       `json:"items"`
+	Next        int           `json:"next"`
+	Generation  int64         `json:"generation,string"`
+	Refreshing  bool          `json:"refreshing"`
+	Refreshed   string        `json:"refreshed"`
+	Error       domain.Record `json:"error,omitzero"`
+	Directory   Entry         `json:"directory"`
+	Breadcrumbs []Entry       `json:"breadcrumbs"`
 }
 
 // ListOrdered continues a cursor listing; a cursor from an older generation is rejected.
@@ -291,12 +301,12 @@ func (l *Library) listOrdered(ctx context.Context, id int64, offset, limit int, 
 	if err != nil {
 		return p, err
 	}
-	p.Directory, err = l.GetContext(ctx, id)
+	p.Directory, err = l.Get(ctx, id)
 	if err != nil {
 		return p, err
 	}
 	if p.Directory.Kind != "directory" {
-		return p, fmt.Errorf("不是目录")
+		return p, errNotDirectory
 	}
 	tx, err := l.DB.Read().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -321,7 +331,7 @@ func (l *Library) listOrdered(ctx context.Context, id int64, offset, limit int, 
 	p.Refreshing = l.refreshing[id] || l.scanning[id]
 	l.refreshMu.Unlock()
 	if generation != 0 && p.Generation != generation {
-		return p, fmt.Errorf("目录已刷新，请返回第一页")
+		return p, errDirectoryRefresh
 	}
 	if limit != 50 && limit != 100 && limit != 200 {
 		limit = 100
@@ -348,7 +358,7 @@ func (l *Library) listOrdered(ctx context.Context, id int64, offset, limit int, 
 	}
 	if offset > 0 {
 		if err = tx.QueryRowContext(ctx, queryPrefix+"SELECT CASE WHEN kind='directory' THEN 0 ELSE 1 END,name,entry,"+value+" FROM directory_items WHERE dir=? AND generation=? AND entry=?", append(append([]any{}, queryArgs...), id, p.Generation, offset)...).Scan(&anchorKind, &anchorName, &anchorID, &anchorValue); err != nil {
-			return p, fmt.Errorf("分页位置已失效，请返回第一页")
+			return p, errDirectoryRefresh
 		}
 	}
 	filter := "(?='' OR kind=?)"
@@ -431,7 +441,7 @@ func (l *Library) listOrdered(ctx context.Context, id int64, offset, limit int, 
 		return p, err
 	}
 	for cur := id; cur > 0 && len(p.Breadcrumbs) <= 1024; {
-		e, er := l.GetContext(ctx, cur)
+		e, er := l.Get(ctx, cur)
 		if er != nil {
 			if ctx.Err() != nil {
 				return p, ctx.Err()
@@ -444,6 +454,7 @@ func (l *Library) listOrdered(ctx context.Context, id int64, offset, limit int, 
 	return p, nil
 }
 
+// Close stops background refreshes and waits for them to finish.
 func (l *Library) Close() {
 	l.refreshMu.Lock()
 	l.closed = true
@@ -458,13 +469,13 @@ func (l *Library) DisplayPath(id int64) string {
 		var parent int64
 		var name string
 		if err := l.DB.Read().QueryRow("SELECT parent,name FROM entries WHERE id=?", id).Scan(&parent, &name); err != nil {
-			return "目录已缺失"
+			return MissingDisplayPath
 		}
 		parts = append([]string{name}, parts...)
 		id = parent
 	}
 	if len(parts) == 0 {
-		return "整个媒体库"
+		return RootDisplayPath
 	}
 	return strings.Join(parts, " / ")
 }

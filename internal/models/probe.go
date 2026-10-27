@@ -3,7 +3,6 @@ package models
 import (
 	"context"
 	"crypto/rand"
-	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -12,24 +11,28 @@ import (
 	"os"
 	"strings"
 	"time"
+
 	"video-rename/internal/config"
 	"video-rename/internal/domain"
 	"video-rename/internal/vision"
 )
 
+// ProbeResult is the result of testing a model connection. Status is passed,
+// mismatch or error; Error explains an error.
 type ProbeResult struct {
-	Status     string `json:"status"`
-	Answer     string `json:"answer"`
-	Expected   string `json:"expected"`
-	Message    string `json:"message"`
-	Code       string `json:"code,omitempty"`
-	HTTPStatus int    `json:"http_status,omitzero"`
-	ElapsedMS  int64  `json:"elapsed_ms"`
+	Status     string        `json:"status"`
+	Answer     string        `json:"answer"`
+	Expected   string        `json:"expected"`
+	Error      domain.Record `json:"error,omitzero"`
+	HTTPStatus int           `json:"http_status,omitzero"`
+	ElapsedMS  int64         `json:"elapsed_ms"`
 }
 
+// Probe tests the model connection s within timeout, which must be 5, 10 or 15
+// seconds.
 func Probe(ctx context.Context, s config.ServerConfig, timeout time.Duration) (out ProbeResult, err error) {
 	if timeout != 5*time.Second && timeout != 10*time.Second && timeout != 15*time.Second {
-		return out, fmt.Errorf("图片识别测试超时只能选择 5s、10s 或 15s")
+		return out, domain.InvalidField("timeout", "invalid_choice")
 	}
 	s.Timeout = timeout.String()
 	var cfg config.TaskConfig
@@ -74,24 +77,23 @@ func Probe(ctx context.Context, s config.ServerConfig, timeout time.Duration) (o
 	started := time.Now()
 	client := vision.New(&cfg)
 	defer client.Close()
+	// The instruction is prompt text for the model, a recorded exception to
+	// the error-code rule (README, code exceptions).
 	answer, status, jobErr := client.Probe(ctx, "识别图片中从左到右的四个色块颜色。仅返回英文小写颜色名，以英文逗号分隔，不要空格和解释。", domain.Frame{Path: f.Name(), Width: 640, Height: 160})
 	out.ElapsedMS = time.Since(started).Milliseconds()
 	out.HTTPStatus = status
 	out.Answer = answer
 	if jobErr != nil {
 		out.Status = "error"
-		out.Code = string(jobErr.Code)
-		out.Message = jobErr.Message
+		out.Error = jobErr.Record()
 		return out, nil
 	}
 	normalized := strings.ToLower(strings.TrimSpace(answer))
 	normalized = strings.NewReplacer(" ", "", "，", ",", "。", "", ".", "", "\"", "").Replace(normalized)
 	if normalized == out.Expected {
 		out.Status = "passed"
-		out.Message = "测试图片识别正确"
 	} else {
 		out.Status = "mismatch"
-		out.Message = "图片请求成功，但识别结果不符合预期；不能据此确认图片识别能力"
 	}
 	return out, nil
 }

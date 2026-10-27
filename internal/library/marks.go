@@ -3,16 +3,19 @@ package library
 import (
 	"context"
 	"database/sql"
-	"fmt"
+
 	"video-rename/internal/discovery"
 	"video-rename/internal/domain"
 )
 
+// MarkFailure reports an entry whose mark could not be changed.
 type MarkFailure struct {
-	ID      int64  `json:"id"`
-	Name    string `json:"name"`
-	Message string `json:"message"`
+	ID    int64         `json:"id"`
+	Name  string        `json:"name"`
+	Error domain.Record `json:"error"`
 }
+
+// MarkResult reports the outcome of changing marks.
 type MarkResult struct {
 	Changed     int64         `json:"changed"`
 	Unchanged   int64         `json:"unchanged"`
@@ -81,7 +84,7 @@ func (w *markWalk) report() {
 func (w *markWalk) addFailure(id int64, err error) {
 	w.result.Failed++
 	if len(w.result.Failures) < 100 {
-		w.result.Failures = append(w.result.Failures, MarkFailure{id, w.l.DisplayPath(id), err.Error()})
+		w.result.Failures = append(w.result.Failures, MarkFailure{id, w.l.DisplayPath(id), domain.RecordOf(err)})
 	}
 }
 
@@ -198,7 +201,7 @@ func (l *Library) setFilesProcessed(ctx context.Context, ids []int64, marked boo
 		for i := range files {
 			if files[i].err == nil {
 				files[i].changed = 0
-				files[i].err = fmt.Errorf("标记批次未提交: %w", err)
+				files[i].err = domain.Fail(domain.KindInternal, "mark_batch_failed", "mark batch not committed").Wrap(err)
 			}
 		}
 	}
@@ -275,14 +278,14 @@ func (l *Library) validateProcessedFile(id int64) (Entry, error) {
 		return Entry{}, err
 	}
 	if l.Busy != nil && l.Busy(id) {
-		return Entry{}, fmt.Errorf("文件有活动任务，请等待任务结束后修改标记")
+		return Entry{}, errBusy
 	}
 	e, err := l.indexedSnapshot(id)
 	if err != nil {
 		return Entry{}, err
 	}
 	if e.Kind != "file" || !(discovery.IsVideoExtension(e.Name) || IsImage(e.Name) || IsAudio(e.Name)) {
-		return Entry{}, fmt.Errorf("文件类型已变化，请刷新后重试")
+		return Entry{}, errChanged
 	}
 	p, err := l.pathForEntry(e)
 	if err != nil {
@@ -293,7 +296,7 @@ func (l *Library) validateProcessedFile(id int64) (Entry, error) {
 		return Entry{}, err
 	}
 	if Identity(snap) != e.Identity || snap.Size != e.Size || stamp(snap) != e.Mtime {
-		return Entry{}, fmt.Errorf("文件已变化，请刷新后重试")
+		return Entry{}, errChanged
 	}
 	return e, nil
 }

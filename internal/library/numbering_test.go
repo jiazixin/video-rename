@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,16 +49,16 @@ func numberedFixture(t *testing.T) (*Library, string, Numbering) {
 	t.Helper()
 	l, root, _ := fixture(t)
 	for _, name := range []string{"1.JPG", "1.PNG", "3.WEBP", "风景.jpg", "截图.PNG", "video.MP4"} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Mkdir(filepath.Join(root, "folder"), 0700); err != nil {
+	if err := os.Mkdir(filepath.Join(root, "folder"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	put(t, filepath.Join(root, "folder", "nested.JPG"))
 	refresh(t, l, 1)
-	b, err := l.PreviewNumberingContext(t.Context(), 1, "image", "", "name_asc", domain.DefaultNumberingSettings())
+	b, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "image", Sort: "name_asc", Settings: domain.DefaultNumberingSettings()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,15 +67,15 @@ func numberedFixture(t *testing.T) (*Library, string, Numbering) {
 func TestAudioNumberingScopesToAudioFiles(t *testing.T) {
 	l, root, _ := fixture(t)
 	for _, name := range []string{"song.MP3", "1.mp3", "pic.jpg", "clip.mp4"} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	refresh(t, l, 1)
-	if _, err := l.PreviewNumberingContext(t.Context(), 1, "video", "", "name_asc", domain.DefaultNumberingSettings()); err == nil {
+	if _, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "video", Sort: "name_asc", Settings: domain.DefaultNumberingSettings()}); err == nil {
 		t.Fatal("invalid media accepted")
 	}
-	b, err := l.PreviewNumberingContext(t.Context(), 1, "audio", "", "name_asc", domain.DefaultNumberingSettings())
+	b, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "audio", Sort: "name_asc", Settings: domain.DefaultNumberingSettings()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +85,7 @@ func TestAudioNumberingScopesToAudioFiles(t *testing.T) {
 	if b.Items[0].Old != "1.mp3" || b.Items[0].New != "1.mp3" || b.Items[1].Old != "song.MP3" || b.Items[1].New != "2.mp3" {
 		t.Fatal(b.Items)
 	}
-	if _, err = l.ApplyNumbering(b.ID); err != nil {
+	if _, err = l.ApplyNumbering(t.Context(), b.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"pic.jpg", "clip.mp4", "1.mp3", "2.mp3"} {
@@ -92,17 +93,17 @@ func TestAudioNumberingScopesToAudioFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	undo, err := l.PreviewNumberingRestore(b.ID)
+	undo, err := l.PreviewNumberingRestore(t.Context(), b.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = l.ApplyNumbering(undo.ID); err != nil {
+	if _, err = l.ApplyNumbering(t.Context(), undo.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = os.Stat(filepath.Join(root, "song.MP3")); err != nil {
 		t.Fatal(err)
 	}
-	images, err := l.PreviewNumberingContext(t.Context(), 1, "image", "", "name_asc", domain.DefaultNumberingSettings())
+	images, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "image", Sort: "name_asc", Settings: domain.DefaultNumberingSettings()})
 	if err != nil || images.Total != 1 || images.Items[0].Old != "pic.jpg" {
 		t.Fatal(images, err)
 	}
@@ -157,7 +158,7 @@ func TestNumberingRuleOptions(t *testing.T) {
 func TestNumberingSharedSequenceAcrossClasses(t *testing.T) {
 	l, root, _ := fixture(t)
 	for _, name := range []string{"1.jpg", "7.mp3", "song.mp3", "pic.jpg"} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -166,14 +167,14 @@ func TestNumberingSharedSequenceAcrossClasses(t *testing.T) {
 	settings.Image.Compact = false
 	settings.Audio.Compact = false
 	settings.Shared = true
-	b, err := l.PreviewNumberingContext(t.Context(), 1, "image", "", "name_asc", settings)
+	b, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "image", Sort: "name_asc", Settings: settings})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if b.Total != 2 || b.Items[len(b.Items)-1].New != "8.jpg" {
 		t.Fatal(b.Items)
 	}
-	audio, err := l.PreviewNumberingContext(t.Context(), 1, "audio", "", "name_asc", settings)
+	audio, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "audio", Sort: "name_asc", Settings: settings})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +208,7 @@ func TestNumberingApplyRestoreAndIdempotence(t *testing.T) {
 	if b.Total != 5 || b.Changed != 5 {
 		t.Fatal(b)
 	}
-	result, err := l.ApplyNumbering(b.ID)
+	result, err := l.ApplyNumbering(t.Context(), b.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +220,7 @@ func TestNumberingApplyRestoreAndIdempotence(t *testing.T) {
 		if err != nil || string(raw) != i.Old {
 			t.Fatalf("%s: %q %v", i.New, raw, err)
 		}
-		e, err := l.Get(i.Entry)
+		e, err := l.Get(t.Context(), i.Entry)
 		if err != nil || e.Name != i.New {
 			t.Fatal(e, err)
 		}
@@ -228,7 +229,7 @@ func TestNumberingApplyRestoreAndIdempotence(t *testing.T) {
 			t.Fatal(h, err)
 		}
 	}
-	if _, err = l.ApplyNumbering(b.ID); err != nil {
+	if _, err = l.ApplyNumbering(t.Context(), b.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = os.Stat(filepath.Join(root, "video.MP4")); err != nil {
@@ -242,11 +243,11 @@ func TestNumberingApplyRestoreAndIdempotence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	undo, err := restarted.PreviewNumberingRestore(b.ID)
+	undo, err := restarted.PreviewNumberingRestore(t.Context(), b.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = restarted.ApplyNumbering(undo.ID); err != nil {
+	if _, err = restarted.ApplyNumbering(t.Context(), undo.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	assertOriginals(t, root, b)
@@ -254,7 +255,7 @@ func TestNumberingApplyRestoreAndIdempotence(t *testing.T) {
 	if err != nil || original.Status != "restored" {
 		t.Fatal(original, err)
 	}
-	if _, err = l.ApplyNumbering(undo.ID); err != nil {
+	if _, err = l.ApplyNumbering(t.Context(), undo.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -268,7 +269,7 @@ func TestNumberingCrossPageOrderAndSearch(t *testing.T) {
 	}
 	put(t, filepath.Join(root, "8.jpg"))
 	refresh(t, l, 1)
-	b, err := l.PreviewNumberingContext(t.Context(), 1, "image", "photo", "name_desc", settings)
+	b, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "image", Query: "photo", Sort: "name_desc", Settings: settings})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +277,7 @@ func TestNumberingCrossPageOrderAndSearch(t *testing.T) {
 		t.Fatal(b.Total, b.Items[0], b.Items[224])
 	}
 	for _, sort := range []string{"name_asc", "name_desc", "size_asc", "size_desc", "mtime_asc", "mtime_desc", "renamed_asc", "renamed_desc"} {
-		b, err = l.PreviewNumberingContext(t.Context(), 1, "image", "photo", sort, settings)
+		b, err = l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "image", Query: "photo", Sort: sort, Settings: settings})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -295,7 +296,7 @@ func TestNumberingPreflightProtection(t *testing.T) {
 	t.Run("changed directory", func(t *testing.T) {
 		l, root, b := numberedFixture(t)
 		put(t, filepath.Join(root, "new.jpg"))
-		if _, err := l.ApplyNumbering(b.ID); err == nil {
+		if _, err := l.ApplyNumbering(t.Context(), b.ID, nil); err == nil {
 			t.Fatal("stale preview accepted")
 		}
 		assertOriginals(t, root, b)
@@ -303,32 +304,32 @@ func TestNumberingPreflightProtection(t *testing.T) {
 	t.Run("unselected target", func(t *testing.T) {
 		l, root, _ := fixture(t)
 		put(t, filepath.Join(root, "a.jpg"))
-		if err := os.Mkdir(filepath.Join(root, "1.jpg"), 0700); err != nil {
+		if err := os.Mkdir(filepath.Join(root, "1.jpg"), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		refresh(t, l, 1)
-		if _, err := l.PreviewNumberingContext(t.Context(), 1, "image", "", "name_asc", domain.DefaultNumberingSettings()); err == nil {
+		if _, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "image", Sort: "name_asc", Settings: domain.DefaultNumberingSettings()}); err == nil {
 			t.Fatal("directory conflict accepted")
 		}
 	})
 	t.Run("busy", func(t *testing.T) {
 		l, root, b := numberedFixture(t)
 		l.Busy = func(int64) bool { return true }
-		if _, err := l.ApplyNumbering(b.ID); err == nil {
+		if _, err := l.ApplyNumbering(t.Context(), b.ID, nil); err == nil {
 			t.Fatal("busy accepted")
 		}
 		assertOriginals(t, root, b)
 	})
 	t.Run("later rename prevents restore", func(t *testing.T) {
 		l, _, b := numberedFixture(t)
-		if _, err := l.ApplyNumbering(b.ID); err != nil {
+		if _, err := l.ApplyNumbering(t.Context(), b.ID, nil); err != nil {
 			t.Fatal(err)
 		}
-		e, _ := l.Get(b.Items[0].Entry)
-		if _, err := l.Rename(e.ID, e.Version, "later.jpg", "later"); err != nil {
+		e, _ := l.Get(t.Context(), b.Items[0].Entry)
+		if _, err := l.Rename(t.Context(), e.ID, e.Version, "later.jpg", "later"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := l.PreviewNumberingRestore(b.ID); err == nil {
+		if _, err := l.PreviewNumberingRestore(t.Context(), b.ID); err == nil {
 			t.Fatal("later change accepted")
 		}
 	})
@@ -339,7 +340,7 @@ func TestNumberingPreflightProtection(t *testing.T) {
 			t.Fatal(err)
 		}
 		refresh(t, l, 1)
-		if _, err := l.PreviewNumberingContext(t.Context(), 1, "image", "", "name_asc", domain.DefaultNumberingSettings()); err == nil {
+		if _, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "image", Sort: "name_asc", Settings: domain.DefaultNumberingSettings()}); err == nil {
 			t.Fatal("hard links accepted")
 		}
 	})
@@ -349,12 +350,12 @@ func TestNumberingDatabaseFailureRollsBack(t *testing.T) {
 	if _, err := l.DB.Exec(`CREATE TRIGGER fail_numbering_history BEFORE INSERT ON operations BEGIN SELECT RAISE(ABORT,'injected failure'); END;`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := l.ApplyNumbering(b.ID); err == nil || !strings.Contains(err.Error(), "已恢复原名") {
+	if _, err := l.ApplyNumbering(t.Context(), b.ID, nil); err == nil || !strings.Contains(err.Error(), "original names restored") {
 		t.Fatal(err)
 	}
 	assertOriginals(t, root, b)
 	for _, i := range b.Items {
-		e, err := l.Get(i.Entry)
+		e, err := l.Get(t.Context(), i.Entry)
 		if err != nil || e.Name != i.Old {
 			t.Fatal(e, err)
 		}
@@ -422,7 +423,7 @@ func TestNumberingRecoveryNeverOverwritesExternalFile(t *testing.T) {
 	if err := l.moveNumbering(&b, i, root, i.Temp); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, i.Old), []byte("external"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, i.Old), []byte("external"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	restarted, err := New(l.DB, root)
@@ -489,7 +490,7 @@ func TestNumberingPreviewChecksActualCaseSourceSnapshot(t *testing.T) {
 		t.Run(field, func(t *testing.T) {
 			l, root, _ := fixture(t)
 			name := "5.JPEG"
-			if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			refresh(t, l, 1)
@@ -504,7 +505,7 @@ func TestNumberingPreviewChecksActualCaseSourceSnapshot(t *testing.T) {
 				item.Mtime = time.Time{}.Format(time.RFC3339Nano)
 			}
 			batch := Numbering{ID: numberingToken(), Parent: 1, Media: "image", Status: "preview", Created: time.Now().UTC().Format(time.RFC3339Nano), Items: []NumberingItem{item}}
-			_, err := l.saveNumberingPreview(batch, root)
+			_, err := l.saveNumberingPreview(t.Context(), batch, root)
 			diagnostic, ok := errors.AsType[*domain.JobError](err)
 			if !ok || diagnostic.Code != domain.CodeRenameConflict {
 				t.Fatalf("stale %s accepted: %v", field, err)
@@ -531,12 +532,12 @@ func TestNumberingCompactUppercaseFromTwoStagesAllFilesAndRestores(t *testing.T)
 			}
 			for n := 2; n <= 42; n++ {
 				name := fmt.Sprintf("%d.%s", n, ext)
-				if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0600); err != nil {
+				if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
 			refresh(t, l, 1)
-			preview, err := l.PreviewNumberingContext(t.Context(), 1, tc.media, "", tc.sort, domain.DefaultNumberingSettings())
+			preview, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: tc.media, Sort: tc.sort, Settings: domain.DefaultNumberingSettings()})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -554,7 +555,7 @@ func TestNumberingCompactUppercaseFromTwoStagesAllFilesAndRestores(t *testing.T)
 			}
 			checkStages := func(batch Numbering) {
 				t.Helper()
-				result, err := l.ApplyNumberingContext(t.Context(), batch.ID, func(done, total int) {
+				result, err := l.ApplyNumbering(t.Context(), batch.ID, func(done, total int) {
 					if done != 1 {
 						return
 					}
@@ -584,7 +585,7 @@ func TestNumberingCompactUppercaseFromTwoStagesAllFilesAndRestores(t *testing.T)
 					t.Fatalf("wrong file at %s: %q %v", item.New, data, err)
 				}
 			}
-			undo, err := l.PreviewNumberingRestore(preview.ID)
+			undo, err := l.PreviewNumberingRestore(t.Context(), preview.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -596,25 +597,25 @@ func TestNumberingCompactUppercaseFromTwoStagesAllFilesAndRestores(t *testing.T)
 
 func TestNumberingCaseOnlyApplyRestoreWithSymlinkSibling(t *testing.T) {
 	l, root, _ := fixture(t)
-	if err := os.WriteFile(filepath.Join(root, "1.JPG"), []byte("original picture"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "1.JPG"), []byte("original picture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink("missing.jpg", filepath.Join(root, "linked.jpg")); err != nil {
 		t.Fatal(err)
 	}
 	refresh(t, l, 1)
-	batch, err := l.PreviewNumberingContext(t.Context(), 1, "image", "", "name_asc", domain.DefaultNumberingSettings())
+	batch, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "image", Sort: "name_asc", Settings: domain.DefaultNumberingSettings()})
 	if err != nil || batch.Total != 1 || batch.Items[0].New != "1.jpg" {
 		t.Fatalf("%+v %v", batch, err)
 	}
-	if _, err := l.ApplyNumbering(batch.ID); err != nil {
+	if _, err := l.ApplyNumbering(t.Context(), batch.ID, nil); err != nil {
 		t.Fatal(err)
 	}
-	undo, err := l.PreviewNumberingRestore(batch.ID)
+	undo, err := l.PreviewNumberingRestore(t.Context(), batch.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := l.ApplyNumbering(undo.ID); err != nil {
+	if _, err := l.ApplyNumbering(t.Context(), undo.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "1.JPG"))
@@ -630,7 +631,7 @@ func TestNumberingCancelledDuringMovesRestoresCurrentDirectory(t *testing.T) {
 	l, root, batch := numberedFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	got, err := l.ApplyNumberingContext(ctx, batch.ID, func(done, total int) {
+	got, err := l.ApplyNumbering(ctx, batch.ID, func(done, total int) {
 		if done == 1 {
 			cancel()
 		}
@@ -642,7 +643,7 @@ func TestNumberingCancelledDuringMovesRestoresCurrentDirectory(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(root, item.Old)); err != nil {
 			t.Fatal(item.Old, err)
 		}
-		if _, err := os.Stat(filepath.Join(root, item.Temp)); !os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(root, item.Temp)); !errors.Is(err, fs.ErrNotExist) {
 			t.Fatal("temporary file remains", item.Temp, err)
 		}
 	}
@@ -655,24 +656,24 @@ func TestNumberingCancelledDuringMovesRestoresCurrentDirectory(t *testing.T) {
 func TestNumberingFingerprintIgnoresChildMetadataButRejectsReplacement(t *testing.T) {
 	root := t.TempDir()
 	child := filepath.Join(root, "child")
-	if err := os.Mkdir(child, 0700); err != nil {
+	if err := os.Mkdir(child, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	file := filepath.Join(root, "photo.jpg")
-	if err := os.WriteFile(file, []byte("image"), 0600); err != nil {
+	if err := os.WriteFile(file, []byte("image"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	before, err := directoryFingerprint(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(child, "nested.jpg"), []byte("child content"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(child, "nested.jpg"), []byte("child content"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chtimes(child, time.Unix(100, 0), time.Unix(100, 0)); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(file, 0640); err != nil {
+	if err := os.Chmod(file, 0o640); err != nil {
 		t.Fatal(err)
 	}
 	after, err := directoryFingerprint(root)
@@ -682,14 +683,14 @@ func TestNumberingFingerprintIgnoresChildMetadataButRejectsReplacement(t *testin
 	if err := os.Rename(child, filepath.Join(t.TempDir(), "original-child")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(child, 0700); err != nil {
+	if err := os.Mkdir(child, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	replaced, err := directoryFingerprint(root)
 	if err != nil || replaced == after {
 		t.Fatal("directory replacement not detected", err)
 	}
-	if err := os.WriteFile(file, []byte("changed file content"), 0600); err != nil {
+	if err := os.WriteFile(file, []byte("changed file content"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	changed, err := directoryFingerprint(root)
@@ -701,15 +702,15 @@ func TestNumberingFingerprintIgnoresChildMetadataButRejectsReplacement(t *testin
 func TestNumberingFingerprintFailureExplainsSourceDifference(t *testing.T) {
 	l, root, b := numberedFixture(t)
 	item := b.Items[0]
-	if err := os.WriteFile(filepath.Join(root, item.Old), []byte("external changed content"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, item.Old), []byte("external changed content"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := l.ApplyNumbering(b.ID)
+	_, err := l.ApplyNumbering(t.Context(), b.ID, nil)
 	diagnostic, ok := errors.AsType[*domain.JobError](err)
-	if !ok || !strings.Contains(diagnostic.ProcessingLog, item.Old) || !strings.Contains(diagnostic.ProcessingLog, "大小") {
+	if !ok || !strings.Contains(diagnostic.ProcessingLog, item.Old) || !strings.Contains(diagnostic.ProcessingLog, "size") {
 		t.Fatal(err)
 	}
-	if !strings.Contains(diagnostic.Message, root) {
+	if diagnostic.Details["path"] != root {
 		t.Fatal("missing failed directory", diagnostic)
 	}
 	saved, err := l.Numbering(b.ID)

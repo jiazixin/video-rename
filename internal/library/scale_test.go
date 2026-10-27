@@ -15,7 +15,7 @@ func TestScaleDirectoryPagination(t *testing.T) {
 	l, root, _ := fixture(t)
 	for d := range 5000 {
 		dir := filepath.Join(root, fmt.Sprintf("folder-%05d", d))
-		if err := os.Mkdir(dir, 0700); err != nil {
+		if err := os.Mkdir(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
 		for f := range 10 {
@@ -23,7 +23,7 @@ func TestScaleDirectoryPagination(t *testing.T) {
 		}
 	}
 	flat := filepath.Join(root, "large-directory")
-	if err := os.Mkdir(flat, 0700); err != nil {
+	if err := os.Mkdir(flat, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	for f := range 50000 {
@@ -76,7 +76,7 @@ func TestScaleProcessedMarks(t *testing.T) {
 	l, root, _ := fixture(t)
 	for d := range 2 {
 		dir := filepath.Join(root, fmt.Sprintf("mark-%d", d))
-		if err := os.Mkdir(dir, 0700); err != nil {
+		if err := os.Mkdir(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
 		for f := range 10000 {

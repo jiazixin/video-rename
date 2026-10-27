@@ -1,11 +1,13 @@
 package scheduler
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
 	"video-rename/internal/config"
 	"video-rename/internal/jobs"
 	"video-rename/internal/library"
@@ -51,9 +53,9 @@ func TestDSTPreviewNoDuplicateWallTime(t *testing.T) {
 func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 	base := t.TempDir()
 	root := filepath.Join(base, "media")
-	os.Mkdir(root, 0700)
+	os.Mkdir(root, 0o700)
 	for _, name := range []string{"ffmpeg", "ffprobe"} {
-		os.WriteFile(filepath.Join(base, name), []byte("#!/bin/sh\nexit 0\n"), 0700)
+		os.WriteFile(filepath.Join(base, name), []byte("#!/bin/sh\nexit 0\n"), 0o700)
 	}
 	t.Setenv("PATH", base)
 	db, err := storage.Open(filepath.Join(base, "db.sqlite"))
@@ -65,7 +67,7 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := jobs.New(db, l, &config.Config{})
+	m, err := jobs.New(db, l, &config.Config{}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +81,7 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := s.Save(Plan{ModelConfigID: prompt.ID, Name: "  " + strings.Repeat("计", 80) + "  ", Targets: []int64{1}, Recursive: true, Kind: "cron", Expression: "* * * * *", Timezone: "Asia/Shanghai", Enabled: true})
+	p, err := s.Save(t.Context(), Plan{ModelConfigID: prompt.ID, Name: "  " + strings.Repeat("计", 80) + "  ", Targets: []int64{1}, Recursive: true, Kind: "cron", Expression: "* * * * *", Timezone: "Asia/Shanghai", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,14 +90,14 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 	}
 	tooLong := p
 	tooLong.Name += "划"
-	if _, err := s.Save(tooLong); err == nil {
+	if _, err := s.Save(t.Context(), tooLong); err == nil {
 		t.Fatal("accepted plan name longer than 80 characters")
 	}
 	at, _ := time.Parse(time.RFC3339, p.Next)
-	if err = s.Tick(at); err != nil {
+	if err = s.Tick(t.Context(), at); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Tick(at); err != nil {
+	if err = s.Tick(t.Context(), at); err != nil {
 		t.Fatal(err)
 	}
 	var n int
@@ -108,7 +110,7 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("duplicate triggers %d", n)
 	}
-	if err = s.Tick(at.Add(time.Minute)); err != nil {
+	if err = s.Tick(t.Context(), at.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	db.QueryRow("SELECT count(*) FROM runs").Scan(&n)
@@ -116,7 +118,7 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 		t.Fatalf("overlapping trigger %d", n)
 	}
 	p, _ = s.Get(p.ID)
-	if p.Last != "前次任务未结束，本次跳过" {
+	if p.Last.Code != "schedule_skipped_active" {
 		t.Fatal(p.Last)
 	}
 	if err = s.ResetNext(at.Add(24 * time.Hour)); err != nil {
@@ -127,17 +129,17 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 		t.Fatal("restart caught up missed runs")
 	}
 	p.Enabled = false
-	if _, err = s.Save(p); err != nil {
+	if _, err = s.Save(t.Context(), p); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Save(p); err == nil {
+	if _, err = s.Save(t.Context(), p); err == nil {
 		t.Fatal("stale edit accepted")
 	}
 	// Switching a persisted plan to extraction must bypass model validation,
 	// survive reload, and pass the task type through the automatic trigger.
 	p, _ = s.Get(p.ID)
 	p.Task, p.ModelConfigID, p.Enabled = "extract", 999999, true
-	p, err = s.Save(p)
+	p, err = s.Save(t.Context(), p)
 	if err != nil || p.Task != "extract" || p.ModelConfigID != 0 {
 		t.Fatalf("extract plan: %+v %v", p, err)
 	}
@@ -145,13 +147,13 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 		t.Fatal(err)
 	}
 	at, _ = time.Parse(time.RFC3339, p.Next)
-	if err = s.Tick(at.Add(2 * time.Minute)); err != nil {
+	if err = s.Tick(t.Context(), at.Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	// The prior wall-clock tick can already be deduplicated; trigger the next one.
 	p, _ = s.Get(p.ID)
 	at, _ = time.Parse(time.RFC3339, p.Next)
-	if err = s.Tick(at); err != nil {
+	if err = s.Tick(t.Context(), at); err != nil {
 		t.Fatal(err)
 	}
 	var task string

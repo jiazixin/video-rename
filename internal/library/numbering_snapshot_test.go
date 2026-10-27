@@ -17,7 +17,7 @@ func TestNumberingSnapshotDiagnosesNonParticipatingEntries(t *testing.T) {
 	if err := os.Remove(original); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "added.txt"), []byte("new"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "added.txt"), []byte("new"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	actual, err := directoryFingerprint(root)
@@ -36,7 +36,7 @@ func TestNumberingSnapshotDiagnosesNonParticipatingEntries(t *testing.T) {
 	if !describeNumberingSnapshotDiff(&detail, persisted.Fingerprint, actual) {
 		t.Fatal("snapshot not persisted")
 	}
-	for _, want := range []string{"video.MP4", "当前目录列表中缺失", "added.txt", "新增条目", "总计 2 个"} {
+	for _, want := range []string{"video.MP4", "missing from the current listing", "added.txt", "new entry", "2 entries differ"} {
 		if !strings.Contains(detail.String(), want) {
 			t.Fatal(want, detail.String())
 		}
@@ -62,9 +62,9 @@ func TestNumberingRejectsInvalidPreviewFormat(t *testing.T) {
 			if _, err := l.DB.Exec("UPDATE image_numberings SET fingerprint=? WHERE id=?", tc.raw, b.ID); err != nil {
 				t.Fatal(err)
 			}
-			_, err = l.ApplyNumbering(b.ID)
+			_, err = l.ApplyNumbering(t.Context(), b.ID, nil)
 			diagnostic, ok := errors.AsType[*domain.JobError](err)
-			if !ok || diagnostic.Code != domain.CodeSourceChanged || !strings.Contains(diagnostic.Message, "预览格式无效，请重新预览") {
+			if !ok || diagnostic.Code != domain.CodeSourceChanged || diagnostic.Details["reason"] != "preview_invalid" {
 				t.Fatal("invalid preview accepted or misdiagnosed", err)
 			}
 			after, err := directoryFingerprint(root)
@@ -98,7 +98,7 @@ func TestNumberingSnapshotReportsIdentityOnlyDrift(t *testing.T) {
 	if !describeNumberingSnapshotDiff(&detail, string(old), string(current)) {
 		t.Fatal("not decoded")
 	}
-	for _, want := range []string{"photo.jpg", "1:100 → 1:999", "大小 42 → 42", "总计 1 个"} {
+	for _, want := range []string{"photo.jpg", "1:100 -> 1:999", "size 42 -> 42", "1 entries differ"} {
 		if !strings.Contains(detail.String(), want) {
 			t.Fatal(want, detail.String())
 		}

@@ -1,18 +1,25 @@
 import { ref, type Ref } from 'vue'
 import { api, ApiError, newRequestKey } from '../../app/api'
-import type { Entry } from '../../app/contracts'
+import { errorText } from '../../app/errors'
+import type { Entry, ServerRecord } from '../../app/contracts'
 
-interface MarkResult {
+type MarkResult = {
   key: string
   status: string
   changed: number
   unchanged: number
   failed: number
   interrupted: boolean
-  failures: { name: string; message: string }[]
+  failures: { name: string; error: ServerRecord }[]
 }
 
-interface MarkOptions {
+// Only the server's own error body proves it rejected the request; a proxy page
+// or unreadable body leaves the outcome unknown, so the job is queried again.
+function serverRejected(e: unknown): e is ApiError {
+  return e instanceof ApiError && e.code !== 'invalid_response'
+}
+
+type MarkOptions = {
   /** Shared with the page so marking never overlaps another write. */
   saving: Ref<boolean>
   /** Invalidates status polls that started before the submission. */
@@ -66,7 +73,7 @@ export function useMarkEntries({
       for (let i = 0; i < entries.length; i += 100) {
         const batchIndex = i / 100,
           existingKey = markKeys[batchIndex],
-          requestKey = existingKey ?? (markKeys[batchIndex] = newRequestKey())
+          requestKey = existingKey || (markKeys[batchIndex] = newRequestKey())
         markProgress.value = `正在处理第 ${i + 1}–${Math.min(i + 100, entries.length)} 个目标…`
         stage = existingKey ? 'query' : 'submit'
         let result: MarkResult
@@ -76,16 +83,19 @@ export function useMarkEntries({
           )
         } else {
           try {
-            result = await api<MarkResult>('/entries/processed', 'POST', {
-              targets: entries.slice(i, i + 100).map((e) => e.id),
-              marked: markedValue,
-              key: requestKey
+            result = await api<MarkResult>('/entries/processed', {
+              method: 'POST',
+              body: {
+                targets: entries.slice(i, i + 100).map((e) => e.id),
+                marked: markedValue,
+                key: requestKey
+              }
             })
           } catch (e) {
             // A proxy or a lost response may fail after the task has started.
             // Only an explicit application rejection permits a new submission.
-            if (e instanceof ApiError && [400, 401, 403, 409, 429].includes(e.status)) {
-              delete markKeys[batchIndex]
+            if (serverRejected(e) && [400, 401, 403, 409, 429].includes(e.status)) {
+              markKeys.splice(batchIndex, 1, '')
               rejected = true
             }
             throw e
@@ -105,11 +115,15 @@ export function useMarkEntries({
         unchanged += result.unchanged
         failed += result.failed
         confirmed = changed
-        failures.push(...result.failures.map((e) => `${e.name}：${e.message}`))
+        failures.push(...result.failures.map((e) => `${e.name}：${errorText(e.error)}`))
         if (result.interrupted) {
           stage = 'interrupted'
           markRetryUnavailable.value = true
-          throw new Error('标记任务已中断，仍有目标未处理')
+          throw new ApiError('mark job interrupted', {
+            status: 0,
+            code: 'mark_interrupted',
+            requestId: ''
+          })
         }
       }
       markKeys = []
@@ -124,15 +138,16 @@ export function useMarkEntries({
         ].join('\n')
       } else marking.value = []
     } catch (e) {
-      if (stage === 'query' && e instanceof ApiError && e.status === 404) {
+      if (stage === 'query' && serverRejected(e) && e.status === 404) {
         markRetryUnavailable.value = true
         markError.value = `已确认变更 ${confirmed} 个文件；标记任务结果已不可查询（可能已回收、过期或服务重启）；已完成的标记会保留。请关闭弹窗，重新选择目标后再操作。`
       } else if (stage === 'interrupted') {
-        markError.value = `已确认变更 ${confirmed} 个文件；${(e as Error).message}；已完成的标记会保留。请关闭弹窗，重新选择未处理目标后再操作。`
+        markError.value = `已确认变更 ${confirmed} 个文件；${errorText(e)}；已完成的标记会保留。请关闭弹窗，重新选择未处理目标后再操作。`
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- the compared state can change while awaiting
       } else if (rejected) {
-        markError.value = `已确认变更 ${confirmed} 个文件；${(e as Error).message}；本批次未启动，可再次确认提交；已完成的标记会保留。`
+        markError.value = `已确认变更 ${confirmed} 个文件；${errorText(e)}；本批次未启动，可再次确认提交；已完成的标记会保留。`
       } else {
-        markError.value = `已确认变更 ${confirmed} 个文件；${stage === 'query' ? '查询中断' : '提交结果未确认'}：${(e as Error).message}。后台任务可能仍在执行，可再次确认查询原任务；已完成的标记会保留。`
+        markError.value = `已确认变更 ${confirmed} 个文件；${stage === 'query' ? '查询中断' : '提交结果未确认'}：${errorText(e)}。后台任务可能仍在执行，可再次确认查询原任务；已完成的标记会保留。`
       }
     } finally {
       markProgress.value = ''

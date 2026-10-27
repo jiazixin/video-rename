@@ -17,7 +17,7 @@ func loadDefaultSampling(t *testing.T) config.SamplingConfig {
 	return settings.Sampling
 }
 
-// processing.md 第 2 节的五组默认样例。
+// the five default examples from processing.md section 2.
 func TestPlanDefaultExamples(t *testing.T) {
 	s := NewSampler(loadDefaultSampling(t))
 	cases := []struct {
@@ -69,7 +69,7 @@ func TestPlanExactThresholds(t *testing.T) {
 	sc := loadDefaultSampling(t)
 	sc.ParsedStrategy = config.StrategySize
 	s = NewSampler(sc)
-	// 恰好 50 MiB 命中 ≤50(Ns=3);50MiB+1 命中 ≤200(Ns=5)
+	// exactly 50 MiB hits ≤50 (Ns=3); 50MiB+1 hits ≤200 (Ns=5)
 	plan, _ := s.Plan(10*time.Second, 50*1024*1024)
 	if plan.BaseN != 3 {
 		t.Errorf("50MiB 边界: N0 = %d, 期望 3", plan.BaseN)
@@ -84,7 +84,7 @@ func TestPlanMaxFramesClamp(t *testing.T) {
 	sc := loadDefaultSampling(t)
 	sc.MaxFrames = 6
 	s := NewSampler(sc)
-	// processing.md:max_frames=6 时,3GiB/60s 与 80MiB/1h 都限制为 6
+	// processing.md: with max_frames=6, both 3GiB/60s and 80MiB/1h are limited to 6
 	for _, tc := range []struct {
 		d    time.Duration
 		size int64
@@ -101,7 +101,7 @@ func TestPlanMaxFramesClamp(t *testing.T) {
 
 func TestPlanStrategies(t *testing.T) {
 	sc := loadDefaultSampling(t)
-	// 3GiB 20秒:size→12,duration→8,hybrid→10
+	// 3GiB 20s: size→12, duration→8, hybrid→10
 	for strategy, want := range map[string]int{"size": 12, "duration": 8, "hybrid": 10} {
 		s2 := sc
 		s2.Strategy = strategy
@@ -123,14 +123,14 @@ func TestPlanTimePointsAreMidpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A=4.5, Z=85.5, L=81, N=12 → 每段中点
-	want := []time.Duration{7875, 14625, 21375, 28125, 34875, 41625, 48375, 55125, 61875, 68625, 75375, 82125} // 毫秒
+	// A=4.5, Z=85.5, L=81, N=12 → segment midpoints
+	want := []time.Duration{7875, 14625, 21375, 28125, 34875, 41625, 48375, 55125, 61875, 68625, 75375, 82125} // milliseconds
 	for i, w := range want {
 		if plan.Times[i] != w*time.Millisecond {
 			t.Errorf("t[%d] = %v, 期望 %v", i, plan.Times[i], w*time.Millisecond)
 		}
 	}
-	// 全部严格位于窗口内部
+	// all strictly inside the window
 	for _, tp := range plan.Times {
 		if tp <= 4500*time.Millisecond || tp >= 85500*time.Millisecond {
 			t.Errorf("时间点 %v 不在窗口 (4.5s, 85.5s) 内", tp)
@@ -163,7 +163,7 @@ func TestPlanRejectsInvalidDuration(t *testing.T) {
 }
 
 func TestPlanCustomRules(t *testing.T) {
-	// 自定义分档:≤1m 4帧,兜底 6帧;验证整体替换
+	// custom tiers: ≤1m 4 frames, fallback 6 frames; the whole table is replaced
 	settings := config.DefaultFrameSettings()
 	limit := "1m"
 	settings.Sampling.DurationRules = []config.DurationRule{{MaxDuration: &limit, Frames: 4}, {Frames: 6}}

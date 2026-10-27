@@ -1,6 +1,8 @@
 <script setup lang="ts">
+  import { niceCeil, stepActive } from './chart-scale';
+  import { formatCount, formatCompact } from '../../lib/format/number';
   import { computed, onMounted, onUnmounted, ref } from 'vue';
-  interface ScatterPoint {
+  type ScatterPoint = {
     task: 'rename' | 'extract';
     run: number;
     items: number;
@@ -8,12 +10,11 @@
     status: string;
     source: string;
     profile_title: string;
-  }
-  const props = defineProps<{
+  };
+  const { points, formatMs } = defineProps<{
     points: ScatterPoint[];
     formatMs: (v: number) => string;
     statusName: (s: string) => string;
-    color: string;
   }>();
   const box = ref<HTMLElement>(),
     width = ref(860),
@@ -24,19 +25,8 @@
     w: Math.max(80, width.value - pad.left - pad.right),
     h: height - pad.top - pad.bottom
   });
-  function niceCeil(value: number) {
-    if (value <= 0) return 1;
-    const pow = 10 ** Math.floor(Math.log10(value));
-    const f = value / pow;
-    return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * pow;
-  }
-  function compact(value: number) {
-    if (value >= 999_950) return `${(value / 1e6).toFixed(2).replace(/\.?0+$/, '')}M`;
-    if (value >= 1000) return `${(value / 1000).toFixed(1).replace(/\.?0+$/, '')}K`;
-    return String(Math.round(value));
-  }
-  const maxX = computed(() => niceCeil(Math.max(1, ...props.points.map((p) => p.items))));
-  const maxY = computed(() => niceCeil(Math.max(1, ...props.points.map((p) => p.ms))));
+  const maxX = computed(() => niceCeil(Math.max(1, ...points.map((p) => p.items))));
+  const maxY = computed(() => niceCeil(Math.max(1, ...points.map((p) => p.ms))));
   const yTicks = computed(() => {
     const out: number[] = [];
     for (let i = 0; i <= 4; i++) out.push((maxY.value * i) / 4);
@@ -49,13 +39,14 @@
   });
   const placed = computed(() => {
     const { w, h } = inner();
-    return props.points.map((p, i) => ({
+    return points.map((p, i) => ({
       ...p,
       i,
       x: pad.left + (p.items / maxX.value) * w,
       y: pad.top + h - (p.ms / maxY.value) * h
     }));
   });
+  const hovered = computed(() => (active.value >= 0 ? placed.value[active.value] : undefined));
   function pick(event: PointerEvent) {
     const rect = (event.currentTarget as SVGRectElement).getBoundingClientRect();
     const x = pad.left + ((event.clientX - rect.left) * inner().w) / rect.width,
@@ -78,16 +69,8 @@
     }
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
-    if (!props.points.length) return;
-    active.value =
-      active.value < 0
-        ? event.key === 'ArrowLeft'
-          ? props.points.length - 1
-          : 0
-        : Math.max(
-            0,
-            Math.min(props.points.length - 1, active.value + (event.key === 'ArrowRight' ? 1 : -1))
-          );
+    if (!points.length) return;
+    active.value = stepActive(active.value, points.length, event.key === 'ArrowRight' ? 1 : -1);
   }
   const tooltipStyle = computed(() => {
     const p = placed.value[active.value];
@@ -137,7 +120,7 @@
         class="axis-text"
         text-anchor="end"
       >
-        {{ compact(t) }}
+        {{ formatCompact(t, 0) }}
       </text>
       <text
         v-for="t in xTicks"
@@ -147,7 +130,7 @@
         class="axis-text"
         text-anchor="middle"
       >
-        {{ compact(t) }}
+        {{ formatCompact(t, 0) }}
       </text>
       <!-- prettier-ignore -->
       <text
@@ -156,23 +139,8 @@
         class="axis-text axis-caption"
         text-anchor="middle"
       >批次目标数（个）</text>
-      <circle
-        v-for="p in placed"
-        :key="p.run"
-        :cx="p.x"
-        :cy="p.y"
-        r="4"
-        class="scatter-dot"
-        :fill="color"
-      />
-      <circle
-        v-if="active >= 0 && placed[active]"
-        :cx="placed[active]!.x"
-        :cy="placed[active]!.y"
-        r="7"
-        class="scatter-halo"
-        :stroke="color"
-      />
+      <circle v-for="p in placed" :key="p.run" :cx="p.x" :cy="p.y" r="4" class="scatter-dot" />
+      <circle v-if="hovered" :cx="hovered.x" :cy="hovered.y" r="7" class="scatter-halo" />
       <rect
         :x="pad.left"
         :y="pad.top"
@@ -182,23 +150,14 @@
         @pointermove="pick"
       />
     </svg>
-    <div
-      v-if="active >= 0 && placed[active]"
-      class="trend-tooltip"
-      :style="tooltipStyle"
-      role="status"
-    >
-      <strong>批次 #{{ placed[active]!.run }} · {{ formatMs(placed[active]!.ms) }}</strong>
+    <div v-if="hovered" class="trend-tooltip" :style="tooltipStyle" role="status">
+      <strong>批次 #{{ hovered.run }} · {{ formatMs(hovered.ms) }}</strong>
       <span
-        >{{ placed[active]!.items.toLocaleString() }} 个目标 ·
-        {{ placed[active]!.source === 'manual' ? '手动' : '自动计划' }} ·
-        {{
-          placed[active]!.task === 'extract'
-            ? '抽帧'
-            : placed[active]!.profile_title || '未命名配置'
-        }}</span
+        >{{ formatCount(hovered.items) }} 个目标 ·
+        {{ hovered.source === 'manual' ? '手动' : '自动计划' }} ·
+        {{ hovered.task === 'extract' ? '抽帧' : hovered.profile_title || '未命名配置' }}</span
       >
-      <span>状态：{{ statusName(placed[active]!.status) }}</span>
+      <span>状态：{{ statusName(hovered.status) }}</span>
     </div>
     <p v-if="!points.length" class="trend-empty">区间内没有已完成的批次</p>
     <p class="trend-hint">悬停或方向键查看每个批次，y 轴为批次耗时</p>

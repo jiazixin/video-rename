@@ -4,7 +4,7 @@ import type { Directive } from 'vue'
 // Lists may wrap onto several rows, so the bar follows the active tab's bottom edge as well.
 const activeTab = ':scope > .active'
 
-interface Tracker {
+type Tracker = {
   mutations: MutationObserver
   resizes: ResizeObserver
   frame: number
@@ -27,7 +27,9 @@ function observeTabs(list: HTMLElement, resizes: ResizeObserver) {
 
 export const vTabIndicator: Directive<HTMLElement> = {
   mounted(list) {
-    const resizes = new ResizeObserver(() => place(list))
+    const resizes = new ResizeObserver(() => {
+      place(list)
+    })
     const mutations = new MutationObserver((records) => {
       if (records.some((record) => record.type === 'childList')) observeTabs(list, resizes)
       place(list)
@@ -37,7 +39,9 @@ export const vTabIndicator: Directive<HTMLElement> = {
     list.classList.add('tab-indicator')
     place(list)
     // Enable the slide only after the first position is painted, so the bar never sweeps in from 0.
-    const frame = requestAnimationFrame(() => list.classList.add('tab-indicator-ready'))
+    const frame = requestAnimationFrame(() => {
+      list.classList.add('tab-indicator-ready')
+    })
     trackers.set(list, { mutations, resizes, frame })
   },
   unmounted(list) {

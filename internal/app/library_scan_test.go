@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json/v2"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,7 +20,7 @@ import (
 func scanAPI(t *testing.T) (*App, string, func(string, string, string, bool) *httptest.ResponseRecorder) {
 	t.Helper()
 	root := t.TempDir()
-	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,28 +30,27 @@ func scanAPI(t *testing.T) (*App, string, func(string, string, string, bool) *ht
 		}
 	})
 	var cookies []*http.Cookie
-	var csrf string
-	request := func(method, path, body string, token bool) *httptest.ResponseRecorder {
+	request := func(method, path, body string, sameSite bool) *httptest.ResponseRecorder {
 		t.Helper()
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r := jsonRequest(method, path, strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
 		for _, c := range cookies {
 			r.AddCookie(c)
 		}
-		if token {
-			r.Header.Set("X-CSRF-Token", csrf)
+		if !sameSite {
+			r.Header.Set("Sec-Fetch-Site", "cross-site")
 		}
 		a.Handler().ServeHTTP(w, r)
 		return w
 	}
-	if w := request("GET", "/api/library/scan", "", false); w.Code != http.StatusUnauthorized {
+	if w := request("GET", "/api/library/scan", "", true); w.Code != http.StatusUnauthorized {
 		t.Fatalf("scan status lacks auth: %d %s", w.Code, w.Body.String())
 	}
-	if w := request("GET", "/api/directories/1/state", "", false); w.Code != http.StatusUnauthorized {
+	if w := request("GET", "/api/directories/1/state", "", true); w.Code != http.StatusUnauthorized {
 		t.Fatalf("directory state lacks auth: %d %s", w.Code, w.Body.String())
 	}
-	w := request("POST", "/api/auth/login", `{"username":"admin","password":"test-password-123"}`, false)
+	w := request("POST", "/api/auth/login", `{"username":"admin","password":"test-password-123"}`, true)
 	if w.Code != http.StatusOK {
 		t.Fatal(w.Code, w.Body.String())
 	}
@@ -59,7 +59,6 @@ func scanAPI(t *testing.T) (*App, string, func(string, string, string, bool) *ht
 	if err := json.Unmarshal(w.Body.Bytes(), &session); err != nil {
 		t.Fatal(err)
 	}
-	csrf = session["csrf"]
 	return a, root, request
 }
 
@@ -69,7 +68,7 @@ func TestLibraryScanAPISettingsAndDiscovery(t *testing.T) {
 		Settings systemsettings.ScanSettings `json:"settings"`
 		Status   libraryscan.Status          `json:"status"`
 	}
-	w := request("GET", "/api/library/scan", "", false)
+	w := request("GET", "/api/library/scan", "", true)
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &response) != nil || !response.Settings.Enabled || response.Settings.IntervalMinutes != 60 {
 		t.Fatalf("scan defaults: %d %s", w.Code, w.Body.String())
 	}
@@ -79,7 +78,7 @@ func TestLibraryScanAPISettingsAndDiscovery(t *testing.T) {
 		{"POST", "/api/library/scan/cancel", `{}`},
 	} {
 		if w := request(target.method, target.path, target.body, false); w.Code != http.StatusForbidden {
-			t.Fatalf("write lacks CSRF: %s %d", target.path, w.Code)
+			t.Fatalf("cross-site write accepted: %s %d", target.path, w.Code)
 		}
 	}
 	for _, body := range []string{
@@ -100,10 +99,10 @@ func TestLibraryScanAPISettingsAndDiscovery(t *testing.T) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	for _, dir := range []string{"a/new", "b"} {
-		if err := os.MkdirAll(filepath.Join(root, dir), 0700); err != nil {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(root, dir, "added.mp4"), []byte("synthetic fixture"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, dir, "added.mp4"), []byte("synthetic fixture"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -113,7 +112,7 @@ func TestLibraryScanAPISettingsAndDiscovery(t *testing.T) {
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		w = request("GET", "/api/library/scan", "", false)
+		w = request("GET", "/api/library/scan", "", true)
 		if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &response) != nil {
 			t.Fatal(w.Code, w.Body.String())
 		}
@@ -143,11 +142,11 @@ func TestLibraryScanAPISettingsAndDiscovery(t *testing.T) {
 
 func TestDirectoryStatePollingDoesNotScanDisk(t *testing.T) {
 	a, root, request := scanAPI(t)
-	if err := os.WriteFile(filepath.Join(root, "new.mp4"), []byte("fixture"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "new.mp4"), []byte("fixture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	for range 3 {
-		w := request("GET", "/api/directories/1/state", "", false)
+		w := request("GET", "/api/directories/1/state", "", true)
 		var state struct {
 			Generation string `json:"generation"`
 			Refreshing bool   `json:"refreshing"`
@@ -164,10 +163,10 @@ func TestDirectoryStatePollingDoesNotScanDisk(t *testing.T) {
 
 func TestScanExcludedTargetsAPI(t *testing.T) {
 	a, root, request := scanAPI(t)
-	if err := os.MkdirAll(filepath.Join(root, "excluded", "child"), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "excluded", "child"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "excluded", "file.mp4"), []byte("fixture"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "excluded", "file.mp4"), []byte("fixture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.Library.ScanDirectory(t.Context(), 1); err != nil {
@@ -191,7 +190,7 @@ func TestScanExcludedTargetsAPI(t *testing.T) {
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &saved) != nil || len(saved.ExcludedTargets) != 1 || saved.ExcludedTargets[0] != parent {
 		t.Fatalf("normalize exclusions: %d %s", w.Code, w.Body.String())
 	}
-	w = request("GET", "/api/library/scan", "", false)
+	w = request("GET", "/api/library/scan", "", true)
 	var state struct {
 		Settings systemsettings.ScanSettings `json:"settings"`
 		Paths    map[int64]string            `json:"directory_paths"`

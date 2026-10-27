@@ -9,7 +9,7 @@ import (
 )
 
 // runsAnalytics serves GET /api/runs/analytics (batch performance for the
-// 数据分析 tab). Times are RFC3339 in a half-open [from,to) range; from may
+// analytics tab). Times are RFC3339 in a half-open [from,to) range; from may
 // be omitted to cover all recorded batches and to defaults to now.
 func (a *App) runsAnalytics(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
@@ -18,7 +18,7 @@ func (a *App) runsAnalytics(w http.ResponseWriter, r *http.Request) {
 	if raw := query.Get("from"); raw != "" {
 		parsed, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
-			send(w, 400, map[string]string{"message": "起始时间无效，请使用 RFC3339 格式"})
+			invalid(w, r, "from", "invalid_time")
 			return
 		}
 		v.From = parsed.UnixMilli()
@@ -26,19 +26,19 @@ func (a *App) runsAnalytics(w http.ResponseWriter, r *http.Request) {
 	if raw := query.Get("to"); raw != "" {
 		parsed, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
-			send(w, 400, map[string]string{"message": "结束时间无效，请使用 RFC3339 格式"})
+			invalid(w, r, "to", "invalid_time")
 			return
 		}
 		v.To = parsed.UnixMilli()
 	}
 	if v.From >= v.To {
-		send(w, 400, map[string]string{"message": "结束时间必须晚于起始时间"})
+		invalid(w, r, "to", "not_after_from")
 		return
 	}
 	if name := query.Get("timezone"); name != "" {
 		location, err := time.LoadLocation(name)
 		if err != nil {
-			send(w, 400, map[string]string{"message": "时区无效"})
+			invalid(w, r, "timezone", "invalid_timezone")
 			return
 		}
 		v.Location = location
@@ -47,14 +47,14 @@ func (a *App) runsAnalytics(w http.ResponseWriter, r *http.Request) {
 	for key, apply := range map[string]func(string){
 		"source": func(value string) {
 			if value != "" && value != "manual" && value != "scheduled" {
-				badRequest = "运行来源无效"
+				badRequest = "invalid_choice"
 				return
 			}
 			v.Source = value
 		},
 		"sort": func(value string) {
 			if value != "" && value != "recent" && value != "duration" && value != "size" {
-				badRequest = "排序方式无效"
+				badRequest = "invalid_choice"
 				return
 			}
 			v.Sort = value
@@ -62,7 +62,7 @@ func (a *App) runsAnalytics(w http.ResponseWriter, r *http.Request) {
 		"profile": func(value string) {
 			parsed, err := strconv.ParseInt(value, 10, 64)
 			if err != nil || parsed < 0 {
-				badRequest = "模型配置筛选无效"
+				badRequest = "invalid_number"
 				return
 			}
 			v.Profile = parsed
@@ -71,7 +71,7 @@ func (a *App) runsAnalytics(w http.ResponseWriter, r *http.Request) {
 		"page": func(value string) {
 			parsed, err := strconv.Atoi(value)
 			if err != nil || parsed < 1 {
-				badRequest = "页码无效"
+				badRequest = "invalid_number"
 				return
 			}
 			v.Page = parsed
@@ -79,7 +79,7 @@ func (a *App) runsAnalytics(w http.ResponseWriter, r *http.Request) {
 		"size": func(value string) {
 			parsed, err := strconv.Atoi(value)
 			if err != nil || parsed < 1 || parsed > 100 {
-				badRequest = "每页数量无效"
+				badRequest = "out_of_range"
 				return
 			}
 			v.Size = parsed
@@ -88,15 +88,15 @@ func (a *App) runsAnalytics(w http.ResponseWriter, r *http.Request) {
 		if raw := query.Get(key); raw != "" {
 			apply(raw)
 			if badRequest != "" {
-				send(w, 400, map[string]string{"message": badRequest})
+				invalid(w, r, key, badRequest)
 				return
 			}
 		}
 	}
 	report, err := runstats.Analytics(r.Context(), a.DB, v)
 	if err != nil {
-		failure(w, err)
+		writeError(w, r, err)
 		return
 	}
-	send(w, 200, report)
+	send(w, http.StatusOK, report)
 }

@@ -17,7 +17,7 @@ import (
 func batchTargets(t *testing.T, m *Manager, root string, n int) []int64 {
 	t.Helper()
 	for i := range n {
-		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("clip-%03d.mp4", i)), []byte("video"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("clip-%03d.mp4", i)), []byte("video"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -54,7 +54,7 @@ func TestWaitingBatchCapacityAndPauseClassification(t *testing.T) {
 	}
 	var ids []int64
 	for i := range 25 {
-		id, err := m.Create(Request{Targets: []int64{targets[i]}, Key: fmt.Sprintf("capacity-%d", i)}, "manual", 0)
+		id, err := m.Create(t.Context(), Request{Targets: []int64{targets[i]}, Key: fmt.Sprintf("capacity-%d", i)}, "manual", 0)
 		if err != nil {
 			t.Fatalf("batch %d: %v", i+1, err)
 		}
@@ -64,14 +64,14 @@ func TestWaitingBatchCapacityAndPauseClassification(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := Request{Targets: []int64{targets[25]}, Key: "capacity-extra"}
-	if _, err := m.Create(request, "manual", 0); err == nil {
+	if _, err := m.Create(t.Context(), request, "manual", 0); err == nil {
 		t.Fatal("unstarted paused batch did not count toward waiting capacity")
 	}
 	// A paused batch that has started belongs to the execution side.
 	if _, err := m.DB.Exec("UPDATE runs SET started='now' WHERE id=?", ids[0]); err != nil {
 		t.Fatal(err)
 	}
-	extra, err := m.Create(request, "manual", 0)
+	extra, err := m.Create(t.Context(), request, "manual", 0)
 	if err != nil {
 		t.Fatal("started paused batch consumed waiting capacity", err)
 	}
@@ -80,11 +80,11 @@ func TestWaitingBatchCapacityAndPauseClassification(t *testing.T) {
 	if err := store.Save(settings); err != nil {
 		t.Fatal(err)
 	}
-	same, err := m.Create(request, "manual", 0)
+	same, err := m.Create(t.Context(), request, "manual", 0)
 	if err != nil || same != extra {
 		t.Fatal("queue limit broke idempotency", same, err)
 	}
-	if _, err := m.Create(Request{Targets: []int64{targets[26]}, Key: "capacity-new"}, "schedule", 1); err == nil {
+	if _, err := m.Create(t.Context(), Request{Targets: []int64{targets[26]}, Key: "capacity-new"}, "schedule", 1); err == nil {
 		t.Fatal("new submission accepted over lowered capacity")
 	}
 	if err := m.Cancel(extra); err != nil {
@@ -94,7 +94,7 @@ func TestWaitingBatchCapacityAndPauseClassification(t *testing.T) {
 	if err := store.Save(settings); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Create(Request{Targets: []int64{targets[26]}, Key: "capacity-new"}, "manual", 0); err != nil {
+	if _, err := m.Create(t.Context(), Request{Targets: []int64{targets[26]}, Key: "capacity-new"}, "manual", 0); err != nil {
 		t.Fatal("cancellation did not free waiting capacity", err)
 	}
 }
@@ -126,7 +126,7 @@ func TestLoopDynamicBatchCapacityAndShutdown(t *testing.T) {
 	}
 	var ids []int64
 	for i, target := range targets {
-		id, err := m.Create(Request{Targets: []int64{target}, Key: fmt.Sprintf("dispatch-%d", i)}, "manual", 0)
+		id, err := m.Create(t.Context(), Request{Targets: []int64{target}, Key: fmt.Sprintf("dispatch-%d", i)}, "manual", 0)
 		if err != nil {
 			t.Fatal(err)
 		}

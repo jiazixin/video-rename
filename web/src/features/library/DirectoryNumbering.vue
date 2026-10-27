@@ -1,11 +1,14 @@
 <script setup lang="ts">
+  import { errorText } from '../../app/errors';
   import PageNavigation from '../../components/PageNavigation.vue';
   import { computed, ref, onDeactivated, watch, nextTick } from 'vue';
   import { useNumberingTask } from './numbering-task';
   import { Hash, History, Undo2 } from '@lucide/vue';
-  import { api, ApiError } from '../../app/api';
+  import { api, ApiError, apiItems } from '../../app/api';
+  import type { ServerRecord } from '../../app/contracts';
+  import { displayPath } from '../../lib/format/path';
   import DateTime from '../../components/DateTime.vue';
-  import Modal from '../../components/Modal.vue';
+  import ModalDialog from '../../components/ModalDialog.vue';
   import ModalTransition from '../../components/ModalTransition.vue';
   import NumberingDiagnostics from './NumberingDiagnostics.vue';
   import './media-numbering.css';
@@ -17,7 +20,7 @@
     status: string;
     created: string;
     undo_of: string;
-    error: string;
+    error?: ServerRecord;
     processing_log?: string;
     total: number;
     changed: number;
@@ -29,7 +32,7 @@
   const progress = task.progress;
   const previewKey = ref(''),
     remoteItems = ref<{ entry: number; old_name: string; new_name: string; path: string }[]>([]);
-  const props = defineProps<{ directory: number; disabled: boolean }>();
+  const { directory, disabled } = defineProps<{ directory: number; disabled: boolean }>();
   const emit = defineEmits<{ changed: []; notice: [message: string] }>();
   const show = ref(false),
     busy = ref(false),
@@ -79,7 +82,7 @@
   }
   onDeactivated(close);
   watch(
-    () => props.directory,
+    () => directory,
     () => {
       if (show.value) close();
     }
@@ -87,7 +90,7 @@
   function report(e: unknown) {
     if (!show.value) return;
     diagnostics.value = e instanceof ApiError ? e.processingLog : '';
-    error.value = (e as Error).message;
+    error.value = errorText(e);
   }
   async function loadPage(next: number) {
     busy.value = true;
@@ -127,12 +130,12 @@
     }
   }
   function open() {
-    parent = props.directory;
+    parent = directory;
     show.value = true;
-    preview();
+    void preview();
   }
   async function loadHistory() {
-    records.value = await api<Batch[]>(`/directories/${parent}/numberings/tree`);
+    records.value = await apiItems<Batch>(`/directories/${parent}/numberings/tree`);
   }
   async function openHistory() {
     history.value = true;
@@ -143,7 +146,7 @@
       await loadHistory();
     } catch (e) {
       diagnostics.value = e instanceof ApiError ? e.processingLog : '';
-      error.value = (e as Error).message;
+      error.value = errorText(e);
     } finally {
       busy.value = false;
     }
@@ -155,12 +158,15 @@
     page.value = 0;
     previewKey.value = '';
     try {
-      const undo = await api<Batch>(`/numberings/${batch.id}/restore-preview`, 'POST', {});
+      const undo = await api<Batch>(`/numberings/${batch.id}/restore-preview`, {
+        method: 'POST',
+        body: {}
+      });
       batches.value = [{ ...undo, path: batch.path }];
       history.value = false;
     } catch (e) {
       diagnostics.value = e instanceof ApiError ? e.processingLog : '';
-      error.value = (e as Error).message;
+      error.value = errorText(e);
     } finally {
       busy.value = false;
     }
@@ -206,39 +212,33 @@
     error.value = '';
     diagnostics.value = '';
     try {
-      const updated = await api<Batch>(`/numberings/${batch.id}/recover`, 'POST', {});
-      if (updated.status === 'review') error.value = updated.error;
-      else emit('notice', updated.error || '已恢复原名');
+      const updated = await api<Batch>(`/numberings/${batch.id}/recover`, {
+        method: 'POST',
+        body: {}
+      });
+      if (updated.status === 'review') error.value = errorText(updated.error);
+      else emit('notice', errorText(updated.error) || '已恢复原名');
       await loadHistory();
     } catch (e) {
       diagnostics.value = e instanceof ApiError ? e.processingLog : '';
-      error.value = (e as Error).message;
+      error.value = errorText(e);
     } finally {
       busy.value = false;
       emit('changed');
     }
   }
+  const dialogTitle = computed(() => {
+    if (confirmingClose.value) return '停止当前处理？';
+    if (history.value) return '目录编号记录';
+    return restoring.value ? '还原目录编号' : '目录编号预览';
+  });
 </script>
 <template>
   <button class="library-action action-number" :disabled="disabled || busy" @click="open"
     ><Hash :size="16" />编号</button
   >
   <ModalTransition
-    ><Modal
-      v-if="show"
-      :title="
-        confirmingClose
-          ? '停止当前处理？'
-          : history
-            ? '目录编号记录'
-            : restoring
-              ? '还原目录编号'
-              : '目录编号预览'
-      "
-      wide
-      contained
-      @close="requestClose"
-    >
+    ><ModalDialog v-if="show" :title="dialogTitle" wide contained @close="requestClose">
       <div v-if="confirmingClose" class="cancel-confirmation">
         <p>确定停止并关闭编号窗口吗？</p>
         <p class="help"
@@ -303,16 +303,16 @@
           <article v-for="batch in records" :key="batch.id" class="numbering-record"
             ><div
               ><strong
-                >{{ batch.path }} · {{ batch.undo_of ? '还原' : '编号' }} ·
+                >{{ displayPath(batch.path) }} · {{ batch.undo_of ? '还原' : '编号' }} ·
                 {{ states[batch.status] || batch.status }}</strong
               ><p class="numbering-record-meta"
                 ><DateTime :value="batch.created" /><span
                   >{{ batch.changed }} 个修改 / {{ batch.total }} 个文件</span
                 ></p
-              ><p v-if="batch.error">{{ batch.error }}</p
+              ><p v-if="batch.error">{{ errorText(batch.error) }}</p
               ><NumberingDiagnostics
                 v-if="batch.processing_log"
-                :message="batch.error"
+                :message="errorText(batch.error)"
                 :diagnostics="batch.processing_log" /></div
             ><button
               v-if="batch.status === 'committed' && !batch.undo_of && batch.changed"
@@ -346,7 +346,7 @@
           ></div
         >
       </template>
-    </Modal></ModalTransition
+    </ModalDialog></ModalTransition
   >
 </template>
 <style scoped>

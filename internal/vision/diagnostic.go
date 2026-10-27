@@ -8,10 +8,10 @@ import (
 	"unicode/utf8"
 )
 
-const omittedDiagnostic = "[响应包含敏感内容，已省略]"
+const omittedDiagnostic = "[response contains sensitive content; omitted]"
 
-// responseDiagnostic 只提取约定的错误消息，不把回显的请求/头部对象写入日志。
-// 非 JSON 错误页不具备可验证结构，省略其正文。
+// responseDiagnostic extracts only the agreed error message and never logs echoed request or header objects.
+// Non-JSON error pages have no verifiable structure, so their bodies are omitted.
 func responseDiagnostic(raw []byte) string {
 	if len(raw) == 0 {
 		return ""
@@ -20,7 +20,7 @@ func responseDiagnostic(raw []byte) string {
 		Error jsontext.Value `json:"error"`
 	}
 	if json.Unmarshal(raw, &envelope) != nil {
-		return "[非结构化错误响应正文已省略]"
+		return "[unstructured error response body omitted]"
 	}
 	var message string
 	if json.Unmarshal(envelope.Error, &message) == nil {
@@ -32,11 +32,11 @@ func responseDiagnostic(raw []byte) string {
 	if json.Unmarshal(envelope.Error, &detail) == nil {
 		return detail.Message
 	}
-	return "[错误响应正文已省略]"
+	return "[error response body omitted]"
 }
 
-// safeDiagnostic 在裁剪前检查敏感内容，避免只暴露凭证前缀。
-// 命中时省略整段消息，不尝试从不受信任文本中猜测秘密的结束位置。
+// safeDiagnostic checks for sensitive content before truncating, so no credential prefix is exposed.
+// A match omits the whole message instead of guessing where a secret ends in untrusted text.
 func safeDiagnostic(s string, limit int, secrets ...string) string {
 	for _, secret := range secrets {
 		if secret == "" {
@@ -60,7 +60,7 @@ func safeDiagnostic(s string, limit int, secrets ...string) string {
 	if len(s) <= limit {
 		return s
 	}
-	const suffix = "…(截断)"
+	const suffix = "…(truncated)"
 	end := max(0, limit-len(suffix))
 	for end > 0 && !utf8.RuneStart(s[end]) {
 		end--

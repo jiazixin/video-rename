@@ -1,3 +1,4 @@
+import { defined } from './support'
 import { test, expect, type Page } from '@playwright/test'
 
 const ordinaryTitle = '旅行视频标题'
@@ -103,16 +104,16 @@ for (const width of [320, 390, 1440]) {
       await expect(card).toBeVisible()
       const layout = await card.evaluate((element) => {
         const bounds = (selector: string) => {
-          const rect = element.querySelector(selector)!.getBoundingClientRect()
+          const rect = element.querySelector(selector)?.getBoundingClientRect()
           return {
-            left: rect.left,
-            right: rect.right,
-            top: rect.top,
-            bottom: rect.bottom,
-            width: rect.width
+            left: rect?.left ?? NaN,
+            right: rect?.right ?? NaN,
+            top: rect?.top ?? NaN,
+            bottom: rect?.bottom ?? NaN,
+            width: rect?.width ?? NaN
           }
         }
-        const heading = element.querySelector('.prompt-card-heading')!
+        const heading = element.querySelector('.prompt-card-heading')
         return {
           header: bounds('header'),
           heading: bounds('.prompt-card-heading'),
@@ -120,7 +121,7 @@ for (const width of [320, 390, 1440]) {
           actions: bounds('.prompt-card-actions'),
           edit: bounds('.prompt-card-actions button:first-child'),
           remove: bounds('.prompt-card-actions button:last-child'),
-          overflow: heading.scrollWidth > heading.clientWidth
+          overflow: heading ? heading.scrollWidth > heading.clientWidth : true
         }
       })
       expect(layout.overflow).toBe(false)
@@ -155,7 +156,7 @@ for (const width of [320, 390, 1440]) {
       path: `test-results/prompts-editor-${width}.png`,
       animations: 'disabled'
     })
-    const editorBounds = (await editor.boundingBox())!
+    const editorBounds = defined(await editor.boundingBox())
     expect(editorBounds.x).toBeGreaterThanOrEqual(0)
     expect(editorBounds.x + editorBounds.width).toBeLessThanOrEqual(width)
     await editor.getByLabel('提示词内容', { exact: true }).fill('更新后的提示词正文。')
@@ -174,7 +175,7 @@ for (const width of [320, 390, 1440]) {
         path: `test-results/prompts-delete${suffix}-${width}.png`,
         animations: 'disabled'
       })
-      const deletionBounds = (await deletion.boundingBox())!
+      const deletionBounds = defined(await deletion.boundingBox())
       expect(deletionBounds.x).toBeGreaterThanOrEqual(0)
       expect(deletionBounds.x + deletionBounds.width).toBeLessThanOrEqual(width)
       const content = await deletion.locator('.modal-content').evaluate((element) => ({

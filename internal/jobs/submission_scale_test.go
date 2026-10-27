@@ -14,10 +14,10 @@ func TestScaleMultiSelectSubmission(t *testing.T) {
 	m, root := setup(t)
 	for d := range 200 {
 		dir := filepath.Join(root, fmt.Sprintf("folder-%03d", d))
-		if err := os.Mkdir(dir, 0700); err != nil {
+		if err := os.Mkdir(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("video-%03d.mp4", d)), []byte("fixture"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("video-%03d.mp4", d)), []byte("fixture"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -45,7 +45,7 @@ func TestScaleMultiSelectSubmission(t *testing.T) {
 		var created []int64
 		for batch := range 2 {
 			start := time.Now()
-			id, err := m.Create(Request{Targets: targets[batch*100 : (batch+1)*100], Recursive: true, Key: fmt.Sprintf("submission-%s-%d", kind, batch)}, "manual", 0)
+			id, err := m.Create(t.Context(), Request{Targets: targets[batch*100 : (batch+1)*100], Recursive: true, Key: fmt.Sprintf("submission-%s-%d", kind, batch)}, "manual", 0)
 			t.Logf("%s: 100 targets, existing batches=%d, submission=%s", kind, batch, time.Since(start))
 			if err != nil {
 				t.Fatal(err)
@@ -67,17 +67,17 @@ func TestScaleMixedDirectorySubmission(t *testing.T) {
 	m, root := setup(t)
 	for d := range 3 {
 		dir := filepath.Join(root, fmt.Sprintf("large-%d", d))
-		if err := os.Mkdir(dir, 0700); err != nil {
+		if err := os.Mkdir(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
 		for f := range 3000 {
-			if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("video-%04d.mp4", f)), []byte("fixture"), 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("video-%04d.mp4", f)), []byte("fixture"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}
 	}
 	for f := range 2 {
-		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("selected-%d.mp4", f)), []byte("fixture"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("selected-%d.mp4", f)), []byte("fixture"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -102,7 +102,7 @@ func TestScaleMixedDirectorySubmission(t *testing.T) {
 		}
 		for _, selection := range [][]int64{{1}, targets} {
 			start := time.Now()
-			id, err := m.Create(Request{Targets: selection, Recursive: true, Key: fmt.Sprintf("mixed-%v-%d", indexed, len(selection))}, "manual", 0)
+			id, err := m.Create(t.Context(), Request{Targets: selection, Recursive: true, Key: fmt.Sprintf("mixed-%v-%d", indexed, len(selection))}, "manual", 0)
 			elapsed := time.Since(start)
 			t.Logf("9,002 videos, indexed=%v, targets=%d, submission=%s", indexed, len(selection), elapsed)
 			if err != nil {

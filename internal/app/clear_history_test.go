@@ -1,14 +1,16 @@
 package app
 
 import (
+	"log/slog"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
 	"video-rename/internal/config"
 )
 
 func TestClearHistoryCategoryIsolation(t *testing.T) {
-	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}})
+	a, err := New(&config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +25,7 @@ func TestClearHistoryCategoryIsolation(t *testing.T) {
 	a.DB.QueryRow("SELECT id FROM events WHERE category='failure'").Scan(&failureID)
 	request := func(body string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
-		a.clearHistory(w, httptest.NewRequest("POST", "/api/logs/clear", strings.NewReader(body)))
+		a.clearHistory(w, jsonRequest("POST", "/api/logs/clear", strings.NewReader(body)))
 		return w
 	}
 	if w := request(`{"category":"failure","all":true}`); w.Code != 200 {
@@ -38,7 +40,7 @@ func TestClearHistoryCategoryIsolation(t *testing.T) {
 		t.Fatal("empty selection accepted")
 	}
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest("POST", "/api/logs/clear", strings.NewReader(`{"category":"success","all":true}`))
+	r := jsonRequest("POST", "/api/logs/clear", strings.NewReader(`{"category":"success","all":true}`))
 	r.Header.Set("Content-Type", "application/json")
 	a.Handler().ServeHTTP(w, r)
 	if w.Code != 401 {

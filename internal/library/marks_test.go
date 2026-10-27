@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
 	"video-rename/internal/domain"
 	"video-rename/internal/storage"
 )
@@ -143,7 +144,7 @@ func TestProcessedMarksBatchValidationFailureKeepsValidPeers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, changed.Name), []byte("changed file has a different size"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, changed.Name), []byte("changed file has a different size"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	l.Busy = func(id int64) bool { return id == ids[0] }
@@ -155,7 +156,7 @@ func TestProcessedMarksBatchValidationFailureKeepsValidPeers(t *testing.T) {
 	}
 	assertDurableMarkProgress(t, l, r)
 	for _, id := range ids[:2] {
-		e, err := l.Get(id)
+		e, err := l.Get(t.Context(), id)
 		if err != nil || e.Processed != "" {
 			t.Fatalf("invalid file received a mark: %+v %v", e, err)
 		}
@@ -200,7 +201,7 @@ func TestProcessedMarksRevalidateMediaTypeBeforeCommit(t *testing.T) {
 	if r.Interrupted || r.Changed != 2 || r.Unchanged != 0 || r.Failed != 1 || len(r.Failures) != 1 || r.Failures[0].ID != changed.ID {
 		t.Fatalf("changed media type received a mark: %+v", r)
 	}
-	e, err := l.Get(changed.ID)
+	e, err := l.Get(t.Context(), changed.ID)
 	if err != nil || e.Name != unsupported || e.Processed != "" {
 		t.Fatalf("unsupported renamed file received a mark: %+v %v", e, err)
 	}
@@ -282,7 +283,7 @@ BEGIN SELECT RAISE(ABORT,'injected unmark failure'); END`, ids[1])
 
 func TestProcessedMarksRecursiveAndPersistent(t *testing.T) {
 	l, root, dbpath := fixture(t)
-	if err := os.MkdirAll(filepath.Join(root, "dir", "nested"), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "dir", "nested"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	put(t, filepath.Join(root, "dir", "a.mp4"))
@@ -322,7 +323,7 @@ func TestProcessedMarksRecursiveAndPersistent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, _ = l.Get(a.ID)
+	a, _ = l.Get(t.Context(), a.ID)
 	if a.Processed != "marked" {
 		t.Fatal("mark lost on restart")
 	}
@@ -350,11 +351,11 @@ func TestMediaMarksProtectManualNamesAndNumberedFiles(t *testing.T) {
 			if r := l.SetProcessed(t.Context(), []int64{e.ID}, true); r.Changed != 1 || r.Failed != 0 {
 				t.Fatal(r)
 			}
-			op, err := l.Rename(e.ID, e.Version, "my-name."+ext, "manual-protected-name")
+			op, err := l.Rename(t.Context(), e.ID, e.Version, "my-name."+ext, "manual-protected-name")
 			if err != nil {
 				t.Fatal(err)
 			}
-			e, err = l.Get(e.ID)
+			e, err = l.Get(t.Context(), e.ID)
 			if err != nil || e.Processed != "marked" || e.RestoreID != op.ID {
 				t.Fatalf("manual rename lost protection/history: %+v %v", e, err)
 			}
@@ -366,7 +367,7 @@ func TestMediaMarksProtectManualNamesAndNumberedFiles(t *testing.T) {
 			if err != nil || len(batches) != 1 {
 				t.Fatalf("unmarked file cannot be numbered: %+v %v", batches, err)
 			}
-			if _, err = l.ApplyNumbering(batches[0].ID); err != nil {
+			if _, err = l.ApplyNumbering(t.Context(), batches[0].ID, nil); err != nil {
 				t.Fatal(err)
 			}
 			batches, err = l.PreviewNumberingTree(t.Context(), 1, settings)
@@ -389,7 +390,7 @@ func TestProcessedMarksPreserveHistoryAndValidateIdentity(t *testing.T) {
 	put(t, filepath.Join(root, "a.mp4"))
 	refresh(t, l, 1)
 	a := entry(t, l, 1, "a.mp4")
-	op, err := l.Rename(a.ID, a.Version, "b.mp4", "mark-history")
+	op, err := l.Rename(t.Context(), a.ID, a.Version, "b.mp4", "mark-history")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,11 +402,11 @@ func TestProcessedMarksPreserveHistoryAndValidateIdentity(t *testing.T) {
 	if r.Changed != 1 {
 		t.Fatalf("%+v", r)
 	}
-	a, _ = l.Get(a.ID)
+	a, _ = l.Get(t.Context(), a.ID)
 	if a.Processed != "" || a.RestoreID != op.ID || a.Name != "b.mp4" {
 		t.Fatalf("%+v", a)
 	}
-	if _, err = l.Restore(op.ID, "restore-after-unmark"); err != nil {
+	if _, err = l.Restore(t.Context(), op.ID, "restore-after-unmark"); err != nil {
 		t.Fatal(err)
 	}
 	l.Busy = func(int64) bool { return true }
@@ -413,7 +414,7 @@ func TestProcessedMarksPreserveHistoryAndValidateIdentity(t *testing.T) {
 		t.Fatal("busy file accepted")
 	}
 	l.Busy = nil
-	if err = os.WriteFile(filepath.Join(root, "a.mp4"), []byte("different content"), 0600); err != nil {
+	if err = os.WriteFile(filepath.Join(root, "a.mp4"), []byte("different content"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if r = l.SetProcessed(t.Context(), []int64{a.ID}, true); r.Failed != 1 {
@@ -431,7 +432,7 @@ func TestRenameKeepsDirectoryPageAvailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := entry(t, l, 1, "a.mp4")
-	if _, err = l.Rename(e.ID, e.Version, "z.mp4", "keep-index"); err != nil {
+	if _, err = l.Rename(t.Context(), e.ID, e.Version, "z.mp4", "keep-index"); err != nil {
 		t.Fatal(err)
 	}
 	after, err := l.ListOrdered(t.Context(), 1, 0, 100, before.Generation, "", "", "", false, "name_asc")
@@ -453,15 +454,15 @@ func TestProcessedMarksHardLinksAndChangedContent(t *testing.T) {
 	if r.Changed != 1 || r.Unchanged != 1 || r.Failed != 0 {
 		t.Fatalf("%+v", r)
 	}
-	alias, _ = l.Get(alias.ID)
+	alias, _ = l.Get(t.Context(), alias.ID)
 	if alias.Processed != "marked" {
 		t.Fatal("hard link did not share mark")
 	}
-	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("new content of another size"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("new content of another size"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	refresh(t, l, 1)
-	a, _ = l.Get(a.ID)
+	a, _ = l.Get(t.Context(), a.ID)
 	if a.Processed != "" {
 		t.Fatal("changed content inherited mark")
 	}
@@ -476,7 +477,7 @@ func TestAutomaticSuccessDiagnosticsPersistWithHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	op, err := l.AutoCommit(e.ID, snap, "new-name", "success-diagnostics", 0, domain.ModelDiagnostics{Request: `{"messages":[]}`, Response: `{"choices":[],"usage":10}`})
+	op, err := l.AutoCommit(t.Context(), e.ID, snap, "new-name", "success-diagnostics", 0, domain.ModelDiagnostics{Request: `{"messages":[]}`, Response: `{"choices":[],"usage":10}`})
 	if err != nil {
 		t.Fatal(err)
 	}

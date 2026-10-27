@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,7 +20,7 @@ func statsTestCache(t *testing.T, base string) *Cache {
 	t.Helper()
 	policy := systemsettings.Default().Policy
 	policy.SuccessCacheMode, policy.IdleCacheHours = "keep", 0
-	c, err := New(base, 1000000, policy)
+	c, err := New(base, 1000000, slog.New(slog.DiscardHandler), policy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,10 +220,10 @@ func TestStatsTracksRevalidatedBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(manifest, append(raw, []byte(strings.Repeat(" ", 2048))...), 0600); err != nil {
+	if err := os.WriteFile(manifest, append(raw, []byte(strings.Repeat(" ", 2048))...), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "unrelated.txt"), []byte(strings.Repeat("x", 4096)), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "unrelated.txt"), []byte(strings.Repeat("x", 4096)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var diskBytes int64
@@ -256,10 +257,10 @@ func TestStatsAccountsRejectedValidationWithoutRemovingLease(t *testing.T) {
 	lease := statsTestAcquire(t, c, key)
 	defer lease.Release(false)
 	dir := filepath.Join(c.root, key)
-	if err := os.WriteFile(filepath.Join(dir, "0-unrelated.txt"), []byte(strings.Repeat("x", 30)), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "0-unrelated.txt"), []byte(strings.Repeat("x", 30)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(filepath.Join(dir, "a-unknown-directory"), 0700); err != nil {
+	if err := os.Mkdir(filepath.Join(dir, "a-unknown-directory"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	other, err := c.Acquire(t.Context(), key, 100000, build)
@@ -323,10 +324,10 @@ func TestStatsPartialPruneFailure(t *testing.T) {
 	c.entries[blocked.key].LastUsed = time.Now().Add(-time.Hour)
 	c.mu.Unlock()
 	blockedDir := filepath.Join(c.root, blocked.key)
-	if err := os.Chmod(blockedDir, 0500); err != nil {
+	if err := os.Chmod(blockedDir, 0o500); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Chmod(blockedDir, 0700) })
+	t.Cleanup(func() { os.Chmod(blockedDir, 0o700) })
 	if err := c.Configure(1, c.policy); err == nil {
 		t.Fatal("pruning a non-writable cache directory did not fail")
 	}
@@ -339,7 +340,7 @@ func TestStatsPartialPruneFailure(t *testing.T) {
 	if _, err := os.Stat(active.Set.Frames[0].Path); err != nil {
 		t.Fatal("partial pruning removed active frames", err)
 	}
-	if err := os.Chmod(blockedDir, 0700); err != nil {
+	if err := os.Chmod(blockedDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	result, err := c.Clear()
@@ -363,7 +364,7 @@ func TestStatsPartialPruneFailure(t *testing.T) {
 func BenchmarkCacheSweepRetained(b *testing.B) {
 	policy := systemsettings.Default().Policy
 	policy.SuccessCacheMode, policy.IdleCacheHours = "keep", 0
-	c, err := New(b.TempDir(), 1<<60, policy)
+	c, err := New(b.TempDir(), 1<<60, slog.New(slog.DiscardHandler), policy)
 	if err != nil {
 		b.Fatal(err)
 	}
