@@ -444,7 +444,7 @@
           ></section
         >
       </fieldset>
-      <section class="panel processing-cache"
+      <section class="panel processing-cache" aria-label="缓存状态"
         ><header
           ><h2>缓存状态</h2
           ><div class="cache-actions"

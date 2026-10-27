@@ -1,4 +1,4 @@
-import { defined } from './support'
+import { bodyRows, defined, toasts } from './support'
 import { test, expect } from '@playwright/test'
 
 test('顶部编号不依赖视图，递归索引并按文件夹编号，刷新后可还原', async ({ page }) => {
@@ -8,7 +8,7 @@ test('顶部编号不依赖视图，递归索引并按文件夹编号，刷新�
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await page.getByRole('button', { name: '递归编号测试', exact: true }).click()
   await expect(page.getByText('photo.JPG', { exact: true })).toBeVisible()
-  const actions = page.locator('.directory-mark-actions')
+  const actions = page.getByRole('group', { name: '当前目录操作' })
   await expect(actions.getByRole('button')).toHaveText([
     '抽帧',
     '重命名',
@@ -18,34 +18,28 @@ test('顶部编号不依赖视图，递归索引并按文件夹编号，刷新�
   ])
   await expect(page.getByText('作用于当前目录及所有子目录', { exact: true })).toHaveCount(0)
   await page.getByLabel('搜索当前目录').fill('clip')
-  await expect(page.locator('.file-table tbody tr')).toHaveCount(1)
+  await expect(bodyRows(page)).toHaveCount(1)
   await actions.getByRole('button', { name: '编号', exact: true }).click()
   let dialog = page.getByRole('dialog')
   await expect(dialog).toContainText('共 4 个目录、8 个文件，8 个需要修改')
-  await expect(dialog.locator('tbody tr')).toHaveCount(8)
-  await expect(dialog.locator('tbody')).toContainText('子目录/孙目录')
-  await expect(dialog.locator('tbody tr').nth(0)).toContainText('photo.JPG1.jpg')
-  await expect(dialog.locator('tbody tr').nth(1)).toContainText('song.MP31.mp3')
+  await expect(bodyRows(dialog)).toHaveCount(8)
+  await expect(dialog.getByRole('table')).toContainText('子目录/孙目录')
+  await expect(bodyRows(dialog).nth(0)).toContainText('photo.JPG1.jpg')
+  await expect(bodyRows(dialog).nth(1)).toContainText('song.MP31.mp3')
   await page.screenshot({ path: 'test-results/directory-numbering-preview.png' })
   await dialog.getByRole('button', { name: '确认编号', exact: true }).click()
-  await expect(page.locator('.toast-message').first()).toContainText(
-    '已编号 8 个文件，完成 4 个目录。'
-  )
+  await expect(toasts(page).first()).toContainText('已编号 8 个文件，完成 4 个目录。')
   await dialog.getByRole('button', { name: '关闭', exact: true }).last().click()
   await page.reload()
   await actions.getByRole('button', { name: '编号', exact: true }).click()
   await expect(page.getByRole('dialog')).toContainText('0 个需要修改，8 个保持不变')
   await page.getByRole('dialog').getByRole('button', { name: '编号记录', exact: true }).click()
   dialog = page.getByRole('dialog')
-  await expect(dialog.locator('.numbering-record')).toHaveCount(4)
-  const nested = dialog
-    .locator('.numbering-record')
-    .filter({ hasText: '递归编号测试/子目录/孙目录' })
+  await expect(dialog.getByRole('article')).toHaveCount(4)
+  const nested = dialog.getByRole('article').filter({ hasText: '递归编号测试/子目录/孙目录' })
   await nested.getByRole('button', { name: '还原本次编号', exact: true }).click()
   await dialog.getByRole('button', { name: '确认整批还原', exact: true }).click()
-  await expect(page.locator('.toast-message').first()).toContainText(
-    '已还原 2 个文件，完成 1 个目录。'
-  )
+  await expect(toasts(page).first()).toContainText('已还原 2 个文件，完成 1 个目录。')
   await dialog.getByRole('button', { name: '关闭', exact: true }).last().click()
   await page.setViewportSize({ width: 390, height: 844 })
   const title = defined(await page.getByRole('heading', { name: '文件目录.' }).boundingBox())
@@ -77,20 +71,20 @@ test('编号冲突直接显示原名、占用类型和可复制诊断', async ({
   await page.getByRole('button', { name: '编号冲突测试', exact: true }).click()
   await expect(page.getByRole('button', { name: '子目录', exact: true })).toBeVisible()
   await page
-    .locator('.directory-mark-actions')
+    .getByRole('group', { name: '当前目录操作' })
     .getByRole('button', { name: '编号', exact: true })
     .click()
   const dialog = page.getByRole('dialog')
   await expect(dialog.getByRole('alert')).toContainText('原文件：photo.jpg')
   await expect(dialog.getByRole('alert')).toContainText('编号冲突测试/子目录')
   await dialog.getByText('查看诊断详情', { exact: true }).click()
-  await expect(dialog.locator('pre')).toContainText('target kind: directory')
-  await expect(dialog.locator('pre')).toContainText('occupying entry: "1.jpg"')
+  await expect(dialog.getByText(/target kind: directory/)).toBeVisible()
+  await expect(dialog.getByText(/occupying entry: "1\.jpg"/)).toBeVisible()
   await expect(dialog.getByRole('button', { name: '复制诊断', exact: true })).toBeVisible()
   await expect(dialog.getByRole('button', { name: '确认编号', exact: true })).toHaveCount(0)
   await dialog.getByRole('button', { name: '编号记录', exact: true }).click()
   await expect(dialog).toContainText('暂无编号记录')
-  await expect(dialog.locator('details')).toHaveCount(0)
+  await expect(dialog.getByText('查看诊断详情', { exact: true })).toHaveCount(0)
 })
 
 test('目录编号持续反馈进度，关闭取消，预览完成仍须确认', async ({ page }) => {
@@ -163,11 +157,12 @@ test('目录编号持续反馈进度，关闭取消，预览完成仍须确认',
   await page.getByLabel('密码', { exact: true }).fill('test-password-123')
   await page.getByRole('button', { name: '登录', exact: true }).click()
   const button = page
-    .locator('.directory-mark-actions')
+    .getByRole('group', { name: '当前目录操作' })
     .getByRole('button', { name: '编号', exact: true })
   await button.click()
   await expect(page.getByRole('dialog')).toContainText('已扫描 12 个目录、3500 个文件')
-  await page.locator('.modal-backdrop').click({ position: { x: 5, y: 5 } })
+  // The point lies on the backdrop, outside the dialog.
+  await page.mouse.click(5, 5)
   await expect(page.getByRole('dialog')).toContainText('确定停止并关闭编号窗口吗')
   expect(cancelled).toHaveLength(0)
   await expect(page.getByRole('button', { name: '继续处理', exact: true })).toBeFocused()
@@ -249,15 +244,15 @@ test('编号历史刷新后可展开并复制执行失败现场', async ({ page,
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt) await page.reload()
     await page
-      .locator('.directory-mark-actions')
+      .getByRole('group', { name: '当前目录操作' })
       .getByRole('button', { name: '编号', exact: true })
       .click()
     const dialog = page.getByRole('dialog')
     await expect(dialog.getByRole('button', { name: '编号记录', exact: true })).toBeEnabled()
     await dialog.getByRole('button', { name: '编号记录', exact: true }).click()
-    const record = dialog.locator('.numbering-record')
+    const record = dialog.getByRole('article')
     await record.getByText('查看诊断详情', { exact: true }).click()
-    await expect(record.locator('pre')).toHaveText(diagnostic)
+    await expect(record.getByText(diagnostic, { exact: true })).toBeVisible()
     await record.getByRole('button', { name: '复制诊断', exact: true }).click()
     await expect(record.getByRole('status')).toHaveText('已复制诊断')
     expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(diagnostic)

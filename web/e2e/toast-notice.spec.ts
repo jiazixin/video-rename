@@ -1,4 +1,4 @@
-import { defined } from './support'
+import { defined, toasts } from './support'
 import { test, expect } from '@playwright/test'
 
 test('保存系统设置不移动表单，切换分类清理通知，通知渠道保存和测试使用浮动反馈', async ({
@@ -78,9 +78,9 @@ test('保存系统设置不移动表单，切换分类清理通知，通知渠�
   await save.scrollIntoViewIfNeeded()
   const before = await save.boundingBox()
   await save.click()
-  const notice = page.locator('.toast-notice')
+  const notice = toasts(page)
   await expect(notice).toContainText('设置已保存')
-  await expect(page.locator('.processing-settings .notice.success')).toHaveCount(0)
+  await expect(page.getByRole('main').getByText('设置已保存')).toHaveCount(0)
   const after = await save.boundingBox()
   expect(Math.abs(defined(before).y - defined(after).y)).toBeLessThan(1)
   await notice.getByRole('button', { name: '关闭提示' }).click()
@@ -97,10 +97,10 @@ test('保存系统设置不移动表单，切换分类清理通知，通知渠�
   await expect(notice).toHaveCount(0)
   const webhook = page.getByRole('form', { name: '自定义', exact: true })
   await webhook.getByRole('button', { name: '保存设置', exact: true }).click()
-  await expect(page.locator('.toast-message').first()).toHaveText('自定义设置已保存')
+  await expect(toasts(page).first()).toHaveText('自定义设置已保存')
   await webhook.getByRole('button', { name: '发送测试', exact: true }).click()
-  await expect(page.locator('.toast-message').first()).toContainText('自定义测试通知已发送')
-  await expect(webhook.locator('.notice.success')).toHaveCount(0)
+  await expect(toasts(page).first()).toContainText('自定义测试通知已发送')
+  await expect(webhook.getByText('自定义测试通知已发送')).toHaveCount(0)
   await page.setViewportSize({ width: 390, height: 844 })
   expect(
     await notice.first().evaluate((el) => el.getBoundingClientRect().right)
@@ -145,16 +145,15 @@ test('浮动提示保留重复消息、最新置顶，并独立关闭和到期',
   const time = new Date('2026-10-02T01:00:00Z')
   await page.clock.install({ time })
   await page.clock.pauseAt(time)
-  const notices = page.locator('.toast-notice')
-  const messages = page.locator('.toast-message')
+  const notices = toasts(page)
   await page.getByRole('button', { name: '复制详情', exact: true }).click()
-  await expect(messages).toHaveText(['已复制运行记录详情'])
+  await expect(notices).toHaveText(['已复制运行记录详情'])
   await page.clock.runFor(1000)
   await page.getByRole('button', { name: '复制详情', exact: true }).click()
-  await expect(messages).toHaveText(['已复制运行记录详情', '已复制运行记录详情'])
+  await expect(notices).toHaveText(['已复制运行记录详情', '已复制运行记录详情'])
   await page.clock.runFor(1000)
   await page.getByRole('button', { name: '还原此次命名', exact: true }).click()
-  await expect(messages).toHaveText(['名称已还原', '已复制运行记录详情', '已复制运行记录详情'])
+  await expect(notices).toHaveText(['名称已还原', '已复制运行记录详情', '已复制运行记录详情'])
   await page.clock.runFor(250)
   // CSS transitions use browser animation time, independently of the timer clock.
   await expect
@@ -177,10 +176,10 @@ test('浮动提示保留重复消息、最新置顶，并独立关闭和到期',
   await page.screenshot({ path: 'test-results/toast-stack-mobile.png' })
   await notices.nth(1).getByRole('button', { name: '关闭提示' }).click()
   await page.clock.runFor(250)
-  await expect(messages).toHaveText(['名称已还原', '已复制运行记录详情'])
+  await expect(notices).toHaveText(['名称已还原', '已复制运行记录详情'])
   // At 5.75 seconds the first copy expires; the restore has its own deadline.
   await page.clock.runFor(3000)
-  await expect(messages).toHaveText(['名称已还原'])
+  await expect(notices).toHaveText(['名称已还原'])
   await page.clock.runFor(2000)
   await expect(notices).toHaveCount(0)
 

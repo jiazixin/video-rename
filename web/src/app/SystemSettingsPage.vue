@@ -40,7 +40,7 @@
         ><h1>系统设置<span class="title-dot">.</span></h1
         ><p>管理处理资源、后台目录扫描、编号规则、Prompt、模型、抽帧规则与通知。</p></div
       ></div
-    ><div v-tab-indicator class="log-tabs settings-tabs" aria-label="系统设置分类"
+    ><div v-tab-indicator class="log-tabs settings-tabs" role="group" aria-label="系统设置分类"
       ><button
         v-for="item in tabs"
         :key="item.id"

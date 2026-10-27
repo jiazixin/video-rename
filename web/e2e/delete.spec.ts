@@ -1,4 +1,4 @@
-import { defined } from './support'
+import { bodyRows, defined, pageReadout } from './support'
 import { test, expect, type Page } from '@playwright/test'
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -26,14 +26,14 @@ async function setupBatch(page: Page, name: string) {
     .toBe(true)
   await page.goto('/')
   await page.getByRole('button', { name, exact: true }).click()
-  await expect(page.locator('tbody tr')).toHaveCount(100)
+  await expect(bodyRows(page)).toHaveCount(100)
   await page.getByRole('button', { name: '多选', exact: true }).click()
   return path
 }
 
 test('批量删除跨页文件和非空目录，确认可取消，操作列右对齐', async ({ page }) => {
   const path = await setupBatch(page, '批量删除-跨页')
-  const toolbar = page.locator('.batch-toolbar'),
+  const toolbar = page.getByRole('group', { name: '批量操作' }),
     remove = toolbar.getByRole('button', { name: '删除', exact: true })
   await expect(remove).toBeDisabled()
   expect(
@@ -71,13 +71,17 @@ test('批量删除跨页文件和非空目录，确认可取消，操作列右�
   await remove.click()
   const dialog = page.getByRole('dialog', { name: '批量删除', exact: true })
   await expect(dialog).toContainText('3 个条目')
-  await expect(dialog.locator('li')).toHaveText(['子目录（目录）', 'file000.txt', 'file104.txt'])
+  await expect(dialog.getByRole('listitem')).toHaveText([
+    '子目录（目录）',
+    'file000.txt',
+    'file104.txt'
+  ])
   await expect(dialog).toContainText('所有文件和子目录')
   await expect(dialog).toContainText('不进入回收站')
   await dialog.getByRole('button', { name: '取消', exact: true }).click()
   for (const name of ['子目录/内容.txt', 'file000.txt', 'file104.txt'])
     expect(existsSync(join(path, name))).toBe(true)
-  await expect(toolbar.locator('strong')).toHaveText('已选 3 项')
+  await expect(toolbar.getByText(/^已选 /)).toHaveText('已选 3 项')
   await page.setViewportSize({ width: 390, height: 844 })
   await toolbar.scrollIntoViewIfNeeded()
   await page.screenshot({ path: 'test-results/batch-delete-mobile.png' })
@@ -85,8 +89,10 @@ test('批量删除跨页文件和非空目录，确认可取消，操作列右�
   await remove.click()
   await dialog.getByRole('button', { name: '确认永久删除', exact: true }).click()
   await expect(dialog).toHaveCount(0)
-  await expect(toolbar.locator('strong')).toHaveText('已选 0 项')
-  await expect(page.locator('.pagination .page-current').last()).toHaveText('2')
+  await expect(toolbar.getByText(/^已选 /)).toHaveText('已选 0 项')
+  await expect(
+    pageReadout(page.getByRole('navigation', { name: '分页导航', exact: true }).last())
+  ).toHaveText(/^2\//)
   for (const name of ['子目录', 'file000.txt', 'file104.txt'])
     expect(existsSync(join(path, name))).toBe(false)
   expect(existsSync(join(path, 'file001.txt'))).toBe(true)
@@ -96,8 +102,7 @@ test('批量删除部分失败保留勾选，执行中禁止重复提交，重�
   const path = await setupBatch(page, '批量删除-失败')
   for (const name of ['file000.txt', 'file001.txt'])
     await page.getByLabel(`选择 ${name}`, { exact: true }).check()
-  const failedID = await page
-    .locator('tbody tr')
+  const failedID = await bodyRows(page)
     .filter({ has: page.getByLabel('选择 file001.txt', { exact: true }) })
     .getAttribute('data-entry-id')
   let release!: () => void
@@ -121,7 +126,10 @@ test('批量删除部分失败保留勾选，执行中禁止重复提交，重�
     } else await route.continue()
   })
   try {
-    await page.locator('.batch-toolbar').getByRole('button', { name: '删除', exact: true }).click()
+    await page
+      .getByRole('group', { name: '批量操作' })
+      .getByRole('button', { name: '删除', exact: true })
+      .click()
     const dialog = page.getByRole('dialog', { name: '批量删除', exact: true })
     await dialog.getByRole('button', { name: '确认永久删除', exact: true }).click()
     await expect.poll(() => deleted.length).toBe(2)
@@ -132,15 +140,19 @@ test('批量删除部分失败保留勾选，执行中禁止重复提交，重�
     release()
     await expect(dialog.getByRole('alert')).toContainText('已删除 1 项，失败 1 项')
     await expect(dialog.getByRole('alert')).toContainText('file001.txt：目录内有活动任务')
-    await expect(dialog.locator('li')).toHaveText(['file001.txt'])
-    await expect(page.locator('.batch-toolbar strong')).toHaveText('已选 1 项')
+    await expect(dialog.getByRole('listitem')).toHaveText(['file001.txt'])
+    await expect(page.getByRole('group', { name: '批量操作' }).getByText(/^已选 /)).toHaveText(
+      '已选 1 项'
+    )
     expect(existsSync(join(path, 'file000.txt'))).toBe(false)
     expect(existsSync(join(path, 'file001.txt'))).toBe(true)
     await page.unroute('**/api/entries/*')
     await dialog.getByRole('button', { name: '确认永久删除', exact: true }).click()
     await expect(dialog).toHaveCount(0)
     expect(existsSync(join(path, 'file001.txt'))).toBe(false)
-    await expect(page.locator('.batch-toolbar strong')).toHaveText('已选 0 项')
+    await expect(page.getByRole('group', { name: '批量操作' }).getByText(/^已选 /)).toHaveText(
+      '已选 0 项'
+    )
   } finally {
     release()
   }

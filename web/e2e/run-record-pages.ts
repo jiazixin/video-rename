@@ -1,3 +1,4 @@
+import type { Locator } from '@playwright/test'
 import { defined } from './support'
 import type { RunItem } from '../src/features/runs/use-run-records'
 
@@ -94,3 +95,21 @@ export function recordPage(items: FixtureItem[], query: URLSearchParams) {
     ...extra
   }
 }
+
+/** File records in a run detail, excluding the live view of files in progress. */
+export const fileRecords = (scope: Locator) => scope.getByRole('article', { name: /^文件记录 / })
+
+/** Visible request attempts; collapsed attempt lists are hidden. */
+export const attempts = (scope: Locator) =>
+  scope.getByRole('list', { name: '请求尝试' }).getByRole('listitem')
+
+/** Directory groups of run records. */
+export const directories = (scope: Locator) => scope.getByRole('region', { name: /^目录 / })
+
+/** The expand toggle of each directory group, named after its path and counts. */
+export const directoryToggles = (scope: Locator) =>
+  directories(scope).getByRole('button', { name: /\d+ 个文件/ })
+
+/** Files that finished recently, newest first. */
+export const recentFiles = (scope: Locator) =>
+  scope.getByRole('region', { name: /^最近结束/ }).getByRole('listitem')

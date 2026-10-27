@@ -350,7 +350,7 @@
           ><button class="primary" @click="open()"><Plus :size="17" />新增提示词</button></header
         >
         <div v-if="rows.length" class="prompt-list"
-          ><article v-for="p in rows" :key="p.id" class="panel prompt-card"
+          ><article v-for="p in rows" :key="p.id" class="panel prompt-card" :aria-label="p.title"
             ><header
               ><div class="prompt-card-heading"
                 ><h2>{{ p.title }}</h2

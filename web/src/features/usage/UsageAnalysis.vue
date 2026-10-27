@@ -294,21 +294,21 @@
       </div>
     </div>
     <template v-if="report">
-      <div class="analysis-kpis">
-        <div class="usage-kpi"
+      <div class="analysis-kpis" role="list" aria-label="运行指标">
+        <div class="usage-kpi" role="listitem"
           ><span>批次成功率</span
           ><strong>{{ formatPercent(totals?.completed || 0, terminal) }}</strong
           ><small>{{ totals?.completed || 0 }} / {{ terminal }} 个终态批次</small></div
         >
-        <div class="usage-kpi"
+        <div class="usage-kpi" role="listitem"
           ><span>项目成功率</span><strong>{{ formatPercent(totals?.done || 0, attempted) }}</strong
           ><small>{{ totals?.done || 0 }} / {{ attempted }} 个已处理项</small></div
         >
-        <div class="usage-kpi"
+        <div class="usage-kpi" role="listitem"
           ><span>平均批次耗时</span><strong>{{ duration(totals?.avg_batch_ms || 0) }}</strong
           ><small>{{ finishedBatches }} 个已结束批次</small></div
         >
-        <div class="usage-kpi"
+        <div class="usage-kpi" role="listitem"
           ><span>平均处理耗时</span><strong>{{ duration(totals?.avg_item_ms || 0) }}</strong
           ><small
             >{{ totals?.timed_items || 0 }} 个计时样本<template
@@ -318,27 +318,27 @@
             ></small
           ></div
         >
-        <div class="usage-kpi"
+        <div class="usage-kpi" role="listitem"
           ><span>吞吐</span><strong>{{ rate(totals?.throughput_per_hour || 0) }}</strong
           ><small>个 / 小时 · 区间内 {{ outcomes }} 项</small></div
         >
-        <div class="usage-kpi"
+        <div class="usage-kpi" role="listitem"
           ><span>失败率</span><strong>{{ formatPercent(totals?.failed || 0, attempted) }}</strong
           ><small>{{ totals?.failed || 0 }} 项失败</small></div
         >
-        <div class="usage-kpi"
+        <div class="usage-kpi" role="listitem"
           ><span>跳过率</span><strong>{{ formatPercent(totals?.skipped || 0, outcomes) }}</strong
           ><small>{{ totals?.skipped || 0 }} 项跳过</small></div
         >
-        <div class="usage-kpi"
+        <div class="usage-kpi" role="listitem"
           ><span>P50 处理耗时</span><strong>{{ duration(totals?.p50_item_ms || 0) }}</strong
           ><small>逐项耗时中位数</small></div
         >
-        <div class="usage-kpi"
+        <div class="usage-kpi" role="listitem"
           ><span>P95 处理耗时</span><strong>{{ duration(totals?.p95_item_ms || 0) }}</strong
           ><small>逐项耗时 95 分位</small></div
         >
-        <div class="usage-kpi"
+        <div class="usage-kpi" role="listitem"
           ><span>取消批次</span><strong>{{ totals?.cancelled || 0 }}</strong
           ><small
             ><template v-if="totals?.interrupted">另有中断 {{ totals.interrupted }} 个</template
@@ -353,7 +353,7 @@
         批次耗时按实际开始至结束计算；逐项耗时自本版本起记录。
       </p>
       <div class="usage-stack">
-        <div class="panel">
+        <div class="panel" role="region" aria-label="批次耗时趋势">
           <div class="panel-toolbar"
             ><h2>批次耗时趋势</h2
             ><span class="subtle">{{ finishedBatches ? '' : '暂无数据' }}</span></div
@@ -388,7 +388,7 @@
             >
           </details>
         </div>
-        <div class="panel">
+        <div class="panel" role="region" aria-label="处理结果趋势">
           <div class="panel-toolbar"
             ><h2>处理结果趋势</h2><span class="subtle">{{ outcomes ? '' : '暂无数据' }}</span></div
           >
@@ -424,7 +424,7 @@
           </details>
         </div>
         <div class="analysis-duo">
-          <div class="panel">
+          <div class="panel" role="region" aria-label="吞吐趋势">
             <div class="panel-toolbar"
               ><h2>吞吐趋势</h2><span class="subtle">{{ outcomes ? '' : '暂无数据' }}</span></div
             >
@@ -460,7 +460,7 @@
               >
             </details>
           </div>
-          <div class="panel">
+          <div class="panel" role="region" aria-label="耗时分布">
             <div class="panel-toolbar"
               ><h2>耗时分布</h2
               ><span class="subtle">{{ totals?.timed_items ? '' : '暂无数据' }}</span></div
@@ -470,7 +470,7 @@
             /></div>
           </div>
         </div>
-        <div class="panel">
+        <div class="panel" role="region" aria-label="模型配置性能比较">
           <div class="panel-toolbar"
             ><h2>模型配置性能比较</h2><span class="subtle">仅命名批次 · 按批次数量排序</span></div
           >
@@ -511,7 +511,7 @@
           >
           <div v-else class="empty compact">区间内没有可比较的命名批次</div>
         </div>
-        <div class="panel">
+        <div class="panel" role="region" aria-label="批次大小 vs 耗时">
           <div class="panel-toolbar"
             ><h2>批次大小 vs 耗时</h2
             ><span class="subtle">最多展示最近 {{ report.scatter.length }} 个批次</span></div
@@ -523,7 +523,7 @@
               :status-name="statusName"
           /></div>
         </div>
-        <div class="panel">
+        <div class="panel" role="region" aria-label="失败分析">
           <div class="panel-toolbar"
             ><h2>失败分析</h2
             ><span class="subtle"
@@ -577,7 +577,7 @@
           </div>
           <div v-else class="empty compact">区间内没有失败记录</div>
         </div>
-        <div class="panel">
+        <div class="panel" role="region" aria-label="批次明细">
           <div class="panel-toolbar usage-detail-toolbar">
             <h2>批次明细</h2>
             <div class="usage-detail-tools">

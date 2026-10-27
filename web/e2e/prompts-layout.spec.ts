@@ -98,9 +98,7 @@ for (const width of [320, 390, 1440]) {
       expect(bounds.right).toBeLessThanOrEqual(fixedLayout.card.right - 1)
     }
     for (const title of [ordinaryTitle, longTitle, longAsciiTitle]) {
-      const card = page.locator('.prompt-card').filter({
-        has: page.getByRole('heading', { name: title, exact: true })
-      })
+      const card = page.getByRole('article', { name: title, exact: true })
       await expect(card).toBeVisible()
       const layout = await card.evaluate((element) => {
         const bounds = (selector: string) => {
@@ -162,7 +160,7 @@ for (const width of [320, 390, 1440]) {
     await editor.getByLabel('提示词内容', { exact: true }).fill('更新后的提示词正文。')
     await editor.getByRole('button', { name: '保存提示词', exact: true }).click()
     await expect(editor).toHaveCount(0)
-    await expect(page.locator('.prompt-card').filter({ hasText: longTitle })).toContainText(
+    await expect(page.getByRole('article', { name: longTitle })).toContainText(
       '更新后的提示词正文。'
     )
     await expect(fixed).toHaveValue(fixedDraft)

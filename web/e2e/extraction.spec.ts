@@ -1,4 +1,4 @@
-import { libraryDirectory } from './support'
+import { bodyRows, libraryDirectory } from './support'
 import { test, expect, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 
@@ -52,12 +52,12 @@ test('三个独立抽帧入口、真实缓存复用及统一成功失败记录',
       ).ok()
     ).toBeTruthy()
     const extract = page
-      .locator('.directory-mark-actions')
+      .getByRole('group', { name: '当前目录操作' })
       .getByRole('button', { name: '抽帧当前目录', exact: true })
     expect(await extract.evaluate((el) => el.nextElementSibling?.textContent.trim())).toBe('重命名')
     // A visible search filter must not restrict a directory extraction.
     await page.getByLabel('搜索当前目录').fill('prepared')
-    await expect(page.locator('tbody tr')).toHaveCount(1)
+    await expect(bodyRows(page)).toHaveCount(1)
     await extract.click()
     await expect(page.getByRole('dialog').getByRole('combobox', { name: '模型配置' })).toHaveCount(
       0
@@ -89,7 +89,7 @@ test('三个独立抽帧入口、真实缓存复用及统一成功失败记录',
 
     await page.getByRole('button', { name: '刷新', exact: true }).click()
     await page.getByRole('button', { name: '多选', exact: true }).click()
-    await expect(page.locator('.batch-toolbar button')).toHaveText([
+    await expect(page.getByRole('group', { name: '批量操作' }).getByRole('button')).toHaveText([
       '全选',
       '反选',
       '清空',
@@ -101,7 +101,10 @@ test('三个独立抽帧入口、真实缓存复用及统一成功失败记录',
       '还原'
     ])
     await page.getByLabel('选择 prepared.mp4', { exact: true }).check()
-    await page.locator('.batch-toolbar').getByRole('button', { name: '抽帧', exact: true }).click()
+    await page
+      .getByRole('group', { name: '批量操作' })
+      .getByRole('button', { name: '抽帧', exact: true })
+      .click()
     const second = await submitRun(page)
     const secondLog = await (await page.request.get(`/api/extractions?run=${second}`)).json()
     expect(secondLog.success.items).toHaveLength(1)
@@ -129,9 +132,7 @@ test('三个独立抽帧入口、真实缓存复用及统一成功失败记录',
     await page.getByRole('button', { name: '批次记录', exact: true }).click()
     const thirdRun = await (await page.request.get(`/api/runs/${third}`)).json()
     expect(thirdRun).toMatchObject({ task: 'extract', done: 2, failed: 1, discovered: 3 })
-    const runRow = page
-      .locator('.run-entry')
-      .filter({ has: page.locator('.run-id', { hasText: `#${third}` }) })
+    const runRow = page.getByRole('article', { name: `批次 #${third}`, exact: true })
     await expect(runRow).toContainText('抽帧')
     await expect(runRow.getByRole('button', { name: '还原批次', exact: true })).toHaveCount(0)
 
@@ -144,7 +145,7 @@ test('三个独立抽帧入口、真实缓存复用及统一成功失败记录',
     await page.getByLabel('保存后启用计划', { exact: true }).uncheck()
     await page.getByRole('button', { name: '保存计划', exact: true }).click()
     await page.reload()
-    const card = page.locator('.plan-card').filter({ hasText: '定时抽帧测试' })
+    const card = page.getByRole('article', { name: '定时抽帧测试', exact: true })
     await expect(card).toContainText('抽帧')
     await page.getByRole('button', { name: '编辑 定时抽帧测试' }).click()
     await expect(page.getByRole('combobox', { name: '计划任务类型' })).toHaveText('抽帧')
@@ -256,7 +257,10 @@ test('三个独立抽帧入口、真实缓存复用及统一成功失败记录',
     ).toBe(true)
 
     await page.getByRole('button', { name: '抽帧记录', exact: true }).click()
-    await expect(page.locator('.log-tabs button')).toHaveText(['成功记录', '失败记录'])
+    await expect(page.getByRole('group', { name: '抽帧记录状态' }).getByRole('button')).toHaveText([
+      '成功记录',
+      '失败记录'
+    ])
     const success = page.getByRole('region', { name: '抽帧成功', exact: true }),
       failure = page.getByRole('region', { name: '抽帧失败', exact: true })
     await expect(success).toContainText('复用缓存')
@@ -267,7 +271,7 @@ test('三个独立抽帧入口、真实缓存复用及统一成功失败记录',
     await expect(success).toHaveCount(0)
     await page.screenshot({ path: 'test-results/extraction-history.png', fullPage: true })
     await failure.getByRole('button', { name: '详细原因', exact: true }).first().click()
-    await expect(page.getByRole('dialog').locator('pre')).toContainText('moov atom not found')
+    await expect(page.getByRole('dialog').getByText(/moov atom not found/)).toBeVisible()
     await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
     await page.getByRole('button', { name: '复制详情', exact: true }).click()
     expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
@@ -337,7 +341,7 @@ test('抽帧历史独立分页、无批次、窄屏与清除', async ({ page }) 
   await page.getByRole('button', { name: '抽帧记录', exact: true }).click()
   const success = page.getByRole('region', { name: '抽帧成功', exact: true }),
     failure = page.getByRole('region', { name: '抽帧失败', exact: true })
-  await expect(success.locator('tbody tr td').nth(3)).toHaveText('—')
+  await expect(bodyRows(success).first().getByRole('cell').nth(3)).toHaveText('—')
   await page.getByRole('button', { name: '下一页抽帧成功', exact: true }).click()
   await expect(success).toContainText('第二页.mp4')
   await page.getByRole('button', { name: '失败记录', exact: true }).click()

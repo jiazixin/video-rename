@@ -37,7 +37,7 @@
   onMounted(scan.startPolling);
 </script>
 <template>
-  <section class="panel library-scan-settings">
+  <section class="panel library-scan-settings" aria-label="后台目录扫描">
     <header
       ><span class="eyebrow">媒体索引</span><h2>后台目录扫描</h2
       ><p class="help"

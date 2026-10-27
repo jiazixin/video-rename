@@ -1,7 +1,7 @@
-import { defined } from './support'
+import { defined, toasts } from './support'
 import { test, expect, type Page } from '@playwright/test'
 import { mockRunPages } from './run-pages'
-import { recordPage } from './run-record-pages'
+import { attempts, fileRecords, recordPage } from './run-record-pages'
 
 const sampleRun = () => ({
   id: 146,
@@ -82,17 +82,20 @@ const sampleItems = () => [
   }
 ]
 async function expectEvenTimeline(page: Page) {
-  const nodes = await page.locator('.detail-lifecycle li').evaluateAll((items) =>
-    items.map((item) => {
-      const cell = item.getBoundingClientRect(),
-        node = item.querySelector('.lifecycle-node')?.getBoundingClientRect()
-      return {
-        center: node ? node.x + node.width / 2 : NaN,
-        cellCenter: cell.x + cell.width / 2,
-        width: cell.width
-      }
-    })
-  )
+  const nodes = await page
+    .getByRole('list', { name: '批次生命周期' })
+    .getByRole('listitem')
+    .evaluateAll((items) =>
+      items.map((item) => {
+        const cell = item.getBoundingClientRect(),
+          node = item.querySelector('.lifecycle-node')?.getBoundingClientRect()
+        return {
+          center: node ? node.x + node.width / 2 : NaN,
+          cellCenter: cell.x + cell.width / 2,
+          width: cell.width
+        }
+      })
+    )
   expect(nodes).toHaveLength(4)
   for (const node of nodes) expect(Math.abs(node.center - node.cellCenter)).toBeLessThan(1)
   for (let i = 1; i < nodes.length; i++)
@@ -131,24 +134,22 @@ async function openSample(page: Page, run: SampleRun = sampleRun()) {
     'aria-pressed',
     'true'
   )
-  await expect(dialog.locator('.run-live-file')).toHaveCount(1)
-  await expect(dialog.locator('.run-live-steps li')).toHaveCount(run.task === 'extract' ? 3 : 5)
+  await expect(dialog.getByRole('article', { name: /^处理中 / })).toHaveCount(1)
+  await expect(dialog.getByRole('list', { name: '处理阶段' }).getByRole('listitem')).toHaveCount(
+    run.task === 'extract' ? 3 : 5
+  )
   await dialog.getByRole('button', { name: /^全部文件/ }).click()
-  await expect(dialog.locator('.detail-record-file')).toHaveCount(3)
+  await expect(fileRecords(dialog)).toHaveCount(3)
   return dialog
 }
 
 test('时间线详情示例、模型展开、复制、移动布局和实时刷新', async ({ page, context }) => {
   const run = sampleRun()
   const dialog = await openSample(page, run)
-  await expect(dialog.locator('.detail-header-meta')).toContainText('2h13m24s')
-  await expect(dialog.locator('.detail-statistic strong')).toHaveText([
-    '1,887',
-    '108',
-    '1',
-    '1,996'
-  ])
-  await expect(dialog.locator('.detail-statistic small').first()).toHaveText('94.5%')
+  await expect(dialog.getByText(/耗时 2h13m24s$/)).toBeVisible()
+  const statistics = dialog.getByRole('list', { name: '批次统计' }).getByRole('listitem')
+  await expect(statistics).toHaveText([/^1,887已完成/, /^108已跳过/, /^1失败/, /^1,996总任务/])
+  await expect(statistics.first()).toHaveText(/94\.5%$/)
   await expect(dialog.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100')
   for (const [label, expanded] of [
     ['运行记录', 'true'],
@@ -159,14 +160,19 @@ test('时间线详情示例、模型展开、复制、移动布局和实时刷�
       expanded
     )
   }
-  await expect(dialog.locator('.detail-lifecycle [aria-current="step"]')).toContainText('处理中')
-  await expect(dialog.locator('.modal-actions button')).toHaveText(['暂停', '取消'])
+  await expect(
+    dialog.getByRole('list', { name: '批次生命周期' }).getByRole('listitem', { name: /当前阶段$/ })
+  ).toContainText('处理中')
+  await expect(dialog.getByRole('group', { name: '批次操作' }).getByRole('button')).toHaveText([
+    '暂停',
+    '取消'
+  ])
   await expect(dialog.getByRole('button', { name: '关闭', exact: true })).toHaveCount(1)
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await dialog
     .getByRole('button', { name: `复制当前路径 ${'长文件名'.repeat(40)}.mp4`, exact: true })
     .click()
-  await expect(page.locator('.toast-message').first()).toContainText('路径已复制')
+  await expect(toasts(page).first()).toContainText('路径已复制')
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
     defined(sampleItems()[0]).current_path
   )
@@ -177,7 +183,7 @@ test('时间线详情示例、模型展开、复制、移动布局和实时刷�
     animations: 'disabled'
   })
   await dialog
-    .locator('.detail-lifecycle')
+    .getByRole('list', { name: '批次生命周期' })
     .screenshot({ path: 'test-results/run-detail-lifecycle-running.png', animations: 'disabled' })
   await page.setViewportSize({ width: 390, height: 844 })
   await expectEvenTimeline(page)
@@ -186,36 +192,48 @@ test('时间线详情示例、模型展开、复制、移动布局和实时刷�
     animations: 'disabled'
   })
   await page.setViewportSize({ width: 1440, height: 1200 })
-  await dialog.locator('.detail-attempt-toggle').first().click()
-  await expect(dialog.locator('.detail-attempt:visible').first()).toContainText('12300 ms')
-  await expect(dialog.locator('.detail-attempt:visible').first()).toContainText('vision-main')
-  await dialog.locator('.detail-attempt-toggle').last().click()
-  const failed = dialog.locator('.detail-record-file').filter({ hasText: '失败文件.mp4' })
-  await expect(failed.locator('.detail-attempt:visible')).toHaveCount(4)
+  await dialog
+    .getByRole('button', { name: /^全部 \d+ 次尝试/ })
+    .first()
+    .click()
+  await expect(attempts(dialog).first()).toContainText('12300 ms')
+  await expect(attempts(dialog).first()).toContainText('vision-main')
+  await dialog
+    .getByRole('button', { name: /^全部 \d+ 次尝试/ })
+    .last()
+    .click()
+  const failed = dialog.getByRole('article', { name: '文件记录 失败文件.mp4' })
+  await expect(attempts(failed)).toHaveCount(4)
   await expect(failed).toContainText('重试第 3 次')
   await expect(failed).toContainText('5060ti')
-  await expect(dialog.locator('.detail-record-names').nth(1)).toContainText('新文件名.mp4')
-  await expect(dialog.locator('.detail-record-names').nth(1)).not.toContainText('后续名称.mp4')
+  await expect(fileRecords(dialog).nth(1)).toContainText('新文件名.mp4')
+  await expect(fileRecords(dialog).nth(1)).not.toContainText('后续名称.mp4')
   // A polling update must keep user-controlled expansion and request details open.
   run.status = 'paused'
-  await expect(dialog.locator('.detail-header-status')).toHaveText('已暂停', { timeout: 10000 })
-  await expect(dialog.locator('.modal-actions button')).toHaveText(['继续', '取消'])
+  await expect(dialog.getByRole('status', { name: '批次状态' })).toHaveText('已暂停', {
+    timeout: 10000
+  })
+  await expect(dialog.getByRole('group', { name: '批次操作' }).getByRole('button')).toHaveText([
+    '继续',
+    '取消'
+  ])
   await expect(dialog.getByRole('button', { name: /^运行记录/ })).toHaveAttribute(
     'aria-expanded',
     'true'
   )
-  await expect(dialog.locator('.detail-attempt-toggle').first()).toHaveAttribute(
+  await expect(dialog.getByRole('button', { name: /^全部 \d+ 次尝试/ }).first()).toHaveAttribute(
     'aria-expanded',
     'true'
   )
-  await expect(dialog.locator('.detail-lifecycle [aria-current="step"]')).toHaveAttribute(
-    'data-tone',
-    'warning'
-  )
+  await expect(
+    dialog.getByRole('list', { name: '批次生命周期' }).getByRole('listitem', { name: /当前阶段$/ })
+  ).toHaveAttribute('data-tone', 'warning')
   await dialog.getByRole('button', { name: /^批次配置与提交范围/ }).click()
-  await expect(dialog.locator('.detail-config')).toContainText('vision-main')
+  await expect(dialog.getByRole('region', { name: '批次配置与提交范围' })).toContainText(
+    'vision-main'
+  )
   await dialog.getByRole('button', { name: /^提示词快照/ }).click()
-  await expect(dialog.locator('.detail-prompt-body pre')).toContainText('长提示词内容')
+  await expect(dialog.getByRole('region', { name: '提示词快照' })).toContainText('长提示词内容')
   await page.setViewportSize({ width: 390, height: 844 })
   await expectEvenTimeline(page)
   const overflow = await dialog.evaluate((el) =>
@@ -240,7 +258,9 @@ test('时间线详情示例、模型展开、复制、移动布局和实时刷�
   })
   await dialog.getByRole('button', { name: '关闭', exact: true }).first().focus()
   await page.keyboard.press('Shift+Tab')
-  await expect(dialog.locator('.modal-actions button').last()).toBeFocused()
+  await expect(
+    dialog.getByRole('group', { name: '批次操作' }).getByRole('button').last()
+  ).toBeFocused()
   await page.keyboard.press('Escape')
   await expect(dialog).toHaveCount(0)
 })
@@ -260,10 +280,14 @@ test('失败、取消、完成与未开始批次的生命周期', async ({ page 
     run.status = status
     run.started = ['queued', 'scanning', 'cancelled'].includes(status) ? '' : '2026-10-03T10:48:46Z'
     run.finished = ['queued', 'scanning'].includes(status) ? '' : '2026-10-03T13:02:10Z'
-    await expect(dialog.locator('.detail-header-status')).toHaveAttribute('data-status', status, {
-      timeout: 10000
-    })
-    const terminal = dialog.locator('.detail-lifecycle li').last()
+    await expect(dialog.getByRole('status', { name: '批次状态' })).toHaveAttribute(
+      'data-status',
+      status,
+      {
+        timeout: 10000
+      }
+    )
+    const terminal = dialog.getByRole('list', { name: '批次生命周期' }).getByRole('listitem').last()
     const terminalTones: Record<string, string> = {
       completed: 'success',
       cancelled: 'muted',
@@ -272,15 +296,16 @@ test('失败、取消、完成与未开始批次的生命周期', async ({ page 
     }
     await expect(terminal).toHaveAttribute('data-tone', terminalTones[status] ?? 'error')
     if (['completed', 'failed', 'cancelled'].includes(status))
-      await dialog.locator('.detail-lifecycle').screenshot({
+      await dialog.getByRole('list', { name: '批次生命周期' }).screenshot({
         path: `test-results/run-detail-lifecycle-${status}.png`,
         animations: 'disabled'
       })
     if (status === 'scanning')
-      await expect(dialog.locator('.detail-lifecycle [aria-current="step"]')).toHaveAttribute(
-        'data-tone',
-        'primary'
-      )
+      await expect(
+        dialog
+          .getByRole('list', { name: '批次生命周期' })
+          .getByRole('listitem', { name: /当前阶段$/ })
+      ).toHaveAttribute('data-tone', 'primary')
     if (['failed', 'partial_failure', 'interrupted', 'cancelled'].includes(status)) {
       await expect(terminal).not.toHaveText(/已完成/)
     }
@@ -298,12 +323,14 @@ test('独立抽帧详情不展示命名配置，保留抽帧文件与批次控�
     model_config_title: ''
   }
   const dialog = await openSample(page, run)
-  await expect(dialog.locator('.detail-metadata')).toHaveText('独立抽帧 · 不使用模型')
-  await expect(dialog.locator('.detail-prompt-tag')).toHaveCount(0)
-  await expect(dialog.locator('.detail-record-file')).toHaveCount(3)
+  await expect(dialog.getByText('独立抽帧 · 不使用模型', { exact: true })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: /^提示词快照/ })).toHaveCount(0)
+  await expect(fileRecords(dialog)).toHaveCount(3)
   await dialog.getByRole('button', { name: /^批次配置与提交范围/ }).click()
-  await expect(dialog.locator('.detail-config')).toContainText('独立抽帧')
-  await expect(dialog.locator('.detail-config')).not.toContainText('主模型')
+  await expect(dialog.getByRole('region', { name: '批次配置与提交范围' })).toContainText('独立抽帧')
+  await expect(dialog.getByRole('region', { name: '批次配置与提交范围' })).not.toContainText(
+    '主模型'
+  )
   await expect(dialog.getByRole('button', { name: '继续', exact: true })).toBeVisible()
   await expect(dialog.getByRole('button', { name: '取消', exact: true })).toBeVisible()
 })

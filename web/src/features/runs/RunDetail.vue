@@ -272,9 +272,13 @@
 <template>
   <ModalDialog :title="`运行 #${run.id}`" wide class="run-detail-dialog" @close="emit('close')">
     <template #header>
-      <StatusBadge class="detail-header-status" :status="run.status">{{
-        statusNames[run.status] || run.status
-      }}</StatusBadge>
+      <StatusBadge
+        class="detail-header-status"
+        role="status"
+        aria-label="批次状态"
+        :status="run.status"
+        >{{ statusNames[run.status] || run.status }}</StatusBadge
+      >
       <p class="detail-header-meta"
         ><span>提交于 {{ formatTime(run.created) }}</span
         ><span><Clock3 :size="13" />{{ active ? '已耗时' : '总耗时' }} {{ elapsed }}</span></p
@@ -305,11 +309,12 @@
           ><small>{{ step.value }}</small>
         </li>
       </ol>
-      <div class="detail-statistics" aria-label="批次统计">
+      <div class="detail-statistics" role="list" aria-label="批次统计">
         <div
           v-for="(stat, i) in stats"
           :key="stat.label"
           class="detail-statistic"
+          role="listitem"
           :data-tone="stat.tone"
         >
           <strong>{{ formatCount(stat.value) }}</strong
@@ -341,7 +346,13 @@
           >
         </template>
       </div>
-      <div v-if="promptOpen" id="run-prompt-snapshot" ref="promptBody" class="detail-prompt-body"
+      <div
+        v-if="promptOpen"
+        id="run-prompt-snapshot"
+        ref="promptBody"
+        class="detail-prompt-body"
+        role="region"
+        aria-label="提示词快照"
         ><p class="detail-caption">创建批次时保存的完整提示词</p><pre>{{ run.prompt_body }}</pre>
       </div>
       <div v-if="run.task === 'extract'" class="detail-metadata"
@@ -384,6 +395,8 @@
             v-show="sections.records"
             id="run-detail-records"
             class="detail-section-content"
+            role="region"
+            aria-label="运行记录"
             :aria-busy="records.busy"
           >
             <div class="detail-record-toolbar">
@@ -430,6 +443,7 @@
               v-for="(group, groupIndex) in filter === 'running' ? [] : groups"
               :key="group.path"
               class="detail-directory"
+              :aria-label="`目录 ${group.path || '媒体根目录'}`"
             >
               <button
                 class="detail-directory-toggle"
@@ -470,6 +484,7 @@
                   v-for="item in group.items"
                   :key="item.id"
                   class="detail-record-file"
+                  :aria-label="`文件记录 ${item.original_name || '未记录原名'}`"
                   :data-tone="tone(item.status)"
                 >
                   <div class="detail-record-heading"
@@ -508,11 +523,17 @@
                         :class="{ 'is-open': expandedAttempts.has(item.id) }"
                       />全部 {{ item.attempts.length }} 次尝试 · {{ attemptSummary(item) }}</button
                     >
-                    <div v-show="expandedAttempts.has(item.id)" :id="`run-attempts-${item.id}`">
+                    <div
+                      v-show="expandedAttempts.has(item.id)"
+                      :id="`run-attempts-${item.id}`"
+                      role="list"
+                      aria-label="请求尝试"
+                    >
                       <div
                         v-for="attempt in item.attempts"
                         :key="attempt.number"
                         class="detail-attempt"
+                        role="listitem"
                         :data-tone="tone(attempt.status)"
                         ><strong
                           >{{
@@ -564,7 +585,12 @@
             }}</span
             ><ChevronRight :size="16" :class="{ 'is-open': sections.config }"
           /></button>
-          <div v-show="sections.config" id="run-detail-config" class="detail-section-content"
+          <div
+            v-show="sections.config"
+            id="run-detail-config"
+            class="detail-section-content"
+            role="region"
+            aria-label="批次配置与提交范围"
             ><div class="detail-targets"
               ><span v-for="target in targetNames" :key="target"
                 ><Folder :size="15" /><span :title="target">{{ target }}</span></span
@@ -621,7 +647,7 @@
     <template v-if="active || copyError" #footer
       ><div class="detail-footer"
         ><span v-if="copyError" role="alert" class="detail-copy-error">{{ copyError }}</span
-        ><div class="modal-actions"
+        ><div class="modal-actions" role="group" aria-label="批次操作"
           ><button
             v-if="['queued', 'scanning', 'running', 'paused'].includes(run.status)"
             @click="emit('pause')"

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { bodyRows } from './support'
 
 test('文件名双击进入行内编辑，保存与取消保留扩展名', async ({ page }) => {
   await page.goto('/')
@@ -35,7 +36,7 @@ test('文件名双击进入行内编辑，保存与取消保留扩展名', async
   await renamed.dblclick()
   await again.fill('已占用名称')
   await again.press('Enter')
-  await expect(page.locator('.inline-rename small[role="alert"]')).toBeVisible()
+  await expect(bodyRows(page).getByRole('alert')).toBeVisible()
   await again.press('Escape')
   await expect(renamed).toBeVisible()
 
@@ -76,7 +77,7 @@ test('点击后缀进入编辑，支持取消、冲突、保存及还原', async
   await page.getByRole('button', { name: '修改后缀名', exact: true }).press('Enter')
   await editor.fill('已占用名称.mp4')
   await editor.press('Enter')
-  await expect(page.locator('.inline-rename small[role="alert"]')).toBeVisible()
+  await expect(bodyRows(page).getByRole('alert')).toBeVisible()
   await editor.fill('VID_20260920_001.MKV')
   await page.screenshot({ path: 'test-results/edit-extension.png' })
   await editor.press('Enter')

@@ -22,7 +22,7 @@
 
 <template>
   <ModalDialog :title="value ? '标记已处理' : '取消已处理标记'" @close="close"
-    ><form @submit.prevent="emit('submit')"
+    ><form :aria-label="value ? '标记已处理' : '取消已处理标记'" @submit.prevent="emit('submit')"
       ><p
         >已选择 {{ entries.length }} 个目标<span v-if="entries.length === 1"
           >：{{ entries[0]?.name || '整个媒体库' }}</span

@@ -87,6 +87,11 @@
   flex-direction: column;
   gap: 11px;
 }
+.analysis-hist-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
 .analysis-hist-row {
   display: grid;
   grid-template-columns: 76px 1fr 52px;

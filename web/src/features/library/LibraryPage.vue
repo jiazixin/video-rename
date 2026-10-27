@@ -1006,6 +1006,7 @@
         v-if="active && directoryUpdateAvailable"
         class="directory-update-notice"
         role="status"
+        aria-label="目录有更新"
         aria-live="polite"
         aria-atomic="true"
       >
@@ -1023,14 +1024,14 @@
     </Teleport>
     <div class="panel file-panel library-directory-overview">
       <div class="panel-toolbar directory-toolbar"
-        ><div class="breadcrumbs"
+        ><div class="breadcrumbs" role="navigation" aria-label="目录路径"
           ><button @click="enter(1)"><Home :size="15" />媒体库</button
           ><template v-for="crumb in page?.breadcrumbs.filter((x) => x.id !== 1)" :key="crumb.id"
             ><ChevronRight :size="13" /><button @click="enter(crumb.id)">{{
               crumb.name
             }}</button></template
           ></div
-        ><div class="directory-summary"
+        ><div class="directory-summary" role="group" aria-label="当前目录概况"
           ><DirectoryStatus v-if="page?.directory.progress" :entry="page.directory" /><div
             class="directory-refresh-summary"
             ><DirectoryContents inline :contents="page?.directory.contents" /><button
@@ -1116,7 +1117,7 @@
             >共 {{ page?.total ?? 0 }} 项 · {{ page?.items.length || 0 }} 项 / 当前页</span
           ></div
         >
-        <div v-if="multi" class="batch-toolbar"
+        <div v-if="multi" class="batch-toolbar" role="group" aria-label="批量操作"
           ><strong>已选 {{ chosen.size }} 项</strong
           ><button title="全选本页" @click="selectPage()">全选</button
           ><button title="反选本页" @click="selectPage(true)">反选</button
@@ -1213,7 +1214,7 @@
                   title="按住 Shift 点击可连续选择当前页条目"
                   @click="selectEntry(e, $event)"
               /></td>
-              <td class="filename-cell"
+              <td class="filename-cell" role="rowheader"
                 ><div class="file-name"
                   ><button
                     v-if="e.kind === 'file' && isVideo(e)"

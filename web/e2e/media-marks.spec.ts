@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { bodyRows } from './support'
 
 test('图片音频标记保护自定义名称，全局和一键编号跳过，取消后可再编号', async ({ page }) => {
   await page.goto('/')
@@ -7,9 +8,7 @@ test('图片音频标记保护自定义名称，全局和一键编号跳过，�
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await page.getByRole('button', { name: '标记保护测试', exact: true }).click()
   const row = (name: string) =>
-    page
-      .locator('.file-table tbody tr')
-      .filter({ has: page.getByRole('button', { name: `历史 ${name}`, exact: true }) })
+    bodyRows(page).filter({ has: page.getByRole('button', { name: `历史 ${name}`, exact: true }) })
   await row('自己的图片.png')
     .getByRole('button', { name: '标记已处理 自己的图片.png', exact: true })
     .click()
@@ -21,7 +20,7 @@ test('图片音频标记保护自定义名称，全局和一键编号跳过，�
   for (const name of ['1.JPG', '2.MP3', '自己的音频.flac', '子目录'])
     await page.getByLabel(`选择 ${name}`, { exact: true }).check()
   await page
-    .locator('.batch-toolbar')
+    .getByRole('group', { name: '批量操作' })
     .getByRole('button', { name: '标记已处理', exact: true })
     .click()
   await expect(page.getByRole('dialog')).toContainText('所有子目录中的现有视频、图片和音频')
@@ -29,14 +28,14 @@ test('图片音频标记保护自定义名称，全局和一键编号跳过，�
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect(row('自己的音频.flac')).toContainText('已标记 · 跳过编号')
   await page
-    .locator('.directory-mark-actions')
+    .getByRole('group', { name: '当前目录操作' })
     .getByRole('button', { name: '编号', exact: true })
     .click()
   let dialog = page.getByRole('dialog')
   await expect(dialog).toContainText('共 1 个目录、2 个文件，2 个需要修改')
-  await expect(dialog.locator('tbody tr')).toHaveCount(2)
-  await expect(dialog.locator('tbody')).toContainText('photo.JPG2.jpg')
-  await expect(dialog.locator('tbody')).toContainText('song.MP31.mp3')
+  await expect(bodyRows(dialog)).toHaveCount(2)
+  await expect(dialog.getByRole('table')).toContainText('photo.JPG2.jpg')
+  await expect(dialog.getByRole('table')).toContainText('song.MP31.mp3')
   await dialog.getByRole('button', { name: '确认编号', exact: true }).click()
   await expect(
     page.getByRole('status').filter({ hasText: '已编号 2 个文件，完成 1 个目录。' })
@@ -54,7 +53,7 @@ test('图片音频标记保护自定义名称，全局和一键编号跳过，�
     dialog = page.getByRole('dialog')
     const unit = type === '图片' ? '张' : '个'
     await expect(dialog).toContainText(`共 1 ${unit}${type}，0 ${unit}需要修改`)
-    await expect(dialog.locator('tbody tr')).toHaveCount(1)
+    await expect(bodyRows(dialog)).toHaveCount(1)
     await dialog.getByRole('button', { name: '取消', exact: true }).click()
   }
   await page.getByRole('combobox', { name: '类型筛选', exact: true }).click()
@@ -69,19 +68,19 @@ test('图片音频标记保护自定义名称，全局和一键编号跳过，�
   await page.getByRole('button', { name: '确认取消标记', exact: true }).click()
   await expect(row('自己的音频.flac')).toContainText('未处理')
   await page
-    .locator('.directory-mark-actions')
+    .getByRole('group', { name: '当前目录操作' })
     .getByRole('button', { name: '取消标记', exact: true })
     .click()
   await page.getByRole('button', { name: '确认取消标记', exact: true }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await page
-    .locator('.directory-mark-actions')
+    .getByRole('group', { name: '当前目录操作' })
     .getByRole('button', { name: '编号', exact: true })
     .click()
   dialog = page.getByRole('dialog')
   await expect(dialog).toContainText('共 2 个目录、8 个文件')
-  await expect(dialog.locator('tbody')).toContainText('自己的图片.png')
-  await expect(dialog.locator('tbody')).toContainText('自己的音频.flac')
-  await expect(dialog.locator('tbody')).toContainText('自己的图片.JPG')
+  await expect(dialog.getByRole('table')).toContainText('自己的图片.png')
+  await expect(dialog.getByRole('table')).toContainText('自己的音频.flac')
+  await expect(dialog.getByRole('table')).toContainText('自己的图片.JPG')
   await dialog.getByRole('button', { name: '关闭', exact: true }).last().click()
 })

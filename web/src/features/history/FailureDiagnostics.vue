@@ -88,7 +88,7 @@
   );
 </script>
 <template>
-  <div class="failure-diagnostics"
+  <div class="failure-diagnostics" role="group" aria-label="失败诊断"
     ><div class="diagnostic-buttons"
       ><button
         v-if="processing"
@@ -99,7 +99,7 @@
       ><button :aria-expanded="active === 'response'" @click="toggle('response')"
         >原始响应</button
       ></div
-    ><section v-if="active" class="diagnostic-content"
+    ><section v-if="active" class="diagnostic-content" aria-label="诊断内容"
       ><p v-if="busy">正在读取…</p><p v-else-if="error" role="alert">{{ error }}</p
       ><template v-else-if="data?.[active]"
         ><header

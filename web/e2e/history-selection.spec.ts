@@ -1,4 +1,4 @@
-import { defined } from './support'
+import { bodyRows, defined, pageReadout } from './support'
 import { test, expect, type Page } from '@playwright/test'
 
 async function openHistory(page: Page, longContent = false, modelSources = false) {
@@ -67,35 +67,33 @@ test('模型配置列直接区分主模型和兜底模型，详情说明来源�
   page
 }) => {
   await openHistory(page, false, true)
-  const table = page.locator('.history-table')
+  const table = page.getByRole('table')
   for (const category of ['成功记录', '失败记录']) {
     await page.getByRole('button', { name: category, exact: true }).click()
-    const cells = table.locator('.history-model-content')
-    await expect(cells.nth(0).locator('.history-model-source')).toHaveText('主模型')
-    await expect(cells.nth(1).locator('.table-model')).toHaveText('备用模型')
-    await expect(cells.nth(1).locator('.history-model-source')).toHaveText('兜底模型')
-    await expect(cells.nth(1).locator('.history-model-source')).toHaveAttribute(
-      'title',
+    // Each record row is followed by a row holding its diagnostics.
+    const rows = bodyRows(table).filter({
+      has: page.getByRole('button', { name: '详情', exact: true })
+    })
+    await expect(rows.nth(0).getByRole('note')).toHaveText('主模型')
+    await expect(rows.nth(1).getByText('备用模型', { exact: true })).toBeVisible()
+    await expect(rows.nth(1).getByRole('note')).toHaveText('兜底模型')
+    await expect(rows.nth(1).getByRole('note')).toHaveAccessibleName(
       category === '成功记录' ? '本次标题由兜底模型生成' : '最后一次模型请求使用兜底模型'
     )
-    await expect(cells.nth(2).locator('.history-model-source')).toHaveText('未记录')
-    await expect(cells.nth(2).locator('.history-model-source')).toHaveAttribute(
-      'title',
-      /无法确认实际模型来源/
-    )
-    await expect(cells.nth(3).locator('.history-model-source')).toHaveCount(0)
+    await expect(rows.nth(2).getByRole('note')).toHaveText('未记录')
+    await expect(rows.nth(2).getByRole('note')).toHaveAccessibleName(/无法确认实际模型来源/)
+    await expect(rows.nth(3).getByRole('note')).toHaveCount(0)
     await page.screenshot({
       path: `test-results/history-model-source-${category}.png`,
       fullPage: true
     })
-    await table
-      .locator('tbody tr')
-      .filter({ has: page.locator('.history-model-source[data-source=fallback]') })
+    await rows
+      .filter({ has: page.getByRole('note').filter({ hasText: '兜底模型' }) })
       .getByRole('button', { name: '详情', exact: true })
       .click()
     const dialog = page.getByRole('dialog', { name: '运行记录详情', exact: true })
     await expect(dialog.getByText('备用模型', { exact: true })).toBeVisible()
-    await expect(dialog.locator('.history-model-source')).toHaveText('兜底模型')
+    await expect(dialog.getByRole('note')).toHaveText('兜底模型')
     await expect(dialog.getByText('fallback-vision', { exact: true })).toBeVisible()
     await expect(
       dialog.getByText(category === '成功记录' ? '模型来源' : '最后请求来源', { exact: true })
@@ -104,14 +102,14 @@ test('模型配置列直接区分主模型和兜底模型，详情说明来源�
   }
   await page.getByRole('button', { name: '成功记录', exact: true }).click()
   await page.setViewportSize({ width: 390, height: 844 })
-  await expect(table.locator('.history-model-source')).toHaveText(['主模型', '兜底模型', '未记录'])
+  await expect(table.getByRole('note')).toHaveText(['主模型', '兜底模型', '未记录'])
   await page.screenshot({ path: 'test-results/history-model-source-mobile.png', fullPage: true })
 })
 
 test('成功记录按实际模型来源筛选，换筛选清空选择并回到第一页', async ({ page }) => {
   await openHistory(page, false, true)
   await page.getByRole('button', { name: '下一页运行记录', exact: true }).click()
-  await expect(page.getByLabel('分页导航').locator('.page-current')).toHaveText('2')
+  await expect(pageReadout(page.getByLabel('分页导航'))).toHaveText(/^2\//)
   await page.getByRole('button', { name: '多选', exact: true }).click()
   await page.getByRole('checkbox', { name: '选择记录 10', exact: true }).check()
   await expect(page.getByRole('button', { name: '重试选中', exact: true })).toBeEnabled()
@@ -131,12 +129,10 @@ test('成功记录按实际模型来源筛选，换筛选清空选择并回到�
     const params = new URL((await response).url()).searchParams
     expect(params.get('category')).toBe('success')
     expect(params.get('page')).toBe('1')
-    await expect(page.getByLabel('分页导航').locator('.page-current')).toHaveText('1')
-    await expect(page.locator('.batch-toolbar')).toContainText('已选 0 项')
+    await expect(pageReadout(page.getByLabel('分页导航'))).toHaveText(/^1\//)
+    await expect(page.getByRole('group', { name: '批量操作' })).toContainText('已选 0 项')
     await expect(page.getByRole('button', { name: '重试选中', exact: true })).toBeDisabled()
-    await expect(page.locator('.history-model-source')).toHaveText([
-      label === '来源未记录' ? '未记录' : label
-    ])
+    await expect(page.getByRole('note')).toHaveText([label === '来源未记录' ? '未记录' : label])
   }
   await page.screenshot({ path: 'test-results/history-model-source-filter.png', fullPage: true })
 })
@@ -145,7 +141,7 @@ test('成功记录仅重试所选结果，确认说明保护标记和历史保�
   await openHistory(page, false, true)
   await page.getByRole('combobox', { name: '模型来源', exact: true }).click()
   await page.getByRole('option', { name: '兜底模型', exact: true }).click()
-  await expect(page.locator('.history-model-source')).toHaveText(['兜底模型'])
+  await expect(page.getByRole('note')).toHaveText(['兜底模型'])
   await page.getByRole('button', { name: '多选', exact: true }).click()
   await page.getByRole('checkbox', { name: '选择记录 9', exact: true }).check()
   let calls = 0
@@ -179,7 +175,7 @@ test('成功记录仅重试所选结果，确认说明保护标记和历史保�
   await dialog.getByRole('button', { name: '确认重试', exact: true }).click()
   await expect(dialog).toHaveCount(0)
   await expect(page.getByRole('status')).toContainText('原记录保留，完成后新增命名记录')
-  await expect(page.locator('.batch-toolbar')).toContainText('已选 0 项')
+  await expect(page.getByRole('group', { name: '批量操作' })).toContainText('已选 0 项')
   expect(calls).toBe(1)
 })
 
@@ -189,7 +185,7 @@ test('宽屏成功和失败记录及诊断行占满表格，多选和窄屏保�
     route.fulfill({ json: { request: '长请求内容'.repeat(600), response: '模型响应' } })
   )
   await openHistory(page, true)
-  const table = page.locator('.history-table')
+  const table = page.getByRole('table')
   async function expectAligned() {
     const edges = await table.evaluate((element) => {
       const bounds = element.getBoundingClientRect()
@@ -210,7 +206,7 @@ test('宽屏成功和失败记录及诊断行占满表格，多选和窄屏保�
     await expect(page.getByText('共 251 项 · 4 项 / 当前页')).toBeVisible()
     await expectAligned()
     const finalColumn = category === '成功记录' ? '新文件名' : '失败原因'
-    await expect(table.locator('thead th')).toHaveText([
+    await expect(table.getByRole('columnheader')).toHaveText([
       '时间',
       '操作',
       '模型配置',
@@ -221,13 +217,13 @@ test('宽屏成功和失败记录及诊断行占满表格，多选和窄屏保�
       finalColumn,
       ''
     ])
-    await expect(table.locator('tbody tr').first().locator('td').nth(3)).toHaveText('#7')
-    await expect(table.locator('tbody tr').first().locator('td').nth(4)).toHaveText('≈123.5K')
+    await expect(bodyRows(table).first().getByRole('cell').nth(3)).toHaveText('#7')
+    await expect(bodyRows(table).first().getByRole('cell').nth(4)).toHaveText('≈123.5K')
     const compactWidths: number[][] = []
     for (const width of [1440, 2560]) {
       await page.setViewportSize({ width, height: 1440 })
       const widths = await table
-        .locator('thead th')
+        .getByRole('columnheader')
         .evaluateAll((cells) => cells.map((cell) => cell.getBoundingClientRect().width))
       compactWidths.push(widths.slice(3, 5))
       expect(widths[3]).toBeLessThan(90)
@@ -246,7 +242,7 @@ test('宽屏成功和失败记录及诊断行占满表格，多选和窄屏保�
         Math.abs(defined(defined(compactWidths[0])[i]) - defined(defined(compactWidths[1])[i]))
       ).toBeLessThan(2)
     await table.getByRole('button', { name: '原始请求', exact: true }).first().click()
-    await expect(table.locator('.diagnostic-content').first()).toContainText('长请求内容')
+    await expect(table.getByRole('group', { name: '失败诊断' }).first()).toContainText('长请求内容')
     await expectAligned()
     await page.getByRole('button', { name: '多选', exact: true }).click()
     await expectAligned()
@@ -262,10 +258,10 @@ test('宽屏成功和失败记录及诊断行占满表格，多选和窄屏保�
 test('成功失败记录按需开启多选，支持全选反选清空与 Shift 连选', async ({ page }) => {
   await openHistory(page)
   await expect(
-    page.locator('.history-heading-actions').getByRole('button', { name: '重试', exact: true })
+    page.getByRole('group', { name: '记录操作' }).getByRole('button', { name: '重试', exact: true })
   ).toHaveCount(0)
-  await expect(page.locator('.history-table input[type=checkbox]')).toHaveCount(0)
-  await expect(page.locator('.batch-toolbar')).toHaveCount(0)
+  await expect(page.getByRole('table').getByRole('checkbox')).toHaveCount(0)
+  await expect(page.getByRole('group', { name: '批量操作' })).toHaveCount(0)
   await page.getByRole('button', { name: '多选', exact: true }).click()
   const header = page.getByRole('checkbox', { name: '选择本页记录', exact: true })
   await page.getByRole('checkbox', { name: '选择记录 10', exact: true }).click()
@@ -276,25 +272,25 @@ test('成功失败记录按需开启多选，支持全选反选清空与 Shift �
     await expect(page.getByRole('checkbox', { name: `选择记录 ${id}`, exact: true })).toBeChecked()
   await expect(header).toHaveJSProperty('indeterminate', true)
   await page.getByRole('button', { name: '反选', exact: true }).click()
-  await expect(page.locator('.batch-toolbar')).toContainText('已选 1 项')
+  await expect(page.getByRole('group', { name: '批量操作' })).toContainText('已选 1 项')
   await expect(page.getByRole('checkbox', { name: '选择记录 7', exact: true })).toBeChecked()
   await page.getByRole('button', { name: '全选', exact: true }).click()
   await expect(header).toBeChecked()
   await page.getByRole('button', { name: '清空', exact: true }).click()
-  await expect(page.locator('.batch-toolbar')).toContainText('已选 0 项')
+  await expect(page.getByRole('group', { name: '批量操作' })).toContainText('已选 0 项')
   await header.check()
-  await expect(page.locator('.batch-toolbar')).toContainText('已选 4 项')
+  await expect(page.getByRole('group', { name: '批量操作' })).toContainText('已选 4 项')
   await header.uncheck()
-  await expect(page.locator('.batch-toolbar')).toContainText('已选 0 项')
+  await expect(page.getByRole('group', { name: '批量操作' })).toContainText('已选 0 项')
   await page.getByRole('button', { name: '全选', exact: true }).click()
   await page.getByRole('button', { name: '退出多选', exact: true }).click()
-  await expect(page.locator('.history-table input[type=checkbox]')).toHaveCount(0)
+  await expect(page.getByRole('table').getByRole('checkbox')).toHaveCount(0)
   await page.getByRole('button', { name: '失败记录', exact: true }).click()
   await expect(
-    page.locator('.history-heading-actions').getByRole('button', { name: '重试', exact: true })
+    page.getByRole('group', { name: '记录操作' }).getByRole('button', { name: '重试', exact: true })
   ).toBeVisible()
   await page.getByRole('button', { name: '多选', exact: true }).click()
-  await expect(page.locator('.batch-toolbar')).toContainText('已选 0 项')
+  await expect(page.getByRole('group', { name: '批量操作' })).toContainText('已选 0 项')
   await expect(page.getByRole('button', { name: '批量重试（0）', exact: true })).toBeDisabled()
   await page.getByRole('button', { name: '全选', exact: true }).click()
   await expect(page.getByRole('button', { name: '批量重试（4）', exact: true })).toBeEnabled()
@@ -302,7 +298,7 @@ test('成功失败记录按需开启多选，支持全选反选清空与 Shift �
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(page.getByRole('button', { name: '退出多选', exact: true })).toBeInViewport()
   await expect(
-    page.locator('.history-heading-actions').getByRole('button', { name: '重试', exact: true })
+    page.getByRole('group', { name: '记录操作' }).getByRole('button', { name: '重试', exact: true })
   ).toBeInViewport()
   await page.screenshot({ path: 'test-results/history-selection-mobile.png', fullPage: true })
 })
@@ -313,9 +309,9 @@ test('右上角重试全部失败不带筛选或选中 ID，提交时防重复�
   await page.getByRole('button', { name: '多选', exact: true }).click()
   await page.getByRole('checkbox', { name: '选择记录 10', exact: true }).check()
   await page.getByRole('button', { name: '下一页运行记录', exact: true }).click()
-  await expect(page.getByLabel('分页导航').locator('.page-current')).toHaveText('2')
+  await expect(pageReadout(page.getByLabel('分页导航'))).toHaveText(/^2\//)
   await page.getByLabel('搜索运行记录').fill('片段')
-  await expect(page.getByLabel('分页导航').locator('.page-current')).toHaveText('1')
+  await expect(pageReadout(page.getByLabel('分页导航'))).toHaveText(/^1\//)
   await page.getByRole('checkbox', { name: '选择记录 10', exact: true }).check()
   let calls = 0
   let release: () => void = () => {}
@@ -338,7 +334,7 @@ test('右上角重试全部失败不带筛选或选中 ID，提交时防重复�
     route.fulfill({ json: { id: 500, status: 'completed' } })
   )
   await page
-    .locator('.history-heading-actions')
+    .getByRole('group', { name: '记录操作' })
     .getByRole('button', { name: '重试', exact: true })
     .click()
   const dialog = page.getByRole('dialog', { name: '重试失败记录', exact: true })
@@ -354,10 +350,10 @@ test('右上角重试全部失败不带筛选或选中 ID，提交时防重复�
   release()
   await expect(page.getByRole('status')).toContainText('已提交 4 条失败记录重试')
   await expect(page.getByRole('status')).toContainText('2 条记录不支持自动重试，已保留')
-  await expect(page.locator('.batch-toolbar')).toContainText('已选 0 项')
+  await expect(page.getByRole('group', { name: '批量操作' })).toContainText('已选 0 项')
   await page.getByRole('button', { name: '成功记录', exact: true }).click()
   await expect(
-    page.locator('.history-heading-actions').getByRole('button', { name: '重试', exact: true })
+    page.getByRole('group', { name: '记录操作' }).getByRole('button', { name: '重试', exact: true })
   ).toHaveCount(0)
 })
 
@@ -379,8 +375,7 @@ for (const mode of ['单条', '详情', '多选'])
         await page.getByRole('checkbox', { name: '选择记录 9', exact: true }).check()
         await page.getByRole('button', { name: '批量重试（2）', exact: true }).click()
       } else if (mode === '详情') {
-        await page
-          .locator('.history-table tbody tr')
+        await bodyRows(page.getByRole('table'))
           .first()
           .getByRole('button', { name: '详情', exact: true })
           .click()

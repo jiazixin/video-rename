@@ -7,18 +7,20 @@
 </script>
 <template>
   <div class="analysis-histogram">
-    <div v-for="band in bands" :key="band.label" class="analysis-hist-row">
-      <span class="analysis-hist-label">{{ band.label }}</span>
-      <div class="analysis-hist-track"
-        ><div
-          v-if="band.count"
-          class="analysis-hist-bar"
-          :data-series="band.tone"
-          :style="{ width: `${Math.max(1.5, (band.count / max()) * 100)}%` }"
-      /></div>
-      <span class="analysis-hist-value" :title="`${band.label}：${formatCount(band.count)} 项`">{{
-        formatCount(band.count)
-      }}</span>
+    <div class="analysis-hist-rows" role="list" aria-label="耗时分档">
+      <div v-for="band in bands" :key="band.label" class="analysis-hist-row" role="listitem">
+        <span class="analysis-hist-label">{{ band.label }}</span>
+        <div class="analysis-hist-track"
+          ><div
+            v-if="band.count"
+            class="analysis-hist-bar"
+            :data-series="band.tone"
+            :style="{ width: `${Math.max(1.5, (band.count / max()) * 100)}%` }"
+        /></div>
+        <span class="analysis-hist-value" :title="`${band.label}：${formatCount(band.count)} 项`">{{
+          formatCount(band.count)
+        }}</span>
+      </div>
     </div>
     <p v-if="!total()" class="trend-empty analysis-hist-empty">还没有可统计的逐项耗时</p>
     <p class="trend-hint">共 {{ formatCount(total()) }} 个样本，数值标注在条尾</p>

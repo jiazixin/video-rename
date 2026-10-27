@@ -59,7 +59,13 @@
         ><span>video-rename</span></a
       >
       <nav aria-label="主导航">
-        <div v-for="group in groups" :key="group.label" class="nav-group">
+        <div
+          v-for="group in groups"
+          :key="group.label"
+          class="nav-group"
+          role="group"
+          :aria-label="group.label"
+        >
           <div v-if="group.label" class="sidebar-caption">{{ group.label }}</div>
           <button
             v-for="item in group.items"

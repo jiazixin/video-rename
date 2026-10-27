@@ -1,7 +1,14 @@
 import { test, expect, type Page } from '@playwright/test'
 import { mockRunPages } from './run-pages'
-import { recordPage } from './run-record-pages'
-import { defined } from './support'
+import {
+  attempts,
+  directories,
+  directoryToggles,
+  fileRecords,
+  recentFiles,
+  recordPage
+} from './run-record-pages'
+import { defined, pageReadout } from './support'
 
 const sampleRun = () => ({
   id: 960,
@@ -77,53 +84,57 @@ test('目录统计覆盖整批，筛选分页保留排队文件与全部尝试',
       : route.fulfill({ json: recordPage(items, query) })
   })
   const dialog = await open(page, run),
-    body = dialog.locator('#run-detail-records')
+    body = dialog.getByRole('region', { name: '运行记录', exact: true })
   await expect(body.getByRole('button', { name: /^处理中/ })).toHaveAttribute(
     'aria-pressed',
     'true'
   )
   await body.getByRole('button', { name: /^全部文件/ }).click()
-  await expect(body.locator('.detail-record-file')).toHaveCount(100)
+  await expect(fileRecords(body)).toHaveCount(100)
   await expect(dialog.getByRole('button', { name: /^运行记录/ })).toContainText(
     '205 个文件 · 2 个目录'
   )
-  await expect(body.locator('.detail-directory-toggle').first()).toContainText('103 个文件')
+  await expect(directoryToggles(body).first()).toContainText('103 个文件')
   await expect(body).toContainText('本页 100 / 103')
-  const attempts = body.locator('.detail-attempt-toggle').first()
-  await attempts.click()
-  await expect(body.locator('.detail-attempt:visible')).toHaveCount(4)
+  const attemptToggle = body.getByRole('button', { name: /^全部 \d+ 次尝试/ }).first()
+  await attemptToggle.click()
+  await expect(attempts(body)).toHaveCount(4)
   const content = dialog.locator('.modal-content')
   await content.evaluate((el) => (el.scrollTop = 250))
   const before = requests.length
   await expect.poll(() => requests.length, { timeout: 10000 }).toBeGreaterThan(before)
-  await expect(attempts).toHaveAttribute('aria-expanded', 'true')
+  await expect(attemptToggle).toHaveAttribute('aria-expanded', 'true')
   expect(await content.evaluate((el) => el.scrollTop)).toBeCloseTo(250, 0)
   await body.getByRole('button', { name: '下页文件' }).click()
-  await expect(body.locator('.detail-directory')).toHaveCount(2)
-  await expect(body.locator('.page-current')).toHaveText('2')
+  await expect(directoryToggles(body)).toHaveCount(2)
+  await expect(pageReadout(body.getByRole('navigation', { name: '运行记录翻页' }))).toHaveText(
+    /^2\//
+  )
   await body.getByRole('button', { name: '下页文件' }).click()
-  await expect(body.locator('.detail-record-file')).toHaveCount(5)
+  await expect(fileRecords(body)).toHaveCount(5)
   await expect(body).toContainText('等待处理')
   await body.getByRole('button', { name: /^最终失败/ }).click()
-  await expect(body.locator('.page-current')).toHaveText('1')
+  await expect(pageReadout(body.getByRole('navigation', { name: '运行记录翻页' }))).toHaveText(
+    /^1\//
+  )
   await expect(body.getByLabel('运行记录分页', { exact: true })).toContainText('共 104 个文件')
   await body.getByRole('combobox', { name: '记录目录筛选' }).click()
   await page.getByRole('option', { name: '上海（103）', exact: true }).click()
-  await expect(body.locator('.detail-record-file')).toHaveCount(3)
-  const failed = body.locator('.detail-record-file').first()
-  await failed.locator('.detail-attempt-toggle').click()
-  await expect(failed.locator('.detail-attempt:visible')).toHaveCount(4)
+  await expect(fileRecords(body)).toHaveCount(3)
+  const failed = fileRecords(body).first()
+  await failed.getByRole('button', { name: /^全部 \d+ 次尝试/ }).click()
+  await expect(attempts(failed)).toHaveCount(4)
   await expect(failed).toContainText('重试第 3 次 · 兜底模型')
   await expect(failed).toContainText('未生成有效名称')
-  await body.locator('.detail-directory-toggle').click()
-  await expect(body.locator('.detail-directory-toggle')).toHaveAttribute('aria-expanded', 'false')
+  await directoryToggles(body).click()
+  await expect(directoryToggles(body)).toHaveAttribute('aria-expanded', 'false')
   const collapsed = requests.length
   await expect.poll(() => requests.length, { timeout: 10000 }).toBeGreaterThan(collapsed)
-  await expect(body.locator('.detail-directory-toggle')).toHaveAttribute('aria-expanded', 'false')
-  await body.locator('.detail-directory-toggle').click()
+  await expect(directoryToggles(body)).toHaveAttribute('aria-expanded', 'false')
+  await directoryToggles(body).click()
   fail = true
   await expect(body.getByRole('alert')).toContainText('保留上次读取', { timeout: 10000 })
-  await expect(body.locator('.detail-record-file')).toHaveCount(3)
+  await expect(fileRecords(body)).toHaveCount(3)
   fail = false
   await body.getByRole('button', { name: '重试', exact: true }).click()
   await expect(body.getByRole('alert')).toHaveCount(0)
@@ -161,7 +172,7 @@ test('加载、错误、空记录与无失败状态不混淆', async ({ page }) 
       : route.fulfill({ json: recordPage([], new URL(route.request().url()).searchParams) })
   })
   const dialog = await open(page, run),
-    body = dialog.locator('#run-detail-records')
+    body = dialog.getByRole('region', { name: '运行记录', exact: true })
   await expect(body.getByRole('status')).toHaveText('正在读取运行记录…')
   await expect(dialog.getByRole('button', { name: /^运行记录/ })).not.toContainText('0 个文件')
   release()
@@ -191,16 +202,18 @@ test('切换筛选忽略迟到响应，终态最后刷新后停止轮询', async
     }
   })
   const dialog = await open(page, run),
-    body = dialog.locator('#run-detail-records')
+    body = dialog.getByRole('region', { name: '运行记录', exact: true })
   await expect.poll(() => count).toBe(1)
   await body.getByRole('button', { name: /^最终失败/ }).click()
   await expect(body.getByLabel('运行记录分页', { exact: true })).toContainText('共 104 个文件')
   release()
-  await expect(body.locator('.status-badge[data-status="done"]')).toHaveCount(0)
+  await expect(fileRecords(body).filter({ hasText: '已完成' })).toHaveCount(0)
   defined(items[100]).message = 'rename_conflict'
   run.status = 'completed'
   await expect(body).toContainText('目标已存在', { timeout: 10000 })
-  await expect(dialog.locator('.detail-header-status')).toHaveText('已完成', { timeout: 10000 })
+  await expect(dialog.getByRole('status', { name: '批次状态' })).toHaveText('已完成', {
+    timeout: 10000
+  })
   await page.clock.install()
   await page.clock.runFor(1000)
   const stopped = count
@@ -232,7 +245,9 @@ test('批次状态轮询不打断慢请求，收起记录取消请求并停止�
     toggle = dialog.getByRole('button', { name: /^运行记录/ })
   await expect.poll(() => count).toBe(1)
   run.status = 'paused'
-  await expect(dialog.locator('.detail-header-status')).toHaveText('已暂停', { timeout: 10000 })
+  await expect(dialog.getByRole('status', { name: '批次状态' })).toHaveText('已暂停', {
+    timeout: 10000
+  })
   expect(count).toBe(1)
   await toggle.click()
   release()
@@ -240,7 +255,7 @@ test('批次状态轮询不打断慢请求，收起记录取消请求并停止�
   await page.clock.runFor(10000)
   expect(count).toBe(1)
   await toggle.click()
-  await expect(dialog.locator('.run-live-recent li')).toHaveCount(20)
+  await expect(recentFiles(dialog)).toHaveCount(20)
   expect(count).toBe(2)
 })
 
@@ -282,7 +297,7 @@ test('多目录同名文件与未提交名称不会被混淆', async ({ page }) 
     r.fulfill({ json: recordPage(items, new URL(r.request().url()).searchParams) })
   )
   const dialog = await open(page, run)
-  const groups = dialog.locator('.detail-directory')
+  const groups = directories(dialog)
   await expect(groups).toHaveCount(2)
   await expect(groups.nth(0)).toContainText('上海')
   await expect(groups.nth(0)).toContainText('clip.mp4')
@@ -398,25 +413,25 @@ test('处理中视图按用时排列阶段时间轴，并显示拟用名称、�
     return route.fulfill({ json: recordPage(items, query) })
   })
   const dialog = await open(page, run),
-    body = dialog.locator('#run-detail-records')
+    body = dialog.getByRole('region', { name: '运行记录', exact: true })
   const running = body.getByRole('button', { name: /^处理中/ })
   await expect(running).toHaveAttribute('aria-pressed', 'true')
   await expect(running).toContainText('2')
   expect(statuses[0]).toBe('running')
-  const cards = body.locator('.run-live-file')
+  const cards = body.getByRole('article', { name: /^处理中 / })
   await expect(cards).toHaveCount(2)
   const slow = cards.first()
   await expect(slow).toContainText('电影 / 2024')
   await expect(slow).toContainText('已用时 1:4')
   await expect(slow).toContainText('等待模型生成…')
-  await expect(slow.locator('[aria-current="step"]')).toHaveText('重试第 1 次')
-  await expect(slow.locator('[data-state="done"]')).toHaveText(['开始', '抽帧 6 张'])
+  await expect(slow.getByRole('listitem', { name: /当前阶段$/ })).toHaveText('重试第 1 次')
+  await expect(slow.getByRole('listitem', { name: /已完成$/ })).toHaveText(['开始', '抽帧 6 张'])
   await expect(slow).toContainText('首次请求失败：模型请求或响应读取超时')
   const committing = cards.nth(1)
   await expect(committing).toContainText('拟用名称')
   await expect(committing).toContainText('嘉宾雨中拆盲盒.mkv')
-  await expect(committing.locator('[aria-current="step"]')).toHaveText('提交改名中')
-  const recent = body.locator('.run-live-recent li')
+  await expect(committing.getByRole('listitem', { name: /当前阶段$/ })).toHaveText('提交改名中')
+  const recent = recentFiles(body)
   await expect(recent).toHaveCount(5)
   await expect(recent.first()).toContainText('DSC0042.mp4')
   await expect(recent.first()).toContainText('海边日落延时.mp4')
@@ -428,13 +443,15 @@ test('处理中视图按用时排列阶段时间轴，并显示拟用名称、�
   await slow.scrollIntoViewIfNeeded()
   await dialog.screenshot({ path: 'test-results/run-live-desktop.png', animations: 'disabled' })
 
-  await body.locator('.run-live-recent').screenshot({ path: 'test-results/run-live-recent.png' })
+  await body
+    .getByRole('region', { name: /^最近结束/ })
+    .screenshot({ path: 'test-results/run-live-recent.png' })
   await body.getByRole('button', { name: /^已跳过/ }).click()
   await expect(body.getByRole('list', { name: '跳过原因' })).toHaveText('已处理，跳过 2')
-  await expect(body.locator('.detail-record-file')).toHaveCount(2)
+  await expect(fileRecords(body)).toHaveCount(2)
   await expect(body).toContainText('本页 1 / 1 个跳过文件')
   await body.getByRole('button', { name: /^已完成/ }).click()
-  await expect(body.locator('.detail-record-file')).toHaveCount(2)
+  await expect(fileRecords(body)).toHaveCount(2)
   await expect(body).toContainText('海边日落延时.mp4')
   await expect(body.getByRole('list', { name: '跳过原因' })).toHaveCount(0)
   await body.getByRole('combobox', { name: '记录目录筛选' }).click()
@@ -444,12 +461,12 @@ test('处理中视图按用时排列阶段时间轴，并显示拟用名称、�
   await body.getByRole('button', { name: /^处理中/ }).focus()
   await page.keyboard.press('Enter')
   await expect(cards).toHaveCount(0)
-  await expect(body.locator('.run-live-file')).toHaveCount(0)
+  await expect(body.getByRole('article', { name: /^处理中 / })).toHaveCount(0)
   await expect(body.getByRole('status')).toHaveCount(1)
-  await expect(body.locator('.run-live-recent li')).toHaveCount(2)
+  await expect(recentFiles(body)).toHaveCount(2)
   await body.getByRole('combobox', { name: '记录目录筛选' }).click()
   await page.getByRole('option', { name: /^全部目录/ }).click()
-  await expect(body.locator('.run-live-file')).toHaveCount(2)
+  await expect(body.getByRole('article', { name: /^处理中 / })).toHaveCount(2)
   await page.setViewportSize({ width: 320, height: 844 })
   await slow.scrollIntoViewIfNeeded()
   expect(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy()

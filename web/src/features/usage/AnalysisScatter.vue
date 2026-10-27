@@ -150,7 +150,13 @@
         @pointermove="pick"
       />
     </svg>
-    <div v-if="hovered" class="trend-tooltip" :style="tooltipStyle" role="status">
+    <div
+      v-if="hovered"
+      class="trend-tooltip"
+      :style="tooltipStyle"
+      role="status"
+      aria-label="数据点详情"
+    >
       <strong>批次 #{{ hovered.run }} · {{ formatMs(hovered.ms) }}</strong>
       <span
         >{{ formatCount(hovered.items) }} 个目标 ·

@@ -62,10 +62,10 @@ test('批次暂停确认、错误重试、恢复、详情与窄屏', async ({ pa
     return route.fulfill({ json: { ok: true } })
   })
   await page.getByRole('button', { name: '批次记录', exact: true }).click()
-  const row = page.locator('.run-entry').filter({ hasText: '#910' })
+  const row = page.getByRole('article', { name: '批次 #910' })
   const dialog = page.getByRole('dialog')
   await expect(
-    page.locator('.run-entry').filter({ hasText: '#911' }).getByRole('button', { name: '暂停调度' })
+    page.getByRole('article', { name: '批次 #911' }).getByRole('button', { name: '暂停调度' })
   ).toHaveCount(0)
   await row.getByRole('button', { name: '暂停调度' }).click()
   await expect(dialog).toContainText('正在执行的步骤会正常完成')

@@ -625,7 +625,7 @@
           ><CalendarDays :size="31" /><h3>{{ loading ? '正在加载计划…' : '暂无自动计划' }}</h3
           ><p>新建自动计划，按设定时间自动运行。</p></div
         ><div v-else class="plan-grid"
-          ><article v-for="p in plans" :key="p.id" class="panel plan-card"
+          ><article v-for="p in plans" :key="p.id" class="panel plan-card" :aria-label="p.name"
             ><header
               ><span class="plan-icon"><Clock3 :size="19" /></span
               ><span class="badge">{{ p.task === 'extract' ? '抽帧' : '命名' }}</span
@@ -746,6 +746,7 @@
             v-for="(r, runIndex) in day.runs"
             :key="r.id"
             class="run-entry"
+            :aria-label="`批次 #${r.id}`"
             :data-task="r.task === 'extract' ? 'extract' : 'rename'"
             :class="{
               'is-active': active(r),
@@ -929,7 +930,7 @@
               ><code>{{ expression }}</code
               ><button type="button" @click="showPreview"
                 >预览执行时间<ChevronRight :size="14" /></button></div
-            ><ol v-if="preview.length" class="schedule-preview"
+            ><ol v-if="preview.length" class="schedule-preview" aria-label="执行时间预览"
               ><li v-for="p in preview" :key="p">{{ p }}</li></ol
             ></template
           >

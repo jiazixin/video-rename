@@ -127,6 +127,7 @@
     <div class="video-stage">
       <video
         ref="video"
+        aria-label="视频画面"
         class="video-player"
         :src="src"
         autoplay

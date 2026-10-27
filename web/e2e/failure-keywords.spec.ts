@@ -1,4 +1,4 @@
-import { defined } from './support'
+import { defined, toasts } from './support'
 import { test, expect, type Page } from '@playwright/test'
 
 const defaults = ['命名失败', '拒绝', '无法完成', 'sorry']
@@ -51,7 +51,7 @@ test('失败关键词增删、空列表、恢复默认与真实持久化', async
     await expect(removeKeyword(page, '拒绝')).toHaveCount(0)
 
     await save.click()
-    await expect(page.locator('.toast-message').first()).toContainText('失败关键词已保存')
+    await expect(toasts(page).first()).toContainText('失败关键词已保存')
     await expect(save).toBeDisabled()
     await page.reload()
     await expect(removeKeyword(page, '我不能为这个视频生成标题')).toBeVisible()

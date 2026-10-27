@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { toasts } from './support'
 async function login(page: Page) {
   await page.goto('/')
   await page.getByLabel('用户名', { exact: true }).fill('admin')
@@ -30,7 +31,7 @@ test('固定提示词与提示词库的新增、编辑、引用保护和持久�
     await page.getByRole('combobox', { name: '命名提示词', exact: true }).click()
     await page.getByRole('option', { name: '下拉绑定提示词', exact: true }).click()
     await page.getByRole('button', { name: '保存配置', exact: true }).click()
-    const card = page.locator('.model-card').filter({ hasText: '下拉测试配置' })
+    const card = page.getByRole('article', { name: '下拉测试配置' })
     await expect(card).toContainText('命名提示词 · 下拉绑定提示词')
     await page.goto('/#settings/prompts')
     await page.getByRole('button', { name: '删除提示词 下拉绑定提示词', exact: true }).click()
@@ -42,23 +43,24 @@ test('固定提示词与提示词库的新增、编辑、引用保护和持久�
     await page.getByRole('combobox', { name: '命名提示词', exact: true }).click()
     await page.getByRole('option', { name: '默认提示词', exact: true }).click()
     await page.getByRole('button', { name: '保存配置', exact: true }).click()
-    await expect(page.locator('.model-card').filter({ hasText: '下拉测试配置' })).toContainText(
+    await expect(page.getByRole('article', { name: '下拉测试配置' })).toContainText(
       '命名提示词 · 默认提示词'
     )
     await page.getByRole('button', { name: '删除模型配置 下拉测试配置', exact: true }).click()
     await page.getByRole('button', { name: '确认删除', exact: true }).click()
-    await expect(page.locator('.model-card').filter({ hasText: '下拉测试配置' })).toHaveCount(0)
+    await expect(page.getByRole('article', { name: '下拉测试配置' })).toHaveCount(0)
     await page.goto('/#settings/prompts')
     await page.getByRole('button', { name: '删除提示词 下拉绑定提示词', exact: true }).click()
     await page.getByRole('button', { name: '确认删除', exact: true }).click()
     await expect(page.getByRole('heading', { name: '下拉绑定提示词', exact: true })).toHaveCount(0)
     await fixed.fill('测试固定约束：只输出一行。')
     await page.getByRole('button', { name: '保存固定提示词', exact: true }).click()
-    await expect(page.locator('.toast-message').first()).toContainText('固定提示词已保存')
-    await expect(page.locator('.system-settings .notice.success')).toHaveCount(0)
-    await expect(
-      page.locator('.toast-stack').filter({ has: page.locator('.toast-notice') })
-    ).toHaveCSS('position', 'fixed')
+    await expect(toasts(page).first()).toContainText('固定提示词已保存')
+    await expect(page.getByRole('main').getByText('固定提示词已保存')).toHaveCount(0)
+    await expect(page.locator('.toast-stack').filter({ has: toasts(page) })).toHaveCSS(
+      'position',
+      'fixed'
+    )
     await page.reload()
     await expect(fixed).toHaveValue('测试固定约束：只输出一行。')
     await page.getByRole('button', { name: '恢复默认', exact: true }).click()

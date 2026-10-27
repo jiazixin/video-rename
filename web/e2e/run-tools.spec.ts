@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { mockRunPages } from './run-pages'
+import { toasts } from './support'
 test('本页选择跨页保留、批次操作和折叠日志复制', async ({ page }) => {
   await page.goto('/')
   await page.getByLabel('用户名', { exact: true }).fill('admin')
@@ -80,18 +81,18 @@ test('本页选择跨页保留、批次操作和折叠日志复制', async ({ pa
   )
   await page.getByRole('button', { name: '批次记录', exact: true }).click()
   await page.getByRole('button', { name: '刷新', exact: true }).click()
-  const row = page.locator('.run-entry').filter({ hasText: '#900' })
+  const row = page.getByRole('article', { name: '批次 #900' })
   await expect(row.getByRole('button', { name: '取消', exact: true })).toBeDisabled()
   await expect(
     page
-      .locator('.run-entry')
+      .getByRole('article')
       .filter({ hasText: '#901' })
       .getByRole('button', { name: '还原批次', exact: true })
   ).toBeDisabled()
   await page.screenshot({ path: 'test-results/run-batch-actions.png' })
   await row.getByRole('button', { name: '还原批次', exact: true }).click()
   await dialog.getByRole('button', { name: '确认还原批次' }).click()
-  await expect(page.locator('.toast-message').first()).toContainText('已还原 2 项')
+  await expect(toasts(page).first()).toContainText('已还原 2 项')
   await dialog.getByRole('button', { name: '关闭', exact: true }).last().click()
   await page.route('**/api/logs?*', (route) =>
     route.fulfill({
@@ -124,9 +125,9 @@ test('本页选择跨页保留、批次操作和折叠日志复制', async ({ pa
   await page.getByRole('button', { name: '运行记录', exact: true }).click()
   await page.getByRole('button', { name: '失败记录', exact: true }).click()
   await page.getByRole('button', { name: '详情', exact: true }).click()
-  await expect(dialog.locator('pre')).toHaveCount(0)
+  await expect(dialog.getByText(/decoder unavailable/)).toHaveCount(0)
   await dialog.getByRole('button', { name: '抽帧 / 媒体诊断日志' }).click()
-  await expect(dialog.locator('pre')).toContainText('decoder unavailable')
+  await expect(dialog.getByText(/decoder unavailable/)).toBeVisible()
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
   await dialog.getByRole('button', { name: '复制', exact: true }).click()
   await expect(dialog.getByRole('button', { name: '已复制', exact: true })).toBeVisible()

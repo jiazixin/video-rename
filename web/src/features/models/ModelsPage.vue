@@ -365,7 +365,7 @@
       >{{ error }}<button @click="load">重试</button></div
     >
     <div class="model-grid"
-      ><article v-for="p in rows" :key="p.id" class="panel model-card"
+      ><article v-for="p in rows" :key="p.id" class="panel model-card" :aria-label="p.title"
         ><header
           ><div class="model-title"
             ><input

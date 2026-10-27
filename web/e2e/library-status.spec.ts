@@ -1,4 +1,4 @@
-import { defined } from './support'
+import { bodyRows, defined, pageReadout } from './support'
 import { test, expect, type Page } from '@playwright/test'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -77,9 +77,7 @@ async function fixture(page: Page, name: string, files: string[], directories: s
   async function open() {
     await page.goto('/')
     await page.getByRole('button', { name, exact: true }).click()
-    await expect(page.locator('.file-table tbody tr')).toHaveCount(
-      Math.min(100, files.length + directories.length)
-    )
+    await expect(bodyRows(page)).toHaveCount(Math.min(100, files.length + directories.length))
   }
   async function populateDirectory(name: string, files: string[]) {
     for (const file of files) writeFileSync(join(path, name, file), 'directory status fixture')
@@ -106,8 +104,8 @@ async function fixture(page: Page, name: string, files: string[], directories: s
   return { id, entries, mark, rename, open, populateDirectory }
 }
 
-const rows = (page: Page) => page.locator('.file-table tbody tr')
-const names = (page: Page) => rows(page).locator('.filename-cell .name-text')
+const rows = (page: Page) => bodyRows(page)
+const names = (page: Page) => rows(page).getByRole('rowheader')
 
 async function select(page: Page, label: string, option: string) {
   await page.getByRole('combobox', { name: label, exact: true }).click()
@@ -133,16 +131,22 @@ test('处理状态与搜索、类型共同筛选，翻页只显示匹配文件�
   await expect(names(page)).toHaveText(clips.slice(0, 100))
   await page.getByRole('button', { name: '下一页', exact: true }).click()
   await expect(names(page)).toHaveText(clips.slice(100, 125))
-  await expect(rows(page).locator('td:nth-child(4)')).toHaveText(Array(25).fill('手动标记已处理'))
-  await expect(page.locator('.pagination .page-current')).toHaveText('2')
+  await expect(rows(page)).toHaveCount(25)
+  await expect(rows(page).filter({ hasText: '手动标记已处理' })).toHaveCount(25)
+  await expect(
+    pageReadout(page.getByRole('navigation', { name: '分页导航', exact: true }))
+  ).toHaveText(/^2\//)
 
   await select(page, '处理状态筛选', '未处理')
-  await expect(page.locator('.pagination .page-current')).toHaveText('1')
+  await expect(
+    pageReadout(page.getByRole('navigation', { name: '分页导航', exact: true }))
+  ).toHaveText(/^1\//)
   await expect(names(page)).toHaveText(['clip-folder', ...clips.slice(125, 224)])
   await expect(page.getByText('共 106 项 · 100 项 / 当前页', { exact: true })).toBeVisible()
   await page.getByLabel('搜索当前目录', { exact: true }).fill('clip22')
   await expect(names(page)).toHaveText(clips.slice(220))
-  await expect(rows(page).locator('td:nth-child(4)')).toHaveText(Array(10).fill('未处理'))
+  await expect(rows(page)).toHaveCount(10)
+  await expect(rows(page).filter({ hasText: '未处理' })).toHaveCount(10)
   await select(page, '处理状态筛选', '已处理')
   await expect(rows(page)).toHaveCount(0)
   await page.getByLabel('搜索当前目录', { exact: true }).fill('')
@@ -222,7 +226,7 @@ test('处理状态表头按状态分组及自然名称双向排序，进入目�
   await expect(page.getByRole('combobox', { name: '类型筛选', exact: true })).toHaveText('全部类型')
   await expect(page.getByLabel('搜索当前目录', { exact: true })).toHaveValue('')
   await page
-    .locator('.breadcrumbs')
+    .getByRole('navigation', { name: '目录路径', exact: true })
     .getByRole('button', { name: '状态筛选-排序', exact: true })
     .click()
   await expect(page.getByRole('combobox', { name: '处理状态筛选', exact: true })).toHaveText(
@@ -274,17 +278,17 @@ test('图片和音频一键编号预览遵循处理状态筛选，还原后的�
     await page.getByRole('button', { name: '一键编号', exact: true }).click()
     let dialog = page.getByRole('dialog', { name: `${kind}编号预览`, exact: true })
     await expect(dialog).toContainText(`共 1 ${unit}${kind}`)
-    await expect(dialog.locator('tbody tr')).toHaveCount(1)
-    await expect(dialog.locator('tbody tr')).toContainText(`manual.${extension}`)
+    await expect(bodyRows(dialog)).toHaveCount(1)
+    await expect(bodyRows(dialog)).toContainText(`manual.${extension}`)
     await dialog.getByRole('button', { name: '取消', exact: true }).click()
     await select(page, '处理状态筛选', '未处理')
     await expect(names(page)).toHaveText([`pending2.${extension}`, `pending10.${extension}`])
     await page.getByRole('button', { name: '一键编号', exact: true }).click()
     dialog = page.getByRole('dialog', { name: `${kind}编号预览`, exact: true })
     await expect(dialog).toContainText(`共 2 ${unit}${kind}`)
-    await expect(dialog.locator('tbody tr')).toHaveCount(2)
-    await expect(dialog.locator('tbody tr').first()).toContainText(`pending2.${extension}`)
-    await expect(dialog.locator('tbody tr').last()).toContainText(`pending10.${extension}`)
+    await expect(bodyRows(dialog)).toHaveCount(2)
+    await expect(bodyRows(dialog).first()).toContainText(`pending2.${extension}`)
+    await expect(bodyRows(dialog).last()).toContainText(`pending10.${extension}`)
     await dialog.getByRole('button', { name: '取消', exact: true }).click()
   }
   const restored = defined(setup.entries.get('manual.mp3'))
@@ -314,7 +318,9 @@ test('未处理筛选中的标记和手动改名立即移除行，并保留其�
   await expect(names(page)).toHaveText(['clip2.mp4', 'clip3.mp4'])
   await expect(page.getByText('共 2 项 · 2 项 / 当前页', { exact: true })).toBeVisible()
   await expect(page.getByLabel('选择 clip2.mp4', { exact: true })).toBeChecked()
-  await expect(page.locator('.batch-toolbar strong')).toHaveText('已选 1 项')
+  await expect(page.getByRole('group', { name: '批量操作' }).getByText(/^已选 /)).toHaveText(
+    '已选 1 项'
+  )
 
   await page
     .getByRole('button', { name: '双击或按 Enter 重命名 clip2.mp4', exact: true })
@@ -324,7 +330,9 @@ test('未处理筛选中的标记和手动改名立即移除行，并保留其�
   await editor.press('Enter')
   await expect(names(page)).toHaveText(['clip3.mp4'])
   await expect(page.getByText('共 1 项 · 1 项 / 当前页', { exact: true })).toBeVisible()
-  await expect(page.locator('.batch-toolbar strong')).toHaveText('已选 1 项')
+  await expect(page.getByRole('group', { name: '批量操作' }).getByText(/^已选 /)).toHaveText(
+    '已选 1 项'
+  )
   await select(page, '处理状态筛选', '全部状态')
   await expect(names(page)).toHaveText(['clip1.mp4', 'clip3.mp4', 'renamed2.mp4'])
   await expect(page.getByLabel('选择 renamed2.mp4', { exact: true })).toBeChecked()

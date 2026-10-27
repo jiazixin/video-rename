@@ -46,6 +46,11 @@
   const rename = computed(() => task !== 'extract');
 
   type Step = { label: string; state: 'done' | 'current' | 'pending' };
+  const stepStates: Record<Step['state'], string> = {
+    done: '已完成',
+    current: '当前阶段',
+    pending: '未开始'
+  };
   // Step index of a live stage: 0 start, 1 extract, 2 model, 3 commit.
   function stagePosition(stage?: string) {
     if (!stage) return 0;
@@ -123,6 +128,7 @@
       v-for="item in items"
       :key="item.id"
       class="run-live-file"
+      :aria-label="`处理中 ${item.original_name || '未记录原名'}`"
       :data-tone="item.stage?.stage === 'retry_wait' ? 'warning' : 'primary'"
     >
       <div class="run-live-heading"
@@ -157,6 +163,7 @@
           v-for="step in steps(item)"
           :key="step.label"
           :data-state="step.state"
+          :aria-label="`${step.label} · ${stepStates[step.state]}`"
           :aria-current="step.state === 'current' ? 'step' : undefined"
           ><span class="run-live-node"><Check v-if="step.state === 'done'" :size="10" /></span
           >{{ step.label }}</li

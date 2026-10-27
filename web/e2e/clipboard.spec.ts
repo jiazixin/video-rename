@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { toasts } from './support'
 
 // The fixture still listens on loopback; this hostname is an actual insecure HTTP origin.
 test.use({
@@ -124,9 +125,9 @@ async function installClipboard(page: Page, mode: 'modern' | 'reject' | 'http' |
 
 async function openResponse(page: Page) {
   await page.getByRole('button', { name: '运行记录', exact: true }).click()
-  const diagnostic = page.locator('.history-table .failure-diagnostics').first()
+  const diagnostic = page.getByRole('group', { name: '失败诊断' }).first()
   await diagnostic.getByRole('button', { name: '原始响应', exact: true }).click()
-  await expect(diagnostic.locator('pre')).toHaveText(responseText)
+  await expect(diagnostic.getByText(responseText, { exact: true })).toBeVisible()
   return diagnostic
 }
 
@@ -135,7 +136,7 @@ async function copyAllEntrances(page: Page) {
   await page.getByRole('button', { name: '详情', exact: true }).click()
   const history = page.getByRole('dialog', { name: '运行记录详情', exact: true })
   await history.getByRole('button', { name: '复制详情', exact: true }).click()
-  await expect(page.locator('.toast-message')).toContainText(['已复制运行记录详情'])
+  await expect(toasts(page)).toContainText(['已复制运行记录详情'])
   await history.getByRole('button', { name: '关闭', exact: true }).click()
 
   const diagnostic = await openResponse(page)
@@ -146,20 +147,23 @@ async function copyAllEntrances(page: Page) {
   await page.getByRole('button', { name: '失败记录', exact: true }).click()
   await page.getByRole('button', { name: '详细原因', exact: true }).click()
   const extraction = page.getByRole('dialog', { name: '抽帧失败详情', exact: true })
-  await expect(extraction.locator('pre')).toHaveText(extractionText)
+  await expect(extraction.getByText(extractionText, { exact: true })).toBeVisible()
   await extraction.getByRole('button', { name: '复制详情', exact: true }).click()
-  await expect(page.locator('.toast-message')).toContainText(['已复制抽帧详情'])
+  await expect(toasts(page)).toContainText(['已复制抽帧详情'])
   await extraction.getByRole('button', { name: '关闭', exact: true }).last().click()
 
   await page.getByRole('button', { name: '文件目录', exact: true }).click()
   await page
-    .locator('.directory-mark-actions')
+    .getByRole('group', { name: '当前目录操作' })
     .getByRole('button', { name: '编号', exact: true })
     .click()
   const numbering = page.getByRole('dialog')
   await numbering.getByText('查看诊断详情', { exact: true }).click()
   await numbering.getByRole('button', { name: '复制诊断', exact: true }).click()
-  await expect(numbering.locator('.numbering-diagnostics [role=status]')).toHaveText('已复制诊断')
+  await expect(
+    numbering.getByRole('group').filter({ hasText: '查看诊断详情' }).getByRole('status')
+  ).toHaveText('已复制诊断')
+  // The copy fallback is a bare off-screen textarea; no role tells it apart.
   await expect(page.locator('textarea')).toHaveCount(0)
 }
 
@@ -205,8 +209,9 @@ test('两个复制途径均失败保留诊断原文，清理选区并支持重�
   })
   await diagnostic.getByRole('button', { name: '复制', exact: true }).click()
   await expect(diagnostic.getByRole('alert')).toHaveText('复制失败，请手动选取文本')
-  await expect(diagnostic.locator('pre')).toHaveText(responseText)
+  await expect(diagnostic.getByText(responseText, { exact: true })).toBeVisible()
   await expect(diagnostic.getByRole('button', { name: '已复制', exact: true })).toHaveCount(0)
+  // The copy fallback is a bare off-screen textarea; no role tells it apart.
   await expect(page.locator('textarea')).toHaveCount(0)
   await page.evaluate(() => {
     window.clipboardTest.fallbackAllowed = true
@@ -221,29 +226,33 @@ test('降级复制恢复焦点、输入选区、文本选区与滚动位置', as
   await installClipboard(page, 'http')
   await login(page, 'http://clipboard-http.test:18790/')
   const diagnostic = await openResponse(page)
-  const button = diagnostic.locator('.diagnostic-content header button')
+  // The label switches to 已复制 after a copy; it stays the same button.
+  const button = diagnostic.getByRole('button', { name: /^(已)?复制$/ })
   await button.focus()
-  const selectedText = await diagnostic.locator('pre').evaluate((element) => {
-    const range = document.createRange()
-    const text = element.firstChild
-    const selection = window.getSelection()
-    if (!text || !selection) throw new Error('missing text or selection')
-    range.setStart(text, 3)
-    range.setEnd(text, 13)
-    selection.removeAllRanges()
-    selection.addRange(range)
-    return selection.toString()
-  })
+  const selectedText = await diagnostic
+    .getByText(responseText, { exact: true })
+    .evaluate((element) => {
+      const range = document.createRange()
+      const text = element.firstChild
+      const selection = window.getSelection()
+      if (!text || !selection) throw new Error('missing text or selection')
+      range.setStart(text, 3)
+      range.setEnd(text, 13)
+      selection.removeAllRanges()
+      selection.addRange(range)
+      return selection.toString()
+    })
   await button.evaluate((element) => {
     ;(element as HTMLButtonElement).click()
   })
   await expect(button).toBeFocused()
   expect(await page.evaluate(() => window.getSelection()?.toString())).toBe(selectedText)
+  // The copy fallback is a bare off-screen textarea; no role tells it apart.
   await expect(page.locator('textarea')).toHaveCount(0)
 
   await page.evaluate(() => {
     const input = document.createElement('input')
-    input.id = 'clipboard-focus-fixture'
+    input.setAttribute('aria-label', '焦点保持夹具')
     input.value = '需要保持的输入选区'.repeat(50)
     input.style.cssText = 'position:fixed;top:0;left:0;width:100px'
     const space = document.createElement('div')
@@ -255,14 +264,14 @@ test('降级复制恢复焦点、输入选区、文本选区与滚动位置', as
     window.scrollTo(0, 100)
   })
   const before = await page
-    .locator('#clipboard-focus-fixture')
+    .getByLabel('焦点保持夹具', { exact: true })
     .evaluate((element) => ({ left: element.scrollLeft, scrollY: window.scrollY }))
   await button.evaluate((element) => {
     ;(element as HTMLButtonElement).click()
   })
-  await expect(page.locator('#clipboard-focus-fixture')).toBeFocused()
+  await expect(page.getByLabel('焦点保持夹具', { exact: true })).toBeFocused()
   expect(
-    await page.locator('#clipboard-focus-fixture').evaluate((element) => {
+    await page.getByLabel('焦点保持夹具', { exact: true }).evaluate((element) => {
       const input = element as HTMLInputElement
       return {
         start: input.selectionStart,
@@ -273,6 +282,7 @@ test('降级复制恢复焦点、输入选区、文本选区与滚动位置', as
       }
     })
   ).toEqual({ start: 2, end: 8, direction: 'backward', ...before })
+  // The copy fallback is a bare off-screen textarea; no role tells it apart.
   await expect(page.locator('textarea')).toHaveCount(0)
 })
 
@@ -281,7 +291,8 @@ test('等待现代复制时阻止重复，迟到拒绝后降级保留当前焦�
   await installClipboard(page, 'deferred')
   await login(page)
   const diagnostic = await openResponse(page)
-  const button = diagnostic.getByRole('button', { name: '复制', exact: true })
+  // The label switches to 已复制 after a copy; it stays the same button.
+  const button = diagnostic.getByRole('button', { name: /^(已)?复制$/ })
   await button.click()
   await expect(button).toBeDisabled()
   await page.getByLabel('搜索运行记录').focus()
@@ -296,6 +307,7 @@ test('等待现代复制时阻止重复，迟到拒绝后降级保留当前焦�
       fallback: window.clipboardTest.fallback.length
     }))
   ).toEqual({ modern: 1, fallback: 1 })
+  // The copy fallback is a bare off-screen textarea; no role tells it apart.
   await expect(page.locator('textarea')).toHaveCount(0)
 })
 
@@ -323,10 +335,11 @@ test('不同入口同时复制不会让迟到的降级覆盖新请求', async ({
   })
   await modal.getByRole('button', { name: '复制详情', exact: true }).click()
   await expect(modal.getByRole('alert')).toHaveCount(0)
-  await expect(page.locator('.toast-message')).toContainText(['已复制运行记录详情'])
+  await expect(toasts(page)).toContainText(['已复制运行记录详情'])
   expect(await page.evaluate(() => window.clipboardTest.modern)).toEqual([
     responseText,
     JSON.stringify(historyItem, null, 2)
   ])
+  // The copy fallback is a bare off-screen textarea; no role tells it apart.
   await expect(page.locator('textarea')).toHaveCount(0)
 })

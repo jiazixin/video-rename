@@ -1,5 +1,5 @@
-import { defined, libraryDirectory } from './support'
-import { recordPage } from './run-record-pages'
+import { bodyRows, defined, libraryDirectory, pageReadout, toasts } from './support'
+import { fileRecords, recordPage } from './run-record-pages'
 import { test, expect, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { mockRunPages } from './run-pages'
@@ -65,25 +65,24 @@ test('登录、目录、手动改名、冲突保护和还原', async ({ page }) 
   const editor = page.getByRole('textbox', { name: '编辑 VID_20260920_001.mp4' })
   await editor.fill('已占用名称')
   await editor.press('Enter')
-  await expect(page.locator('.inline-rename small[role="alert"]')).toContainText('目标已存在')
+  await expect(bodyRows(page).getByRole('alert')).toContainText('目标已存在')
   await editor.fill('海边散步')
   await editor.press('Enter')
   await expect(page.getByText('海边散步.mp4', { exact: true })).toBeVisible({ timeout: 10000 })
   await page.getByRole('button', { name: '还原 海边散步.mp4', exact: true }).click()
   await expect(page.getByRole('dialog')).toContainText('VID_20260920_001.mp4')
   await page.getByRole('button', { name: '确认还原' }).click()
-  await expect(
-    page.locator('tbody').getByText('VID_20260920_001.mp4', { exact: true })
-  ).toBeVisible({ timeout: 10000 })
+  await expect(bodyRows(page).getByText('VID_20260920_001.mp4', { exact: true })).toBeVisible({
+    timeout: 10000
+  })
   await expect(
     page.getByRole('button', { name: '自动命名 VID_20260920_001.mp4', exact: true })
   ).toBeEnabled()
   await page.getByRole('button', { name: '运行记录', exact: true }).click()
-  await expect(page.locator('tbody').getByText('手动命名', { exact: true }).first()).toBeVisible()
+  await expect(bodyRows(page).getByText('手动命名', { exact: true }).first()).toBeVisible()
   await page.getByRole('button', { name: '失败记录', exact: true }).click()
   await expect(
-    page
-      .locator('tbody')
+    bodyRows(page)
       .getByText(/目标已存在/)
       .first()
   ).toBeVisible()
@@ -100,7 +99,7 @@ test('惰性子目录、分页、筛选与窄屏', async ({ page }) => {
   await expect(page.getByText('VID_20260920_001.mp4', { exact: true })).toBeVisible()
   await page.goForward()
   await expect(page.getByText('片段_0000.mp4', { exact: true })).toBeVisible()
-  await expect(page.locator('tbody tr')).toHaveCount(100)
+  await expect(bodyRows(page)).toHaveCount(100)
   await expect(page.getByText('共 230 项 · 100 项 / 当前页', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '下一页', exact: true }).click()
   await expect(page.getByText('片段_0100.mp4', { exact: true })).toBeVisible()
@@ -109,7 +108,7 @@ test('惰性子目录、分页、筛选与窄屏', async ({ page }) => {
   await page.getByRole('button', { name: '切换名称排序' }).click()
   await expect(page.getByText('片段_0229.mp4', { exact: true })).toBeVisible()
   await page.getByLabel('搜索当前目录').fill('0229')
-  await expect(page.locator('tbody tr')).toHaveCount(1)
+  await expect(bodyRows(page)).toHaveCount(1)
   await expect(page.getByText('共 1 项 · 1 项 / 当前页', { exact: true })).toBeVisible()
   await page.setViewportSize({ width: 390, height: 844 })
   await page.screenshot({ path: 'test-results/library-mobile.png', fullPage: true })
@@ -121,7 +120,7 @@ test('计划创建、Cron 预览、暂停、编辑和删除', async ({ page }) =
   await page.getByRole('button', { name: '新建自动计划', exact: true }).click()
   await page.getByLabel('计划名称', { exact: true }).fill('每日旅行整理')
   await page.getByRole('button', { name: '预览执行时间' }).click()
-  await expect(page.locator('.schedule-preview li')).toHaveCount(5)
+  await expect(page.getByRole('dialog').getByRole('list').getByRole('listitem')).toHaveCount(5)
   await page.getByLabel('选择 2026 · 旅行记录', { exact: true }).check()
   await page.getByRole('button', { name: '保存计划', exact: true }).click()
   await expect(page.getByRole('heading', { name: '每日旅行整理', exact: true })).toBeVisible()
@@ -159,9 +158,7 @@ test('提示词新增、持久化、编辑和计划选择', async ({ page }) => 
     .getByLabel('提示词内容', { exact: true })
     .fill('用于测试的独立提示词：准确描述旅行风景，不编造内容，只输出中文标题。')
   await page.getByRole('button', { name: '保存提示词', exact: true }).click()
-  await expect(page.locator('.prompt-card').filter({ hasText: '旅行专用提示词' })).toContainText(
-    '不编造内容'
-  )
+  await expect(page.getByRole('article', { name: '旅行专用提示词' })).toContainText('不编造内容')
   await page.screenshot({ path: 'test-results/prompts-desktop.png', fullPage: true })
   await page.getByRole('button', { name: '模型配置', exact: true }).click()
   await page.getByRole('button', { name: '新增配置', exact: true }).click()
@@ -179,7 +176,7 @@ test('提示词新增、持久化、编辑和计划选择', async ({ page }) => 
     page.getByRole('heading', { name: '旅行专用提示词', exact: true }).first()
   ).toBeVisible()
   await page
-    .locator('.model-card')
+    .getByRole('article')
     .filter({ hasText: '旅行专用提示词' })
     .getByText('命名提示词 · 旅行专用提示词', { exact: true })
     .click()
@@ -218,20 +215,20 @@ test('真实 FFmpeg 抽帧、测试模型、自动命名与再次跳过', async 
   await expect(page.getByRole('combobox', { name: '模型配置' })).toHaveText('默认视频命名')
   await page.getByRole('button', { name: '重命名', exact: true }).click()
   await page.getByRole('button', { name: '批次记录', exact: true }).click()
-  await expect(page.locator('.run-entry').first().getByText('已完成', { exact: true })).toBeVisible(
-    { timeout: 65000 }
-  )
-  const successfulRun = page.locator('.run-entry').first()
+  await expect(page.getByRole('article').first().getByText('已完成', { exact: true })).toBeVisible({
+    timeout: 65000
+  })
+  const successfulRun = page.getByRole('article').first()
   await successfulRun.getByRole('button', { name: '详情', exact: true }).click()
   const detail = page.getByRole('dialog')
-  await expect(detail.locator('.detail-record-file')).toHaveCount(1)
-  await expect(detail.locator('.detail-record-file')).toContainText('clip.mp4')
-  await expect(detail.locator('.detail-record-file')).toContainText('山间晨雾与日出.mp4')
-  await expect(detail.locator('.detail-record-file')).not.toContainText('未记录改名结果')
+  await expect(fileRecords(detail)).toHaveCount(1)
+  await expect(fileRecords(detail)).toContainText('clip.mp4')
+  await expect(fileRecords(detail)).toContainText('山间晨雾与日出.mp4')
+  await expect(fileRecords(detail)).not.toContainText('未记录改名结果')
   await page.screenshot({ path: 'test-results/real-rename-record-desktop.png' })
   await page.setViewportSize({ width: 390, height: 844 })
   expect(await detail.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy()
-  await detail.locator('.detail-record-file').scrollIntoViewIfNeeded()
+  await fileRecords(detail).scrollIntoViewIfNeeded()
   await expect(detail.getByText('山间晨雾与日出.mp4', { exact: true })).toBeVisible()
   await page.screenshot({ path: 'test-results/real-rename-record-mobile.png' })
   await page.keyboard.press('Escape')
@@ -254,11 +251,14 @@ test('真实 FFmpeg 抽帧、测试模型、自动命名与再次跳过', async 
   await page.getByRole('button', { name: '重命名当前目录', exact: true }).click()
   await page.getByRole('button', { name: '重命名', exact: true }).click()
   await page.getByRole('button', { name: '批次记录', exact: true }).click()
-  await expect(page.locator('.run-entry').first()).toContainText('已完成', { timeout: 10000 })
+  await expect(page.getByRole('article').first()).toContainText('已完成', { timeout: 10000 })
   await expect(
-    page.locator('.run-entry').first().locator('.run-stat[data-stat="skipped"]')
+    page
+      .getByRole('article')
+      .first()
+      .getByText(/^跳过 \d+$/)
   ).toHaveText('跳过 1')
-  await expect(page.locator('.run-entry').first().locator('.run-tokens')).toHaveText('—')
+  await expect(page.getByRole('article').first().getByTitle('暂无模型请求记录')).toHaveText('—')
   await page.getByRole('button', { name: '文件目录', exact: true }).click()
   await page.getByRole('button', { name: '还原 山间晨雾与日出.mp4', exact: true }).click()
   await page.getByRole('button', { name: '确认还原', exact: true }).click()
@@ -267,14 +267,20 @@ test('真实 FFmpeg 抽帧、测试模型、自动命名与再次跳过', async 
   await expect(page.getByRole('combobox', { name: '模型配置' })).toHaveText('默认视频命名')
   await page.getByRole('button', { name: '重命名', exact: true }).click()
   await page.getByRole('button', { name: '批次记录', exact: true }).click()
-  await expect(page.locator('.run-entry').first().getByText('已完成', { exact: true })).toBeVisible(
-    { timeout: 65000 }
-  )
+  await expect(page.getByRole('article').first().getByText('已完成', { exact: true })).toBeVisible({
+    timeout: 65000
+  })
   await expect(
-    page.locator('.run-entry').first().locator('.run-stat[data-stat="done"]')
+    page
+      .getByRole('article')
+      .first()
+      .getByText(/^成功 \d+$/)
   ).toHaveText('成功 1')
   await expect(
-    page.locator('.run-entry').first().locator('.run-stat[data-stat="skipped"]')
+    page
+      .getByRole('article')
+      .first()
+      .getByText(/^跳过 \d+$/)
   ).toHaveText('跳过 0')
 })
 
@@ -288,7 +294,7 @@ test('目录日志分列与统一下拉框键盘操作', async ({ page }) => {
   await type.press('End')
   await type.press('Enter')
   await expect(type).toHaveText('其他文件')
-  await expect(page.locator('tbody tr')).toHaveCount(0)
+  await expect(bodyRows(page)).toHaveCount(0)
   await type.click()
   await type.press('Home')
   await type.press('Enter')
@@ -296,16 +302,16 @@ test('目录日志分列与统一下拉框键盘操作', async ({ page }) => {
   const imgEditor = page.getByRole('textbox', { name: '编辑 IMG_20260901.mp4' })
   await imgEditor.fill('已占用名称')
   await imgEditor.press('Enter')
-  await expect(page.locator('.inline-rename small[role="alert"]')).toContainText('目标已存在')
+  await expect(bodyRows(page).getByRole('alert')).toContainText('目标已存在')
   await imgEditor.fill('旅行回忆')
   await imgEditor.press('Enter')
   await expect(page.getByText('旅行回忆.mp4', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '运行记录', exact: true }).click()
-  const row = page.locator('tbody tr').filter({ hasText: '旅行回忆.mp4' }).first()
-  await expect(row.locator('.log-directory')).toHaveText('目录日志测试')
-  await expect(row.locator('.history-filename').nth(0)).toHaveText('IMG_20260901.mp4')
-  await expect(row.locator('.history-filename').nth(1)).toHaveText('旅行回忆.mp4')
-  await expect(row.locator('.history-filename').nth(0)).not.toContainText('目录日志测试')
+  const row = bodyRows(page).filter({ hasText: '旅行回忆.mp4' }).first()
+  // Directory, old name and new name are separate cells; each holds only its own value.
+  await expect(row.getByRole('cell', { name: '目录日志测试', exact: true })).toBeVisible()
+  await expect(row.getByRole('cell', { name: 'IMG_20260901.mp4', exact: true })).toBeVisible()
+  await expect(row.getByRole('cell', { name: '旅行回忆.mp4', exact: true })).toBeVisible()
   await page.getByRole('combobox', { name: '操作类型' }).click()
   await page.screenshot({ path: 'test-results/logs-dropdown.png', fullPage: true })
   await page.getByRole('heading', { name: '运行记录.' }).click()
@@ -313,12 +319,11 @@ test('目录日志分列与统一下拉框键盘操作', async ({ page }) => {
   await page.getByRole('button', { name: '失败记录', exact: true }).click()
   await expect(page.getByRole('columnheader', { name: '目录', exact: true })).toBeVisible()
   await expect(
-    page
-      .locator('tbody tr')
+    bodyRows(page)
       .filter({ hasText: 'IMG_20260901.mp4' })
       .first()
-      .locator('.log-directory')
-  ).toHaveText('目录日志测试')
+      .getByRole('cell', { name: '目录日志测试', exact: true })
+  ).toBeVisible()
   await page.getByRole('button', { name: '计划管理', exact: true }).click()
   await page.getByRole('button', { name: '新建自动计划', exact: true }).click()
   const frequency = page.getByRole('combobox', { name: '执行频率' })
@@ -343,7 +348,7 @@ test('取消运行必须确认，继续运行和关闭均不提交取消', async
   page.on('request', (request) => {
     if (request.method() === 'POST' && /\/runs\/\d+\/cancel$/.test(request.url())) cancellations++
   })
-  const row = page.locator('.run-entry').first()
+  const row = page.getByRole('article').first()
   await row.getByRole('button', { name: '取消', exact: true }).click()
   await expect(page.getByRole('dialog', { name: '取消运行' })).toBeVisible()
   expect(cancellations).toBe(0)
@@ -365,7 +370,7 @@ test('取消运行必须确认，继续运行和关闭均不提交取消', async
 test('状态颜色、每页居中和日志日历', async ({ page }) => {
   await login(page)
   await page.getByRole('button', { name: '分页测试', exact: true }).click()
-  await expect(page.locator('tbody tr')).toHaveCount(100)
+  await expect(bodyRows(page)).toHaveCount(100)
   const perPage = page.getByRole('combobox', { name: '每页条目数' })
   const alignment = await perPage.evaluate((el) => {
     const a = el.getBoundingClientRect(),
@@ -375,7 +380,7 @@ test('状态颜色、每页居中和日志日历', async ({ page }) => {
   expect(alignment).toBeLessThan(1)
   await perPage.click()
   await page.getByRole('option', { name: '50 项 / 页', exact: true }).click()
-  await expect(page.locator('tbody tr')).toHaveCount(50)
+  await expect(bodyRows(page)).toHaveCount(50)
   await page.getByRole('button', { name: '运行记录', exact: true }).click()
   const today = await page.evaluate(() => {
     const d = new Date()
@@ -444,6 +449,7 @@ test('状态颜色、每页居中和日志日历', async ({ page }) => {
     }))
   )
   await page.getByRole('button', { name: '批次记录', exact: true }).click()
+  // Badge colours are a visual style check; the badge has no role of its own.
   await expect(page.locator('.status-badge')).toHaveCount(8)
   const colors = await page
     .locator('.status-badge')
@@ -470,7 +476,7 @@ test('状态颜色、每页居中和日志日历', async ({ page }) => {
 test('多选命名入队后不等待慢速状态查询', async ({ page }) => {
   await login(page)
   await page.getByRole('button', { name: '分页测试', exact: true }).click()
-  await expect(page.locator('tbody tr')).toHaveCount(100)
+  await expect(bodyRows(page)).toHaveCount(100)
   await page.getByRole('button', { name: '多选', exact: true }).click()
   await page.getByLabel('选择 片段_0000.mp4', { exact: true }).check()
   await page.getByLabel('选择 片段_0001.mp4', { exact: true }).check()
@@ -507,14 +513,15 @@ test('多选命名入队后不等待慢速状态查询', async ({ page }) => {
     ).toBeVisible()
     // A delayed status refresh must not keep the shared saving flag locked.
     await page
-      .locator('.directory-mark-actions')
+      .getByRole('group', { name: '当前目录操作' })
       .getByRole('button', { name: '标记', exact: true })
       .click()
     await expect(page.getByRole('button', { name: '确认标记', exact: true })).toBeEnabled()
     await page
       .getByRole('dialog')
-      .locator('.modal-actions')
+      // The footer button follows the header's icon button of the same name.
       .getByRole('button', { name: '关闭', exact: true })
+      .last()
       .click()
   } finally {
     release()
@@ -525,7 +532,7 @@ for (const count of [1, 2])
   test(`多选 ${count} 项后迟到的目录刷新不移动勾选行`, async ({ page }) => {
     await login(page)
     await page.getByRole('button', { name: '分页测试', exact: true }).click()
-    await expect(page.locator('tbody tr')).toHaveCount(100)
+    await expect(bodyRows(page)).toHaveCount(100)
     const directory = libraryDirectory(page.url())
     const snapshot = await (
       await page.request.get(`/api/directories/${directory}/entries?limit=100`)
@@ -552,7 +559,7 @@ for (const count of [1, 2])
       await route.fulfill({ json: { ...snapshot, refreshing: false } })
     })
     await page.reload()
-    await expect(page.locator('tbody tr')).toHaveCount(99)
+    await expect(bodyRows(page)).toHaveCount(99)
     await page.getByRole('button', { name: '多选', exact: true }).click()
     await page.route('**/api/runs/999', (route) =>
       route.fulfill({ json: { id: 999, status: 'completed' } })
@@ -578,17 +585,19 @@ for (const count of [1, 2])
       releaseRefresh()
       await refreshed
       await expect(page.getByRole('dialog')).toContainText(`处理选中的 ${count} 个条目`)
-      await expect(page.locator('tbody tr').first().getByRole('checkbox')).toBeChecked()
-      await expect(page.locator('tbody tr').first()).toContainText('片段_0001.mp4')
-      await expect(page.locator('tbody input:checked')).toHaveCount(count)
+      await expect(bodyRows(page).first().getByRole('checkbox')).toBeChecked()
+      await expect(bodyRows(page).first()).toContainText('片段_0001.mp4')
+      await expect(bodyRows(page).getByRole('checkbox', { checked: true })).toHaveCount(count)
       const updated = page.waitForResponse((r) => r.url().includes('/api/entries/status?'))
       await page.getByRole('button', { name: '重命名', exact: true }).click()
       await updated
-      await expect(page.locator('.batch-toolbar strong')).toHaveText(`已选 ${count} 项`)
-      await expect(page.locator('tbody input:checked')).toHaveCount(count)
+      await expect(page.getByRole('group', { name: '批量操作' }).getByText(/^已选 /)).toHaveText(
+        `已选 ${count} 项`
+      )
+      await expect(bodyRows(page).getByRole('checkbox', { checked: true })).toHaveCount(count)
       await page.getByRole('button', { name: '刷新', exact: true }).click()
-      await expect(page.locator('tbody tr').first()).toContainText('片段_0000.mp4')
-      await expect(page.locator('tbody input:checked')).toHaveCount(count)
+      await expect(bodyRows(page).first()).toContainText('片段_0000.mp4')
+      await expect(bodyRows(page).getByRole('checkbox', { checked: true })).toHaveCount(count)
     } finally {
       releaseRefresh()
     }
@@ -597,13 +606,13 @@ for (const count of [1, 2])
 test('弹窗锁滚动、多选反选、批量还原和视频播放', async ({ page }) => {
   await login(page)
   await page.getByRole('button', { name: '分页测试', exact: true }).click()
-  await expect(page.locator('tbody tr')).toHaveCount(100)
+  await expect(bodyRows(page)).toHaveCount(100)
   await page.getByRole('button', { name: '多选', exact: true }).click()
   await page.getByLabel('选择 片段_0000.mp4', { exact: true }).check()
   await page.getByRole('button', { name: '反选', exact: true }).click()
-  await expect(page.locator('tbody input:checked')).toHaveCount(99)
+  await expect(bodyRows(page).getByRole('checkbox', { checked: true })).toHaveCount(99)
   await page.getByRole('button', { name: '反选', exact: true }).click()
-  await expect(page.locator('tbody input:checked')).toHaveCount(1)
+  await expect(bodyRows(page).getByRole('checkbox', { checked: true })).toHaveCount(1)
   await page.getByRole('button', { name: '下一页', exact: true }).click()
   await expect(page.getByText('已选 1 项', { exact: true })).toBeVisible()
   await page.getByLabel('选择 片段_0100.mp4', { exact: true }).check()
@@ -653,34 +662,43 @@ test('弹窗锁滚动、多选反选、批量还原和视频播放', async ({ pa
   await page.getByRole('button', { name: '文件目录', exact: true }).click()
   await page.getByRole('button', { name: '媒体库', exact: true }).click()
   await page.getByRole('button', { name: '播放视频 preview.webm', exact: true }).click()
-  await expect(page.locator('video')).toBeVisible()
+  await expect(page.getByLabel('视频画面', { exact: true })).toBeVisible()
   await expect
-    .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.readyState))
+    .poll(() =>
+      page.getByLabel('视频画面', { exact: true }).evaluate((v: HTMLVideoElement) => v.readyState)
+    )
     .toBeGreaterThanOrEqual(2)
-  await expect(page.locator('video')).not.toHaveAttribute('controls')
+  await expect(page.getByLabel('视频画面', { exact: true })).not.toHaveAttribute('controls')
   const seek = page.getByRole('slider', { name: '播放进度' })
   await expect(seek).toBeEnabled()
-  await page.locator('video').evaluate((v: HTMLVideoElement) => {
+  await page.getByLabel('视频画面', { exact: true }).evaluate((v: HTMLVideoElement) => {
     v.pause()
   })
   await seek.fill('0.5')
   await expect
-    .poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.currentTime))
+    .poll(() =>
+      page.getByLabel('视频画面', { exact: true }).evaluate((v: HTMLVideoElement) => v.currentTime)
+    )
     .toBeCloseTo(0.5, 1)
   await page.getByRole('button', { name: '静音', exact: true }).click()
-  expect(await page.locator('video').evaluate((v: HTMLVideoElement) => v.muted)).toBe(true)
+  expect(
+    await page.getByLabel('视频画面', { exact: true }).evaluate((v: HTMLVideoElement) => v.muted)
+  ).toBe(true)
   await page.getByRole('slider', { name: '音量', exact: true }).fill('0.5')
-  expect(await page.locator('video').evaluate((v: HTMLVideoElement) => v.volume)).toBe(0.5)
+  expect(
+    await page.getByLabel('视频画面', { exact: true }).evaluate((v: HTMLVideoElement) => v.volume)
+  ).toBe(0.5)
   await page.mouse.move(0, 0)
   // Measures that the controls stay visible past the 3 s idle hide delay while paused.
   await page.waitForTimeout(3200)
   await expect(seek).toBeVisible()
   await page.screenshot({ path: 'test-results/video-modal.png', animations: 'disabled' })
   await page.getByRole('dialog').getByRole('button', { name: '关闭', exact: true }).click()
-  await expect(page.locator('video')).toHaveCount(0)
+  await expect(page.getByLabel('视频画面', { exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: '播放视频 preview.webm', exact: true }).click()
-  await page.locator('.modal-backdrop').click({ position: { x: 5, y: 5 } })
-  await expect(page.locator('video')).toHaveCount(0)
+  // The point lies on the backdrop, outside the dialog.
+  await page.mouse.click(5, 5)
+  await expect(page.getByLabel('视频画面', { exact: true })).toHaveCount(0)
 })
 
 test('模型 URL 预设、检测模型、密钥保留与编辑参数', async ({ page }) => {
@@ -751,7 +769,7 @@ test('模型 URL 预设、检测模型、密钥保留与编辑参数', async ({ 
   expect(saved.api_key).toBeUndefined()
   expect(JSON.stringify(saved)).not.toContain('ui-secret-not-in-response')
   await page.reload()
-  const card = page.locator('.model-card').filter({ hasText: '检测与密钥测试' })
+  const card = page.getByRole('article', { name: '检测与密钥测试' })
   await expect(card).toContainText('second-model')
   await expect(card).toContainText('2048')
   await page.screenshot({ path: 'test-results/model-configs-desktop.png', animations: 'disabled' })
@@ -802,18 +820,22 @@ test('运行记录文件名分列、省略与操作颜色', async ({ page }) => 
   await expect(page.getByRole('columnheader', { name: '旧文件名', exact: true })).toBeVisible()
   await expect(page.getByRole('columnheader', { name: '新文件名', exact: true })).toBeVisible()
   await expect(page.getByRole('columnheader', { name: '模型配置', exact: true })).toBeVisible()
+  const records = bodyRows(page.getByRole('table')).filter({
+    has: page.getByRole('button', { name: '详情', exact: true })
+  })
+  // The date and time stack on two lines inside the first cell.
   await expect(
-    page.locator('.history-table tbody tr').first().locator('.stacked-date-time span')
+    records.first().getByRole('cell').first().locator('.stacked-date-time span')
   ).toHaveCount(2)
-  await expect(page.locator('.history-table .table-model').nth(1)).toHaveText('fixture profile')
-  const cell = page.locator('.history-filename').first()
-  await expect(cell).toHaveAttribute('title', old)
+  await expect(records.nth(1).getByText('fixture profile', { exact: true })).toBeVisible()
+  const cell = page.getByTitle(old, { exact: true }).first()
   expect(
     await cell.evaluate(
       (e) => e.scrollWidth > e.clientWidth && getComputedStyle(e).textOverflow === 'ellipsis'
     )
   ).toBeTruthy()
   await cell.hover()
+  // Action badge colours are a visual style check.
   const colors = await page
     .locator('.action-badge')
     .evaluateAll((elements) => elements.map((e) => getComputedStyle(e).color))
@@ -893,7 +915,7 @@ test('表格内容与下拉面板中轴对齐', async ({ page }) => {
     })
   )
   await page.getByRole('button', { name: '抽帧记录', exact: true }).click()
-  await expect(page.locator('.extraction-table tbody tr')).toHaveCount(1)
+  await expect(bodyRows(page.getByRole('region', { name: '抽帧成功', exact: true }))).toHaveCount(1)
   expect(
     await page
       .locator('.extraction-table th,.extraction-table td')
@@ -908,15 +930,9 @@ test('表格内容与下拉面板中轴对齐', async ({ page }) => {
     })
     expect(deviation).toBeLessThan(1)
   }
-  await expect(page.locator('.extraction-table .history-filename')).toHaveAttribute(
-    'title',
-    longName
-  )
-  expect(
-    await page
-      .locator('.extraction-table .history-filename')
-      .evaluate((el) => el.scrollWidth > el.clientWidth)
-  ).toBe(true)
+  const filename = page.getByTitle(longName, { exact: true })
+  await expect(filename).toBeVisible()
+  expect(await filename.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true)
   expect(
     await page
       .locator('.extraction-table .stacked-date-time')
@@ -969,7 +985,8 @@ test('默认全部类型、视频和图片筛选与弹窗预览', async ({ page 
   await page.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(img).toHaveCount(0)
   await page.getByRole('button', { name: '预览图片 photo.png', exact: true }).click()
-  await page.locator('.modal-backdrop').click({ position: { x: 5, y: 5 } })
+  // The point lies on the backdrop, outside the dialog.
+  await page.mouse.click(5, 5)
   await expect(page.getByRole('dialog')).toHaveCount(0)
 })
 
@@ -1005,14 +1022,14 @@ test('失败记录诊断展开、收起与复制', async ({ page }) => {
   await page.getByRole('button', { name: '运行记录', exact: true }).click()
   await page.getByRole('button', { name: '失败记录', exact: true }).click()
   await page.getByRole('button', { name: '原始请求', exact: true }).click()
-  await expect(page.locator('.diagnostic-content pre')).toContainText('max_tokens')
+  await expect(page.getByRole('region', { name: '诊断内容' })).toContainText('max_tokens')
   await page.getByRole('button', { name: '原始响应', exact: true }).click()
-  await expect(page.locator('.diagnostic-content pre')).toContainText('finish_reason')
+  await expect(page.getByRole('region', { name: '诊断内容' })).toContainText('finish_reason')
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
   await page.getByRole('button', { name: '复制', exact: true }).click()
   await expect(page.getByRole('button', { name: '已复制', exact: true })).toBeVisible()
   await page.getByRole('button', { name: '原始响应', exact: true }).click()
-  await expect(page.locator('.diagnostic-content')).toHaveCount(0)
+  await expect(page.getByRole('region', { name: '诊断内容' })).toHaveCount(0)
 })
 
 test('思考模式参数选择、保存与预算校验', async ({ page }) => {
@@ -1211,7 +1228,7 @@ test('图片识别测试与智谱 Coding Plan 预设', async ({ page }) => {
   await expect(page.getByRole('status').filter({ hasText: '测试图片识别正确' })).toBeVisible()
   expect(calls).toBe(1)
   await page.getByLabel('模型名称', { exact: true }).fill('other')
-  await expect(page.locator('.probe-result')).toHaveCount(0)
+  await expect(page.getByRole('status').filter({ hasText: '测试图片识别正确' })).toHaveCount(0)
 })
 
 test('清除已选和全部历史不影响还原', async ({ page }) => {
@@ -1225,11 +1242,11 @@ test('清除已选和全部历史不影响还原', async ({ page }) => {
   const conflictEditor = page.getByRole('textbox', { name: '编辑 清除保留测试.mp4' })
   await conflictEditor.fill('已占用名称')
   await conflictEditor.press('Enter')
-  await expect(page.locator('.inline-rename small[role="alert"]')).toBeVisible()
+  await expect(bodyRows(page).getByRole('alert')).toBeVisible()
   await conflictEditor.press('Escape')
   await page.getByRole('button', { name: '运行记录', exact: true }).click()
   await page.getByRole('button', { name: '多选', exact: true }).click()
-  const row = page.locator('tbody tr').filter({ hasText: '清除保留测试.mp4' }).first()
+  const row = bodyRows(page).filter({ hasText: '清除保留测试.mp4' }).first()
   await row.getByRole('checkbox').check()
   await page.getByRole('button', { name: '清除记录', exact: true }).click()
   await page.getByRole('button', { name: '取消', exact: true }).click()
@@ -1238,16 +1255,14 @@ test('清除已选和全部历史不影响还原', async ({ page }) => {
   await page.getByRole('button', { name: '确认清除', exact: true }).click()
   await expect(row).toHaveCount(0)
   await page.getByRole('button', { name: '失败记录', exact: true }).click()
-  await expect(page.locator('.failure-diagnostics').first()).toBeVisible()
+  await expect(page.getByRole('group', { name: '失败诊断' }).first()).toBeVisible()
   await page.getByRole('button', { name: '清除记录', exact: true }).click()
   await page.getByRole('button', { name: '确认清除', exact: true }).click()
   await expect(page.getByRole('heading', { name: '没有失败记录', exact: true })).toBeVisible()
   await page.getByRole('button', { name: '文件目录', exact: true }).click()
   await page.getByRole('button', { name: '还原 清除保留测试.mp4', exact: true }).click()
   await page.getByRole('button', { name: '确认还原', exact: true }).click()
-  await expect(
-    page.locator('tbody').getByText('VID_20260920_001.mp4', { exact: true })
-  ).toBeVisible()
+  await expect(bodyRows(page).getByText('VID_20260920_001.mp4', { exact: true })).toBeVisible()
 })
 
 test('后台标记查询断连后使用同一请求重试', async ({ page }) => {
@@ -1306,7 +1321,7 @@ test('手动处理标记、目录递归与跨页批量取消', async ({ page }) 
   await login(page)
   await page.getByRole('button', { name: '标记已处理 VID_20260920_001.mp4', exact: true }).click()
   await page.getByRole('button', { name: '确认标记', exact: true }).click()
-  const row = page.locator('tbody tr').filter({ hasText: 'VID_20260920_001.mp4' })
+  const row = bodyRows(page).filter({ hasText: 'VID_20260920_001.mp4' })
   await expect(row).toContainText('手动标记已处理')
   await expect(
     row.getByRole('button', { name: '自动命名 VID_20260920_001.mp4', exact: true })
@@ -1327,43 +1342,39 @@ test('手动处理标记、目录递归与跨页批量取消', async ({ page }) 
     page.getByRole('status').filter({ hasText: '已标记 230 个文件，未变更 0 个，失败 0 项' })
   ).toBeVisible()
   await expect(
-    page
-      .locator('tbody tr')
-      .filter({ has: page.getByRole('button', { name: '分页测试', exact: true }) })
+    bodyRows(page).filter({ has: page.getByRole('button', { name: '分页测试', exact: true }) })
   ).toContainText('全部已处理')
   await page.getByRole('button', { name: '分页测试', exact: true }).click()
-  await expect(page.locator('tbody tr')).toHaveCount(100)
+  await expect(bodyRows(page)).toHaveCount(100)
   await page.getByRole('button', { name: '多选', exact: true }).click()
   await page.getByLabel('选择 片段_0000.mp4', { exact: true }).check()
   await page.getByRole('button', { name: '下一页', exact: true }).click()
   await page.getByLabel('选择 片段_0100.mp4', { exact: true }).check()
   await page
-    .locator('.batch-toolbar')
+    .getByRole('group', { name: '批量操作' })
     .getByRole('button', { name: '取消标记', exact: true })
     .click()
   await page.getByRole('button', { name: '确认取消标记', exact: true }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect(page.getByRole('status').filter({ hasText: '已取消标记 2 个文件' })).toBeVisible()
-  await expect(page.locator('.panel-toolbar')).toContainText('部分已处理')
+  await expect(page.getByRole('group', { name: '当前目录概况' })).toContainText('部分已处理')
   await expect(page.getByText('已选 2 项', { exact: true })).toBeVisible()
-  await expect(page.locator('tbody tr').filter({ hasText: '片段_0100.mp4' })).toContainText(
-    '未处理'
-  )
+  await expect(bodyRows(page).filter({ hasText: '片段_0100.mp4' })).toContainText('未处理')
   await page
-    .locator('.directory-mark-actions')
+    .getByRole('group', { name: '当前目录操作' })
     .getByRole('button', { name: '取消标记', exact: true })
     .click()
   await page.getByRole('button', { name: '确认取消标记', exact: true }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await page.getByRole('button', { name: '下一页', exact: true }).click()
-  await expect(page.locator('tbody tr')).toHaveCount(30)
+  await expect(bodyRows(page)).toHaveCount(30)
   await expect(page.getByRole('alert')).toHaveCount(0)
 })
 
 test('自动命名原位更新且不重载目录列表', async ({ page }) => {
   await login(page)
   await page.getByRole('button', { name: '分页测试', exact: true }).click()
-  await expect(page.locator('tbody tr')).toHaveCount(100)
+  await expect(bodyRows(page)).toHaveCount(100)
   await page.getByRole('button', { name: '多选', exact: true }).click()
   await page.getByLabel('选择 片段_0000.mp4', { exact: true }).check()
   let entries: Record<string, unknown>[] = []
@@ -1402,13 +1413,14 @@ test('自动命名原位更新且不重载目录列表', async ({ page }) => {
   })
   await page.getByRole('button', { name: '自动命名 片段_0000.mp4', exact: true }).click()
   await page.getByRole('button', { name: '重命名', exact: true }).click()
-  await expect(page.locator('tbody tr').first()).toContainText('最后排序的新名称.mp4', {
+  await expect(bodyRows(page).first()).toContainText('最后排序的新名称.mp4', {
     timeout: 10000
   })
-  await expect(page.locator('tbody tr')).toHaveCount(100)
-  await expect(page.locator('tbody input:checked')).toHaveCount(1)
+  await expect(bodyRows(page)).toHaveCount(100)
+  await expect(bodyRows(page).getByRole('checkbox', { checked: true })).toHaveCount(1)
   await expect(page.getByRole('button', { name: '下一页', exact: true })).toBeEnabled()
-  await expect(page.locator('.heading-actions .spin')).toHaveCount(0)
+  // The refresh button is disabled while the directory reloads.
+  await expect(page.getByRole('button', { name: '刷新', exact: true })).toBeEnabled()
   expect(lists).toBe(0)
   await page.screenshot({ path: 'test-results/library-local-update.png', fullPage: true })
 })
@@ -1453,17 +1465,17 @@ test('计划与批次独立、来源筛选及目录选择处理状态', async ({
   await page.getByRole('button', { name: '批次记录', exact: true }).click()
   const batches = page.getByRole('region', { name: '批次列表', exact: true })
   const source = page.getByRole('combobox', { name: '运行来源', exact: true })
-  await expect(batches.locator('.run-entry')).toHaveCount(3)
+  await expect(batches.getByRole('article')).toHaveCount(3)
   await expect(page.getByRole('button', { name: '新建自动计划', exact: true })).toHaveCount(0)
   await source.click()
   await page.getByRole('option', { name: '手动运行', exact: true }).click()
-  await expect(batches.locator('.run-entry')).toHaveCount(1)
+  await expect(batches.getByRole('article')).toHaveCount(1)
   await expect(batches).toContainText('#803')
   await expect(page.getByRole('button', { name: '新建手动计划', exact: true })).toHaveCount(0)
   await page.screenshot({ path: 'test-results/runs-manual-tab.png', fullPage: true })
   await source.click()
   await page.getByRole('option', { name: '计划触发', exact: true }).click()
-  await expect(batches.locator('.run-entry')).toHaveCount(2)
+  await expect(batches.getByRole('article')).toHaveCount(2)
   await expect(batches).toContainText('#801')
   await expect(batches).toContainText('#802')
   await page.setViewportSize({ width: 390, height: 844 })
@@ -1496,7 +1508,7 @@ test('计划与批次独立、来源筛选及目录选择处理状态', async ({
     await route.fulfill({ json: data })
   })
   await page.getByRole('button', { name: '新建自动计划', exact: true }).click()
-  const picker = page.locator('.directory-picker')
+  const picker = page.getByRole('dialog')
   await expect(picker.getByText('全部已处理', { exact: true })).toBeVisible()
   await expect(picker.getByText('部分已处理', { exact: true })).toBeVisible()
   await page.getByLabel('选择 2026 · 旅行记录', { exact: true }).check()
@@ -1520,10 +1532,10 @@ test('通知设置保存密钥、测试发送和批次结束通知', async ({ pa
     .getByLabel('自定义推送地址', { exact: true })
     .fill(modelURL().replace('/v1', '/notify'))
   await webhook.getByRole('button', { name: '保存设置', exact: true }).click()
-  await expect(page.locator('.toast-message').first()).toContainText('设置已保存')
+  await expect(toasts(page).first()).toContainText('设置已保存')
   await expect(webhook.getByLabel('自定义推送地址', { exact: true })).toHaveValue('')
   await webhook.getByRole('button', { name: '发送测试', exact: true }).click()
-  await expect(page.locator('.toast-message').first()).toContainText('测试通知已发送')
+  await expect(toasts(page).first()).toContainText('测试通知已发送')
   const entries = await (
     await page.request.get('/api/directories/1/entries?kind=video&limit=100')
   ).json()
@@ -1566,7 +1578,7 @@ test('通知设置保存密钥、测试发送和批次结束通知', async ({ pa
   await page.screenshot({ path: 'test-results/notifications-desktop.png', fullPage: true })
   await webhook.getByLabel('启用自定义', { exact: true }).uncheck()
   await webhook.getByRole('button', { name: '保存设置', exact: true }).click()
-  await expect(page.locator('.toast-message').first()).toContainText('设置已保存')
+  await expect(toasts(page).first()).toContainText('设置已保存')
   await page.request.post('/api/entries/processed', {
     data: { targets: [entry.id], marked: false }
   })
@@ -1618,12 +1630,12 @@ test('运行详情显示目录文件清单与翻页、成功历史诊断', async
   const dialog = page.getByRole('dialog')
   await expect(dialog).toContainText('旅行记录 / 九月')
   await expect(dialog).not.toContainText('模型请求参数')
-  await expect(dialog.locator('.detail-record-file')).toHaveCount(100)
+  await expect(fileRecords(dialog)).toHaveCount(100)
   await dialog.getByRole('button', { name: '下页文件', exact: true }).click()
   await expect(dialog).toContainText('原视频100.mp4')
-  await expect(dialog.locator('.detail-record-file')).toHaveCount(1)
+  await expect(fileRecords(dialog)).toHaveCount(1)
   await page.screenshot({ path: 'test-results/run-detail-files.png', fullPage: true })
-  await dialog.locator(':scope > header').getByRole('button', { name: '关闭', exact: true }).click()
+  await dialog.getByRole('button', { name: '关闭', exact: true }).first().click()
   await page.route('**/api/logs?*', (r) =>
     r.fulfill({
       json: {
@@ -1654,9 +1666,9 @@ test('运行详情显示目录文件清单与翻页、成功历史诊断', async
   )
   await page.getByRole('button', { name: '运行记录', exact: true }).click()
   await page.getByRole('button', { name: '原始请求', exact: true }).click()
-  await expect(page.locator('.diagnostic-content pre')).toContainText('脱敏请求')
+  await expect(page.getByRole('region', { name: '诊断内容' })).toContainText('脱敏请求')
   await page.getByRole('button', { name: '原始响应', exact: true }).click()
-  await expect(page.locator('.diagnostic-content pre')).toContainText('total_tokens')
+  await expect(page.getByRole('region', { name: '诊断内容' })).toContainText('total_tokens')
   await page.screenshot({ path: 'test-results/success-diagnostics.png', fullPage: true })
 })
 
@@ -1678,11 +1690,12 @@ test('目录大小和时间排序按钮、重命名时间展示', async ({ page 
     }
   }
   // Use a file no earlier test touched to check that a never-renamed file shows —; VID was renamed and restored.
-  const untouched = page
-    .locator('tbody tr')
-    .filter({ has: page.getByText('已占用名称.mp4', { exact: true }) })
-  await expect(untouched.locator('td').nth(5)).toHaveText('—')
-  const modified = untouched.locator('td').nth(4).locator('.stacked-date-time')
+  const untouched = bodyRows(page).filter({
+    has: page.getByText('已占用名称.mp4', { exact: true })
+  })
+  await expect(untouched.getByRole('cell').nth(4)).toHaveText('—')
+  // The date and time stack on two lines; their spacing is a layout check.
+  const modified = untouched.getByRole('cell').nth(3).locator('.stacked-date-time')
   await expect(modified.locator('span')).toHaveCount(2)
   await expect(modified).toHaveAttribute('datetime', /.+T.+Z/)
   const spacing = await modified.evaluate((el) => {
@@ -1696,17 +1709,15 @@ test('目录大小和时间排序按钮、重命名时间展示', async ({ page 
   const sortEditor = page.getByRole('textbox', { name: '编辑 VID_20260920_001.mp4' })
   await sortEditor.fill('排序时间验证')
   await sortEditor.press('Enter')
-  const renamed = page
-    .locator('tbody tr')
-    .filter({ has: page.getByText('排序时间验证.mp4', { exact: true }) })
-  await expect(renamed.locator('td').nth(5)).not.toHaveText('—')
-  await expect(renamed.locator('td').nth(5).locator('.stacked-date-time span')).toHaveCount(2)
+  const renamed = bodyRows(page).filter({
+    has: page.getByText('排序时间验证.mp4', { exact: true })
+  })
+  await expect(renamed.getByRole('cell').nth(4)).not.toHaveText('—')
+  await expect(renamed.getByRole('cell').nth(4).locator('.stacked-date-time span')).toHaveCount(2)
   await page.screenshot({ path: 'test-results/library-sorting.png', fullPage: true })
   await page.getByRole('button', { name: '还原 排序时间验证.mp4', exact: true }).click()
   await page.getByRole('button', { name: '确认还原' }).click()
-  await expect(
-    page.locator('tbody').getByText('VID_20260920_001.mp4', { exact: true })
-  ).toBeVisible()
+  await expect(bodyRows(page).getByText('VID_20260920_001.mp4', { exact: true })).toBeVisible()
 })
 
 test('通知配置问号支持悬停和手机点击', async ({ page }) => {
@@ -1754,14 +1765,12 @@ test('历史批次自绘筛选和失败批次列', async ({ page }) => {
   await batch.click()
   await expect(page.getByRole('listbox', { name: '批次' })).toBeVisible()
   await page.getByRole('option', { name: '批次 #7', exact: true }).click()
-  await expect(
-    page.locator('.history-filename').getByText('片段7.mp4', { exact: true })
-  ).toBeVisible()
+  await expect(bodyRows(page).getByRole('cell', { name: '片段7.mp4', exact: true })).toBeVisible()
   await expect(page.getByText('片段208.mp4', { exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: '失败记录', exact: true }).click()
   await expect(page.getByRole('columnheader', { name: '新文件名', exact: true })).toHaveCount(0)
   await expect(page.getByRole('columnheader', { name: '批次', exact: true })).toBeVisible()
-  await expect(page.locator('tbody tr').first().locator('td').nth(3)).toHaveText('#7')
+  await expect(bodyRows(page).first().getByRole('cell').nth(3)).toHaveText('#7')
   await batch.focus()
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press('Home')
@@ -1897,15 +1906,15 @@ test('通知同步浏览器时区和请求上下文统计', async ({ page }) => 
 test('返回目录恢复分页并居中定位，支持面包屑和浏览器后退', async ({ page }) => {
   await login(page)
   await page.getByRole('button', { name: '返回定位测试', exact: true }).click()
-  await expect(page.locator('tbody tr')).toHaveCount(100)
+  await expect(bodyRows(page)).toHaveCount(100)
   await page.getByRole('button', { name: '下一页', exact: true }).click()
   const target = page.getByRole('button', { name: '目录_135', exact: true })
   await target.click()
   await expect(page.getByText('这里还没有内容', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '返回定位测试', exact: true }).click()
-  const row = page.locator('tbody tr').filter({ has: target })
+  const row = bodyRows(page).filter({ has: target })
   await expect(row).toHaveClass(/return-anchor/)
-  await expect(page.locator('tbody tr')).toHaveCount(60)
+  await expect(bodyRows(page)).toHaveCount(60)
   await expect
     .poll(async () =>
       row.evaluate((el) =>
@@ -1935,33 +1944,35 @@ test('返回目录恢复分页并居中定位，支持面包屑和浏览器后�
       )
     )
     .toBeLessThan(3)
-  await page.locator('.page-heading').click({ position: { x: 350, y: 15 } })
+  await page.getByRole('heading', { level: 1 }).click()
   await expect(row).not.toHaveClass(/return-anchor/)
 })
 test('连续进入超过30个子目录后返回仍保留第二页和定位', async ({ page }) => {
   await login(page)
   await page.getByRole('button', { name: '返回定位测试', exact: true }).click()
-  await expect(page.locator('tbody tr')).toHaveCount(100)
+  await expect(bodyRows(page)).toHaveCount(100)
   await page.getByRole('button', { name: '下一页', exact: true }).click()
-  await expect(page.locator('tbody tr')).toHaveCount(60)
+  await expect(bodyRows(page)).toHaveCount(60)
   for (let i = 100; i < 132; i++) {
     const target = page.getByRole('button', { name: `目录_${i}`, exact: true })
     await target.click()
     await expect(page.getByText('这里还没有内容', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: '返回定位测试', exact: true }).click()
-    await expect(page.locator('.pagination .page-current').last()).toHaveText('2')
-    await expect(page.locator('tbody tr').filter({ has: target })).toHaveClass(/return-anchor/)
+    await expect(
+      pageReadout(page.getByRole('navigation', { name: '分页导航', exact: true }).last())
+    ).toHaveText(/^2\//)
+    await expect(bodyRows(page).filter({ has: target })).toHaveClass(/return-anchor/)
   }
 })
 test('列表快照淘汰后返回仍能从接口恢复第二页和定位', async ({ page }) => {
   await login(page)
   await page.getByRole('button', { name: '返回定位测试', exact: true }).click()
-  await expect(page.locator('tbody tr')).toHaveCount(100)
+  await expect(bodyRows(page)).toHaveCount(100)
   await page.getByRole('button', { name: '下一页', exact: true }).click()
-  await expect(page.locator('tbody tr')).toHaveCount(60)
-  const ids = await page
-    .locator('tbody tr')
-    .evaluateAll((rows) => rows.map((row) => Number(row.getAttribute('data-entry-id'))))
+  await expect(bodyRows(page)).toHaveCount(60)
+  const ids = await bodyRows(page).evaluateAll((rows) =>
+    rows.map((row) => Number(row.getAttribute('data-entry-id')))
+  )
   const target = page.getByRole('button', { name: '目录_135', exact: true })
   await target.click()
   await expect(page.getByText('这里还没有内容', { exact: true })).toBeVisible()
@@ -1970,14 +1981,16 @@ test('列表快照淘汰后返回仍能从接口恢复第二页和定位', async
     await page.evaluate((id) => {
       location.hash = `library/${id}`
     }, id)
-    await expect(page.locator('.breadcrumbs button').last()).toHaveText(
-      `目录_${100 + ids.indexOf(id)}`
-    )
+    await expect(
+      page.getByRole('navigation', { name: '目录路径' }).getByRole('button').last()
+    ).toHaveText(`目录_${100 + ids.indexOf(id)}`)
     await expect(page.getByText('这里还没有内容', { exact: true })).toBeVisible()
   }
   await page.getByRole('button', { name: '返回定位测试', exact: true }).click()
-  await expect(page.locator('.pagination .page-current').last()).toHaveText('2')
-  const row = page.locator('tbody tr').filter({ has: target })
+  await expect(
+    pageReadout(page.getByRole('navigation', { name: '分页导航', exact: true }).last())
+  ).toHaveText(/^2\//)
+  const row = bodyRows(page).filter({ has: target })
   await expect(row).toHaveClass(/return-anchor/)
   await expect
     .poll(async () =>
@@ -1992,7 +2005,7 @@ test('列表快照淘汰后返回仍能从接口恢复第二页和定位', async
 test('切换页面后返回上级目录仍定位先前进入的文件夹', async ({ page }) => {
   await login(page)
   await page.getByRole('button', { name: '返回定位测试', exact: true }).click()
-  await expect(page.locator('tbody tr')).toHaveCount(100)
+  await expect(bodyRows(page)).toHaveCount(100)
   await page.getByRole('button', { name: '下一页', exact: true }).click()
   const target = page.getByRole('button', { name: '目录_135', exact: true })
   await target.click()
@@ -2001,8 +2014,8 @@ test('切换页面后返回上级目录仍定位先前进入的文件夹', async
   await page.getByRole('button', { name: '文件目录', exact: true }).click()
   await expect(page.getByText('这里还没有内容', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '返回定位测试', exact: true }).click()
-  const row = page.locator('tbody tr').filter({ has: target })
-  await expect(page.locator('tbody tr')).toHaveCount(60)
+  const row = bodyRows(page).filter({ has: target })
+  await expect(bodyRows(page)).toHaveCount(60)
   await expect(row).toHaveClass(/return-anchor/)
   await expect
     .poll(async () =>
@@ -2016,61 +2029,81 @@ test('切换页面后返回上级目录仍定位先前进入的文件夹', async
   const scrollY = await page.evaluate(() => window.scrollY)
   await page.getByRole('button', { name: '批次记录', exact: true }).click()
   await page.getByRole('button', { name: '文件目录', exact: true }).click()
-  await expect(page.locator('tbody tr')).toHaveCount(60)
+  await expect(bodyRows(page)).toHaveCount(60)
   await expect.poll(() => page.evaluate(() => Math.abs(window.scrollY - scrollY))).toBeLessThan(3)
 })
 test('目录内容在进入索引后显示直接子项数量', async ({ page }) => {
   await login(page)
   // Use a directory no earlier test opened to check the initial lazy statistics; 2026 · 旅行记录 is already cached.
-  const album = page
-    .locator('.file-table tbody tr')
-    .filter({ has: page.getByRole('button', { name: '家庭影像', exact: true }) })
-  await expect(album.locator('.contents-cell')).toHaveText('待统计')
+  const album = bodyRows(page).filter({
+    has: page.getByRole('button', { name: '家庭影像', exact: true })
+  })
+  // Contents follow the size column; the status column can also read 待统计.
+  await expect(album.getByRole('cell').nth(1)).toHaveText('待统计')
   await page.getByRole('button', { name: '家庭影像', exact: true }).click()
   await expect(page.getByText('这里还没有内容', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '媒体库', exact: true }).click()
-  await expect(album.locator('.content-stat')).toHaveText(['0', '0', '0', '0'])
+  await expect(album.getByRole('list', { name: /^目录内容/ }).getByRole('listitem')).toHaveText([
+    '0',
+    '0',
+    '0',
+    '0'
+  ])
   await page.getByRole('button', { name: '图片编号测试', exact: true }).click()
   // video.MP4 sorts last of 207 entries, off the first page; the first entry confirms the directory loaded.
   await expect(page.getByText('photo-000.PNG', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '媒体库', exact: true }).click()
-  const images = page
-    .locator('.file-table tbody tr')
-    .filter({ has: page.getByRole('button', { name: '图片编号测试', exact: true }) })
-  await expect(images.locator('.content-stat')).toHaveText(['1', '1', '205', '0'])
+  const images = bodyRows(page).filter({
+    has: page.getByRole('button', { name: '图片编号测试', exact: true })
+  })
+  await expect(images.getByRole('list', { name: /^目录内容/ }).getByRole('listitem')).toHaveText([
+    '1',
+    '1',
+    '205',
+    '0'
+  ])
   await page.getByRole('button', { name: '音频编号测试', exact: true }).click()
-  await expect(page.locator('.directory-refresh-summary .content-stat')).toHaveText([
+  await expect(page.getByRole('list', { name: /^当前目录内容/ }).getByRole('listitem')).toHaveText([
     '子目录0',
     '视频1',
     '图片1',
     '音频3'
   ])
   const summaryTops = await page
-    .locator('.directory-refresh-summary .content-stat')
+    .getByRole('list', { name: /^当前目录内容/ })
+    .getByRole('listitem')
     .evaluateAll((nodes) => nodes.map((n) => n.getBoundingClientRect().top))
   expect(new Set(summaryTops).size).toBe(1)
   await page.getByLabel('搜索当前目录').fill('song')
-  await expect(page.locator('.file-table tbody tr')).toHaveCount(1)
-  await expect(page.locator('.directory-refresh-summary .content-stat')).toHaveText([
+  await expect(bodyRows(page)).toHaveCount(1)
+  await expect(page.getByRole('list', { name: /^当前目录内容/ }).getByRole('listitem')).toHaveText([
     '子目录0',
     '视频1',
     '图片1',
     '音频3'
   ])
   await page.getByRole('button', { name: '媒体库', exact: true }).click()
-  const audio = page
-    .locator('.file-table tbody tr')
-    .filter({ has: page.getByRole('button', { name: '音频编号测试', exact: true }) })
-  await expect(audio.locator('.content-stat')).toHaveText(['0', '1', '1', '3'])
-  await expect(audio.locator('.content-stat.audio')).toHaveAttribute('title', '音频：3')
+  const audio = bodyRows(page).filter({
+    has: page.getByRole('button', { name: '音频编号测试', exact: true })
+  })
+  await expect(audio.getByRole('list', { name: /^目录内容/ }).getByRole('listitem')).toHaveText([
+    '0',
+    '1',
+    '1',
+    '3'
+  ])
+  await expect(audio.getByRole('listitem', { name: '音频：3' })).toHaveAttribute('title', '音频：3')
   const tops = await audio
-    .locator('.content-stat')
+    .getByRole('list', { name: /^目录内容/ })
+    .getByRole('listitem')
     .evaluateAll((nodes) => nodes.map((n) => n.getBoundingClientRect().top))
   expect(tops[0]).toBe(tops[1])
   expect(tops[2]).toBe(tops[3])
   expect(defined(tops[2])).toBeGreaterThan(defined(tops[0]))
-  expect(defined(await audio.locator('.directory-contents').boundingBox()).width).toBeLessThan(80)
-  await expect(page.locator('.directory-mark-actions button')).toHaveText([
+  expect(
+    defined(await audio.getByRole('list', { name: /^目录内容/ }).boundingBox()).width
+  ).toBeLessThan(80)
+  await expect(page.getByRole('group', { name: '当前目录操作' }).getByRole('button')).toHaveText([
     '抽帧',
     '重命名',
     '编号',
@@ -2079,7 +2112,7 @@ test('目录内容在进入索引后显示直接子项数量', async ({ page }) 
   ])
   await page.screenshot({ path: 'test-results/library-contents.png', animations: 'disabled' })
   await page.setViewportSize({ width: 390, height: 844 })
-  const heading = await page.locator('.directory-mark-actions').boundingBox()
+  const heading = await page.getByRole('group', { name: '当前目录操作' }).boundingBox()
   expect(defined(heading).x + defined(heading).width).toBeLessThanOrEqual(390)
   await page.screenshot({
     path: 'test-results/library-contents-mobile.png',
@@ -2108,10 +2141,12 @@ test('批次记录按实际开始计算耗时，排除排队时间', async ({ pa
   ])
   await page.getByRole('button', { name: '批次记录', exact: true }).click()
   const section = page.getByRole('region', { name: '批次列表', exact: true })
-  await expect(section.locator('.run-entry .table-model')).toHaveText('fixture profile')
-  await expect(section.locator('.run-day-label')).toHaveText(/2026年9月2[12]日/)
-  await expect(section.locator('.run-entry .run-duration-value')).toHaveText('1h1m53s')
-  await expect(section.locator('.run-entry .run-tokens')).toHaveText('—')
+  await expect(
+    section.getByRole('article').getByText('fixture profile', { exact: true })
+  ).toBeVisible()
+  await expect(section.getByRole('heading', { level: 4 })).toHaveText(/2026年9月2[12]日/)
+  await expect(section.getByRole('article').getByTitle(/^从实际开始到结束/)).toHaveText('1h1m53s')
+  await expect(section.getByRole('article').getByTitle('暂无模型请求记录')).toHaveText('—')
   await mockRunPages(page, [
     {
       id: 988,
@@ -2129,13 +2164,13 @@ test('批次记录按实际开始计算耗时，排除排队时间', async ({ pa
     }
   ])
   await page.getByRole('button', { name: '刷新', exact: true }).click()
-  await expect(section.locator('.run-entry .run-duration-value')).toHaveText('等待开始')
+  await expect(section.getByRole('article').getByTitle(/^从实际开始到结束/)).toHaveText('等待开始')
 })
 
 test('大播放器、方向键十秒跳转与跨页切集', async ({ page }) => {
   await login(page)
   await page.getByRole('button', { name: '播放视频 preview.webm', exact: true }).click()
-  const media = page.locator('video')
+  const media = page.getByLabel('视频画面', { exact: true })
   await expect
     .poll(() => media.evaluate((v: HTMLVideoElement) => v.readyState))
     .toBeGreaterThanOrEqual(2)
@@ -2175,7 +2210,7 @@ test('首次进入目录后后台刷新不把阅读位置拉回顶部', async ({
     await route.fulfill({ response, json: data })
   })
   await page.getByRole('button', { name: '分页测试', exact: true }).click()
-  await expect(page.locator('tbody tr')).toHaveCount(100)
+  await expect(bodyRows(page)).toHaveCount(100)
   await page.evaluate(() => {
     window.scrollTo(0, 1200)
   })
@@ -2222,15 +2257,15 @@ for (const task of ['rename', 'extract'])
   test(`跨页选择230个目标只提交一个${task}批次`, async ({ page }) => {
     await login(page)
     await page.getByRole('button', { name: '分页测试', exact: true }).click()
-    await expect(page.locator('tbody tr')).toHaveCount(100)
+    await expect(bodyRows(page)).toHaveCount(100)
     await page.getByRole('combobox', { name: '每页条目数' }).click()
     await page.getByRole('option', { name: '200 项 / 页', exact: true }).click()
-    await expect(page.locator('tbody tr')).toHaveCount(200)
+    await expect(bodyRows(page)).toHaveCount(200)
     await page.getByRole('button', { name: '多选', exact: true }).click()
-    const toolbar = page.locator('.batch-toolbar')
+    const toolbar = page.getByRole('group', { name: '批量操作' })
     await toolbar.getByRole('button', { name: '全选', exact: true }).click()
     await page.getByRole('button', { name: '下一页', exact: true }).click()
-    await expect(page.locator('tbody tr')).toHaveCount(30)
+    await expect(bodyRows(page)).toHaveCount(30)
     await toolbar.getByRole('button', { name: '全选', exact: true }).click()
     await expect(toolbar).toContainText('已选 230 项')
     const requests: { task: string; targets: number[] }[] = []

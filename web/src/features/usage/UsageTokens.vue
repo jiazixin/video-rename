@@ -242,22 +242,22 @@
       </div>
     </div>
     <template v-if="report">
-      <div class="usage-kpis">
-        <div class="usage-kpi"
+      <div class="usage-kpis" role="list" aria-label="用量概览">
+        <div class="usage-kpi" role="listitem"
           ><span>累计 token</span><strong>{{ formatCompact(totals?.tokens || 0) }}</strong
           ><small>{{ formatCount(totals?.tokens || 0) }}</small></div
         >
-        <div class="usage-kpi"
+        <div class="usage-kpi" role="listitem"
           ><span>已记录请求</span><strong>{{ formatCount(totals?.records || 0) }}</strong
           ><small v-if="totals?.estimated_records"
             >含粗估 {{ formatCount(totals.estimated_records) }} 条</small
           ><small v-else>全部来自模型 usage</small></div
         >
-        <div class="usage-kpi"
+        <div class="usage-kpi" role="listitem"
           ><span>涉及批次</span><strong>{{ formatCount(totals?.batches || 0) }}</strong
           ><small>区间内有记录的批次</small></div
         >
-        <div class="usage-kpi"
+        <div class="usage-kpi" role="listitem"
           ><span>平均每请求</span><strong>{{ formatCompact(Math.round(average)) }}</strong
           ><small>{{ formatCount(Math.round(average)) }} token / 条</small></div
         >
@@ -269,7 +269,7 @@
         token；未记录的内部重试和模型测试不计入。
       </p>
       <div class="usage-stack">
-        <div class="panel">
+        <div class="panel" role="region" aria-label="消耗趋势">
           <div class="panel-toolbar"
             ><h2>消耗趋势</h2><span class="subtle">{{ hasData ? '' : '暂无数据' }}</span></div
           >
@@ -298,7 +298,7 @@
             >
           </details>
         </div>
-        <div class="panel">
+        <div class="panel" role="region" aria-label="模型用量对比">
           <div class="panel-toolbar"
             ><h2>模型用量对比</h2
             ><span v-if="report.sources.length" class="subtle">{{
@@ -310,8 +310,8 @@
                 .join(' · ')
             }}</span></div
           >
-          <div v-if="visibleModels.length" class="usage-models">
-            <div v-for="m in visibleModels" :key="m.key" class="usage-model">
+          <div v-if="visibleModels.length" class="usage-models" role="list" aria-label="模型用量">
+            <div v-for="m in visibleModels" :key="m.key" class="usage-model" role="listitem">
               <div class="usage-model-head"
                 ><strong :title="[m.provider, m.protocol].filter(Boolean).join(' · ')">{{
                   m.model || '未记录模型'
@@ -342,7 +342,7 @@
           </div>
           <div v-else class="empty compact">区间内没有模型用量记录</div>
         </div>
-        <div class="panel">
+        <div class="panel" role="region" aria-label="高消耗批次">
           <div class="panel-toolbar"
             ><h2>高消耗批次</h2><span class="subtle">按区间内 token 排序</span></div
           >
@@ -381,7 +381,7 @@
           >
           <div v-else class="empty compact">区间内没有批次用量记录</div>
         </div>
-        <div class="panel">
+        <div class="panel" role="region" aria-label="批次明细">
           <div class="panel-toolbar usage-detail-toolbar">
             <h2>批次明细</h2>
             <div class="usage-detail-tools">

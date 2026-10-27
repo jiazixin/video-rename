@@ -129,6 +129,7 @@
       <p class="track-position">{{ position ? `第 ${position} 首` : '同目录音频' }}</p>
       <audio
         ref="audio"
+        aria-label="音频播放器"
         :src="`/api/entries/${entry.id}/audio`"
         autoplay
         preload="metadata"

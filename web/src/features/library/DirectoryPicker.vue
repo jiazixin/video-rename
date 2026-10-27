@@ -76,7 +76,7 @@
 </script>
 <template>
   <div class="directory-picker" :aria-busy="busy || page?.refreshing || undefined"
-    ><div class="picker-breadcrumb"
+    ><div class="picker-breadcrumb" role="navigation" aria-label="目录路径"
       ><button type="button" @click="enter(1)"><Home :size="15" />媒体库</button
       ><template v-for="crumb in page?.breadcrumbs.filter((x) => x.id !== 1)" :key="crumb.id"
         ><ChevronRight :size="13" /><button type="button" @click="enter(crumb.id)">{{

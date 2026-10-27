@@ -1,5 +1,10 @@
-import { defined } from './support'
+import { bodyRows, defined } from './support'
 import { test, expect, type Page } from '@playwright/test'
+
+const scatter = (page: Page) => page.getByRole('img', { name: /^批次大小与批次耗时散点图/ })
+/** The hover detail of the scatter plot, apart from the line charts' tooltips. */
+const scatterTip = (page: Page) =>
+  page.getByRole('region', { name: '批次大小 vs 耗时' }).getByRole('status', { name: '数据点详情' })
 
 async function login(page: Page) {
   await page.goto('/')
@@ -169,37 +174,48 @@ test('默认打开模型用量并可从侧栏切换运行分析', async ({ page 
   await login(page)
   await page.goto('/#usage')
   await expect(page.getByRole('heading', { name: '模型用量.' })).toBeVisible()
-  await expect(page.locator('.usage-kpi').getByText('累计 token', { exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('list', { name: '用量概览' }).getByText('累计 token', { exact: true })
+  ).toBeVisible()
   await page.getByRole('button', { name: '运行分析', exact: true }).click()
   await expect(page.getByText('批次成功率', { exact: true })).toBeVisible()
-  await expect(page.locator('.analysis-kpis .usage-kpi')).toHaveCount(10)
+  await expect(page.getByRole('list', { name: '运行指标' }).getByRole('listitem')).toHaveCount(10)
   await page.goto('/#usage/analysis')
   await expect(page.getByText('批次成功率', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '模型用量', exact: true }).click()
-  await expect(page.locator('.usage-kpi').getByText('累计 token', { exact: true })).toBeVisible()
-  await expect(page.locator('.analysis-kpis .usage-kpi')).toHaveCount(0)
+  await expect(
+    page.getByRole('list', { name: '用量概览' }).getByText('累计 token', { exact: true })
+  ).toBeVisible()
+  await expect(page.getByRole('list', { name: '运行指标' }).getByRole('listitem')).toHaveCount(0)
 })
 
 test('指标卡、趋势图与散点渲染', async ({ page }) => {
   await login(page)
   await page.route('**/api/runs/analytics*', (route) => route.fulfill({ json: fixture() }))
   await page.goto('/#usage/analysis')
-  await expect(page.locator('.analysis-kpis .usage-kpi').first()).toContainText('50.0%')
-  await expect(page.locator('.analysis-kpis .usage-kpi').nth(2)).toContainText('30m')
-  await expect(page.locator('.analysis-kpis .usage-kpi').nth(4)).toContainText('0.5')
+  await expect(
+    page.getByRole('list', { name: '运行指标' }).getByRole('listitem').first()
+  ).toContainText('50.0%')
+  await expect(
+    page.getByRole('list', { name: '运行指标' }).getByRole('listitem').nth(2)
+  ).toContainText('30m')
+  await expect(
+    page.getByRole('list', { name: '运行指标' }).getByRole('listitem').nth(4)
+  ).toContainText('0.5')
   await expect(page.getByText('升级前的批次', { exact: false })).toHaveCount(0)
-  await expect(page.locator('.analysis-line svg')).toHaveCount(3)
-  await expect(page.locator('.analysis-legend')).toHaveCount(1)
-  await expect(page.locator('.analysis-legend-item')).toHaveCount(3)
-  await expect(page.locator('.analysis-hist-row')).toHaveCount(8)
+  await expect(page.getByRole('img', { name: /，精确数值见下方数据表$/ })).toHaveCount(3)
+  await expect(page.getByRole('list', { name: '图例' })).toHaveCount(1)
+  await expect(page.getByRole('list', { name: '图例' }).getByRole('listitem')).toHaveCount(3)
+  await expect(page.getByRole('list', { name: '耗时分档' }).getByRole('listitem')).toHaveCount(8)
+  // Plotted marks are drawing geometry inside a single SVG image; count them by shape.
   await expect(page.locator('.scatter-dot')).toHaveCount(3)
   await page
-    .locator('.analysis-line svg')
+    .getByRole('img', { name: /，精确数值见下方数据表$/ })
     .first()
     .click({ position: { x: 300, y: 100 } })
-  await expect(page.locator('.trend-tooltip')).toBeVisible()
-  await page.locator('.analysis-scatter svg').click({ position: { x: 300, y: 100 } })
-  await expect(page.locator('.analysis-scatter .trend-tooltip')).toContainText('批次 #')
+  await expect(page.getByRole('status', { name: '数据点详情' })).toBeVisible()
+  await scatter(page).click({ position: { x: 300, y: 100 } })
+  await expect(scatterTip(page)).toContainText('批次 #')
   await expect(page.getByText('清洗后的标题无效', { exact: false })).toBeVisible()
   await page.screenshot({
     path: 'test-results/usage-analysis-desktop.png',
@@ -214,7 +230,7 @@ test('有数据明细窄屏标题完整且分页换行', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/#usage/analysis')
   const title = page.getByRole('heading', { name: '批次明细', exact: true })
-  const panel = page.locator('.panel').filter({ has: title })
+  const panel = page.getByRole('region', { name: '批次明细', exact: true })
   const navigation = panel.getByRole('navigation', { name: '分页导航' })
   await expect(title).toBeVisible()
   await expect
@@ -232,7 +248,7 @@ test('有数据明细窄屏标题完整且分页换行', async ({ page }) => {
   expect(navigationBox.y).toBeGreaterThanOrEqual(headingBox.y + headingBox.height)
   expect(navigationBox.x).toBeGreaterThanOrEqual(panelBox.x)
   expect(navigationBox.x + navigationBox.width).toBeLessThanOrEqual(panelBox.x + panelBox.width)
-  await expect(panel.locator('tbody tr')).toHaveCount(3)
+  await expect(bodyRows(panel)).toHaveCount(3)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()
   await panel.screenshot({
     path: 'test-results/usage-analysis-detail-mobile.png',
@@ -418,7 +434,7 @@ test('无效自定义区间会中止上一请求并保留校验提示', async ({
   try {
     await aborted
     await expect(page.getByRole('alert')).toContainText('请选择自定义区间的起止日期')
-    await expect(page.locator('.usage-kpi')).toHaveCount(0)
+    await expect(page.getByRole('list', { name: '运行指标' })).toHaveCount(0)
   } finally {
     release()
   }
@@ -441,7 +457,7 @@ test('非法 JSON 响应显示错误并可重试', async ({ page }) => {
   malformed = false
   await page.getByRole('button', { name: '重试', exact: true }).click()
   await expect(page.getByRole('alert')).toHaveCount(0)
-  await expect(page.locator('.usage-kpi').first()).toBeVisible()
+  await expect(page.getByRole('list', { name: '运行指标' })).toBeVisible()
 })
 
 test('抽帧明细说明不使用模型且仅抽帧时没有模型性能比较', async ({ page }) => {
@@ -497,29 +513,22 @@ test('抽帧明细说明不使用模型且仅抽帧时没有模型性能比较',
     return route.fulfill({ json: response })
   })
   await page.goto('/#usage/analysis')
-  const detail = page
-    .locator('.panel')
-    .filter({ has: page.getByRole('heading', { name: '批次明细', exact: true }) })
-  const comparison = page
-    .locator('.panel')
-    .filter({ has: page.getByRole('heading', { name: '模型配置性能比较', exact: true }) })
+  const detail = page.getByRole('region', { name: '批次明细', exact: true })
+  const comparison = page.getByRole('region', { name: '模型配置性能比较', exact: true })
   for (const id of [31, 7]) {
-    const row = detail
-      .locator('tbody tr')
-      .filter({ has: page.getByText(`#${id}`, { exact: true }) })
+    const row = bodyRows(detail).filter({ has: page.getByText(`#${id}`, { exact: true }) })
     await expect(row.getByText('抽帧', { exact: true })).toBeVisible()
     await expect(row.getByRole('cell', { name: '不使用模型', exact: true })).toBeVisible()
   }
   await expect(detail.getByText('配置 #0', { exact: true })).toHaveCount(0)
   await expect(detail.getByRole('cell', { name: 'vision-a', exact: true })).toBeVisible()
   await expect(detail.getByRole('cell', { name: '未记录模型', exact: true })).toBeVisible()
-  await expect(comparison.locator('tbody tr')).toHaveCount(1)
+  await expect(bodyRows(comparison)).toHaveCount(1)
   await expect(comparison.getByText('配置 #0', { exact: true })).toHaveCount(0)
-  const scatter = page.locator('.analysis-scatter svg')
-  await scatter.focus()
-  await scatter.press('ArrowRight')
-  await expect(page.locator('.analysis-scatter .trend-tooltip')).toContainText('抽帧')
-  await expect(page.locator('.analysis-scatter .trend-tooltip')).not.toContainText('未命名配置')
+  await scatter(page).focus()
+  await scatter(page).press('ArrowRight')
+  await expect(scatterTip(page)).toContainText('抽帧')
+  await expect(scatterTip(page)).not.toContainText('未命名配置')
   await detail.screenshot({
     path: 'test-results/usage-analysis-extraction-desktop.png',
     animations: 'disabled'
@@ -528,7 +537,7 @@ test('抽帧明细说明不使用模型且仅抽帧时没有模型性能比较',
   await page.getByRole('option', { name: '无模型配置（抽帧）', exact: true }).click()
   await expect(comparison.getByText('区间内没有可比较的命名批次', { exact: true })).toBeVisible()
   expect(extractionFiltered).toBe(true)
-  await expect(detail.locator('tbody tr')).toHaveCount(2)
+  await expect(bodyRows(detail)).toHaveCount(2)
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(detail.getByText('抽帧', { exact: true })).toHaveCount(2)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()

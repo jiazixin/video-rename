@@ -164,7 +164,12 @@
         class="hit-zone"
         @pointermove="pick"
       /></svg
-    ><div v-if="hovered" class="trend-tooltip" :style="tooltipStyle" role="status"
+    ><div
+      v-if="hovered"
+      class="trend-tooltip"
+      :style="tooltipStyle"
+      role="status"
+      aria-label="数据点详情"
       ><strong :title="`${formatCount(hovered.b.tokens)} token`"
         >{{ formatCompact(hovered.b.tokens) }} token</strong
       ><span>{{ bucketTitle(hovered.b) }}</span

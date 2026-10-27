@@ -1,4 +1,4 @@
-import { defined } from './support'
+import { bodyRows, defined } from './support'
 import { test, expect, type Page } from '@playwright/test'
 import type { Entry } from '../src/app/contracts'
 
@@ -53,7 +53,7 @@ async function setup(page: Page, count = 1) {
   await page.getByLabel('密码', { exact: true }).fill('test-password-123')
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await expect(page.getByRole('heading', { name: '文件目录.' })).toBeVisible()
-  await expect(page.locator('.file-table tbody tr')).toHaveCount(Math.min(count, 100))
+  await expect(bodyRows(page)).toHaveCount(Math.min(count, 100))
   return entries
 }
 
@@ -187,7 +187,7 @@ test('旧结果404后禁用原弹窗提交，关闭重新选择才创建新操�
   await expect(dialog(page).getByRole('alert')).toContainText('请关闭弹窗，重新选择目标')
   await expect(confirm(page)).toBeDisabled()
   await dialog(page)
-    .locator('form')
+    .getByRole('form')
     .evaluate((form: HTMLFormElement) => {
       form.requestSubmit()
     })
@@ -201,10 +201,8 @@ test('旧结果404后禁用原弹窗提交，关闭重新选择才创建新操�
   )
   expect(posts).toHaveLength(1)
   expect(queries).toEqual(posts)
-  await dialog(page)
-    .locator('.modal-actions')
-    .getByRole('button', { name: '关闭', exact: true })
-    .click()
+  // The footer button follows the header's icon button of the same name.
+  await dialog(page).getByRole('button', { name: '关闭', exact: true }).last().click()
   await openSingle(page)
   await confirm(page).click()
   await expect(dialog(page)).toHaveCount(0)
@@ -217,9 +215,12 @@ for (const failure of ['断连', '409拒绝']) {
     const entries = await setup(page, 101)
     await page.getByRole('combobox', { name: '每页条目数', exact: true }).click()
     await page.getByRole('option', { name: '200 项 / 页', exact: true }).click()
-    await expect(page.locator('.file-table tbody tr')).toHaveCount(101)
+    await expect(bodyRows(page)).toHaveCount(101)
     await page.getByRole('button', { name: '多选', exact: true }).click()
-    await page.locator('.batch-toolbar').getByRole('button', { name: '全选', exact: true }).click()
+    await page
+      .getByRole('group', { name: '批量操作' })
+      .getByRole('button', { name: '全选', exact: true })
+      .click()
     const posts: { key: string; targets: number[] }[] = [],
       queries: string[] = []
     await page.route('**/api/entries/processed', async (route) => {
@@ -250,7 +251,7 @@ for (const failure of ['断连', '409拒绝']) {
       await route.fulfill({ json: result(requestKey, submitted.targets.length) })
     })
     await page
-      .locator('.batch-toolbar')
+      .getByRole('group', { name: '批量操作' })
       .getByRole('button', { name: '标记已处理', exact: true })
       .click()
     await confirm(page).click()

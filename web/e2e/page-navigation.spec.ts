@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 import { mockRunPages } from './run-pages'
 import { recordPage } from './run-record-pages'
+import { bodyRows, pageReadout } from './support'
 
 async function login(page: Page) {
   await page.request.post('/api/auth/login', {
@@ -71,9 +72,9 @@ test('运行记录和抽帧记录直接请求指定页，筛选重置页码', as
   await nav.getByLabel('跳转页码').fill('9')
   await nav.getByRole('button', { name: '跳转', exact: true }).click()
   await expect.poll(() => logPage).toBe(9)
-  await expect(page.locator('tbody')).toContainText('第9页.mp4')
+  await expect(bodyRows(page).filter({ hasText: '第9页.mp4' })).toHaveCount(1)
   await page.getByLabel('搜索运行记录').fill('查询')
-  await expect(nav.locator('.page-current')).toHaveText('1')
+  await expect(pageReadout(nav)).toHaveText(/^1\//)
   await expect(nav.getByLabel('跳转页码')).toBeDisabled()
   await page.getByRole('button', { name: '抽帧记录', exact: true }).click()
   nav = page.getByRole('navigation', { name: '分页导航', exact: true })
@@ -81,12 +82,12 @@ test('运行记录和抽帧记录直接请求指定页，筛选重置页码', as
   await nav.getByLabel('跳转页码').press('Enter')
   await expect.poll(() => successPage).toBe(8)
   await page.getByRole('button', { name: '失败记录', exact: true }).click()
-  await expect(nav.locator('.page-current')).toHaveText('1')
+  await expect(pageReadout(nav)).toHaveText(/^1\//)
   await nav.getByLabel('跳转页码').fill('6')
   await nav.getByLabel('跳转页码').press('Enter')
   await expect.poll(() => failurePage).toBe(6)
   await page.getByRole('button', { name: '成功记录', exact: true }).click()
-  await expect(nav.locator('.page-current')).toHaveText('8')
+  await expect(pageReadout(nav)).toHaveText(/^8\//)
 })
 
 test('批次与详情直接跳页，目录选择器跳页不提交外层表单', async ({ page }) => {
@@ -125,23 +126,22 @@ test('批次与详情直接跳页，目录选择器跳页不提交外层表单',
   const pager = page.getByLabel('批次记录分页')
   await pager.getByLabel('跳转页码').fill('10')
   await pager.getByLabel('跳转页码').press('Enter')
-  await expect(page.locator('.run-id').first()).toHaveText('#551')
+  await expect(page.getByRole('article').first()).toHaveAccessibleName('批次 #551')
   await pager.getByRole('button', { name: '首页', exact: true }).click()
-  await page
-    .locator('.run-entry')
-    .first()
-    .getByRole('button', { name: '详情', exact: true })
-    .click()
+  await page.getByRole('article').first().getByRole('button', { name: '详情', exact: true }).click()
   const detail = page.getByRole('dialog')
-  await detail.locator('#run-detail-records').getByLabel('跳转页码').fill('3')
-  await detail.locator('#run-detail-records').getByLabel('跳转页码').press('Enter')
+  await detail.getByRole('navigation', { name: '运行记录翻页' }).getByLabel('跳转页码').fill('3')
+  await detail
+    .getByRole('navigation', { name: '运行记录翻页' })
+    .getByLabel('跳转页码')
+    .press('Enter')
   await expect(detail).toContainText('第3页视频.mp4')
   await detail.getByRole('button', { name: '关闭', exact: true }).last().click()
   await page.getByRole('button', { name: '计划管理', exact: true }).click()
   await page.getByRole('button', { name: '新建手动计划', exact: true }).click()
   const dialog = page.getByRole('dialog')
   await dialog.getByRole('button', { name: '返回定位测试', exact: true }).click()
-  await expect(dialog.locator('.page-readout')).toContainText('4')
+  await expect(pageReadout(dialog.getByRole('navigation'))).toContainText('4')
   await dialog.getByLabel('跳转页码').fill('3')
   await dialog.getByLabel('跳转页码').press('Enter')
   await expect(dialog.getByLabel('选择 目录_100', { exact: true })).toBeVisible()

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { bodyRows } from './support'
 
 const entry = (id: number, name: string, kind = 'file') => ({
   id,
@@ -138,7 +139,7 @@ for (const batch of [false, true])
       await page.getByRole('button', { name: '多选', exact: true }).click()
       await page.getByLabel('选择 delete.txt', { exact: true }).check()
       await page
-        .locator('.batch-toolbar')
+        .getByRole('group', { name: '批量操作' })
         .getByRole('button', { name: '删除', exact: true })
         .click()
     } else await page.getByRole('button', { name: '删除 delete.txt', exact: true }).click()
@@ -191,10 +192,9 @@ test('关闭后重开音频不会被旧的下一首响应切换', async ({ page 
     await (await response).finished()
     await settleUI(page)
     await expect(page.getByRole('dialog', { name: 'first.wav', exact: true })).toBeVisible()
-    await expect(page.getByRole('dialog').locator('audio')).toHaveAttribute(
-      'src',
-      '/api/entries/10/audio'
-    )
+    await expect(
+      page.getByRole('dialog').getByLabel('音频播放器', { exact: true })
+    ).toHaveAttribute('src', '/api/entries/10/audio')
   } finally {
     release()
   }
@@ -256,7 +256,7 @@ test('目录选择器忽略已离开目录的迟到错误', async ({ page }) => 
     await login(page)
     await page.getByRole('button', { name: '计划管理', exact: true }).click()
     await page.getByRole('button', { name: '新建手动计划', exact: true }).click()
-    const picker = page.locator('.directory-picker')
+    const picker = page.getByRole('dialog')
     await picker.getByRole('button', { name: '子目录', exact: true }).click()
     await expect.poll(() => requested).toBe(true)
     await picker.getByRole('button', { name: '媒体库', exact: true }).click()
@@ -297,7 +297,10 @@ test('离开文件目录后批量删除的迟到失败不会重新弹框', async
   try {
     await page.getByRole('button', { name: '多选', exact: true }).click()
     await page.getByLabel('选择 delete.txt', { exact: true }).check()
-    await page.locator('.batch-toolbar').getByRole('button', { name: '删除', exact: true }).click()
+    await page
+      .getByRole('group', { name: '批量操作' })
+      .getByRole('button', { name: '删除', exact: true })
+      .click()
     await page.getByRole('button', { name: '确认永久删除', exact: true }).click()
     await expect.poll(() => requested).toBe(true)
     await leaveLibrary(page)
@@ -325,9 +328,12 @@ test('离开文件目录后超过100个目标的标记仍完整提交', async ({
   await login(page)
   await page.getByRole('combobox', { name: '每页条目数', exact: true }).click()
   await page.getByRole('option', { name: '200 项 / 页', exact: true }).click()
-  await expect(page.locator('tbody tr')).toHaveCount(101)
+  await expect(bodyRows(page)).toHaveCount(101)
   await page.getByRole('button', { name: '多选', exact: true }).click()
-  await page.locator('.batch-toolbar').getByRole('button', { name: '全选', exact: true }).click()
+  await page
+    .getByRole('group', { name: '批量操作' })
+    .getByRole('button', { name: '全选', exact: true })
+    .click()
   let release!: () => void
   const delayed = new Promise<void>((resolve) => {
       release = resolve
@@ -352,7 +358,7 @@ test('离开文件目录后超过100个目标的标记仍完整提交', async ({
   })
   try {
     await page
-      .locator('.batch-toolbar')
+      .getByRole('group', { name: '批量操作' })
       .getByRole('button', { name: '标记已处理', exact: true })
       .click()
     await page.getByRole('button', { name: '确认标记', exact: true }).click()

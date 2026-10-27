@@ -19,14 +19,15 @@
     v-if="contents"
     class="directory-contents"
     :class="{ 'contents-inline': inline }"
-    role="group"
-    aria-label="目录内容（仅直接子项）"
+    role="list"
+    :aria-label="inline ? '当前目录内容（仅直接子项）' : '目录内容（仅直接子项）'"
     title="最近完整索引的直接子项数量，包含全部分页，不受搜索和类型筛选影响"
   >
     <span
       v-for="type in types"
       :key="type.key"
       class="content-stat"
+      role="listitem"
       :class="type.key"
       :title="`${type.label}：${formatCount(contents[type.key])}`"
       :aria-label="`${type.label}：${formatCount(contents[type.key])}`"

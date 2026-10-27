@@ -1,4 +1,4 @@
-import { defined, libraryDirectory } from './support'
+import { bodyRows, defined, libraryDirectory, toasts } from './support'
 import { test, expect, type Page } from '@playwright/test'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -18,7 +18,7 @@ test('后台扫描默认一小时，范围与间隔保存后重开保持，窄�
   try {
     await page.getByRole('button', { name: '系统设置', exact: true }).click()
     await page.getByRole('button', { name: '后台目录扫描', exact: true }).click()
-    const panel = page.locator('.library-scan-settings')
+    const panel = page.getByRole('region', { name: '后台目录扫描', exact: true })
     await expect(panel.getByLabel('扫描间隔（分钟）', { exact: true })).toHaveValue('60')
     await panel.getByLabel('扫描间隔（分钟）', { exact: true }).fill('120')
     await panel.getByLabel('开启定时扫描', { exact: true }).check()
@@ -26,7 +26,7 @@ test('后台扫描默认一小时，范围与间隔保存后重开保持，窄�
       panel.getByRole('button', { name: '立即扫描全部范围', exact: true })
     ).toBeDisabled()
     await panel.getByRole('button', { name: '保存扫描设置', exact: true }).click()
-    await expect(page.locator('.toast-message').first()).toContainText('扫描设置已保存')
+    await expect(toasts(page).first()).toContainText('扫描设置已保存')
     await page.reload()
     await expect(panel.getByLabel('扫描间隔（分钟）', { exact: true })).toHaveValue('120')
     await expect(panel.getByLabel('开启定时扫描', { exact: true })).toBeChecked()
@@ -77,7 +77,9 @@ test('手动递归扫描发现多个目录中新视频和新子目录，不创�
   const before = await beforeResponse.json()
   expect(Number.isInteger(before.total)).toBe(true)
   await page.getByRole('button', { name: '扫描当前目录及子目录', exact: true }).click()
-  await expect(page.locator('.library-scan-status')).toContainText('扫描完成', { timeout: 15000 })
+  await expect(page.getByRole('region', { name: '媒体索引扫描状态' })).toContainText('扫描完成', {
+    timeout: 15000
+  })
   await expect(page.getByRole('button', { name: '全新目录', exact: true })).toBeVisible({
     timeout: 15000
   })
@@ -199,7 +201,7 @@ for (const mode of ['auto', 'auto-delayed', 'selected', 'late-selection'] as con
     )
     await page.clock.install()
     await login(page)
-    await expect(page.locator('tbody tr')).toHaveCount(2)
+    await expect(bodyRows(page)).toHaveCount(2)
     await expect.poll(() => scanRequests).toBeGreaterThan(0)
     await page.evaluate(() => {
       const state = window as typeof window & { directoryNotices: number }
@@ -229,23 +231,25 @@ for (const mode of ['auto', 'auto-delayed', 'selected', 'late-selection'] as con
         await page.getByRole('button', { name: '多选', exact: true }).click()
         await page.getByLabel('选择 保留.mp4', { exact: true }).check()
       } else {
-        await expect(page.locator('.directory-update-notice')).toHaveCount(0)
-        await expect(page.locator('tbody tr')).toHaveCount(2)
+        await expect(page.getByRole('status', { name: '目录有更新' })).toHaveCount(0)
+        await expect(bodyRows(page)).toHaveCount(2)
       }
       const response = page.waitForResponse((r) => r.url().includes('/api/directories/1/entries?'))
       release()
       await (await response).finished()
     }
     if (selected || selectLate) {
-      await expect(page.locator('.directory-update-notice')).toContainText('目录有更新')
+      await expect(page.getByRole('status', { name: '目录有更新' })).toContainText('目录有更新')
       expect(listRequests).toBe(previousLists + (selectLate ? 1 : 0))
-      await expect(page.locator('tbody tr')).toHaveCount(2)
+      await expect(bodyRows(page)).toHaveCount(2)
       await page.getByRole('button', { name: '更新文件列表', exact: true }).click()
       await expect(page.getByLabel('选择 保留.mp4', { exact: true })).toBeChecked()
-      await expect(page.locator('.batch-toolbar strong')).toHaveText('已选 1 项')
+      await expect(page.getByRole('group', { name: '批量操作' }).getByText(/^已选 /)).toHaveText(
+        '已选 1 项'
+      )
     }
-    await expect(page.locator('tbody tr')).toHaveCount(3)
-    await expect(page.locator('.directory-update-notice')).toHaveCount(0)
+    await expect(bodyRows(page)).toHaveCount(3)
+    await expect(page.getByRole('status', { name: '目录有更新' })).toHaveCount(0)
     if (!selected && !selectLate)
       expect(
         await page.evaluate(
@@ -322,7 +326,7 @@ async function mockDirectoryUpdates(
   )
   await page.clock.install()
   await login(page)
-  await expect(page.locator('tbody tr')).toHaveCount(initial.length)
+  await expect(bodyRows(page)).toHaveCount(initial.length)
   await expect.poll(() => updates.requests.scan).toBeGreaterThan(0)
   return updates
 }
@@ -339,8 +343,8 @@ test('自动更新目录仍在刷新时，后续重试保留新勾选并提示�
   updates.generation = '2'
   updates.refreshing = true
   await page.clock.runFor(6000)
-  await expect(page.locator('tbody tr')).toHaveCount(3)
-  await expect(page.locator('.directory-update-notice')).toHaveCount(0)
+  await expect(bodyRows(page)).toHaveCount(3)
+  await expect(page.getByRole('status', { name: '目录有更新' })).toHaveCount(0)
   await page.getByRole('button', { name: '多选', exact: true }).click()
   await page.getByLabel('选择 保留.mp4', { exact: true }).check()
   const before = await directoryPosition(page),
@@ -350,13 +354,13 @@ test('自动更新目录仍在刷新时，后续重试保留新勾选并提示�
   updates.added.push(entry(101, '稍后新增.mp4'))
   await page.clock.runFor(1600)
   await expect.poll(() => updates.requests.list).toBe(lists + 1)
-  await expect(page.locator('.directory-update-notice')).toBeVisible()
-  await expect(page.locator('tbody tr')).toHaveCount(3)
+  await expect(page.getByRole('status', { name: '目录有更新' })).toBeVisible()
+  await expect(bodyRows(page)).toHaveCount(3)
   await expect(page.getByLabel('选择 保留.mp4', { exact: true })).toBeChecked()
   expect(await directoryPosition(page)).toEqual(before)
   await page.getByRole('button', { name: '更新文件列表', exact: true }).click()
-  await expect(page.locator('tbody tr')).toHaveCount(4)
-  await expect(page.locator('.directory-update-notice')).toHaveCount(0)
+  await expect(bodyRows(page)).toHaveCount(4)
+  await expect(page.getByRole('status', { name: '目录有更新' })).toHaveCount(0)
   await expect(page.getByLabel('选择 保留.mp4', { exact: true })).toBeChecked()
 })
 
@@ -380,7 +384,7 @@ for (const viewport of [
       lists = updates.requests.list
     updates.generation = '2'
     await page.clock.runFor(6000)
-    const notice = page.locator('.directory-update-notice')
+    const notice = page.getByRole('status', { name: '目录有更新' })
     await expect(notice).toContainText('目录有更新')
     await expect(notice).toHaveCSS('position', 'fixed')
     expect(await directoryPosition(page)).toEqual(before)
@@ -427,7 +431,7 @@ for (const viewport of [
     expect(await directoryPosition(page)).toEqual(before)
 
     await notice.getByRole('button', { name: '更新文件列表', exact: true }).click()
-    await expect(page.locator('tbody tr')).toHaveCount(initial.length + 1)
+    await expect(bodyRows(page)).toHaveCount(initial.length + 1)
     await expect(notice).toHaveCount(0)
     await expect(page.getByLabel('选择 条目_0.mp4', { exact: true })).toBeChecked()
     expect(await directoryPosition(page)).toEqual(before)
@@ -453,18 +457,18 @@ for (const interaction of ['editing', 'media'])
       await editor.fill('未保存的新标题')
     } else {
       await page.getByRole('button', { name: '播放视频 保留.mp4', exact: true }).click()
-      await expect(page.locator('video')).toBeVisible()
+      await expect(page.getByLabel('视频画面', { exact: true })).toBeVisible()
     }
     const before = await directoryPosition(page),
       lists = updates.requests.list
     updates.generation = '2'
     await page.clock.runFor(6000)
-    const notice = page.locator('.directory-update-notice')
+    const notice = page.getByRole('status', { name: '目录有更新' })
     await expect(notice).toHaveCount(1)
     await expect(notice.getByRole('button', { name: '更新文件列表', exact: true })).toBeDisabled()
     expect(updates.requests.list).toBe(lists)
     expect(await directoryPosition(page)).toEqual(before)
-    await expect(page.locator('tbody tr')).toHaveCount(2)
+    await expect(bodyRows(page)).toHaveCount(2)
     if (interaction === 'editing') {
       await expect(editor).toHaveValue('未保存的新标题')
       await expect(editor).toBeFocused()
@@ -472,10 +476,10 @@ for (const interaction of ['editing', 'media'])
     } else {
       await expect(page.getByRole('dialog', { name: '保留.mp4', exact: true })).toBeVisible()
       await page.getByRole('dialog').getByRole('button', { name: '关闭', exact: true }).click()
-      await expect(page.locator('video')).toHaveCount(0)
+      await expect(page.getByLabel('视频画面', { exact: true })).toHaveCount(0)
     }
     await notice.getByRole('button', { name: '更新文件列表', exact: true }).click()
-    await expect(page.locator('tbody tr')).toHaveCount(3)
+    await expect(bodyRows(page)).toHaveCount(3)
     await expect(notice).toHaveCount(0)
     await expect(
       page.getByRole('button', { name: '双击或按 Enter 重命名 保留.mp4', exact: true })
@@ -506,7 +510,7 @@ test('扫描失败和取消反馈清晰，不覆盖尚未保存的扫描间隔',
   await login(page)
   await page.getByRole('button', { name: '系统设置', exact: true }).click()
   await page.getByRole('button', { name: '后台目录扫描', exact: true }).click()
-  const panel = page.locator('.library-scan-settings')
+  const panel = page.getByRole('region', { name: '后台目录扫描', exact: true })
   await expect(panel).toContainText('正在扫描')
   await panel.getByLabel('扫描间隔（分钟）', { exact: true }).fill('120')
   await panel.getByRole('button', { name: '停止扫描', exact: true }).click()
@@ -559,11 +563,11 @@ test('扫描中长路径和大计数保持布局，范围整行且窄屏不溢�
   await login(page)
   await page.getByRole('button', { name: '系统设置', exact: true }).click()
   await page.getByRole('button', { name: '后台目录扫描', exact: true }).click()
-  const panel = page.locator('.library-scan-settings')
+  const panel = page.getByRole('region', { name: '后台目录扫描', exact: true })
   await panel.scrollIntoViewIfNeeded()
   await expect(panel).toContainText('正在扫描')
-  const path = panel.locator('.scan-path-value')
-  await expect(path).toHaveAttribute('title', longPath)
+  const path = panel.getByTitle(longPath, { exact: true })
+  await expect(path).toBeVisible()
   await expect(panel.getByRole('button', { name: '停止扫描', exact: true })).toBeEnabled()
   const fields = await panel.locator('.scan-settings-fields').boundingBox()
   const scope = await panel.locator('.scan-settings-scope').boundingBox()
@@ -583,7 +587,7 @@ test('排除目录可多选、取消、移除和保存，两个范围共用弹�
   try {
     await page.getByRole('button', { name: '系统设置', exact: true }).click()
     await page.getByRole('button', { name: '后台目录扫描', exact: true }).click()
-    const panel = page.locator('.library-scan-settings')
+    const panel = page.getByRole('region', { name: '后台目录扫描', exact: true })
     const excluded = panel.getByRole('region', { name: '排除目录', exact: true })
     const add = excluded.getByRole('button', { name: '添加排除目录' })
     await expect(excluded).toContainText('未设置排除目录')
@@ -591,19 +595,19 @@ test('排除目录可多选、取消、移除和保存，两个范围共用弹�
     const dialog = page.getByRole('dialog', { name: '选择排除目录' })
     await dialog.getByLabel('选择 家庭影像', { exact: true }).check()
     await dialog.getByRole('button', { name: '取消', exact: true }).click()
-    await expect(excluded.locator('li')).toHaveCount(0)
+    await expect(excluded.getByRole('listitem')).toHaveCount(0)
     await expect(add).toBeFocused()
     await add.press('Enter')
     await expect(dialog.getByLabel('选择 家庭影像', { exact: true })).not.toBeChecked()
     await dialog.getByLabel('选择 家庭影像', { exact: true }).check()
     await dialog.getByLabel('选择 工作素材', { exact: true }).check()
     await dialog.getByRole('button', { name: '确认选择', exact: true }).click()
-    await expect(excluded.locator('li')).toHaveCount(2)
+    await expect(excluded.getByRole('listitem')).toHaveCount(2)
     await expect(add).toBeFocused()
     await panel.getByRole('button', { name: '保存扫描设置', exact: true }).click()
-    await expect(page.locator('.toast-message').first()).toContainText('扫描设置已保存')
+    await expect(toasts(page).first()).toContainText('扫描设置已保存')
     await page.reload()
-    await expect(excluded.locator('li')).toHaveCount(2)
+    await expect(excluded.getByRole('listitem')).toHaveCount(2)
     await expect(excluded).toContainText('家庭影像')
     await expect(excluded).toContainText('工作素材')
     await page.screenshot({ path: 'test-results/scan-exclusions-desktop.png', fullPage: true })
@@ -621,7 +625,7 @@ test('排除目录可多选、取消、移除和保存，两个范围共用弹�
     await excluded.getByRole('button', { name: '从排除目录移除 家庭影像', exact: true }).click()
     await excluded.getByRole('button', { name: '从排除目录移除 工作素材', exact: true }).click()
     await panel.getByRole('button', { name: '保存扫描设置', exact: true }).click()
-    await expect(page.locator('.toast-message').first()).toContainText('扫描设置已保存')
+    await expect(toasts(page).first()).toContainText('扫描设置已保存')
     await page.reload()
     await expect(excluded).toContainText('未设置排除目录')
   } finally {
@@ -647,7 +651,7 @@ test('目录选择弹窗加载失败可重试，长路径列表在窄屏不溢�
   await page.getByRole('button', { name: '后台目录扫描', exact: true }).click()
   await page.setViewportSize({ width: 320, height: 844 })
   const excluded = page.getByRole('region', { name: '排除目录', exact: true })
-  await expect(excluded.locator('li')).toContainText(longPath)
+  await expect(excluded.getByRole('listitem')).toContainText(longPath)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.screenshot({ path: 'test-results/scan-exclusions-long-320.png', fullPage: true })
   await page.route(
@@ -672,5 +676,5 @@ test('目录选择弹窗加载失败可重试，长路径列表在窄屏不溢�
   await dialog.getByRole('button', { name: '重试', exact: true }).click()
   await expect(dialog.getByLabel('选择 家庭影像', { exact: true })).toBeEnabled()
   await dialog.getByRole('button', { name: '取消', exact: true }).click()
-  await expect(excluded.locator('li')).toContainText(longPath)
+  await expect(excluded.getByRole('listitem')).toContainText(longPath)
 })

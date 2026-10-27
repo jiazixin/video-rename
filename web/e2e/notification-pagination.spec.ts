@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { bodyRows } from './support'
 
 async function openNotifications(page: Page) {
   await page.goto('/')
@@ -35,7 +36,7 @@ test('通知渠道顺序、发送记录分页、刷新、条数和窄屏', async
     })
   })
   await openNotifications(page)
-  await expect(page.locator('.notification-card h2')).toHaveText([
+  await expect(page.getByRole('form').getByRole('heading', { level: 2 })).toHaveText([
     '钉钉',
     '企业微信',
     'Bark',
@@ -43,18 +44,18 @@ test('通知渠道顺序、发送记录分页、刷新、条数和窄屏', async
     '自定义'
   ])
   const pager = page.getByLabel('通知发送记录分页', { exact: true }),
-    table = page.locator('.notification-settings tbody')
+    table = page.getByRole('table')
   await expect(pager).toContainText('共 123 条记录 · 第 1 / 3 页 · 当前页 50 条')
-  await expect(table.locator('tr')).toHaveCount(50)
+  await expect(bodyRows(table)).toHaveCount(50)
   await expect(pager.getByRole('button', { name: '上一页发送记录' })).toBeDisabled()
   await pager.getByRole('button', { name: '下一页发送记录' }).click()
   await expect(pager).toContainText('第 2 / 3 页')
-  await expect(table.locator('tr').first().locator('td').first()).toHaveText('#73')
+  await expect(bodyRows(table).first().getByRole('cell').first()).toHaveText('#73')
   await page.getByRole('button', { name: '刷新', exact: true }).click()
   await expect(pager).toContainText('第 2 / 3 页')
   const before = requests
   await expect.poll(() => requests, { timeout: 10000 }).toBeGreaterThan(before)
-  await expect(table.locator('tr').first().locator('td').first()).toHaveText('#73')
+  await expect(bodyRows(table).first().getByRole('cell').first()).toHaveText('#73')
   await pager.getByLabel('跳转页码', { exact: true }).fill('3')
   await pager.getByRole('button', { name: '跳转', exact: true }).click()
   await expect(pager).toContainText('第 3 / 3 页 · 当前页 23 条')
@@ -109,6 +110,6 @@ test('发送记录迟到响应不会覆盖新的每页条数', async ({ page }) 
   )
   release()
   await response
-  await expect(page.locator('.notification-settings tbody tr')).toHaveCount(100)
+  await expect(bodyRows(page.getByRole('table'))).toHaveCount(100)
   await expect(pager.getByRole('combobox', { name: '每页发送记录数' })).toContainText('100 条 / 页')
 })

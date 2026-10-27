@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { bodyRows, toasts } from './support'
 
 test('图片默认连续编号、跨页预览、小写后缀与刷新后整批还原', async ({ page }) => {
   await page.goto('/')
@@ -14,17 +15,17 @@ test('图片默认连续编号、跨页预览、小写后缀与刷新后整批�
   await page.getByRole('button', { name: '一键编号', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: '图片编号预览', exact: true })
   await expect(dialog).toContainText('共 205 张图片，205 张需要修改')
-  await expect(dialog.locator('tbody tr').nth(0)).toHaveText('1.JPG1.jpg')
-  await expect(dialog.locator('tbody tr').nth(1)).toHaveText('1.PNG2.png')
-  await expect(dialog.locator('tbody tr').nth(2)).toHaveText('3.WEBP3.webp')
-  await expect(dialog.locator('tbody tr').nth(3)).toHaveText('photo-000.PNG4.png')
+  await expect(bodyRows(dialog).nth(0)).toHaveText('1.JPG1.jpg')
+  await expect(bodyRows(dialog).nth(1)).toHaveText('1.PNG2.png')
+  await expect(bodyRows(dialog).nth(2)).toHaveText('3.WEBP3.webp')
+  await expect(bodyRows(dialog).nth(3)).toHaveText('photo-000.PNG4.png')
   await dialog.getByRole('button', { name: '下页', exact: true }).click()
   await dialog.getByRole('button', { name: '下页', exact: true }).click()
-  await expect(dialog.locator('tbody tr')).toHaveCount(5)
-  await expect(dialog.locator('tbody tr').last()).toHaveText('photo-201.PNG205.png')
+  await expect(bodyRows(dialog)).toHaveCount(5)
+  await expect(bodyRows(dialog).last()).toHaveText('photo-201.PNG205.png')
   await page.screenshot({ path: 'test-results/image-numbering-preview.png', fullPage: false })
   await dialog.getByRole('button', { name: '确认编号', exact: true }).click()
-  await expect(page.locator('.toast-message').first()).toContainText('已编号 205 张图片', {
+  await expect(toasts(page).first()).toContainText('已编号 205 张图片', {
     timeout: 30000
   })
   await page.getByRole('dialog').getByRole('button', { name: '关闭', exact: true }).last().click()
@@ -45,7 +46,7 @@ test('图片默认连续编号、跨页预览、小写后缀与刷新后整批�
   await page.setViewportSize({ width: 390, height: 844 })
   await page.screenshot({ path: 'test-results/image-numbering-mobile.png', fullPage: false })
   await page.getByRole('button', { name: '确认整批还原', exact: true }).click()
-  await expect(page.locator('.toast-message').first()).toContainText('已还原 205 张图片', {
+  await expect(toasts(page).first()).toContainText('已还原 205 张图片', {
     timeout: 30000
   })
   await page.getByRole('dialog').getByRole('button', { name: '关闭', exact: true }).last().click()
@@ -56,10 +57,8 @@ test('图片默认连续编号、跨页预览、小写后缀与刷新后整批�
   await expect(page.getByText('共 10 项 · 10 项 / 当前页', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '切换名称排序', exact: true }).click()
   await page.getByRole('button', { name: '一键编号', exact: true }).click()
-  await expect(page.getByRole('dialog').locator('tbody tr').first()).toHaveText(
-    'photo-009.PNG2.png'
-  )
-  await expect(page.getByRole('dialog').locator('tbody tr')).toHaveCount(10)
+  await expect(bodyRows(page.getByRole('dialog')).first()).toHaveText('photo-009.PNG2.png')
+  await expect(bodyRows(page.getByRole('dialog'))).toHaveCount(10)
   await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click()
   await page.getByLabel('搜索当前目录', { exact: true }).fill('')
   await page.getByRole('combobox', { name: '类型筛选', exact: true }).click()
@@ -82,11 +81,11 @@ test('音频默认连续编号只处理音频并支持整批还原', async ({ pa
   await page.getByRole('button', { name: '一键编号', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: '音频编号预览', exact: true })
   await expect(dialog).toContainText('共 3 个音频，3 个需要修改')
-  await expect(dialog.locator('tbody tr').nth(0)).toHaveText('2.MP31.mp3')
-  await expect(dialog.locator('tbody tr').nth(1)).toHaveText('song.flac2.flac')
-  await expect(dialog.locator('tbody tr').nth(2)).toHaveText('track.M4A3.m4a')
+  await expect(bodyRows(dialog).nth(0)).toHaveText('2.MP31.mp3')
+  await expect(bodyRows(dialog).nth(1)).toHaveText('song.flac2.flac')
+  await expect(bodyRows(dialog).nth(2)).toHaveText('track.M4A3.m4a')
   await dialog.getByRole('button', { name: '确认编号', exact: true }).click()
-  await expect(page.locator('.toast-message').first()).toContainText('已编号 3 个音频', {
+  await expect(toasts(page).first()).toContainText('已编号 3 个音频', {
     timeout: 30000
   })
   await page.getByRole('dialog').getByRole('button', { name: '关闭', exact: true }).last().click()
@@ -104,7 +103,7 @@ test('音频默认连续编号只处理音频并支持整批还原', async ({ pa
     '3 个需要还原'
   )
   await page.getByRole('button', { name: '确认整批还原', exact: true }).click()
-  await expect(page.locator('.toast-message').first()).toContainText('已还原 3 个音频', {
+  await expect(toasts(page).first()).toContainText('已还原 3 个音频', {
     timeout: 30000
   })
   await page.getByRole('dialog').getByRole('button', { name: '关闭', exact: true }).last().click()
@@ -131,8 +130,8 @@ test('编号规则设置位数后预览使用新规则', async ({ page }) => {
     await page.getByRole('option', { name: '图片', exact: true }).click()
     await page.getByRole('button', { name: '一键编号', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: '图片编号预览', exact: true })
-    await expect(dialog.locator('tbody tr').nth(0)).toHaveText('x.jpg001.jpg')
-    await expect(dialog.locator('tbody tr').nth(1)).toHaveText('y.png002.png')
+    await expect(bodyRows(dialog).nth(0)).toHaveText('x.jpg001.jpg')
+    await expect(bodyRows(dialog).nth(1)).toHaveText('y.png002.png')
     await dialog.getByRole('button', { name: '取消', exact: true }).click()
   } finally {
     await page.goto('/#settings/numbering').catch(() => {})

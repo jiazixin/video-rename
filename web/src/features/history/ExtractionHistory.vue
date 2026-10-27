@@ -213,7 +213,7 @@
         ></div
       ></div
     >
-    <div v-tab-indicator class="log-tabs" aria-label="抽帧记录状态"
+    <div v-tab-indicator class="log-tabs" role="group" aria-label="抽帧记录状态"
       ><button
         :class="{ active: category === 'success' }"
         :aria-pressed="category === 'success'"

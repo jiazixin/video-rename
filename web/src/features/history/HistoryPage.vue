@@ -384,7 +384,7 @@
       ><div
         ><h1>运行记录<span class="title-dot">.</span></h1
         ><p>查看文件命名、还原等操作的成功与失败结果。</p></div
-      ><div class="history-heading-actions"
+      ><div class="history-heading-actions" role="group" aria-label="记录操作"
         ><button
           v-if="category === 'success'"
           :disabled="busy || retrying || clearing || !retryable.length"
@@ -407,7 +407,7 @@
         ></div
       ></div
     >
-    <div v-tab-indicator class="log-tabs" aria-label="运行记录状态"
+    <div v-tab-indicator class="log-tabs" role="group" aria-label="运行记录状态"
       ><button
         :class="{ active: category === 'success' }"
         :aria-pressed="category === 'success'"
@@ -463,7 +463,7 @@
           class="filter-spacer"
         /><span class="subtle">共 {{ total }} 项 · {{ rows.length }} 项 / 当前页</span></div
       >
-      <div v-if="multi" class="batch-toolbar"
+      <div v-if="multi" class="batch-toolbar" role="group" aria-label="批量操作"
         ><strong>已选 {{ chosen.size }} 项</strong
         ><button :disabled="busy" title="全选本页" @click="selectPage()">全选</button
         ><button :disabled="busy" title="反选本页" @click="selectPage(true)">反选</button
@@ -516,6 +516,7 @@
                     ><span
                       v-if="row.action === 'automatic'"
                       class="history-model-source"
+                      role="note"
                       :data-source="row.model_source"
                       :title="modelSourceHint(row)"
                       >{{ modelSource(row) }}</span
@@ -610,6 +611,7 @@
             ><dd
               ><span
                 class="history-model-source"
+                role="note"
                 :data-source="selected.model_source"
                 :title="modelSourceHint(selected)"
                 >{{ modelSource(selected) }}</span

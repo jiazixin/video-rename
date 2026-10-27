@@ -110,8 +110,8 @@
 </script>
 <template>
   <div ref="box" class="usage-trend analysis-line">
-    <div v-if="series.length > 1" class="analysis-legend" aria-hidden="false">
-      <span v-for="s in series" :key="s.name" class="analysis-legend-item"
+    <div v-if="series.length > 1" class="analysis-legend" role="list" aria-label="图例">
+      <span v-for="s in series" :key="s.name" class="analysis-legend-item" role="listitem"
         ><i :data-series="s.tone" />{{ s.name }}</span
       >
     </div>
@@ -190,7 +190,13 @@
         @pointermove="pick"
       />
     </svg>
-    <div v-if="hovered" class="trend-tooltip" :style="tooltipStyle" role="status">
+    <div
+      v-if="hovered"
+      class="trend-tooltip"
+      :style="tooltipStyle"
+      role="status"
+      aria-label="数据点详情"
+    >
       <strong>{{ bucketTitle(hovered.b) }}</strong>
       <span v-for="s in series" :key="s.name" class="tooltip-row"
         ><i class="tooltip-key" :data-series="s.tone" /><b>{{ format(s.values[active] || 0) }}</b
