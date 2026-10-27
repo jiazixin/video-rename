@@ -62,3 +62,23 @@
 ## 验证边界
 
 未运行规模测试（`-tags=scale`、`scale_large`）。未在 Linux 实机运行二进制，交叉编译只证明可构建；Node.js 26 与 Go 1.27.3 的 GitHub Actions 结果以推送后的运行页面为准。`npm outdated` 列出的小版本更新（如 vite 8.3.5、vue 3.5.44、vue-tsc 3.3.13）本轮未升级。
+
+## 补 ctx 与生命周期、E2E 定位器、页面拆分（2026-10-27，未提交）
+
+处理上一节“保留未改”的三项。
+
+- Go 第 5 节：`storage.Open`、各 Store 方法、`library`/`jobs`/`scheduler`/`notifications` 的数据库与出站请求全部改为 ctx 首参并沿调用链传递（HTTP 用 `r.Context()`，测试用 `t.Context()`）。`App` 改为 `New(ctx)` 只构造、`Start(ctx)` 启动、`Shutdown(ctx)` 取消并等待后关闭存储（可重复调用）；通知、批次、计划、目录扫描、帧缓存的 `Loop` 改为 `Run(ctx) error`。结构体不再保存 context：删除 `App.ctx`、`Library.RefreshContext`、`markWalk.ctx` 与批次暂停的 `runControl.parent/schedule`，请求发起的后台工作（标记、编号、目录刷新、手动扫描）用 `context.WithoutCancel(r.Context())` 并登记取消函数，暂停改为登记调度等待的取消函数。取消后仍须写入的结果（批次完成/取消、失败诊断、抽帧记录、模型尝试、改名与编号的提交和回滚、删除后的索引、通知投递结果）经 `storage.Detach` 脱离取消并限时 30 秒；早期读取被取消时按取消而非失败结束批次。
+- E2E：约 700 处 CSS 定位器改为 `getByRole`/`getByLabel`/`getByText`/`getByTitle`，公共辅助在 `e2e/support.ts`（`toasts`、`bodyRows`、`pageReadout`）与 `e2e/run-record-pages.ts`。为此补充了可访问名称与角色：批量操作与标签栏 `role=group`、卡片与批次条目 `article` 名称、文件名列 `rowheader`、目录路径导航、媒体元素标签、运行详情的统计/生命周期/请求尝试列表与具名区域、用量页面板区域与 KPI/图例/分档列表、图表提示名称等。剩余 56 行 CSS 均为布局几何、配色样式、SVG 内部图形，以及剪贴板降级用的临时 `textarea`（无可区分角色），已就近注释。4 处 `waitForTimeout` 均为测量时长并已有注释。
+- 页面拆分：`LibraryPage` 先抽出 `delete-entries.ts`、`batch-actions.ts`、`entry-dialog.ts`，再拆出 `EntryDialog`、`ImagePreviewDialog`、`DirectoryActions`（1914 → 1613 行）；`RunsPage` 抽出 `run-filters.ts`、`run-timing.ts`、`plan-form.ts` 与 `PlanDialog`（1057 → 750 行）。
+
+本机 macOS / arm64，Go 1.27.3，Node.js 26。
+
+| 命令或检查 | 结果 |
+| --- | --- |
+| gofmt、goimports、`go vet`（本机、linux/amd64、linux/arm64、`-tags integration,scale`）、staticcheck、`go mod tidy -diff` | 通过 |
+| `go test -count=1 ./...`、`go test -race -count=1 ./...`、`go test -tags=integration ./internal/media ./cmd/video-rename` | 通过 |
+| `govulncheck ./...` | 无漏洞 |
+| `npm --prefix web run format:check`、`lint`、`typecheck`、`test`（25 项）、`build` | 通过 |
+| 全量 `npm --prefix web run test:e2e`（重新构建 `web/dist` 与 `bin/video-rename` 后） | 184 通过、0 失败（10.4 分钟）。按批改定位器期间的失败：复制按钮点击后改名为“已复制”、分页读数设为 `role=status` 与空状态提示冲突（已撤回该角色）、运行记录表含诊断行导致行序错位、内容列与状态列同为“待统计”，均已修正 |
+
+未覆盖：仅本机实测，未在 Linux 目标环境运行 E2E；`LibraryPage` 仍超过 1600 行，文件表格行与媒体播放弹窗未继续拆分。

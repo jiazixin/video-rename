@@ -21,7 +21,6 @@
     RefreshCw,
     CalendarDays,
     Undo2,
-    ChevronRight,
     Images
   } from '@lucide/vue';
   import { api, newRequestKey, apiItems } from '../../app/api';
@@ -29,18 +28,30 @@
   import { formatClock, formatLongDate, formatTime } from '../../lib/format/date';
   import { statusNames } from '../../app/labels';
   import { isActiveRunStatus, type Plan, type Run, type ServerRecord } from '../../app/contracts';
-  import { DirectoryPicker } from '../library';
-  import { ModelPicker } from '../models';
   import StatusBadge from '../../components/StatusBadge.vue';
   import './runs.css';
   import ModalDialog from '../../components/ModalDialog.vue';
   import ModalTransition from '../../components/ModalTransition.vue';
   import RunDetail from './RunDetail.vue';
   import SelectField from '../../components/SelectField.vue';
+  import { statusOptions, useRunFilters } from './run-filters';
+  import { processed, progress, useRunTiming } from './run-timing';
+  import PlanDialog from './PlanDialog.vue';
+  import type { PlanMode } from './plan-form';
   const toast = useToast();
-  const modelConfigID = ref(0);
-  const category = ref<'all' | 'manual' | 'automatic'>('all'),
-    task = ref('');
+  const {
+    category,
+    task,
+    status,
+    profile,
+    duration,
+    period,
+    from,
+    to,
+    hasFilters,
+    filterQuery,
+    resetFilters
+  } = useRunFilters();
   type RunPage = {
     items: Run[];
     total: number;
@@ -48,64 +59,7 @@
     size: number;
     profiles?: { id: number; title: string }[];
   };
-  const taskType = ref('rename'),
-    status = ref(''),
-    profile = ref(''),
-    duration = ref(''),
-    period = ref('all'),
-    from = ref(''),
-    to = ref('');
   const profiles = ref<{ id: number; title: string }[]>([]);
-  const statusOptions = [
-    'queued',
-    'scanning',
-    'running',
-    'paused',
-    'cancelling',
-    'completed',
-    'partial_failure',
-    'failed',
-    'cancelled',
-    'interrupted'
-  ].map((value) => ({ value, label: statusNames[value] || value }));
-  const hasFilters = computed(
-    () =>
-      category.value !== 'all' ||
-      task.value ||
-      status.value ||
-      profile.value ||
-      duration.value ||
-      period.value !== 'all'
-  );
-  function filterQuery() {
-    const q = new URLSearchParams({
-      status: status.value,
-      profile: profile.value,
-      duration: duration.value
-    });
-    const end = new Date(),
-      start = new Date(end);
-    if (period.value === 'custom') {
-      if (from.value) q.set('from', new Date(from.value).toISOString());
-      if (to.value) q.set('to', new Date(to.value).toISOString());
-    } else if (period.value !== 'all') {
-      if (period.value === 'today') start.setHours(0, 0, 0, 0);
-      else start.setTime(end.getTime() - Number(period.value) * 86400000);
-      q.set('from', start.toISOString());
-      q.set('to', end.toISOString());
-    }
-    return q.toString();
-  }
-  function resetFilters() {
-    category.value = 'all';
-    task.value = '';
-    status.value = '';
-    profile.value = '';
-    duration.value = '';
-    period.value = 'all';
-    from.value = '';
-    to.value = '';
-  }
   const pagination = ref({
     all: { page: 1, size: 50, total: 0 },
     manual: { page: 1, size: 50, total: 0 },
@@ -137,21 +91,7 @@
   const runs = ref<Run[]>([]),
     plans = ref<Plan[]>([]),
     error = ref(''),
-    mode = ref(''),
-    busy = ref(false),
-    dialogError = ref(''),
-    targets = ref<number[]>([]),
-    recursive = ref(true);
-  const edit = ref<Plan>(),
-    name = ref(''),
-    kind = ref('daily'),
-    hour = ref(2),
-    minute = ref(30),
-    days = ref([1]),
-    cron = ref('0 */6 * * *'),
-    timezone = ref('Asia/Shanghai'),
-    enabled = ref(true),
-    preview = ref<string[]>([]);
+    planDialog = ref<{ mode: PlanMode; plan: Plan | null }>();
   type RestoreResult = {
     restored: number;
     skipped: number;
@@ -197,12 +137,6 @@
     deletePlan = ref<Plan>();
   let timer: ReturnType<typeof setTimeout> | undefined,
     alive = true;
-  const expression = computed(() => {
-    if (kind.value === 'hourly') return `${minute.value} * * * *`;
-    if (kind.value === 'daily') return `${minute.value} ${hour.value} * * *`;
-    if (kind.value === 'weekly') return `${minute.value} ${hour.value} * * ${days.value.join(',')}`;
-    return cron.value;
-  });
   const sourceLabel = (r: Run) => {
     if (r.source === 'schedule') return '定时触发';
     return r.plan ? '计划立即运行' : '手动触发';
@@ -221,6 +155,7 @@
     return days;
   }
   const runDays = computed(() => groupDays(runs.value));
+  const { etas, elapsed, trackEta } = useRunTiming(() => runs.value);
   const active = (r: Run) => isActiveRunStatus(r.status);
   const pausable = (r: Run) => ['queued', 'scanning', 'running'].includes(r.status);
   const runStatusIcons = {
@@ -247,81 +182,10 @@
       ? `累计 ${formatCount(r.token_count)} token；${r.token_estimated_records} 条请求使用文字粗估，未计图片 token 和无法还原的重试。`
       : `累计 ${formatCount(r.token_count)} token；来自模型返回的 usage。`;
   }
-  const now = ref(Date.now());
-  const processed = (r: Run) => (r.done || 0) + (r.skipped || 0) + (r.failed || 0);
-  const progress = (r: Run) =>
-    r.discovered > 0 ? Math.min(100, Math.round((processed(r) / r.discovered) * 100)) : 0;
   const runClock = (r: Run) => {
     const stamp = r.started || r.created;
     return stamp ? formatClock(stamp).slice(0, 5) : '—';
   };
-  function elapsed(r: Run) {
-    if (!r.started) return r.status === 'queued' ? '等待开始' : '—';
-    const start = Date.parse(r.started);
-    let end = NaN;
-    if (r.finished) end = Date.parse(r.finished);
-    else if (active(r)) end = now.value;
-    if (!Number.isFinite(start) || !Number.isFinite(end)) return '—';
-    const seconds = Math.max(0, Math.floor((end - start) / 1000));
-    const days = Math.floor(seconds / 86400),
-      hours = Math.floor((seconds % 86400) / 3600),
-      minutes = Math.floor((seconds % 3600) / 60);
-    const parts: string[] = [];
-    if (days) parts.push(`${days}d`);
-    if (days || hours) parts.push(`${hours}h`);
-    if (days || hours || minutes) parts.push(`${minutes}m`);
-    parts.push(`${seconds % 60}s`);
-    return parts.join('');
-  }
-  const ETA_ALPHA = 0.3;
-  const etaState = new Map<
-    number,
-    { base: number; at: number; prev: number; prevAt: number; rate: number }
-  >();
-  const etas = ref<Record<number, string>>({});
-  function etaWarmup(total: number) {
-    if (total <= 2) return Infinity;
-    return total <= 10 ? Math.max(2, Math.ceil(total / 2)) : 10;
-  }
-  function etaFormat(seconds: number) {
-    const s = Math.max(0, Math.round(seconds));
-    if (s < 60) return `${s}s`;
-    if (s < 3600) return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
-    return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`;
-  }
-  function trackEta(list: Run[]) {
-    const live = list.filter((r) => r.status === 'running'),
-      next: Record<number, string> = {};
-    for (const r of live) {
-      const total = r.discovered || 0,
-        p = processed(r),
-        t = Date.now();
-      let s = etaState.get(r.id);
-      if (!s) {
-        s = { base: p, at: t, prev: p, prevAt: t, rate: 0 };
-        etaState.set(r.id, s);
-      } else {
-        const items = p - s.prev,
-          span = (t - s.prevAt) / 1000;
-        if (items > 0 && span > 0) {
-          const instant = items / span;
-          s.rate = s.rate > 0 ? ETA_ALPHA * instant + (1 - ETA_ALPHA) * s.rate : instant;
-        }
-        s.prev = p;
-        s.prevAt = t;
-      }
-      const runFor = (t - s.at) / 1000,
-        remaining = Math.max(total - p, 0),
-        warm = etaWarmup(total);
-      let rate = s.rate;
-      if (!(rate > 0) && p - s.base > 0) rate = (p - s.base) / runFor;
-      if (total > 0 && p - s.base >= warm && runFor >= 5 && rate > 0)
-        next[r.id] = remaining > 0 ? etaFormat(remaining / rate) : '<1s';
-      else next[r.id] = '预计时间计算中…';
-    }
-    for (const id of [...etaState.keys()]) if (!live.some((r) => r.id === id)) etaState.delete(id);
-    etas.value = next;
-  }
   async function load(requestedPage?: number) {
     const sequence = ++loadSequence,
       selected = category.value,
@@ -341,7 +205,6 @@
         `/runs?category=${selected}&task=${task.value}&page=${page}&size=${size}&${filterQuery()}`
       );
       if (!alive || sequence !== loadSequence) return;
-      now.value = Date.now();
       runs.value = r.items;
       profiles.value = r.profiles || [];
       pagination.value[selected] = { page: r.page, size: r.size, total: r.total };
@@ -364,90 +227,14 @@
     if (alive) timer = setTimeout(() => void poll(), 3000);
   }
   function manual() {
-    modelConfigID.value = 0;
-    taskType.value = 'rename';
-    mode.value = 'manual';
-    targets.value = [];
-    recursive.value = true;
-    dialogError.value = '';
+    planDialog.value = { mode: 'manual', plan: null };
   }
   function plan(p?: Plan) {
-    taskType.value = p?.task || 'rename';
-    modelConfigID.value = p?.model_config_id || 0;
-    edit.value = p;
-    name.value = p?.name || '';
-    targets.value = p ? [...p.targets] : [];
-    recursive.value = p?.recursive ?? true;
-    kind.value = p?.kind || 'daily';
-    timezone.value = p?.timezone || 'Asia/Shanghai';
-    enabled.value = p?.enabled ?? true;
-    cron.value = p?.expression || '0 */6 * * *';
-    const parts = p?.expression.split(' ');
-    minute.value = parts ? Number(parts[0]) || 0 : 30;
-    hour.value = parts ? Number(parts[1]) || 0 : 2;
-    days.value = parts?.[4] && p?.kind === 'weekly' ? parts[4].split(',').map(Number) : [1];
-    preview.value = [];
-    dialogError.value = '';
-    mode.value = 'plan';
+    planDialog.value = { mode: 'plan', plan: p ?? null };
   }
-  async function showPreview() {
-    dialogError.value = '';
-    try {
-      preview.value = await apiItems<string>('/schedules/preview', {
-        method: 'POST',
-        body: {
-          expression: expression.value,
-          timezone: timezone.value
-        }
-      });
-    } catch (e) {
-      dialogError.value = errorText(e);
-    }
-  }
-  async function submit() {
-    busy.value = true;
-    dialogError.value = '';
-    try {
-      const extracting = taskType.value === 'extract';
-      if (mode.value === 'manual') {
-        const r = await api<{ id: number }>('/runs', {
-          method: 'POST',
-          body: {
-            task: taskType.value,
-            model_config_id: extracting ? 0 : modelConfigID.value,
-            targets: targets.value,
-            recursive: recursive.value,
-            key: newRequestKey()
-          }
-        });
-        toast.show(
-          `${extracting ? '抽帧' : '重命名'}批次 #${r.id} 已加入队列，可在批次记录查看进度。`
-        );
-      } else {
-        await api<unknown>(edit.value ? `/schedules/${edit.value.id}` : '/schedules', {
-          method: edit.value ? 'PATCH' : 'POST',
-          body: {
-            task: taskType.value,
-            name: name.value,
-            model_config_id: extracting ? 0 : modelConfigID.value,
-            targets: targets.value,
-            recursive: recursive.value,
-            kind: kind.value,
-            expression: expression.value,
-            timezone: timezone.value,
-            enabled: enabled.value,
-            version: edit.value?.version || 0
-          }
-        });
-        toast.show('运行计划已保存');
-      }
-      mode.value = '';
-      await load();
-    } catch (e) {
-      dialogError.value = errorText(e);
-    } finally {
-      busy.value = false;
-    }
+  function planSaved() {
+    planDialog.value = undefined;
+    void load();
   }
   async function toggle(p: Plan) {
     try {
@@ -539,17 +326,12 @@
       error.value = errorText(e);
     }
   }
-  let ticker: ReturnType<typeof setInterval> | undefined;
   onMounted(() => {
     void poll();
-    ticker = setInterval(() => {
-      if (runs.value.some((r) => active(r) && r.started)) now.value = Date.now();
-    }, 1000);
   });
   onUnmounted(() => {
     alive = false;
     clearTimeout(timer);
-    clearInterval(ticker);
   });
   const planKinds: Record<string, string> = { hourly: '按小时', daily: '按日', weekly: '按周' };
   const planKind = (kind: string) => planKinds[kind] ?? 'Cron';
@@ -562,14 +344,6 @@
     return hasFilters.value
       ? '没有符合筛选条件的批次'
       : '暂无批次记录，请到计划管理创建手动计划或自动计划。';
-  });
-  const planDialogTitle = computed(() => {
-    if (mode.value === 'manual') return '新建手动计划';
-    return edit.value ? '编辑自动计划' : '新建自动计划';
-  });
-  const planSubmitLabel = computed(() => {
-    if (busy.value) return '正在提交…';
-    return mode.value === 'manual' ? '立即运行' : '保存计划';
   });
   const restoreLabel = computed(() => {
     if (restoring.value) return '正在还原…';
@@ -873,95 +647,14 @@
           @change="changePage" /></div
     ></section>
     <ModalTransition
-      ><ModalDialog v-if="mode" :title="planDialogTitle" wide @close="!busy && (mode = '')"
-        ><form @submit.prevent="submit">
-          <div class="plan-config-row"
-            ><label
-              >任务类型<SelectField
-                v-model="taskType"
-                label="计划任务类型"
-                :options="[
-                  { value: 'rename', label: '命名' },
-                  { value: 'extract', label: '抽帧' }
-                ]" /></label
-            ><ModelPicker v-if="taskType !== 'extract'" v-model="modelConfigID"
-          /></div>
-          <template v-if="mode === 'plan'"
-            ><label
-              >计划名称<input
-                v-model="name"
-                required
-                maxlength="80"
-                placeholder="例如：每天整理旅行视频" /></label
-            ><div class="form-grid"
-              ><label
-                >执行频率<SelectField
-                  v-model="kind"
-                  label="执行频率"
-                  :options="[
-                    { value: 'hourly', label: '按小时' },
-                    { value: 'daily', label: '按日' },
-                    { value: 'weekly', label: '按周' },
-                    { value: 'cron', label: 'Cron 表达式' }
-                  ]"
-                  @change="preview = []" /></label
-              ><label
-                >时区<input v-model="timezone" required placeholder="Asia/Shanghai" /></label></div
-            ><div v-if="kind !== 'cron'" class="form-grid"
-              ><label v-if="kind !== 'hourly'"
-                >小时<input v-model="hour" type="number" min="0" max="23" required /></label
-              ><label
-                >分钟<input v-model="minute" type="number" min="0" max="59" required /></label></div
-            ><div v-if="kind === 'weekly'" class="weekday-picker"
-              ><label v-for="(d, i) in ['日', '一', '二', '三', '四', '五', '六']" :key="i"
-                ><input v-model="days" type="checkbox" :value="i" />周{{ d }}</label
-              ></div
-            ><label v-if="kind === 'cron'"
-              >Cron 表达式<input
-                v-model="cron"
-                aria-label="Cron 表达式"
-                required
-                placeholder="0 */6 * * *"
-                class="mono"
-              /><small class="help"
-                >五段：分 时 日 月 周。日与周同时限制时，任一匹配即触发。</small
-              ></label
-            ><div class="preview-rule"
-              ><code>{{ expression }}</code
-              ><button type="button" @click="showPreview"
-                >预览执行时间<ChevronRight :size="14" /></button></div
-            ><ol v-if="preview.length" class="schedule-preview" aria-label="执行时间预览"
-              ><li v-for="p in preview" :key="p">{{ p }}</li></ol
-            ></template
-          >
-          <label class="field-heading">选择目标目录</label
-          ><DirectoryPicker v-model="targets" /><label class="check-label"
-            ><input v-model="recursive" type="checkbox" role="switch" />包含所选目录的子目录</label
-          ><label v-if="mode === 'plan'" class="check-label"
-            ><input v-model="enabled" type="checkbox" role="switch" />保存后启用计划</label
-          >
-          <p class="help">{{
-            taskType === 'extract'
-              ? '为所选目录中的视频预先生成截图，包括已处理视频；有效缓存直接复用，供之后重命名使用。结果见“抽帧记录”。'
-              : '已命名或手动标记已处理的视频会跳过；还原后的视频可再次处理。新文件会先进行稳定性检查。'
-          }}</p
-          ><div v-if="dialogError" class="notice error" role="alert">{{ dialogError }}</div
-          ><div class="modal-actions"
-            ><button type="button" :disabled="busy" @click="mode = ''">取消</button
-            ><button
-              class="primary"
-              :disabled="
-                busy ||
-                !targets.length ||
-                (taskType !== 'extract' && !modelConfigID) ||
-                (taskType !== 'extract' && mode === 'manual' && !ready)
-              "
-              >{{ planSubmitLabel }}</button
-            ></div
-          ></form
-        ></ModalDialog
-      ></ModalTransition
-    >
+      ><PlanDialog
+        v-if="planDialog"
+        :mode="planDialog.mode"
+        :plan="planDialog.plan"
+        :ready="ready"
+        @close="planDialog = undefined"
+        @saved="planSaved"
+    /></ModalTransition>
     <ModalTransition
       ><ModalDialog
         v-if="restoreTarget"
