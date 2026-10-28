@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json/v2"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -43,18 +44,32 @@ func numberingRequestTest(t *testing.T, options numberingRequestTestOptions) num
 }
 func waitNumberingTest(t *testing.T, a *App, key string) numberingStatus {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		a.numberingMu.Lock()
-		s := a.numberingJobs[key].status
-		a.numberingMu.Unlock()
-		if s.Status != "running" && s.Status != "cancelling" {
-			return s
+	// Real clients renew the lease through status requests. The deadline only
+	// bounds a stuck test; durable file moves have no ten-second latency contract.
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	poll := time.Tick(10 * time.Millisecond)
+	for {
+		r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/numbering/jobs/"+key, nil)
+		r.SetPathValue("key", key)
+		w := httptest.NewRecorder()
+		a.numberingJobStatus(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("numbering status: got %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
 		}
-		time.Sleep(10 * time.Millisecond)
+		var status numberingStatus
+		if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil {
+			t.Fatal(err)
+		}
+		if status.Status != "running" && status.Status != "cancelling" {
+			return status
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("numbering task did not stop: %v: %+v", ctx.Err(), status)
+		case <-poll:
+		}
 	}
-	t.Fatal("numbering task did not stop")
-	return numberingStatus{}
 }
 func TestNumberingBackgroundPreviewConfirmationAndPaging(t *testing.T) {
 	a, _ := markTestApp(t, 0)
