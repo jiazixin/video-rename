@@ -2,11 +2,14 @@ package app
 
 import (
 	"cmp"
+	"errors"
 	"mime"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"video-rename/internal/domain"
 )
 
 var (
@@ -24,17 +27,25 @@ var (
 )
 
 // playback serves authenticated, seekable media without loading it into memory.
-func (a *App) playback(w http.ResponseWriter, r *http.Request) { a.serveMedia(w, r, videoExts, nil) }
+func (a *App) playback(w http.ResponseWriter, r *http.Request) {
+	a.serveMedia(w, r, mediaOptions{allowed: videoExts})
+}
 
 func (a *App) imagePreview(w http.ResponseWriter, r *http.Request) {
-	a.serveMedia(w, r, imageExts, func(ext string) string { return mime.TypeByExtension("." + ext) })
+	a.serveMedia(w, r, mediaOptions{allowed: imageExts, contentType: func(ext string) string { return mime.TypeByExtension("." + ext) }})
 }
 
 func (a *App) audioPlayback(w http.ResponseWriter, r *http.Request) {
-	a.serveMedia(w, r, audioExts, func(ext string) string { return cmp.Or(audioTypes[ext], "application/octet-stream") })
+	a.serveMedia(w, r, mediaOptions{allowed: audioExts, contentType: func(ext string) string { return cmp.Or(audioTypes[ext], "application/octet-stream") }})
 }
 
-func (a *App) serveMedia(w http.ResponseWriter, r *http.Request, allowed string, contentType func(string) string) {
+type mediaOptions struct {
+	allowed     string
+	contentType func(string) string
+}
+
+func (a *App) serveMedia(w http.ResponseWriter, r *http.Request, options mediaOptions) {
+	allowed, contentType := options.allowed, options.contentType
 	id := number(r.PathValue("id"))
 	e, err := a.Library.Get(r.Context(), id)
 	if err != nil {
@@ -43,7 +54,7 @@ func (a *App) serveMedia(w http.ResponseWriter, r *http.Request, allowed string,
 	}
 	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(e.Name)), ".")
 	if e.Kind != "file" || !strings.Contains(allowed, "|"+ext+"|") {
-		invalid(w, r, "id", "unsupported_media")
+		writeError(w, r, domain.InvalidField("id", "unsupported_media"))
 		return
 	}
 	f, err := a.Library.OpenPlayback(r.Context(), id)
@@ -65,14 +76,17 @@ func (a *App) serveMedia(w http.ResponseWriter, r *http.Request, allowed string,
 		}
 	}
 	// Playback outlasts the server write timeout.
-	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		writeError(w, r, err)
+		return
+	}
 	http.ServeContent(w, r, e.Name, st.ModTime(), f)
 }
 
 func (a *App) adjacentImage(w http.ResponseWriter, r *http.Request) {
 	direction := r.URL.Query().Get("direction")
 	if direction != "previous" && direction != "next" {
-		invalid(w, r, "direction", "invalid_choice")
+		writeError(w, r, domain.InvalidField("direction", "invalid_choice"))
 		return
 	}
 	entry, err := a.Library.AdjacentImage(r.Context(), number(r.PathValue("id")), direction == "previous")

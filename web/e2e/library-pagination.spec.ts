@@ -229,10 +229,12 @@ test('第二页后台重扫与改名不移动阅读位置和勾选行', async ({
     expect(
       (
         await page.request.post(`/api/entries/${rows[0]}/rename`, {
+          headers: {
+            'If-Match': entries[0].etag,
+            'Idempotency-Key': 'pagination-background-rename'
+          },
           data: {
-            name: 'zz-renamed.mp4',
-            version: entries[0].version,
-            key: 'pagination-background-rename'
+            name: 'zz-renamed.mp4'
           }
         })
       ).ok()

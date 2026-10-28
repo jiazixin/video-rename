@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"slices"
 
-	"video-rename/internal/systemsettings"
+	"video-rename/internal/systemsetting"
 )
 
 func (a *App) libraryScanRoutes(mux *router) {
-	store := systemsettings.Store{DB: a.DB}
+	store := systemsetting.New(a.db)
 	mux.HandleFunc("GET /api/library/scan", func(w http.ResponseWriter, r *http.Request) {
 		settings, err := store.Scan(r.Context())
 		if err != nil {
@@ -24,7 +24,7 @@ func (a *App) libraryScanRoutes(mux *router) {
 		send(w, http.StatusOK, map[string]any{"settings": settings, "status": a.Scanner.Snapshot(), "directory_paths": paths})
 	})
 	mux.HandleFunc("PUT /api/library/scan/settings", func(w http.ResponseWriter, r *http.Request) {
-		var settings systemsettings.ScanSettings
+		var settings systemsetting.ScanSettings
 		if !decode(w, r, &settings) {
 			return
 		}

@@ -1,84 +1,109 @@
-# 最新验收：代码质量整理与 Go 1.27.3 升级（2026-10-22）
+# 最新验收：全仓规范整改（2026-10-28）
 
-范围：基线 `92a6f78` 加本轮变更。本轮按代码质量检查结果清理死代码、未使用参数与样式，合并重复逻辑，改善命名并拆分过长函数；Go 升级至 1.27.3，GitHub Actions 改用 Node.js 26 并取最新补丁。未修改数据库结构、接口字段、配置协议或界面文案。上一轮记录见 [历史验收](archive/2026-10-20-preview-window-acceptance.md)，不用于证明本轮通过。
+范围：基线 `9329a23` 之后的当前工作区，按目录规范、代码规范及 Go / Web / Vue 技术栈规范完成本轮整改。本文区分原检查的误判、实际修复、已执行验证和未验证范围；不沿用旧验收的通过结论。此前累计记录已归档为 [整改前验收](archive/2026-10-27-before-full-compliance-acceptance.md)。
 
-## 变更要点
+原有 `Go代码规范.md` 的用户修改保持原样，未纳入本轮修复提交，未改规范来迁就实现。以下验收基于提交前工作区；发布构建仅为本地快照，未向远端发布。
 
-- 删除仅测试使用的 `Library.List`/`ListSorted`/旧 `ListOrdered`/旧 `ListPage` 包装，原 `*Filtered` 方法改名为 `ListOrdered`、`ListPage`；删除按路径改名的 `rename.NoReplace`（绕过逐层打开父目录的约定），测试改用 `NoReplaceAt`；`ValidateTitleWithKeywords` 改名为 `ValidateTitle`。
-- 删除 18 个无引用的 CSS 选择器（约 230 行）、5 个多余的类型导出、`parseMeta`/`startMark` 未使用参数、对整数时长的 NaN/Inf 判断，以及 History 页从未触发的数组响应分支（前端始终请求分页结果）；相应 E2E 模拟响应改为真实的分页结构。
-- 新增 `internal/timebucket`，供运行分析与用量分析共用趋势分桶；新增 `domain.ActiveRunStatusesSQL`/`ActiveRunStatus` 与前端 `isActiveRunStatus`，替代 11 处 SQL 与 6 处前端硬编码列表（SQL 文本与 `run_active` 部分索引保持逐字一致）。
-- 拆分 `runstats.Analytics`、`jobs.inferWithRetry`、`jobs.Create`、`jobs.process`、`SetProcessedWithProgress`、`ThinkingFields`、`retryHistory`，认知复杂度均降至 60 以下；运行来源分类只保留 SQL 一处定义。
-- Library.vue：标记流程与吸顶表头移入 `mark-entries.ts`、`sticky-header.ts`；合并批次创建、还原、删除请求与面包屑路径；请求计数器、弹窗模式、`load` 参数改为有含义的名称与类型；`any` 改为 `Operation`、`LogRecord`、`ProbeResult` 等契约类型。通用函数改名为 `formatSize`、`formatTime`、`newRequestKey`、`isVideo`、`isMarked`，两个播放器共用 `formatPlaybackTime`。
+本轮直接更新当前接口、配置及调用方，不保留旧字段、旧导入路径或旧数据库迁移分支。当前数据库结构号为 **20261028**；已有不支持的数据库拒绝打开并保留原样，不自动清空或重建。测试使用临时数据库、隔离目录、合成媒体和本地假服务，不以用户数据或真实外部服务代替夹具。
+
+## 对原检查的核实与修正
+
+原报告的 P1/P2 主体判断成立：数据库连接暴露、HTTP 直接 SQL、缺少统一写事务、PATCH 实际全量保存、200/409/请求体幂等与版本契约、业务全局样式、秘密类型、参数数量、Fuzz、测试诊断和清理边界等问题均已核实并整改。以下区分确实需要收紧的措辞、原报告已经判断正确的部分，以及本轮补查得到的技术约束；不把原报告未作的判断归给它。
+
+| 原报告内容或检查项 | 核实结论 |
+| --- | --- |
+| DSN 缺少 `journal_mode(WAL)`、`_txlock=immediate` | DSN 缺项属实，但原实现已在启动时执行 `PRAGMA journal_mode=WAL`，不能推导为数据库从未启用 WAL。本轮统一所有连接的 DSN 与事务行为。 |
+| 数据库访问未收口、SQL 分散在 13 个包 | 连接暴露与 HTTP SQL 是实际问题；SQL 位于多个领域仓储本身不违规，不需要全部集中到一个全局包。当前保留领域归属，隐藏连接并统一 Write/View，HTTP 记录查询移至 `internal/record`。 |
+| “非法”构建标签 `scale_large` | 它是 Go 可识别的自定义标签，只是违反本项目白名单。现改为 `integration && scale`；没有扩大规范允许范围。 |
+| 超长函数与文件“只是拆分信号” | 原判断正确，规范不是硬性行数上限。本轮按职责拆分，未为凑行数增加转发层；仍较长的扫描、分析与目录页面不自动构成违规。 |
+| `newLogger`、`app.Serve` 与模板有差异 | logger 的错误/关闭边界及构建身份传播确需补齐，但类型必须叫 `app.Build` 不是硬性要求。本轮完整传递版本、提交、时间和 modified 状态。 |
+| 中文提示词/通知/种子数据不是违规；既有 Prettier 配置可沿用 | 原判断正确。保留已登记的业务数据例外和已有格式配置；整改的是英文开发者诊断、测试失败说明及源码注释。中文测试输入本身不是问题。 |
+| 存储与接口时间格式不固定、缺少统一类型 | 原问题成立。补充约束是文件安全指纹必须保留纳秒，不能随展示时间截断。本轮用 `timefmt` 固定接口/业务时间，单独保存 `mtime_ns`。 |
+| cron 维护状态尚未核实 | 原报告没有作出错误结论。本轮确认 v3.0.1 仍为最新稳定版，仓库未归档但默认分支长期无新提交；不能称为活跃维护，证据与保留理由见 [依赖维护](IMPLEMENTATION.md#依赖维护与构建版本)。 |
+| race、漏洞、integration、scale、E2E 未执行；Sleep 未逐个核对 | 这是原报告明确披露的验证缺口，本轮补做。余下 Sleep 属有截止时间的真实 I/O 轮询或显式模拟慢媒体/模型，不以固定睡眠猜测异步完成。 |
+
+项目支持的 OpenAI 兼容模型协议属于当前产品能力，与本次删除旧 API、配置、数据库兼容分支是两件事。漏洞扫描也应区分可达代码与整个依赖模块的告警范围，详见下文；这两点是本轮补充约束，不是原报告的误判。
+
+运行期编辑模型、提示词、采样等设置是现有产品功能，已登记为配置生命周期例外；任务仍冻结自己的快照。文件改名、编号及目录发布在最终事务中保留窄范围 stat/fstat 身份复核，也已登记例外。外部进程不受应用锁约束，不能为了消除事务内文件 I/O 而删除这道安全检查；遍历目录、读写文件内容、网络和外部进程仍在写事务之外。
+
+## 实际完成的修复
+
+### 存储、认证与生命周期
+
+- 数据库连接私有化，统一 `Write/View`、有返回值的事务辅助及 `CollectRows`；提交、回滚、行迭代、关闭、`RowsAffected` 和 `LastInsertId` 错误按边界传播，确实允许忽略的错误说明原因。目录扫描暂存库也使用明确的读写边界；分页计数和数据在同一读快照中完成。
+- DSN 固定 WAL、FULL 同步、外键与 busy timeout；写池单连接并使用 immediate 事务，读池使用 `file:`、`mode=ro` 和 `query_only`。补充替换连接、只读隔离、旧库原样保留、实例锁、密钥缺失、ID 不复用及关闭失败的回归。
+- 新增 `secret.Value`，普通格式化、结构化日志及 JSON 默认脱敏；配置、加密持久化、密码派生和出站认证只在明确边界 `Reveal`。管理员密码使用独立随机盐和 Argon2id（19 MiB、2 轮、并行度 1）；认证组件不保留密码明文或可绕过 KDF 的快速密码摘要。会话令牌仍只存 SHA-256。
+- 读写与外部请求传递调用方 context；构造、启动、退出分离，后台组件提供 `Run(ctx) error`，结构体不保存 context。已开始且需要落盘的结果使用有界清理 context；退出等待 worker，超时不提前关闭仍被使用的存储。会话读取响应取消，有效会话续期最多等待写池 100 毫秒，失败不发新 Cookie。
+- 调度、目录扫描与帧缓存等后台错误进入注入的日志器或返回到监督边界；修复帧缓存失败路径因日志器未正确保存而 panic。暂停抽帧只取消调度等待，已成功生成的帧仍在有界时间内完成校验与发布。
+
+### API、时间与命令行
+
+- 请求边界拒绝未知字段、只读元数据、非法数字及不支持的媒体类型；列表使用对象封装，创建/受理/空响应状态与 `Location` 对齐。请求 ID、缓存头、404/405 JSON 错误及 `Allow` 保持一致，完整契约见 [API](API.md)。
+- 提示词、模型与计划使用 JSON Merge Patch；并发修改以 `ETag` / `If-Match` 校验，数据库继续原子比较内部版本。POST 幂等键通过请求头传递，响应持久化后再发出；并发、重启、容量、待确认结果和重放响应头均有回归。修复空响应被存为 NULL 后触发 500 的问题，204 结果可以重放。
+- 普通存储与 API 时间使用 `internal/timefmt` 的 `2006-01-02T15:04:05.000Z`，严格读取当前格式；`/api/info` 的已知构建时间采用同一类型，未知时省略；文件指纹独立保留纳秒，不用展示时间代替安全证据。JSON 使用 v2，零值省略遵循 `omitzero` 语义。
+- 部署配置与任务配置分离；配置验证不偷偷归一化，YAML 拒绝未知/重复字段、多文档和超限输入。CLI 的帮助、参数错误、配置错误、stdout/stderr、退出码与信号关闭行为对齐规范。无 Git 源码包显示 `dev`；有 VCS 的构建保留可取得的版本、revision 和 modified 信息。
+
+### Go、Web 与验证基础
+
+- Go 包统一使用单数名称（`job`、`model`、`prompt`、`notification`、`record`、`runstat`、`systemsetting`），更新调用方，不保留旧导入别名。整理参数对象、接收者、导出注释、英文错误与测试诊断，保留中文业务数据。
+- Web API 客户端统一错误对象、请求 ID、取消、超时和受限重试；同一逻辑 POST 重试沿用同一幂等键。模型编辑只提交允许写入的字段，修复把 ID、ETag 等响应元数据再次提交而被服务端拒绝的问题。
+- 业务样式迁回 features，theme.css 从 2566 行减至 1246 行；SystemSettingsPage 迁入 features/settings，ToastNotice 成为共享组件。composable 使用 onScopeDispose，覆盖 effectScope 停止；共享会话只读、watch 取消并防止迟到结果回写。补 color-scheme、嵌套弹窗焦点及组件测试，删除 execCommand 旧剪贴板回退；SPA 直接地址由服务端回退，未知静态文件仍为 404。当前 CSP 与设计变量保持一致。
+- 增加 YAML 配置、ffprobe JSON、文件名清洗和模型响应四类 Fuzz 及种子；CI 使用固定工具版本检查格式、静态分析、全部发布目标 vet、竞态、短时 Fuzz、集成测试、Chromium E2E 和发布快照。沿用已有 `go.yaml.in/yaml/v3`；新增 Argon2id 使用 Go 项目的 `x/crypto`，维护与漏洞范围见 [开发与测试](IMPLEMENTATION.md#依赖维护与构建版本)。
+
+### 复核中确认并修复的文件安全与并发缺陷
+
+- 编号最后提交事务期间，外部进程替换文件、改写内容或替换父目录时，旧流程仍可能记录 committed。回归先复现失败，再在事务提交前完成持有句柄和实际路径的最终核验；失败保留 review 日志，不提交成功事件，也不覆盖外部新内容。证据为 `commit_identity_test.go` 的改名/编号回归，以及本地 `numbering-before.log`、`numbering-after.log`。
+- `NumberingTreeHistory` 在占有只读连接时又调用 `Path/Numbering` 获取连接，可能耗尽四连接读池。现先验证路径，只在一个 View 中收集 ID 并关闭，再逐项读取。含两条已提交历史的 8 并发回归在修复前全部触发 5 秒截止；修复后 64 次读取通过，并纳入全量测试。
 
 ## 已执行验证
 
-本机 macOS / arm64，Go 1.27.3，Node.js 26.12.0。浏览器测试使用隔离服务器 18790、临时数据库、合成媒体、真实 FFmpeg 和本地假模型。
+本机 **macOS / arm64（Apple M2 Max），Go 1.27.3，Node.js 26.12.1，npm 11.20.0，FFmpeg 9.0.2**。日志位于被忽略的 `.cache/compliance/`；下表列出本轮证据文件，不把它们当作需要提交的源码。完整复现命令在 [开发与测试](IMPLEMENTATION.md)。
 
-| 命令或检查 | 结果 |
-| --- | --- |
-| `npm --prefix web ci`、`format:check`、`check`、`build` | 通过 |
-| `go mod verify`、gofmt、`go vet ./...`（本机、darwin/arm64、linux/amd64） | 通过 |
-| `go test -count=1 ./...`、`go test -race -count=1 ./...` | 通过 |
-| `go test -tags=integration -count=1 ./internal/media ./cmd/video-rename` | 通过 |
-| `go build -buildvcs=true` 本机与 linux/amd64 交叉编译 | 通过 |
-| 全量 `npm --prefix web run test:e2e` | 183 通过、0 失败（9.9 分钟） |
-| `npm --prefix web audit`、`govulncheck ./...` | 均未发现漏洞 |
-| staticcheck、deadcode（macOS / Linux 目标）、unparam、knip | 无死代码与未使用参数；staticcheck 剩余 6 条 ST1005 为 Anthropic、Claude、Bark、Cron 等专有名词开头的中文提示，保留 |
+| 检查 | 本轮结果 | 本地证据 |
+| --- | --- | --- |
+| `go mod verify`、`go mod tidy -diff`、gofmt、goimports | 通过，模块可验证，无待整理差异 | `mod-verify.log`、`mod-tidy.log`、`gofmt-final.log`、`goimports-final.log` |
+| `go vet ./...`，全部 8 个发布目标；`go vet -tags integration,scale ./...` | 通过，无诊断；交叉 vet 不代表目标实机测试 | `vet-<os>-<arch>.log`、`vet-tags.log` |
+| staticcheck v0.8.2 | 通过，无遗留诊断 | `staticcheck-final-confirmed.log` |
+| `go test -p=2 -count=1 ./...` | 27 个有测试包通过；另 2 包无测试文件 | `unit-final-confirmed.log` |
+| `CGO_ENABLED=1 go test -p=2 -race -count=1 ./...` | 全量通过，无竞态报告 | `race-final.log` |
+| `go test -tags=integration -count=1 ./internal/media ./cmd/video-rename` | 真实 FFmpeg 与临时 Git 仓库构建版本测试通过 | `integration-final.log` |
+| 四类 Fuzz，各 `-fuzztime=15s -parallel=2` | YAML、ffprobe JSON、文件名、模型响应全部通过；这是短时输入探索 | `fuzz-config.log`、`fuzz-media.log`、`fuzz-naming.log`、`fuzz-vision.log` |
+| Web `format:check`、`lint`、`typecheck`、`test`、`build` | 全通过；16 个单测文件、53 项测试通过 | `web-format.log`、`web-lint.log`、`web-typecheck.log`、`web-unit.log`、`web-build.log` |
+| `npm audit` | 本次扫描 0 漏洞 | `npm-audit.log` |
+| 重新构建 Web 与服务后的 Chromium E2E | **183 通过、0 失败、0 跳过，10.4 分钟**；隔离端口 18790、合成媒体、真实 FFmpeg、本地假模型 | `e2e.log` |
+| govulncheck v1.9.0（含 verbose） | 0 可达符号漏洞、0 导入包漏洞；1 项模块告警，见下一节 | `govulncheck-final.log`、`govulncheck-verbose.log` |
+| GoReleaser v2.18.3 配置检查及本地 snapshot | 8 个目标构建、归档成功，8 个 SHA-256 校验通过；只预演，未向远端发布 | `release-check.log`、`release-snapshot.log`、`release-checksums.log` |
+| 本机 snapshot 的 `--version` | 输出保留当前伪版本和 `+dirty (modified)`，没有冒充正式 tag 版本 | `release-version.log` |
+| 从 darwin/arm64 压缩包提取的二进制运行冒烟 | 隔离配置启动、健康检查、构建时间格式、登录/会话、3 个 SPA 直达地址、内嵌 JS、缺失静态文件 404、SIGTERM 退出码 0 均通过；临时夹具已删除 | `release-runtime-smoke.py`、`release-runtime-smoke.log` |
+| 无 `node_modules`、`web/dist`、`bin`、`.git` 的源码副本重建 | `npm ci`、Web 构建、Go 构建和 `--version` 均通过，版本为 `video-rename dev`；使用本机已安装工具链 | `source-copy.py`、`fresh-build.log` |
 
-## 补充：竞态模式下的偶发测试失败（2026-10-22）
+8 个发布目标为 linux/amd64、linux/arm64、linux/ppc64le、linux/s390x、linux/riscv64、linux/loong64、darwin/amd64、darwin/arm64。除本机 darwin/arm64 外，其余 7 个目标只有本轮交叉检查和构建证据。
 
-`92a6f78` 的 GitHub Actions 在 `go test -race` 中失败于 `TestDirectoryProcessingFiltersUseSubtreesBeforePaging`：游标报"目录已刷新，请返回第一页"，随后各子测试计数为 0。原因在测试夹具：它直接写入合成的目录索引，磁盘上的媒体根目录为空；`listOrdered` 遇到刷新时间超过 30 秒的目录会启动后台重扫，CI 竞态模式下该测试耗时 31.9 秒，重扫把空目录发布为新 generation。把根目录刷新时间回拨 31 秒后本机稳定复现同样报错，与产品行为无关。
+发布包冒烟脚本首次以完整字符串匹配 HTML，因结束标签中的合法换行误判失败；改用 HTML 解析器检查应用挂载节点与脚本引用后通过，未修改产品代码或放宽 HTTP 状态、资源加载和退出断言。
 
-修正：测试把合成根目录的刷新时间写为未来时间，不再受 30 秒过期检查影响。验证：在列表断言前临时加入 31 秒等待后该测试通过（等待已移除）；`go test -race -count=1 ./internal/library` 通过。
+## 规模与基准
 
-## 接口约定对齐（2026-10-27，未提交）
+三组命令均已结束并返回 0；普通 scale 与超大文件测试顺序执行。没有用历史报告的耗时或中间进度替代本轮终态。
 
-按 [代码规范.md](../代码规范.md) 第 5 节调整，项目未上线，不保留旧接口：错误码改为小写（`internal` 等），新增未认证、无权限两类；运行记录严格解析为 JSON 编码的错误记录，不再兼容纯文本；会话表去掉 `csrf` 列（`schemaVersion` 20261027）；配置键改为 `media_path`/`tmp_storage`，新增 `log.level`/`log.format`；认证改为 `Authenticate`/`Login`/`Logout`，登出返回 204；新增 `/healthz` 与 `/api/info`；列表统一返回 `{"items": [...]}`；数字型路径/查询参数非法时返回 400 `invalid_argument`；非 JSON 请求体返回 415，过大返回 413；日志器由构造参数注入。前端改用 `apiItems` 读取列表（含计划预览），错误文本按新错误码；e2e 夹具改为编码记录与 `{items}` 列表。
+| 项目 | 结果 | 本地证据 |
+| --- | --- | --- |
+| `-tags=scale -run '^TestScale'`，library、job、app、runstat | 12 个顶层测试通过；包含 30 万索引/候选、5 万分页、2 万标记/编号、断线后台标记、历史模型来源与 10 万条目/请求统计 | `scale-final.log` |
+| `-tags=integration,scale -run '^TestScaleLarge'` | 通过，总 393.302 秒；53 万真实文件、111 目录首次/不变重扫；50 万文件、100 目录标记，Changed=500000、Failed=0；精确计数、候选清理、完整性和外键检查通过，另含 30 万索引进度测试 | `large-scale.log` |
+| `-tags=scale -run '^$' -bench . -benchtime=1x -benchmem -p=1 ./...` | 全部通过，4 个 benchmark 入口、16 个案例；历史来源查询、缓存账目保留、目录扫描与递归扫描。每案只运行一次，是基准冒烟，不是稳定性能估计 | `benchmarks.log` |
 
-验证：Go 全套检查（gofmt、goimports、vet、staticcheck、race 测试、govulncheck）通过；vue-tsc、lint、vitest 21 项通过；重新构建 `web/dist` 与 `bin/video-rename` 后 Playwright 184 项全部通过。首轮全量 e2e 有 15 项失败（直接调用期望裸数组、旧消息夹具、`processing_log` 位置），第二轮剩 2 项（计划预览仍按数组读取、测试直接读取日志列表），均已修正后重跑通过。
+首轮规模失败有两处夹具问题：为了记录库大小而将 wal_checkpoint 放进写事务，以及 SQL strftime 仍生成秒精度时间。前者改为记录数据库与 WAL 的真实总大小，后者输出固定毫秒；计数、分页、统计及完整性断言均保留，重跑全套通过。
 
-## 代码规范与目录规范对齐（2026-10-27）
+规模结果只描述本机隔离数据和当次负载，不代表 NAS 吞吐，也不替代断电与真实磁盘故障测试。
 
-按 [代码规范.md](../代码规范.md)、Go / Web / Vue 技术栈规范与 [目录规范.md](../目录规范.md) 逐条整改：
+## 依赖告警与验证边界
 
-- Go：15 个带连字符的文件改为下划线命名；`framecache` 不再混用 JSON v1/v2（改用 v2 自定义编解码，manifest 与缓存键字节不变，已用临时测试对比）；`%v` 包装错误、无参 `fmt.Errorf`、`os.IsNotExist`/`IsExist` 全部改正；文件权限统一为 `0o600` 写法；删除 `Library` 中“无 ctx + `XxxContext`”的成对 API，`Get`、`PreviewNumbering(ctx, NumberingRequest)`、`ApplyNumbering`、`AutoCommit` 等改为 ctx 首参，并沿 `jobs.Create`、`Scheduler.Save`/`Tick` 与 HTTP 处理器传递；应用编号使用 `context.WithoutCancel`，关闭阶段不再用 `context.Background()`；稳定等待可注入计时器，暂停与租约测试改为轮询断言；页面与 API 统一使用规范的默认 CSP（去掉 `'unsafe-inline'` 与 `data:`），并有测试断言。
-- Web：全局提示改为 `app/use-toast.ts` 的 `useToast()` 与 `App.vue` 中唯一的 `ToastNotice`，离开页面时立即撤下本页提示；用户文案统一经 `errorText`（`error-text.ts` 改为内部码表 `server-codes.ts`，`displayPath` 移至 `lib/format/path.ts`）；剪贴板使用自有 `ClipboardError`，`lib` 不再依赖 `app`；图表颜色移入 `theme.css` 的 `--chart-*` 变量；去掉脚本与模板中的嵌套三元并启用 `no-nested-ternary`；去掉模板非空断言、补全空 `catch` 注释、时区统一用 `localTimeZone()`；`LibraryPage` 拆出删除、批量操作、标记三个弹窗组件。修复 `AudioPlayer` 把“读取中”显示为“读取失败”的问题。
-- 目录与文档：`SystemSettings.vue` 改名 `SystemSettingsPage.vue`；`.gitignore` 去掉旧路径；README 目录例外去掉冗余行，代码例外登记 ESLint `allowNumber`；`DESIGN.md` 登记断点、提示与图表配色约定，修正 `Modal`、`error-text.ts` 旧引用。
+本次 `govulncheck -show verbose` 报告 **0 个影响代码的漏洞、0 个导入包漏洞、1 个依赖模块告警**。告警 [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932) 针对 `golang.org/x/crypto/openpgp` 及相关子包：这些包停止维护，所有版本受影响，没有已知修复版本。本项目使用 `golang.org/x/crypto v0.58.0` 的 Argon2id，没有导入 OpenPGP；未通过隐藏告警或移除密码 KDF 来获得“零告警”。结论仅代表本次漏洞数据库与当前导入图。
 
-本机 macOS / arm64，Go 1.27.3，Node.js 26。
+以下仍未验证，不能由本机通过结果推导为已支持或已发布：
 
-| 命令或检查 | 结果 |
-| --- | --- |
-| `go mod verify`、`go mod tidy -diff`、gofmt、goimports | 通过 |
-| `go vet`（本机、darwin/arm64、linux/amd64、`-tags integration,scale`）、staticcheck | 通过 |
-| `go test -race -count=1 ./...`、`go test -tags=integration ./internal/media ./cmd/video-rename` | 通过 |
-| `govulncheck ./...`、linux/amd64 交叉编译 | 无漏洞；可构建 |
-| `npm --prefix web run format:check`、`lint`、`typecheck`、`test`（25 项）、`build`、`npm audit --omit=dev` | 通过，0 漏洞 |
-| 无头 Chromium 逐页检查（隔离夹具服务器） | 新 CSP 下无违规 |
-| 全量 `npm --prefix web run test:e2e`（重新构建 `web/dist` 与 `bin/video-rename` 后） | 184 通过、0 失败（10.2 分钟）。上一轮全量有 1 项失败：离开页面时提示随页面淡出而未立即消失，改为路由离开即撤下本页提示后通过 |
-
-保留未改：E2E 中约 600 处 CSS 定位器未改为 `getByRole`/`getByLabel`；`LibraryPage`（1913 行）与 `RunsPage`（1056 行）未进一步拆分。另发现 `models.Store.Get` 等 I/O 方法缺少 ctx、`App` 与 `Library` 在结构体中保存 context，属 Go 规范第 5 节的存量差异，本轮未处理。
-
-## 验证边界
-
-未运行规模测试（`-tags=scale`、`scale_large`）。未在 Linux 实机运行二进制，交叉编译只证明可构建；Node.js 26 与 Go 1.27.3 的 GitHub Actions 结果以推送后的运行页面为准。`npm outdated` 列出的小版本更新（如 vite 8.3.5、vue 3.5.44、vue-tsc 3.3.13）本轮未升级。
-
-## 补 ctx 与生命周期、E2E 定位器、页面拆分（2026-10-27，未提交）
-
-处理上一节“保留未改”的三项。
-
-- Go 第 5 节：`storage.Open`、各 Store 方法、`library`/`jobs`/`scheduler`/`notifications` 的数据库与出站请求全部改为 ctx 首参并沿调用链传递（HTTP 用 `r.Context()`，测试用 `t.Context()`）。`App` 改为 `New(ctx)` 只构造、`Start(ctx)` 启动、`Shutdown(ctx)` 取消并等待后关闭存储（可重复调用）；通知、批次、计划、目录扫描、帧缓存的 `Loop` 改为 `Run(ctx) error`。结构体不再保存 context：删除 `App.ctx`、`Library.RefreshContext`、`markWalk.ctx` 与批次暂停的 `runControl.parent/schedule`，请求发起的后台工作（标记、编号、目录刷新、手动扫描）用 `context.WithoutCancel(r.Context())` 并登记取消函数，暂停改为登记调度等待的取消函数。取消后仍须写入的结果（批次完成/取消、失败诊断、抽帧记录、模型尝试、改名与编号的提交和回滚、删除后的索引、通知投递结果）经 `storage.Detach` 脱离取消并限时 30 秒；早期读取被取消时按取消而非失败结束批次。
-- E2E：约 700 处 CSS 定位器改为 `getByRole`/`getByLabel`/`getByText`/`getByTitle`，公共辅助在 `e2e/support.ts`（`toasts`、`bodyRows`、`pageReadout`）与 `e2e/run-record-pages.ts`。为此补充了可访问名称与角色：批量操作与标签栏 `role=group`、卡片与批次条目 `article` 名称、文件名列 `rowheader`、目录路径导航、媒体元素标签、运行详情的统计/生命周期/请求尝试列表与具名区域、用量页面板区域与 KPI/图例/分档列表、图表提示名称等。剩余 56 行 CSS 均为布局几何、配色样式、SVG 内部图形，以及剪贴板降级用的临时 `textarea`（无可区分角色），已就近注释。4 处 `waitForTimeout` 均为测量时长并已有注释。
-- 页面拆分：`LibraryPage` 先抽出 `delete-entries.ts`、`batch-actions.ts`、`entry-dialog.ts`，再拆出 `EntryDialog`、`ImagePreviewDialog`、`DirectoryActions`（1914 → 1613 行）；`RunsPage` 抽出 `run-filters.ts`、`run-timing.ts`、`plan-form.ts` 与 `PlanDialog`（1057 → 750 行）。
-
-本机 macOS / arm64，Go 1.27.3，Node.js 26。
-
-| 命令或检查 | 结果 |
-| --- | --- |
-| gofmt、goimports、`go vet`（本机、linux/amd64、linux/arm64、`-tags integration,scale`）、staticcheck、`go mod tidy -diff` | 通过 |
-| `go test -count=1 ./...`、`go test -race -count=1 ./...`、`go test -tags=integration ./internal/media ./cmd/video-rename` | 通过 |
-| `govulncheck ./...` | 无漏洞 |
-| `npm --prefix web run format:check`、`lint`、`typecheck`、`test`（25 项）、`build` | 通过 |
-| 全量 `npm --prefix web run test:e2e`（重新构建 `web/dist` 与 `bin/video-rename` 后） | 184 通过、0 失败（10.4 分钟）。按批改定位器期间的失败：复制按钮点击后改名为“已复制”、分页读数设为 `role=status` 与空状态提示冲突（已撤回该角色）、运行记录表含诊断行导致行序错位、内容列与状态列同为“待统计”，均已修正 |
-
-未覆盖：仅本机实测，未在 Linux 目标环境运行 E2E；`LibraryPage` 仍超过 1600 行，文件表格行与媒体播放弹窗未继续拆分。
+- Linux 实机以及本机之外的 7 个目标运行环境；交叉 vet、编译与归档不能证明运行正确。
+- 真实 SMB/NFS 延迟、服务器差异、掉线重连、断电及物理磁盘故障。隔离故障注入验证了错误路径，不等于这些目标环境实测。
+- Firefox、Safari 及真实移动设备；本轮浏览器结果来自 Chromium，包含桌面/窄屏、交互与可访问性回归。
+- 真实模型、通知渠道和其他外部服务的费用、限流、协议差异与可用性；这些测试使用本地假服务。
+- 修改后的 GitHub Actions 在线运行、正式 tag 发布、远端 Release 下载与安装、Apple 签名公证；本地 snapshot 没有执行发布。
+- 长时间 Fuzz 浸泡；四类 15 秒运行不能证明输入空间已穷尽。

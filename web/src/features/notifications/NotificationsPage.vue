@@ -354,3 +354,32 @@
           @change="changePage" /></div></div
   ></section>
 </template>
+
+<style scoped>
+  .section-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 32px 0 17px;
+  }
+  .section-heading h2 {
+    font-size: 16px;
+  }
+  .count {
+    font-size: 10px;
+    color: var(--ash);
+    padding: 2px 6px;
+    background: var(--palette-f1f3f4);
+    border-radius: 4px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .section-heading > .subtle {
+    font-size: 10px;
+  }
+  @media (max-width: 800px) {
+    .section-heading .subtle {
+      display: none;
+    }
+  }
+</style>

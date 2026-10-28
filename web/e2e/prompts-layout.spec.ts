@@ -12,9 +12,10 @@ async function mockPrompts(page: Page) {
     id: 100 + i,
     title,
     body: `用于测试 ${title} 的提示词正文。`,
+    etag: '"v1"',
     version: 1,
-    created: '2026-10-01T00:00:00Z',
-    updated: '2026-10-01T00:00:00Z'
+    created: '2026-10-01T00:00:00.000Z',
+    updated: '2026-10-01T00:00:00.000Z'
   }))
   await page.route('**/api/prompts**', async (route) => {
     const request = route.request()
@@ -35,9 +36,15 @@ async function mockPrompts(page: Page) {
     expect(row).toBeDefined()
     if (!row) throw new Error(`Unexpected prompt request: ${request.method()} ${path}`)
     const body = request.postDataJSON()
-    expect(body.version).toBe(row.version)
+    expect(request.headers()['if-match']).toBe(row.etag)
+    expect(body).not.toHaveProperty('version')
     if (request.method() === 'PATCH') {
-      Object.assign(row, { title: body.title, body: body.body, version: row.version + 1 })
+      Object.assign(row, {
+        title: body.title,
+        body: body.body,
+        version: row.version + 1,
+        etag: `"v${row.version + 1}"`
+      })
       await route.fulfill({ json: row })
     } else {
       expect(request.method()).toBe('DELETE')
@@ -53,7 +60,7 @@ async function login(page: Page) {
   await page.getByLabel('密码', { exact: true }).fill('test-password-123')
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await expect(page.getByRole('heading', { name: '文件目录.' })).toBeVisible()
-  await page.goto('/#settings/prompts')
+  await page.goto('/settings/prompts')
   await expect(page.getByRole('heading', { name: '提示词库', exact: true })).toBeVisible()
 }
 

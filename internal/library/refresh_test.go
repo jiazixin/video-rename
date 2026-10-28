@@ -2,6 +2,7 @@ package library
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"video-rename/internal/domain"
+	"video-rename/internal/storage"
 )
 
 type refreshTestEntry struct {
@@ -29,7 +31,9 @@ func TestRefreshMetadataFailureKeepsCompleteGeneration(t *testing.T) {
 			put(t, filepath.Join(root, "old.mp4"))
 			refresh(t, l, 1)
 			var generation int64
-			if err := l.DB.QueryRow("SELECT generation FROM directory_state WHERE dir=1").Scan(&generation); err != nil {
+			if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT generation FROM directory_state WHERE dir=1").Scan(&generation)
+			}); err != nil {
 				t.Fatal(err)
 			}
 			for _, name := range []string{"a.mp4", "b.mp4", "c.mp4"} {
@@ -68,7 +72,9 @@ func TestRefreshMetadataFailureKeepsCompleteGeneration(t *testing.T) {
 			}
 			var published int64
 			var scanError string
-			if err := l.DB.QueryRow("SELECT generation,error FROM directory_state WHERE dir=1").Scan(&published, &scanError); err != nil {
+			if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT generation,error FROM directory_state WHERE dir=1").Scan(&published, &scanError)
+			}); err != nil {
 				t.Fatal(err)
 			}
 			if published != generation || scanError == "" {
@@ -76,7 +82,9 @@ func TestRefreshMetadataFailureKeepsCompleteGeneration(t *testing.T) {
 			}
 			for name, want := range map[string]int{"old.mp4": 1, "a.mp4": 0, "b.mp4": 0, "c.mp4": 0} {
 				var count int
-				if err := l.DB.QueryRow("SELECT COUNT(*) FROM entries WHERE parent=1 AND name=? AND present=1", name).Scan(&count); err != nil {
+				if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+					return tx.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM entries WHERE parent=1 AND name=? AND present=1", name).Scan(&count)
+				}); err != nil {
 					t.Fatal(err)
 				}
 				if count != want {
@@ -109,7 +117,7 @@ func TestRefreshEmptyDirectoryKeepsCompleteGeneration(t *testing.T) {
 }
 
 func TestRefreshMetadataChangesPublishNewGeneration(t *testing.T) {
-	for _, change := range []string{"size", "mtime"} {
+	for _, change := range []string{"size", "mtime_ns"} {
 		t.Run(change, func(t *testing.T) {
 			l, root, _ := fixture(t)
 			path := filepath.Join(root, "a.mp4")
@@ -125,10 +133,7 @@ func TestRefreshMetadataChangesPublishNewGeneration(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				at, err := time.Parse(time.RFC3339Nano, old.Mtime)
-				if err != nil {
-					t.Fatal(err)
-				}
+				at := time.Unix(0, old.ModifiedNS)
 				if err := os.Chtimes(path, at.Add(time.Second), at.Add(time.Second)); err != nil {
 					t.Fatal(err)
 				}
@@ -142,7 +147,7 @@ func TestRefreshMetadataChangesPublishNewGeneration(t *testing.T) {
 			if current.ID != old.ID || current.Identity != old.Identity || current.Version != old.Version+1 {
 				t.Fatalf("content change lost identity or version: before=%+v after=%+v", old, current)
 			}
-			if _, err := l.ListOrdered(t.Context(), 1, 0, 50, before.Generation, "", "", "", false, "name_asc"); err == nil {
+			if _, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 50, Generation: before.Generation, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"}); err == nil {
 				t.Fatal("metadata change accepted an old-generation cursor")
 			}
 		})
@@ -235,10 +240,12 @@ func TestRefreshSlowMetadataLeavesDatabaseAvailable(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	var count int
-	if err := l.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM entries").Scan(&count); err != nil {
+	if err := l.db.View(ctx, func(tx *sql.Tx) error { return tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM entries").Scan(&count) }); err != nil {
 		t.Fatalf("database read blocked by filesystem metadata: %v", err)
 	}
-	if _, err := l.DB.ExecContext(ctx, "UPDATE entries SET observed=observed WHERE id=1"); err != nil {
+	if _, err := storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(ctx, "UPDATE entries SET observed=observed WHERE id=1")
+	}); err != nil {
 		t.Fatalf("database write blocked by filesystem metadata: %v", err)
 	}
 }

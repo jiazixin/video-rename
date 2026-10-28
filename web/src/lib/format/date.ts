@@ -52,3 +52,25 @@ export function formatPlaybackTime(seconds: number): string {
   const minutes = String(Math.floor(s / 60) % 60).padStart(2, '0')
   return `${hours ? `${String(hours)}:` : ''}${minutes}:${String(s % 60).padStart(2, '0')}`
 }
+
+/** Estimated duration in seconds, rounded to the nearest second. */
+export function formatEstimatedTime(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds))
+  if (s < 60) return `${s}s`
+  if (s < 3600) return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`
+  return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`
+}
+
+/** Elapsed duration in seconds, including all units between days and seconds. */
+export function formatElapsedTime(value: number): string {
+  const seconds = Math.max(0, Math.floor(value))
+  const days = Math.floor(seconds / 86400),
+    hours = Math.floor((seconds % 86400) / 3600),
+    minutes = Math.floor((seconds % 3600) / 60)
+  const parts: string[] = []
+  if (days) parts.push(`${days}d`)
+  if (days || hours) parts.push(`${hours}h`)
+  if (days || hours || minutes) parts.push(`${minutes}m`)
+  parts.push(`${seconds % 60}s`)
+  return parts.join('')
+}

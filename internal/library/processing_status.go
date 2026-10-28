@@ -6,11 +6,12 @@ import (
 	"encoding/json/v2"
 
 	"video-rename/internal/domain"
+	"video-rename/internal/storage"
 )
 
 // These expressions share the live state used by Get, filtering, and sorting.
 // They expect the current entry to be aliased as e.
-const entryProcessedSQL = `COALESCE((SELECT source FROM marks m WHERE m.identity=e.identity AND m.size=e.size AND m.mtime=e.mtime),'')`
+const entryProcessedSQL = `COALESCE((SELECT source FROM marks m WHERE m.identity=e.identity AND m.size=e.size AND m.mtime_ns=e.mtime_ns),'')`
 
 const entryTaskStatusSQL = `COALESCE((SELECT CASE WHEN r.status='paused' THEN 'paused' ELSE i.status END FROM run_items i JOIN runs r ON r.id=i.run WHERE i.entry=e.id AND i.status IN ('queued','running') AND r.status IN ` + domain.ActiveRunStatusesSQL + ` ORDER BY i.id DESC LIMIT 1),
  (WITH RECURSIVE ancestors(id,parent,depth) AS (
@@ -66,10 +67,21 @@ func (n *directoryProcessing) matchesStatus(status string) bool {
 	}
 }
 
+// directoryStatusIDsOptions groups the inputs for directoryStatusIDs.
+type directoryStatusIDsOptions struct {
+	Tx         *sql.Tx
+	ID         int64
+	Generation int64
+	Query      string
+	Status     string
+}
+
 // directoryStatusIDs evaluates sibling subtrees together, before count or page
 // boundaries are calculated. Unknown subtrees remain discoverable as unprocessed.
-func directoryStatusIDs(ctx context.Context, tx *sql.Tx, id, generation int64, query, status string) (string, error) {
-	nodes, err := directoryStatusNodes(ctx, tx, id, generation, query, status)
+func directoryStatusIDs(ctx context.Context, params directoryStatusIDsOptions) (string, error) {
+	tx, id, generation, query, status := params.Tx, params.ID, params.Generation, params.Query, params.Status
+
+	nodes, err := directoryStatusNodes(ctx, directoryStatusNodesOptions{Tx: tx, ID: id, Generation: generation, Query: query, Status: status})
 	if err != nil {
 		return "", err
 	}
@@ -83,25 +95,29 @@ func directoryStatusIDs(ctx context.Context, tx *sql.Tx, id, generation int64, q
 	return string(raw), err
 }
 
+// directoryStatusNodesOptions groups the inputs for directoryStatusNodes.
+type directoryStatusNodesOptions struct {
+	Tx         *sql.Tx
+	ID         int64
+	Generation int64
+	Query      string
+	Status     string
+}
+
 // Read all matching siblings before paging so subtree state determines both
 // numbered pages and cursor boundaries, rather than sorting only visible rows.
-func directoryStatusNodes(ctx context.Context, tx *sql.Tx, id, generation int64, query, status string) (map[int64]*directoryProcessing, error) {
+func directoryStatusNodes(ctx context.Context, params directoryStatusNodesOptions) (map[int64]*directoryProcessing, error) {
+	tx, id, generation, query, status := params.Tx, params.ID, params.Generation, params.Query, params.Status
+
 	rows, err := tx.QueryContext(ctx, `SELECT entry FROM directory_items WHERE dir=? AND generation=? AND kind='directory' AND instr(lower(name),lower(?))>0`, id, generation, query)
 	if err != nil {
 		return nil, err
 	}
-	ids := []int64{}
-	for rows.Next() {
+	ids, err := storage.CollectRows(rows, func(rows *sql.Rows) (int64, error) {
 		var id int64
-		if err = rows.Scan(&id); err != nil {
-			break
-		}
-		ids = append(ids, id)
-	}
-	if err == nil {
-		err = rows.Err()
-	}
-	rows.Close()
+		err := rows.Scan(&id)
+		return id, err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -151,9 +167,19 @@ func (n *directoryProcessing) sortRank() int {
 	}
 }
 
-func directoryStatusRanks(ctx context.Context, tx *sql.Tx, id, generation int64, query string) (string, error) {
+// directoryStatusRanksOptions groups the inputs for directoryStatusRanks.
+type directoryStatusRanksOptions struct {
+	Tx         *sql.Tx
+	ID         int64
+	Generation int64
+	Query      string
+}
+
+func directoryStatusRanks(ctx context.Context, params directoryStatusRanksOptions) (string, error) {
+	tx, id, generation, query := params.Tx, params.ID, params.Generation, params.Query
+
 	// The processed filter requests live task state without source-match counts.
-	nodes, err := directoryStatusNodes(ctx, tx, id, generation, query, "processed")
+	nodes, err := directoryStatusNodes(ctx, directoryStatusNodesOptions{Tx: tx, ID: id, Generation: generation, Query: query, Status: "processed"})
 	if err != nil {
 		return "", err
 	}

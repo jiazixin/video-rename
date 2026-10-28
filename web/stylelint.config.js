@@ -1,4 +1,4 @@
-// Web代码规范 §3: color literals only in src/styles/, where the design variables live.
+// Web standards section 3 confines color literals to the design variables in src/styles/.
 export default {
   overrides: [{ files: ['**/*.vue'], customSyntax: 'postcss-html' }],
   rules: {

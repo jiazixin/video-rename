@@ -1,6 +1,7 @@
 package tokenusage
 
 import (
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -16,32 +17,46 @@ func analyticsDB(t *testing.T) *storage.Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	return db
 }
 
 func seedUsage(t *testing.T, db *storage.Store, run int64, source string, plan int64, summary string, profileID int64, title string, rows [][3]int64) {
 	t.Helper()
-	if _, err := db.Exec(`INSERT INTO runs(id,source,targets,recursive,status,created,started,finished,request_key,plan,config_summary,model_config_id,model_config_title) VALUES(?,?,'[]',1,'completed','2026-09-01T00:00:00Z','2026-09-01T00:00:00Z','2026-09-01T01:00:00Z',?,?,?,?,?)`, run, source, storage.Now(), plan, summary, profileID, title); err != nil {
+	if _, err := storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `INSERT INTO runs(id,source,targets,recursive,status,created,started,finished,request_key,plan,config_summary,model_config_id,model_config_title) VALUES(?,?,'[]',1,'completed','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z','2026-09-01T01:00:00.000Z',?,?,?,?,?)`, run, source, fmt.Sprintf("usage-%d", run), plan, summary, profileID, title)
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT OR IGNORE INTO entries(id,parent,name,kind,identity,size,mtime,observed) VALUES(1,0,'clip.mp4','file','i',1,'m','o')`); err != nil {
+	if _, err := storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `INSERT OR IGNORE INTO entries(id,parent,name,kind,identity,size,mtime_ns,observed) VALUES(1,0,'clip.mp4','file','i',1,0,'o')`)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	var lifetime, estimatedCount int64
 	for i, row := range rows {
 		// row is recorded_at(ms), tokens, estimated(0/1); records is 1.
 		item := run*1000 + int64(i)
-		if _, err := db.Exec(`INSERT INTO run_items(id,run,entry,identity,size,mtime) VALUES(?,?,1,?,1,'m')`, item, run, fmt.Sprint("identity-", item)); err != nil {
+		if _, err := storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(t.Context(), `INSERT INTO run_items(id,run,entry,identity,size,mtime_ns) VALUES(?,?,1,?,1,0)`, item, run, fmt.Sprint("identity-", item))
+		}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.Exec(`INSERT INTO token_usage_records(run,item,recorded_at,tokens,records,estimated_records) VALUES(?,?,?,?,1,?)`, run, item, row[0], row[1], row[2]); err != nil {
+		if _, err := storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(t.Context(), `INSERT INTO token_usage_records(run,item,recorded_at,tokens,records,estimated_records) VALUES(?,?,?,?,1,?)`, run, item, row[0], row[1], row[2])
+		}); err != nil {
 			t.Fatal(err)
 		}
 		lifetime += row[1]
 		estimatedCount += row[2]
 	}
-	if _, err := db.Exec(`INSERT INTO run_token_usage(run,token_count,token_records,token_estimated_records) VALUES(?,?,?,?)`, run, lifetime, int64(len(rows)), estimatedCount); err != nil {
+	if _, err := storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `INSERT INTO run_token_usage(run,token_count,token_records,token_estimated_records) VALUES(?,?,?,?)`, run, lifetime, int64(len(rows)), estimatedCount)
+	}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -160,7 +175,14 @@ func TestAnalyticsPaginationSortingAndDayBoundaries(t *testing.T) {
 	if report.Range.Interval != "day" || len(report.Trend) != 7 {
 		t.Fatal("day interval and buckets", report.Range.Interval, len(report.Trend))
 	}
-	dayStart, _ := time.Parse(time.RFC3339, report.Trend[3].From)
+	if got, want := report.Trend[3].From, "2026-09-22T16:00:00.000Z"; got != want {
+		t.Fatalf("got day boundary %q, want UTC boundary %q", got, want)
+	}
+	dayStart, err := time.Parse(time.RFC3339, report.Trend[3].From)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dayStart = dayStart.In(shanghai)
 	_, offset := dayStart.Zone()
 	if dayStart.Hour() != 0 || dayStart.Day() != 23 || offset != 8*60*60 {
 		t.Fatal("day bucket should start at local midnight", dayStart)
@@ -230,20 +252,28 @@ func TestTopUsageIndependentOfPageSortAndHugePage(t *testing.T) {
 
 func TestAnalyticsOptionsKeepConfigIdentityAndModelHistory(t *testing.T) {
 	db := analyticsDB(t)
-	if _, err := db.Exec(`INSERT INTO prompts(id,title,body,created,updated) VALUES(1,'提示词','内容','c','u')`); err != nil {
+	if _, err := storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `INSERT INTO prompts(id,title,body,created,updated) VALUES(1,'提示词','内容','c','u')`)
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO model_configs(id,title,prompt_id,created,updated) VALUES(10,'共享配置',1,'c','u')`); err != nil {
+	if _, err := storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `INSERT INTO model_configs(id,title,prompt_id,created,updated) VALUES(10,'共享配置',1,'c','u')`)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	a := `{"model":"a","provider":"p","protocol":"openai"}`
 	b := `{"model":"b","provider":"p","protocol":"openai"}`
 	seedUsage(t, db, 1, "manual", 0, a, 10, "旧名称", [][3]int64{{1000, 100, 0}})
 	seedUsage(t, db, 2, "manual", 0, a, 10, "共享配置", [][3]int64{{2000, 200, 0}})
-	if _, err := db.Exec(`DELETE FROM model_configs WHERE id=10`); err != nil {
+	if _, err := storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `DELETE FROM model_configs WHERE id=10`)
+	}); err != nil {
 		t.Fatal(err)
 	}
-	result, err := db.Exec(`INSERT INTO model_configs(title,prompt_id,created,updated) VALUES('共享配置',1,'c','u')`)
+	result, err := storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `INSERT INTO model_configs(title,prompt_id,created,updated) VALUES('共享配置',1,'c','u')`)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +286,9 @@ func TestAnalyticsOptionsKeepConfigIdentityAndModelHistory(t *testing.T) {
 	seedUsage(t, db, 4, "manual", 0, a, newID, "改名前", [][3]int64{{1500, 400, 0}})
 	// Attempt-level identity may differ from the batch's primary config.
 	seedUsage(t, db, 5, "manual", 0, b, newID, "共享配置", [][3]int64{{3500, 500, 0}})
-	if _, err := db.Exec(`UPDATE token_usage_records SET model_config_id=10,model_config_title='共享配置',config_summary=? WHERE run=5`, b); err != nil {
+	if _, err := storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `UPDATE token_usage_records SET model_config_id=10,model_config_title='共享配置',config_summary=? WHERE run=5`, b)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	report, err := Analytics(t.Context(), db, AnalyticsQuery{From: 2999, To: 4000, Model: modelKey("p", "openai", "b"), Profile: newID})
@@ -286,17 +318,17 @@ func TestAnalyticsOptionsKeepConfigIdentityAndModelHistory(t *testing.T) {
 
 func TestLifetimeUsageBeyondSQLiteParameterLimit(t *testing.T) {
 	db := analyticsDB(t)
-	tx, err := db.Read().BeginTx(t.Context(), nil)
-	if err != nil {
+	if err := db.View(t.Context(), func(tx *sql.Tx) error {
+		ids := make(map[int64]bool, 40000)
+		for id := int64(1); id <= 40000; id++ {
+			ids[id] = true
+		}
+		got, err := lifetimeUsage(t.Context(), tx, ids)
+		if err != nil || len(got) != 0 {
+			t.Fatal(len(got), err)
+		}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
-	}
-	defer tx.Rollback()
-	ids := make(map[int64]bool, 40000)
-	for id := int64(1); id <= 40000; id++ {
-		ids[id] = true
-	}
-	got, err := lifetimeUsage(t.Context(), tx, ids)
-	if err != nil || len(got) != 0 {
-		t.Fatal(len(got), err)
 	}
 }

@@ -17,7 +17,7 @@ const sampleRun = () => ({
   status: 'running',
   targets: [1],
   target_names: ['素材'],
-  created: '2026-10-07T00:00:00Z',
+  created: '2026-10-07T00:00:00.000Z',
   discovered: 205,
   done: 100,
   skipped: 0,
@@ -44,7 +44,7 @@ const records = () =>
       model_config_title: '测试模型',
       model: n === 3 ? 'fallback' : 'vision',
       fallback: n === 3,
-      started: '2026-10-07T00:00:00Z',
+      started: '2026-10-07T00:00:00.000Z',
       duration_ms: 500,
       status: i < 100 && n === 3 ? 'success' : 'failed',
       error: { code: 'api_http_error', details: { http_status: 500 + n } }

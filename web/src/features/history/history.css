@@ -1,0 +1,183 @@
+.detail-list {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 15px;
+  font-size: 12px;
+}
+.detail-list dt {
+  color: var(--ash);
+}
+.detail-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.error-summary {
+  max-width: 100%;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.log-directory {
+  display: block;
+  margin-inline: auto;
+  min-width: 100px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--steel);
+  font-size: 12px;
+}
+.history-table-scroll {
+  container-type: inline-size;
+}
+.history-table {
+  --history-min-width: 1080px;
+  --history-selection-width: 0px;
+  --history-actions-width: 64px;
+  --history-fixed-width: calc(
+    488px + var(--history-actions-width) + var(--history-selection-width)
+  );
+  /* Resolve flexible columns from the scroll container, including on narrow screens. */
+  --history-content-width: calc(max(var(--history-min-width), 100cqi) - var(--history-fixed-width));
+  table-layout: fixed;
+  min-width: var(--history-min-width);
+  width: 100%;
+}
+.history-table.failure {
+  --history-actions-width: 108px;
+}
+.history-table.multi {
+  --history-selection-width: 42px;
+}
+.history-table th.history-time {
+  width: 96px;
+}
+.history-table th.history-action {
+  width: 92px;
+}
+.history-table th.history-model {
+  width: 140px;
+}
+.history-table th.history-directory {
+  width: calc(var(--history-content-width) * 0.24);
+}
+.history-table th.history-old-name {
+  width: calc(var(--history-content-width) * 0.38);
+}
+.history-table.success th.history-result {
+  width: calc(var(--history-content-width) * 0.38);
+}
+.history-table th.history-run {
+  width: 76px;
+}
+.history-table th.history-tokens {
+  width: 84px;
+}
+.history-table.failure th.history-old-name {
+  width: calc(var(--history-content-width) * 0.34);
+}
+.history-table.failure th.history-reason {
+  width: calc(var(--history-content-width) * 0.42);
+}
+.history-table th:last-child {
+  width: var(--history-actions-width);
+}
+.history-table .log-directory {
+  min-width: 0;
+  max-width: 100%;
+}
+.history-row-actions {
+  white-space: nowrap;
+}
+.history-row-actions button + button {
+  margin-left: 6px;
+}
+.history-filename {
+  display: block;
+  margin-inline: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  max-width: 100%;
+  color: var(--palette-454c48);
+}
+.history-table th,
+.history-table td {
+  padding-left: 14px;
+  padding-right: 14px;
+}
+.history-table th.history-run,
+.history-table th.history-tokens,
+.history-table td.history-run-value,
+.history-table td.history-token-value {
+  padding-left: 8px;
+  padding-right: 8px;
+  white-space: nowrap;
+}
+.history-run-value span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.action-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 10px;
+  white-space: nowrap;
+  color: var(--palette-656d77);
+  background: var(--palette-f0f1f4);
+}
+.action-badge[data-action='manual'] {
+  background: var(--palette-fcf0f6);
+  color: var(--palette-9a4674);
+}
+.action-badge[data-action='automatic'] {
+  background: var(--palette-eaf7ee);
+  color: var(--palette-347652);
+}
+.action-badge[data-action='restore'] {
+  background: var(--palette-fff4df);
+  color: var(--palette-98651f);
+}
+.action-badge[data-action='recovery'] {
+  background: var(--palette-f0eefa);
+  color: var(--palette-775ca0);
+}
+.action-badge[data-action='scan'] {
+  background: var(--palette-e9f5f7);
+  color: var(--palette-427a83);
+}
+.action-badge[data-action='run'] {
+  background: var(--palette-f2edfc);
+  color: var(--palette-77559e);
+}
+.action-badge[data-action='schedule'] {
+  background: var(--palette-fbeef5);
+  color: var(--palette-9a587b);
+}
+.action-badge[data-action='scheduler'] {
+  background: var(--palette-fff0e9);
+  color: var(--palette-a36640);
+}
+.history-heading-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.history-table tr.is-selected {
+  background: var(--palette-f0f7f4);
+}
+.history-table .history-select {
+  width: 42px;
+  padding: 12px;
+  text-align: center;
+}
+.history-table .table-model {
+  max-width: 112px;
+}

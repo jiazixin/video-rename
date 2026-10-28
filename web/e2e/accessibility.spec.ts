@@ -52,7 +52,7 @@ test('登录页与各工作台页面没有严重无障碍问题', async ({ page 
   await page.getByLabel('密码', { exact: true }).fill('test-password-123')
   await page.getByRole('button', { name: '登录', exact: true }).click()
   for (const path of pages) {
-    await page.goto(`/#/${path}`)
+    await page.goto(`/${path}`)
     await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
     await page.waitForLoadState('networkidle')
     await settle(page)

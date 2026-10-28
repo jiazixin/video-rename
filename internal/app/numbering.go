@@ -5,10 +5,11 @@ import (
 	"errors"
 	"maps"
 	"net/http"
+	"time"
 
 	"video-rename/internal/domain"
 	"video-rename/internal/library"
-	"video-rename/internal/systemsettings"
+	"video-rename/internal/systemsetting"
 )
 
 // numberingRoutes serves both media classes; the batch journal records which
@@ -17,7 +18,7 @@ import (
 // the names frozen at preview time, so later rule changes never mutate them.
 func (a *App) numberingRoutes(api *router) {
 	a.numberingJobRoutes(api)
-	store := systemsettings.Store{DB: a.DB}
+	store := systemsetting.New(a.db)
 	api.HandleFunc("POST /api/directories/{id}/numberings/tree-preview", func(w http.ResponseWriter, r *http.Request) {
 		settings, err := store.Numbering(r.Context())
 		if err != nil {
@@ -29,7 +30,7 @@ func (a *App) numberingRoutes(api *router) {
 			numberingFailure(w, r, err)
 			return
 		}
-		send(w, http.StatusOK, batches)
+		send(w, http.StatusCreated, batches)
 	})
 	api.HandleFunc("GET /api/directories/{id}/numberings/tree", func(w http.ResponseWriter, r *http.Request) {
 		batches, err := a.Library.NumberingTreeHistory(r.Context(), number(r.PathValue("id")))
@@ -69,7 +70,7 @@ func (a *App) numberingRoutes(api *router) {
 			return
 		}
 		if v.Media != "image" && v.Media != "audio" {
-			invalid(w, r, "media", "invalid_choice")
+			writeError(w, r, domain.InvalidField("media", "invalid_choice"))
 			return
 		}
 		settings, err := store.Numbering(r.Context())
@@ -89,12 +90,12 @@ func (a *App) numberingRoutes(api *router) {
 			numberingFailure(w, r, err)
 			return
 		}
-		send(w, http.StatusOK, b)
+		send(w, http.StatusCreated, b)
 	})
 	api.HandleFunc("GET /api/directories/{id}/numberings", func(w http.ResponseWriter, r *http.Request) {
 		media := r.URL.Query().Get("media")
 		if media != "image" && media != "audio" {
-			invalid(w, r, "media", "invalid_choice")
+			writeError(w, r, domain.InvalidField("media", "invalid_choice"))
 			return
 		}
 		b, err := a.Library.NumberingHistory(r.Context(), number(r.PathValue("id")), media)
@@ -106,7 +107,9 @@ func (a *App) numberingRoutes(api *router) {
 	})
 	api.HandleFunc("POST /api/numberings/{id}/apply", func(w http.ResponseWriter, r *http.Request) {
 		// Renames must not stop half way when the client disconnects.
-		b, err := a.Library.ApplyNumbering(context.WithoutCancel(r.Context()), r.PathValue("id"), nil)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Minute)
+		defer cancel()
+		b, err := a.Library.ApplyNumbering(ctx, r.PathValue("id"), nil)
 		if err != nil {
 			numberingFailure(w, r, err)
 			return
@@ -119,7 +122,7 @@ func (a *App) numberingRoutes(api *router) {
 			numberingFailure(w, r, err)
 			return
 		}
-		send(w, http.StatusOK, b)
+		send(w, http.StatusCreated, b)
 	})
 	api.HandleFunc("POST /api/numberings/{id}/recover", func(w http.ResponseWriter, r *http.Request) {
 		b, err := a.Library.RecoverNumbering(r.Context(), r.PathValue("id"))

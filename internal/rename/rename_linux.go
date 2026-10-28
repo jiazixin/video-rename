@@ -1,9 +1,3 @@
-//go:build linux
-
-// Package rename provides platform-specific atomic no-replace renames.
-// Never replace it with "check that the target is absent, then rename": the two steps race.
-// Linux uses renameat2 with RENAME_NOREPLACE; when the kernel or file system lacks it,
-// it reports rename_unsupported and keeps the original file, never falling back to an overwriting operation.
 package rename
 
 import (

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import './library.css';
   import { errorText } from '../../app/errors';
   import PageNavigation from '../../components/PageNavigation.vue';
   import { ref, onMounted, onUnmounted, computed } from 'vue';

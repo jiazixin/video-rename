@@ -23,8 +23,7 @@ func TestModelAPISecretsAndCrossOrigin(t *testing.T) {
 	var cookie *http.Cookie
 	call := func(method, path string, payload any, sameSite bool) *httptest.ResponseRecorder {
 		raw, _ := json.Marshal(payload)
-		r := httptest.NewRequest(method, "http://example.com"+path, bytes.NewReader(raw))
-		r.Header.Set("Content-Type", "application/json")
+		r := jsonRequest(method, "http://example.com"+path, bytes.NewReader(raw))
 		r.Header.Set("Origin", "http://example.com")
 		if cookie != nil {
 			r.AddCookie(cookie)
@@ -44,7 +43,7 @@ func TestModelAPISecretsAndCrossOrigin(t *testing.T) {
 	var auth map[string]string
 	json.Unmarshal(w.Body.Bytes(), &auth)
 	w = call("POST", "/api/prompts", map[string]any{"title": "测试提示词", "body": "title only"}, true)
-	if w.Code != 200 {
+	if w.Code != 201 {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	var created map[string]any
@@ -54,7 +53,7 @@ func TestModelAPISecretsAndCrossOrigin(t *testing.T) {
 		t.Fatal("cross-site write accepted", w.Code)
 	}
 	w = call("POST", "/api/model-configs", data, true)
-	if w.Code != 200 {
+	if w.Code != 201 {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	if strings.Contains(w.Body.String(), "api-private-test-key") || strings.Contains(w.Body.String(), `"api_key"`) {

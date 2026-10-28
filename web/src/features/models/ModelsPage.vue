@@ -31,22 +31,22 @@
     saving = ref(false),
     dialogError = ref(''),
     settingDefault = ref(false);
-  const initial = () => ({
-    title: '',
-    prompt_id: 0,
-    provider: 'custom',
-    protocol: 'openai',
-    base_url: '',
-    model: '',
-    timeout: '180s',
-    temperature: 0.7,
-    max_tokens: 1024,
-    workers: 2,
-    omit_temperature: false,
-    thinking: 'default',
-    thinking_adapter: 'auto',
-    thinking_effort: 'low',
-    thinking_budget: 1024
+  const initial = (profile?: ModelProfile) => ({
+    title: profile?.title ?? '',
+    prompt_id: profile?.prompt_id ?? 0,
+    provider: profile?.provider ?? 'custom',
+    protocol: profile?.protocol ?? 'openai',
+    base_url: profile?.base_url ?? '',
+    model: profile?.model ?? '',
+    timeout: profile?.timeout ?? '180s',
+    temperature: profile?.temperature ?? 0.7,
+    max_tokens: profile?.max_tokens ?? 1024,
+    workers: profile?.workers ?? 2,
+    omit_temperature: profile?.omit_temperature ?? false,
+    thinking: profile?.thinking || 'default',
+    thinking_adapter: profile?.thinking_adapter || 'auto',
+    thinking_effort: profile?.thinking_effort || 'low',
+    thinking_budget: profile?.thinking_budget || 1024
   });
   const form = reactive(initial()),
     apiKey = ref(''),
@@ -83,9 +83,8 @@
     try {
       await api<unknown>(`/model-configs/${deleteTarget.value.id}`, {
         method: 'DELETE',
-        body: {
-          version: deleteTarget.value.version
-        }
+        headers: { 'If-Match': deleteTarget.value.etag },
+        body: {}
       });
       deleteTarget.value = undefined;
       await load();
@@ -127,7 +126,7 @@
     try {
       const result = await api<ProbeResult>('/model-configs/test-vision', {
         method: 'POST',
-        body: { ...payload(), probe_timeout_seconds: seconds },
+        body: { ...payload(), id: selected.value?.id || 0, probe_timeout_seconds: seconds },
         signal: controller.signal
       });
       if (n === probeSeq) probeResult.value = result;
@@ -181,11 +180,8 @@
   }
   function open(p?: ModelProfile) {
     selected.value = p;
-    Object.assign(form, initial(), p || {});
-    form.thinking = form.thinking || 'default';
-    form.thinking_adapter = form.thinking_adapter || 'auto';
-    form.thinking_effort = form.thinking_effort || 'low';
-    form.thinking_budget = form.thinking_budget || 1024;
+    // Drafts contain only writable fields; response metadata never enters a PATCH.
+    Object.assign(form, initial(p));
     apiKey.value = '';
     clearKey.value = false;
     dialogError.value = '';
@@ -215,8 +211,6 @@
     else if (apiKey.value) key = { api_key: apiKey.value };
     return {
       ...form,
-      id: selected.value?.id || 0,
-      version: selected.value?.version || 0,
       ...key
     };
   }
@@ -231,7 +225,11 @@
     try {
       await api<unknown>(
         selected.value ? `/model-configs/${selected.value.id}` : '/model-configs',
-        { method: selected.value ? 'PATCH' : 'POST', body: payload() }
+        {
+          method: selected.value ? 'PATCH' : 'POST',
+          headers: selected.value ? { 'If-Match': selected.value.etag } : {},
+          body: payload()
+        }
       );
       editing.value = false;
       apiKey.value = '';
@@ -258,7 +256,11 @@
     try {
       const data = await api<{ models: { id: string; name: string }[]; truncated: boolean }>(
         '/model-configs/detect',
-        { method: 'POST', body: payload(), signal: controller.signal }
+        {
+          method: 'POST',
+          body: { ...payload(), id: selected.value?.id || 0 },
+          signal: controller.signal
+        }
       );
       if (n !== detectSeq) return;
       detected.value = data.models;

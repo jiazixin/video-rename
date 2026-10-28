@@ -9,7 +9,7 @@ import (
 func TestSourceChangedErrorEvidence(t *testing.T) {
 	before := Snapshot{Dev: 1, Ino: 2, Size: 3, ModTime: time.Unix(100, 123456789)}
 	after := Snapshot{Dev: 4, Ino: 5, Size: 6, ModTime: before.ModTime.Add(time.Nanosecond)}
-	err := SourceChangedError("source changed", StageBeforeRequest, "/media/a.mp4", before, after)
+	err := SourceChangedError(SourceChange{Message: "source changed", Stage: StageBeforeRequest, Path: "/media/a.mp4", Before: before, After: after})
 	if err.Code != CodeSourceChanged || err.Message != "source changed" || err.Details["stage"] != StageBeforeRequest {
 		t.Fatal(err)
 	}

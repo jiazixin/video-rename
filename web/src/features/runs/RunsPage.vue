@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import { RouterLink } from 'vue-router';
   import { formatCount, formatCompact } from '../../lib/format/number';
   import { errorText } from '../../app/errors';
   import PageNavigation from '../../components/PageNavigation.vue';
@@ -23,7 +24,7 @@
     Undo2,
     Images
   } from '@lucide/vue';
-  import { api, newRequestKey, apiItems } from '../../app/api';
+  import { api, apiItems } from '../../app/api';
   import { displayPath } from '../../lib/format/path';
   import { formatClock, formatLongDate, formatTime } from '../../lib/format/date';
   import { statusNames } from '../../app/labels';
@@ -240,7 +241,8 @@
     try {
       await api<unknown>(`/schedules/${p.id}`, {
         method: 'PATCH',
-        body: { ...p, enabled: !p.enabled }
+        headers: { 'If-Match': p.etag },
+        body: { enabled: !p.enabled }
       });
       await load();
     } catch (e) {
@@ -251,7 +253,7 @@
     try {
       const r = await api<{ id: number }>(`/schedules/${p.id}/run`, {
         method: 'POST',
-        body: { key: newRequestKey() }
+        body: {}
       });
       toast.show(`运行 #${r.id} 已加入队列`);
       await load();
@@ -262,7 +264,11 @@
   async function remove() {
     if (!deletePlan.value) return;
     try {
-      await api<unknown>(`/schedules/${deletePlan.value.id}`, { method: 'DELETE', body: {} });
+      await api<unknown>(`/schedules/${deletePlan.value.id}`, {
+        method: 'DELETE',
+        headers: { 'If-Match': deletePlan.value.etag },
+        body: {}
+      });
       deletePlan.value = undefined;
       await load();
     } catch (e) {
@@ -386,7 +392,7 @@
             ><p>按需执行一次，选择命名或抽帧以及目标目录。</p></div
           ><button class="primary" @click="manual()"><Plus :size="17" />新建手动计划</button></div
         ><p class="help"
-          >提交后立即加入队列，进度与结果在 <a href="#runs">批次记录</a> 中查看。</p
+          >提交后立即加入队列，进度与结果在 <RouterLink to="/runs">批次记录</RouterLink> 中查看。</p
         ></section
       >
       <section class="run-section" aria-label="自动计划"

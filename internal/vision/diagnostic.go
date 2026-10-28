@@ -42,7 +42,7 @@ func safeDiagnostic(s string, limit int, secrets ...string) string {
 		if secret == "" {
 			continue
 		}
-		quoted, _ := json.Marshal(secret)
+		quoted, _ := json.Marshal(secret) // A string always has a JSON representation.
 		variants := []string{secret, strings.TrimSpace(secret), url.QueryEscape(secret), url.PathEscape(secret), string(quoted[1 : len(quoted)-1])}
 		for _, variant := range variants {
 			if variant != "" && strings.Contains(s, variant) {

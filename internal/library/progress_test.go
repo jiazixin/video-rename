@@ -2,10 +2,13 @@ package library
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"video-rename/internal/storage"
 )
 
 func TestDirectoryProgressRequiresCompleteIndex(t *testing.T) {
@@ -142,14 +145,20 @@ func TestProgressBatchOverlappingScopesAndFreshState(t *testing.T) {
 	if r := l.SetProcessed(t.Context(), []int64{file.ID}, true); r.Changed != 1 || r.Failed != 0 {
 		t.Fatal(r)
 	}
-	if _, err := l.DB.Exec("INSERT INTO runs(id,source,targets,recursive,status,created,request_key) VALUES(1,'manual','[1]',1,'running','now','progress-test')"); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "INSERT INTO runs(id,source,targets,recursive,status,created,request_key) VALUES(1,'manual','[1]',1,'running','2026-10-28T00:00:00.000Z','progress-test')")
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := l.DB.Exec("INSERT INTO run_items(run,entry,identity,size,mtime,status) VALUES(1,?,?,?,?, 'running')", file.ID, file.Identity, file.Size, file.Mtime); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "INSERT INTO run_items(run,entry,identity,size,mtime_ns,status) VALUES(1,?,?,?,?, 'running')", file.ID, file.Identity, file.Size, file.ModifiedNS)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	check(1, 1, 0)
-	if _, err := l.DB.Exec("UPDATE runs SET status='completed'; UPDATE directory_state SET error='read failed' WHERE dir=?", nested.ID); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "UPDATE runs SET status='completed'; UPDATE directory_state SET error='read failed' WHERE dir=?", nested.ID)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	got := check(1, 0, 1)
@@ -165,9 +174,11 @@ func TestProgressBatchOverlappingScopesAndFreshState(t *testing.T) {
 
 func TestProgressBatchDeepTreeAndCycle(t *testing.T) {
 	l, _, _ := fixture(t)
-	if _, err := l.DB.Exec(`WITH RECURSIVE n(x) AS (VALUES(2) UNION ALL SELECT x+1 FROM n WHERE x<500)
- INSERT INTO entries(id,parent,name,kind,identity,size,mtime,observed) SELECT x,x-1,'folder','directory','d-'||x,0,'now','now' FROM n;
- INSERT INTO entries(id,parent,name,kind,identity,size,mtime,observed) VALUES(501,500,'video.mp4','file','video',1,'now','now')`); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `WITH RECURSIVE n(x) AS (VALUES(2) UNION ALL SELECT x+1 FROM n WHERE x<500)
+ INSERT INTO entries(id,parent,name,kind,identity,size,mtime_ns,observed) SELECT x,x-1,'folder','directory','d-'||x,0,0,0 FROM n;
+ INSERT INTO entries(id,parent,name,kind,identity,size,mtime_ns,observed) VALUES(501,500,'video.mp4','file','video',1,0,0)`)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := l.WithProgressBatch(t.Context(), []Entry{{ID: 1, Kind: "directory"}, {ID: 250, Kind: "directory"}})
@@ -177,7 +188,9 @@ func TestProgressBatchDeepTreeAndCycle(t *testing.T) {
 	if got[0].Progress.Total != 1 || got[0].Progress.Unknown != 500 || got[1].Progress.Total != 1 || got[1].Progress.Unknown != 251 {
 		t.Fatalf("deep tree: %+v %+v", got[0].Progress, got[1].Progress)
 	}
-	if _, err := l.DB.Exec("UPDATE entries SET parent=500 WHERE id=2"); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "UPDATE entries SET parent=500 WHERE id=2")
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := l.WithProgressBatch(t.Context(), []Entry{{ID: 2, Kind: "directory"}}); err == nil {

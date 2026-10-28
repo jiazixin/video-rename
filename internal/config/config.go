@@ -11,12 +11,14 @@ import (
 	"path/filepath"
 
 	"go.yaml.in/yaml/v3"
+
+	"video-rename/internal/secret"
 )
 
 // AuthConfig holds the administrator credentials.
 type AuthConfig struct {
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
+	Username string       `yaml:"username"`
+	Password secret.Value `yaml:"password"`
 }
 
 // LogConfig selects the service log level and format.
@@ -81,13 +83,22 @@ func read(src Source) (cfg Config, found bool, err error) {
 		abs = filepath.Join(src.WorkDir, abs)
 	}
 	cfg = defaults()
-	data, err := os.ReadFile(abs)
+	file, err := os.Open(abs)
 	if errors.Is(err, fs.ErrNotExist) && !src.Explicit {
 		cfg.ConfigDir = filepath.Clean(src.WorkDir)
 		return cfg, false, nil
 	}
 	if err != nil {
 		return Config{}, false, fmt.Errorf("read configuration: %w", err)
+	}
+	defer file.Close() // This read-only descriptor has no buffered writes.
+	const maxConfigBytes = 1 << 20
+	data, err := io.ReadAll(io.LimitReader(file, maxConfigBytes+1))
+	if err != nil {
+		return Config{}, false, fmt.Errorf("read configuration: %w", err)
+	}
+	if len(data) > maxConfigBytes {
+		return Config{}, false, errors.New("configuration exceeds 1 MiB")
 	}
 	if err := unmarshalStrict(data, &cfg); err != nil {
 		return Config{}, false, fmt.Errorf("parse %s: %w", abs, err)

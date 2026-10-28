@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"video-rename/internal/secret"
 )
 
 func TestServiceConfiguration(t *testing.T) {
@@ -95,7 +97,7 @@ func TestStorageDirectoryAndShortPassword(t *testing.T) {
 				t.Fatal("resolving a loaded configuration must be idempotent", err)
 			}
 			for _, password := range []string{"", "   ", "请替换为你的密码"} {
-				cfg.Auth.Password = password
+				cfg.Auth.Password = secret.Value(password)
 				if cfg.Validate() == nil {
 					t.Fatalf("accepted empty/placeholder password %q", password)
 				}

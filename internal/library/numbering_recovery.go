@@ -2,11 +2,13 @@ package library
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
 
 	"video-rename/internal/domain"
+	"video-rename/internal/storage"
 )
 
 // Resolve a crash between filesystem rename and journal completion without guessing.
@@ -25,23 +27,27 @@ func (l *Library) reconcileNumbering(ctx context.Context, b *Numbering, path str
 		if i.Pending != "" {
 			pending := exact[i.Pending] && numberingMatch(filepath.Join(path, i.Pending), *i)
 			if current == pending {
-				return domain.Fail(domain.KindInternal, "numbering_item_ambiguous", "file location is ambiguous; manual review needed", "media", b.Media, "name", i.Old)
+				return domain.Fail(domain.KindInternal, domain.Record{Code: "numbering_item_ambiguous", Message: "file location is ambiguous; manual review needed", Details: map[string]any{"media": b.Media, "name": i.Old}})
 			}
 			if pending {
 				i.Current = i.Pending
 			}
-			if _, err = l.DB.ExecContext(ctx, "UPDATE image_numbering_items SET current_name=?,pending_name='' WHERE batch=? AND entry=?", i.Current, b.ID, i.Entry); err != nil {
+			if _, err = storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
+				return tx.ExecContext(ctx, "UPDATE image_numbering_items SET current_name=?,pending_name='' WHERE batch=? AND entry=?", i.Current, b.ID, i.Entry)
+			}); err != nil {
 				return err
 			}
 			i.Pending = ""
 		} else if !current {
-			return domain.Fail(domain.KindInternal, "numbering_item_modified", "file was modified externally; manual review needed", "media", b.Media, "name", i.Old)
+			return domain.Fail(domain.KindInternal, domain.Record{Code: "numbering_item_modified", Message: "file was modified externally; manual review needed", Details: map[string]any{"media": b.Media, "name": i.Old}})
 		}
 	}
 	return syncNumberingDir(path)
 }
 func (l *Library) rollbackNumbering(ctx context.Context, b *Numbering, path string) error {
-	if _, err := l.DB.ExecContext(ctx, "UPDATE image_numberings SET status='rollback' WHERE id=?", b.ID); err != nil {
+	if _, err := storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(ctx, "UPDATE image_numberings SET status='rollback' WHERE id=?", b.ID)
+	}); err != nil {
 		return err
 	}
 	b.Status = "rollback"
@@ -52,7 +58,7 @@ func (l *Library) rollbackNumbering(ctx context.Context, b *Numbering, path stri
 	for idx := range b.Items {
 		i := &b.Items[idx]
 		if i.Current != i.Old {
-			if err := l.moveNumbering(ctx, b, i, path, i.Temp); err != nil {
+			if err := l.moveNumbering(ctx, moveNumberingOptions{Batch: b, Item: i, Path: path, Target: i.Temp}); err != nil {
 				return err
 			}
 		}
@@ -60,7 +66,7 @@ func (l *Library) rollbackNumbering(ctx context.Context, b *Numbering, path stri
 	for idx := range b.Items {
 		i := &b.Items[idx]
 		if i.Current != i.Old {
-			if err := l.moveNumbering(ctx, b, i, path, i.Old); err != nil {
+			if err := l.moveNumbering(ctx, moveNumberingOptions{Batch: b, Item: i, Path: path, Target: i.Old}); err != nil {
 				return err
 			}
 		}
@@ -68,21 +74,19 @@ func (l *Library) rollbackNumbering(ctx context.Context, b *Numbering, path stri
 	return nil
 }
 func (l *Library) recoverNumberings(ctx context.Context) error {
-	rows, err := l.DB.QueryContext(ctx, "SELECT id FROM image_numberings WHERE status IN ('running','rollback','review') ORDER BY created")
-	if err != nil {
-		return err
-	}
 	var ids []string
-	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
-			rows.Close()
+	err := l.db.View(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT id FROM image_numberings WHERE status IN ('running','rollback','review') ORDER BY created")
+		if err != nil {
 			return err
 		}
-		ids = append(ids, id)
-	}
-	err = rows.Err()
-	rows.Close()
+		ids, err = storage.CollectRows(rows, func(rows *sql.Rows) (string, error) {
+			var id string
+			err := rows.Scan(&id)
+			return id, err
+		})
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -121,6 +125,8 @@ func (l *Library) recoverNumbering(ctx context.Context, id string) (Numbering, e
 			b.ProcessingLog += "\nrecovery failure:\n" + diagnostic.ProcessingLog
 		}
 	}
-	_, dbErr := l.DB.ExecContext(ctx, "UPDATE image_numberings SET status=?,error=? WHERE id=?", b.Status, b.numberingErrorRecord(), id)
+	_, dbErr := storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(ctx, "UPDATE image_numberings SET status=?,error=? WHERE id=?", b.Status, b.numberingErrorRecord(), id)
+	})
 	return b, dbErr
 }

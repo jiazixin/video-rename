@@ -3,7 +3,9 @@ package scheduler
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -14,16 +16,18 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"video-rename/internal/domain"
-	"video-rename/internal/jobs"
-	"video-rename/internal/models"
+	"video-rename/internal/job"
+	"video-rename/internal/library"
+	"video-rename/internal/model"
 	"video-rename/internal/storage"
+	"video-rename/internal/timefmt"
 )
 
 // Plan is a scheduled batch rule.
 type Plan struct {
 	Task          string        `json:"task"`
 	ModelConfigID int64         `json:"model_config_id"`
-	TargetNames   []string      `json:"target_names,omitempty"`
+	TargetNames   []string      `json:"target_names,omitzero"`
 	ID            int64         `json:"id"`
 	Name          string        `json:"name"`
 	Targets       []int64       `json:"targets"`
@@ -37,11 +41,12 @@ type Plan struct {
 	Version       int64         `json:"version"`
 }
 
-// Scheduler persists calendar rules and starts their batches.
+// Scheduler persists calendar rules and starts their batches. mu serializes
+// plan mutations and trigger deduplication.
 type Scheduler struct {
 	mu   sync.Mutex
-	DB   *storage.Store
-	Jobs *jobs.Manager
+	db   *storage.Store
+	Jobs *job.Manager
 }
 
 // Rule parses a five-field cron expression in time zone zone.
@@ -71,7 +76,10 @@ func Preview(expression, zone string, now time.Time) ([]string, error) {
 	}
 	out := []string{}
 	seen := map[string]bool{}
-	loc, _ := time.LoadLocation(zone)
+	loc, err := time.LoadLocation(zone)
+	if err != nil {
+		return nil, fmt.Errorf("load schedule timezone %q: %w", zone, err)
+	}
 	for len(out) < 5 {
 		now = rule.Next(now)
 		if now.IsZero() {
@@ -82,7 +90,7 @@ func Preview(expression, zone string, now time.Time) ([]string, error) {
 			continue
 		}
 		seen[key] = true
-		out = append(out, now.In(loc).Format(time.RFC3339))
+		out = append(out, timefmt.Format(now))
 	}
 	return out, nil
 }
@@ -100,21 +108,13 @@ const columns = "id,name,targets,recursive,kind,expression,timezone,enabled,next
 // List returns all plans.
 func (s *Scheduler) List(ctx context.Context) ([]Plan, error) { return s.list(ctx, true) }
 func (s *Scheduler) list(ctx context.Context, withNames bool) ([]Plan, error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT "+columns+" FROM schedules ORDER BY id DESC")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []Plan{}
-	for rows.Next() {
-		p, e := scanPlan(rows)
-		if e != nil {
-			return nil, e
+	out, err := storage.ReadValue(ctx, s.db, func(tx *sql.Tx) ([]Plan, error) {
+		rows, err := tx.QueryContext(ctx, "SELECT "+columns+" FROM schedules ORDER BY id DESC")
+		if err != nil {
+			return nil, err
 		}
-		out = append(out, p)
-	}
-	err = rows.Err()
-	rows.Close()
+		return storage.CollectRows(rows, func(rows *sql.Rows) (Plan, error) { return scanPlan(rows) })
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +130,9 @@ func (s *Scheduler) list(ctx context.Context, withNames bool) ([]Plan, error) {
 
 // Get returns plan id.
 func (s *Scheduler) Get(ctx context.Context, id int64) (Plan, error) {
-	p, err := scanPlan(s.DB.QueryRowContext(ctx, "SELECT "+columns+" FROM schedules WHERE id=?", id))
+	p, err := storage.ReadValue(ctx, s.db, func(tx *sql.Tx) (Plan, error) {
+		return scanPlan(tx.QueryRowContext(ctx, "SELECT "+columns+" FROM schedules WHERE id=?", id))
+	})
 	if err == nil {
 		for _, target := range p.Targets {
 			p.TargetNames = append(p.TargetNames, s.Jobs.Library.DisplayPath(ctx, target))
@@ -158,15 +160,15 @@ func (s *Scheduler) Save(ctx context.Context, p Plan) (Plan, error) {
 	} else {
 		if p.ModelConfigID == 0 {
 			var err error
-			p.ModelConfigID, err = (models.Store{DB: s.DB}).DefaultID(ctx)
+			p.ModelConfigID, err = (model.New(s.db)).DefaultID(ctx)
 			if err != nil {
 				return p, err
 			}
 		}
-		if profile, err := (models.Store{DB: s.DB}).Get(ctx, p.ModelConfigID); err != nil {
+		if profile, err := (model.New(s.db)).Get(ctx, p.ModelConfigID); err != nil {
 			return p, domain.InvalidField("model_config_id", "invalid").Wrap(err)
 		} else if err = profile.Validate(); err != nil {
-			return p, domain.Fail(domain.KindInvalid, "model_config_incomplete", "model configuration is incomplete").Wrap(err)
+			return p, domain.Fail(domain.KindInvalid, domain.Record{Code: "model_config_incomplete", Message: "model configuration is incomplete"}).Wrap(err)
 		}
 	}
 	switch p.Kind {
@@ -188,56 +190,75 @@ func (s *Scheduler) Save(ctx context.Context, p Plan) (Plan, error) {
 		return p, err
 	}
 	p.Next = next[0]
-	raw, _ := json.Marshal(p.Targets)
-	tx, err := s.DB.BeginTx(ctx, nil)
+	raw, err := json.Marshal(p.Targets)
 	if err != nil {
-		return p, err
+		return p, fmt.Errorf("encode schedule targets: %w", err)
 	}
-	defer tx.Rollback()
-	if p.Task == "rename" {
-		var exists bool
-		if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM model_configs WHERE id=?)", p.ModelConfigID).Scan(&exists); err != nil {
-			return p, err
+	p, err = storage.WriteValue(ctx, s.db, func(tx *sql.Tx) (Plan, error) {
+		if p.Task == "rename" {
+			var exists bool
+			if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM model_configs WHERE id=?)", p.ModelConfigID).Scan(&exists); err != nil {
+				return p, err
+			}
+			if !exists {
+				return p, domain.Fail(domain.KindNotFound, domain.Record{Code: "model_config_not_found", Message: "model configuration does not exist"})
+			}
 		}
-		if !exists {
-			return p, domain.Fail(domain.KindNotFound, "model_config_not_found", "model configuration does not exist")
+		if p.ID == 0 {
+			var n int
+			if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM schedules").Scan(&n); err != nil {
+				return p, err
+			}
+			if n >= 100 {
+				return p, domain.Fail(domain.KindTooMany, domain.Record{Code: "schedules_full", Message: "at most 100 schedules"})
+			}
+			res, err := tx.ExecContext(ctx, "INSERT INTO schedules(name,targets,recursive,kind,expression,timezone,enabled,next,model_config_id,task) VALUES(?,?,?,?,?,?,?,?,?,?)", p.Name, string(raw), p.Recursive, p.Kind, p.Expression, p.Timezone, p.Enabled, p.Next, p.ModelConfigID, p.Task)
+			if err != nil {
+				return p, err
+			}
+			p.ID, err = res.LastInsertId()
+			if err != nil {
+				return p, err
+			}
+		} else {
+			res, err := tx.ExecContext(ctx, "UPDATE schedules SET name=?,targets=?,recursive=?,kind=?,expression=?,timezone=?,enabled=?,next=?,model_config_id=?,task=?,version=version+1 WHERE id=? AND version=?", p.Name, string(raw), p.Recursive, p.Kind, p.Expression, p.Timezone, p.Enabled, p.Next, p.ModelConfigID, p.Task, p.ID, p.Version)
+			if err != nil {
+				return p, err
+			}
+			n, err := res.RowsAffected()
+			if err != nil {
+				return p, err
+			}
+			if n == 0 {
+				return p, domain.Fail(domain.KindConflict, domain.Record{Code: "schedule_changed", Message: "schedule was modified; refresh"})
+			}
 		}
-	}
-	if p.ID == 0 {
-		var n int
-		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM schedules").Scan(&n); err != nil {
-			return p, err
-		}
-		if n >= 100 {
-			return p, domain.Fail(domain.KindTooMany, "schedules_full", "at most 100 schedules")
-		}
-		res, err := tx.ExecContext(ctx, "INSERT INTO schedules(name,targets,recursive,kind,expression,timezone,enabled,next,model_config_id,task) VALUES(?,?,?,?,?,?,?,?,?,?)", p.Name, string(raw), p.Recursive, p.Kind, p.Expression, p.Timezone, p.Enabled, p.Next, p.ModelConfigID, p.Task)
-		if err != nil {
-			return p, err
-		}
-		p.ID, _ = res.LastInsertId()
-	} else {
-		res, err := tx.ExecContext(ctx, "UPDATE schedules SET name=?,targets=?,recursive=?,kind=?,expression=?,timezone=?,enabled=?,next=?,model_config_id=?,task=?,version=version+1 WHERE id=? AND version=?", p.Name, string(raw), p.Recursive, p.Kind, p.Expression, p.Timezone, p.Enabled, p.Next, p.ModelConfigID, p.Task, p.ID, p.Version)
-		if err != nil {
-			return p, err
-		}
-		n, _ := res.RowsAffected()
-		if n == 0 {
-			return p, domain.Fail(domain.KindConflict, "schedule_changed", "schedule was modified; refresh")
-		}
-	}
-	if err = tx.Commit(); err != nil {
+		return p, nil
+	})
+	if err != nil {
 		return p, err
 	}
 	return s.Get(ctx, p.ID)
 }
 
 // Delete deletes plan id.
-func (s *Scheduler) Delete(ctx context.Context, id int64) error {
+func (s *Scheduler) Delete(ctx context.Context, id, version int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.DB.ExecContext(ctx, "DELETE FROM schedules WHERE id=?", id)
-	return err
+	return s.db.Write(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, "DELETE FROM schedules WHERE id=? AND version=?", id, version)
+		if err != nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			return domain.Fail(domain.KindConflict, domain.Record{Code: "schedule_changed", Message: "schedule was modified; refresh"})
+		}
+		return nil
+	})
 }
 
 // ResetNext deliberately does not catch up missed runs on service restart.
@@ -249,12 +270,14 @@ func (s *Scheduler) ResetNext(ctx context.Context, now time.Time) error {
 		return err
 	}
 	for _, p := range plans {
-		times, e := Preview(p.Expression, p.Timezone, now)
-		if e != nil {
-			return e
+		times, err := Preview(p.Expression, p.Timezone, now)
+		if err != nil {
+			return err
 		}
-		if _, e = s.DB.ExecContext(ctx, "UPDATE schedules SET next=? WHERE id=?", times[0], p.ID); e != nil {
-			return e
+		if _, err = storage.WriteValue(ctx, s.db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(ctx, "UPDATE schedules SET next=? WHERE id=?", times[0], p.ID)
+		}); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -273,57 +296,60 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) error {
 		if !p.Enabled {
 			continue
 		}
-		at, e := time.Parse(time.RFC3339, p.Next)
-		if e != nil {
-			return e
+		at, err := time.Parse(timefmt.Layout, p.Next)
+		if err != nil {
+			return err
 		}
 		if at.After(now) {
 			continue
 		}
-		next, e := Preview(p.Expression, p.Timezone, now)
-		if e != nil {
-			return e
+		next, err := Preview(p.Expression, p.Timezone, now)
+		if err != nil {
+			return err
 		}
-		loc, _ := time.LoadLocation(p.Timezone)
+		loc, err := time.LoadLocation(p.Timezone)
+		if err != nil {
+			return fmt.Errorf("load schedule timezone %q: %w", p.Timezone, err)
+		}
 		wall := at.In(loc).Format("2006-01-02 15:04")
-		tx, e := s.DB.BeginTx(ctx, nil)
-		if e != nil {
-			return e
-		}
-		res, e := tx.ExecContext(ctx, "INSERT OR IGNORE INTO schedule_ticks VALUES(?,?,?)", p.ID, wall, storage.Now())
-		if e != nil {
-			tx.Rollback()
-			return e
-		}
-		n, _ := res.RowsAffected()
-		if _, e = tx.ExecContext(ctx, "UPDATE schedules SET next=? WHERE id=?", next[0], p.ID); e != nil {
-			tx.Rollback()
-			return e
-		}
-		if e = tx.Commit(); e != nil {
-			return e
+		n, err := storage.WriteValue(ctx, s.db, func(tx *sql.Tx) (int64, error) {
+			result, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO schedule_ticks VALUES(?,?,?)", p.ID, wall, storage.Now())
+			if err != nil {
+				return 0, err
+			}
+			if _, err = tx.ExecContext(ctx, "UPDATE schedules SET next=? WHERE id=?", next[0], p.ID); err != nil {
+				return 0, err
+			}
+			return result.RowsAffected()
+		})
+		if err != nil {
+			return err
 		}
 		if n == 0 {
 			continue
 		}
 		var active int
-		if e = s.DB.QueryRowContext(ctx, "SELECT count(*) FROM runs WHERE plan=? AND status IN "+domain.ActiveRunStatusesSQL, p.ID).Scan(&active); e != nil {
-			return e
+		if err = s.db.View(ctx, func(tx *sql.Tx) error {
+			return tx.QueryRowContext(ctx, "SELECT count(*) FROM runs WHERE plan=? AND status IN "+domain.ActiveRunStatusesSQL, p.ID).Scan(&active)
+		}); err != nil {
+			return err
 		}
 		message := domain.Record{Code: "schedule_triggered", Message: "triggered"}.Text()
 		if active > 0 {
 			message = domain.Record{Code: "schedule_skipped_active", Message: "previous run unfinished; skipped"}.Text()
 		} else {
-			_, e = s.Jobs.Create(ctx, jobs.Request{Task: p.Task, ModelConfigID: p.ModelConfigID, Targets: p.Targets, Recursive: p.Recursive, Key: fmt.Sprintf("plan:%d:%s", p.ID, wall)}, "schedule", p.ID)
-			if e != nil {
-				message = domain.RecordText(e)
-				if er := s.Jobs.Library.Event(ctx, "failure", "schedule", 0, 0, 0, "", "", message); er != nil {
-					return er
+			_, err = s.Jobs.Create(ctx, job.Request{Task: p.Task, ModelConfigID: p.ModelConfigID, Targets: p.Targets, Recursive: p.Recursive, Key: fmt.Sprintf("plan:%d:%s", p.ID, wall)}, "schedule", p.ID)
+			if err != nil {
+				message = domain.RecordText(err)
+				if err := s.Jobs.Library.Event(ctx, library.EventInput{Category: "failure", Action: "schedule", Entry: 0, Operation: 0, Run: 0, Old: "", New: "", Message: message}); err != nil {
+					return err
 				}
 			}
 		}
-		if _, e = s.DB.ExecContext(ctx, "UPDATE schedules SET last=? WHERE id=?", message, p.ID); e != nil {
-			return e
+		if _, err = storage.WriteValue(ctx, s.db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(ctx, "UPDATE schedules SET last=? WHERE id=?", message, p.ID)
+		}); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -339,8 +365,18 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			return nil
 		case now := <-t.C:
 			if err := s.Tick(ctx, now); err != nil {
-				_ = s.Jobs.Library.Event(ctx, "failure", "scheduler", 0, 0, 0, "", "", domain.RecordText(err))
+				if ctx.Err() != nil {
+					return nil
+				}
+				if recordErr := s.Jobs.Library.Event(ctx, library.EventInput{Category: "failure", Action: "scheduler", Message: domain.RecordText(err)}); recordErr != nil {
+					return errors.Join(err, fmt.Errorf("record scheduler failure: %w", recordErr))
+				}
 			}
 		}
 	}
+}
+
+// New creates the schedule store and its batch runner.
+func New(db *storage.Store, manager *job.Manager) *Scheduler {
+	return &Scheduler{db: db, Jobs: manager}
 }

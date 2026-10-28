@@ -19,8 +19,9 @@ func (l *Library) Refresh(ctx context.Context, id int64) error {
 }
 
 type scannedDirectoryEntry struct {
-	name, kind, identity, mtime string
-	size                        int64
+	name, kind, identity string
+	mtime                int64
+	size                 int64
 }
 
 // readDirectoryMetadata joins all workers, including on cancellation or failure.

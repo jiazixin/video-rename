@@ -45,7 +45,7 @@ func fakeFFmpeg(t *testing.T, name, copyFrom, failAt string) string {
 	t.Helper()
 	sh, err := exec.LookPath("sh")
 	if err != nil {
-		t.Skip("无 sh 可用")
+		t.Skip("sh is unavailable")
 	}
 	body := "#!" + sh + "\n"
 	if failAt != "" {
@@ -117,7 +117,7 @@ func TestTargetDims(t *testing.T) {
 		}
 	}
 	if _, _, err := targetDims(1, 100, 768); err == nil {
-		t.Error("病态尺寸应拒绝")
+		t.Error("pathological dimensions should be rejected")
 	}
 }
 
@@ -135,25 +135,25 @@ func TestExtractHappyPath(t *testing.T) {
 		t.Fatal(jerr)
 	}
 	if len(set.Frames) != 3 {
-		t.Fatalf("应提取 3 帧: %d", len(set.Frames))
+		t.Fatalf("want 3 extracted frames: %d", len(set.Frames))
 	}
 	for i, fr := range set.Frames {
 		if fr.Width != 768 || fr.Height != 432 {
-			t.Errorf("帧 %d 尺寸 %dx%d", i, fr.Width, fr.Height)
+			t.Errorf("frame %d dimensions %dx%d", i, fr.Width, fr.Height)
 		}
 		if fr.Bytes == 0 || fr.Path == "" {
-			t.Errorf("帧 %d 信息不完整: %+v", i, fr)
+			t.Errorf("frame %d incomplete metadata: %+v", i, fr)
 		}
 		if fr.Planned != set.Plan.Times[i] {
-			t.Errorf("帧 %d 计划点 %v != %v", i, fr.Planned, set.Plan.Times[i])
+			t.Errorf("frame %d planned point %v != %v", i, fr.Planned, set.Plan.Times[i])
 		}
 	}
 	// the temp directory must exist until the caller removes it
 	if set.TempDir == "" {
-		t.Fatal("TempDir 应返回给调用方")
+		t.Fatal("TempDir should be returned to the caller")
 	}
 	if _, err := os.Stat(set.TempDir); err != nil {
-		t.Fatalf("临时目录应仍存在: %v", err)
+		t.Fatalf("temporary directory should still exist: %v", err)
 	}
 	os.RemoveAll(set.TempDir)
 }
@@ -166,7 +166,7 @@ func TestExtractRetriesAtOneThird(t *testing.T) {
 	// the first midpoint 3.500 fails; the retry point is 2+1/3*3 = 3.000 (1/3 of segment [2,5))
 	mid := formatSeconds(plan.Times[0])
 	if mid != "3.500" {
-		t.Fatalf("测试假设中点为 3.500, got %s", mid)
+		t.Fatalf("fixture midpoint should be 3.500, got %s", mid)
 	}
 	ff := fakeFFmpeg(t, "ffmpeg-retry", fixture, mid)
 
@@ -178,18 +178,18 @@ func TestExtractRetriesAtOneThird(t *testing.T) {
 		t.Fatal(jerr)
 	}
 	if len(set.Frames) != 2 || len(set.Failed) != 0 {
-		t.Fatalf("补试后应全部成功: frames=%d failed=%d", len(set.Frames), len(set.Failed))
+		t.Fatalf("all frames should succeed after retry: frames=%d failed=%d", len(set.Frames), len(set.Failed))
 	}
 	if set.Frames[0].Actual == set.Frames[0].Planned {
-		t.Errorf("第一帧应记录补试点: planned=%v actual=%v", set.Frames[0].Planned, set.Frames[0].Actual)
+		t.Errorf("first frame should record the retry point: planned=%v actual=%v", set.Frames[0].Planned, set.Frames[0].Actual)
 	}
 	seg := plan.WindowLen / time.Duration(2)
 	retryWant := plan.WindowStart + time.Duration((1.0/3.0)*float64(seg))
 	if set.Frames[0].Actual != retryWant {
-		t.Errorf("补试点 = %v, 期望 %v", set.Frames[0].Actual, retryWant)
+		t.Errorf("retry point = %v, want %v", set.Frames[0].Actual, retryWant)
 	}
 	if set.Frames[1].Actual != set.Frames[1].Planned {
-		t.Errorf("第二帧无需补试")
+		t.Errorf("second frame should not need retry")
 	}
 	os.RemoveAll(set.TempDir)
 }
@@ -209,21 +209,21 @@ func TestExtractOversizeRecompress(t *testing.T) {
 	si, _ := os.Stat(small)
 	ex.ImageLimit = fi.Size() - 1 // big is over the limit, small is within it
 	if ex.ImageLimit <= si.Size() {
-		t.Fatalf("夹具尺寸不满足测试假设: big=%d small=%d", fi.Size(), si.Size())
+		t.Fatalf("fixture sizes do not meet test assumptions: big=%d small=%d", fi.Size(), si.Size())
 	}
 	set, jerr := ex.Extract(t.Context(), job, meta, testPlan(1))
 	if jerr != nil {
 		t.Fatal(jerr)
 	}
 	if len(set.Frames) != 1 {
-		t.Fatalf("应有一帧: %d (failed=%+v)", len(set.Frames), set.Failed)
+		t.Fatalf("want one frame: %d (failed=%+v)", len(set.Frames), set.Failed)
 	}
 	fr := set.Frames[0]
 	if !fr.Recompressed {
-		t.Error("应标记 Recompressed")
+		t.Error("should mark Recompressed")
 	}
 	if fr.Width != 240 || fr.Height != 134 {
-		t.Errorf("重编码尺寸 %dx%d, 期望 240x134", fr.Width, fr.Height)
+		t.Errorf("recompresseddimensions %dx%d, want 240x134", fr.Width, fr.Height)
 	}
 	os.RemoveAll(set.TempDir)
 }
@@ -240,14 +240,14 @@ func TestExtractImageTooLargeFailsVideo(t *testing.T) {
 	ex.ImageLimit = 10 // every image is over the limit
 	set, jerr := ex.Extract(t.Context(), job, meta, testPlan(1))
 	if jerr == nil || jerr.Code != domain.CodeExtractInsufficientFrames {
-		t.Fatalf("应报 extract_insufficient_frames, got %+v", jerr)
+		t.Fatalf("want extract_insufficient_frames, got %+v", jerr)
 	}
 	if len(set.Frames) != 0 && set.TempDir != "" {
-		t.Log("失败时应清理临时目录")
+		t.Log("temporary directory should be removed on failure")
 	}
 	if set.TempDir != "" {
 		if _, err := os.Stat(set.TempDir); !errors.Is(err, fs.ErrNotExist) {
-			t.Error("失败后临时目录应被清理")
+			t.Error("temporary directory should be removed after failure")
 		}
 	}
 }
@@ -255,7 +255,7 @@ func TestExtractImageTooLargeFailsVideo(t *testing.T) {
 func TestExtractBudgetTimeout(t *testing.T) {
 	sh, err := exec.LookPath("sh")
 	if err != nil {
-		t.Skip("无 sh")
+		t.Skip("sh is unavailable")
 	}
 	p := filepath.Join(t.TempDir(), "ffmpeg-slow")
 	os.WriteFile(p, []byte("#!"+sh+"\nsleep 5\n"), 0o755)
@@ -265,10 +265,10 @@ func TestExtractBudgetTimeout(t *testing.T) {
 	ex.Budget = 150 * time.Millisecond
 	set, jerr := ex.Extract(t.Context(), job, meta, testPlan(1))
 	if jerr == nil || jerr.Code != domain.CodeExtractTimeout {
-		t.Fatalf("应报 extract_timeout, got %+v", jerr)
+		t.Fatalf("want extract_timeout, got %+v", jerr)
 	}
 	if len(set.Frames) != 0 {
-		t.Error("不应有成功帧")
+		t.Error("want no successful frames")
 	}
 }
 
@@ -287,10 +287,10 @@ func TestExtractPartialFailureStillSucceeds(t *testing.T) {
 	ex := testExtractor(p, 768, 4)
 	set, jerr := ex.Extract(t.Context(), job, meta, plan)
 	if jerr == nil || jerr.Code != domain.CodeExtractInsufficientFrames {
-		t.Fatalf("零帧应失败, got %+v", jerr)
+		t.Fatalf("empty frames should fail, got %+v", jerr)
 	}
 	if len(set.Failed) != 2 {
-		t.Errorf("应记录 2 个失败点: %d", len(set.Failed))
+		t.Errorf("want 2 failed points: %d", len(set.Failed))
 	}
 	_ = fixture
 }
@@ -321,7 +321,7 @@ func TestExtractArgumentsIncludeSeekAndMap(t *testing.T) {
 		" -vf scale=320:180:flags=lanczos,setsar=1 ", " -q:v 7 ", " -update 1 ",
 	} {
 		if !strings.Contains(joined, want) {
-			t.Errorf("ffmpeg 参数缺少 %s", want)
+			t.Errorf("ffmpeg arguments missing %s", want)
 		}
 	}
 	os.RemoveAll(set.TempDir)
@@ -332,7 +332,7 @@ func TestExtractEmptyPlan(t *testing.T) {
 	ex := testExtractor("ffmpeg", 768, 4)
 	set, jerr := ex.Extract(t.Context(), job, domain.VideoMeta{DisplayWidth: 320, DisplayHeight: 180}, domain.FramePlan{})
 	if jerr == nil || jerr.Code != domain.CodeExtractInsufficientFrames {
-		t.Fatalf("空计划应失败, got %+v", jerr)
+		t.Fatalf("empty plan should fail, got %+v", jerr)
 	}
 	_ = set
 }
@@ -378,7 +378,7 @@ func TestExtractCancelledContext(t *testing.T) {
 	ex := testExtractor(ff, 768, 4)
 	_, jerr := ex.Extract(ctx, job, meta, testPlan(1))
 	if jerr == nil {
-		t.Fatal("已取消的 context 应失败")
+		t.Fatal("cancelled context should fail")
 	}
 }
 

@@ -1,6 +1,7 @@
 package naming
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -32,17 +33,29 @@ type AllocateResult struct {
 	Unchanged bool   // the target is the source file and its extension is already lowercase
 }
 
+// Allocation describes the source and target naming policy.
+type Allocation struct {
+	Directory string
+	Title     string
+	Extension string
+	Job       domain.VideoJob
+}
+
 // Allocate assigns a target name for a cleaned title.
 // On conflict it appends " (2)", " (3)"… before the extension, re-reserving bytes for suffix and extension each time;
 // past (9999) it reports rename_conflict_exhausted.
 // When a candidate is the source file itself it returns Unchanged, unless the extension case must be normalized.
-func (a *Allocator) Allocate(dir, title, ext string, job domain.VideoJob) (AllocateResult, *domain.JobError) {
+func (a *Allocator) Allocate(ctx context.Context, request Allocation) (AllocateResult, *domain.JobError) {
+	dir, title, ext, job := request.Directory, request.Title, request.Extension, request.Job
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	ext = NormalizeExtension(ext)
 
 	for n := 1; n <= 9999; n++ {
+		if err := ctx.Err(); err != nil {
+			return AllocateResult{}, &domain.JobError{Code: domain.CodeCancelled, Message: "name allocation cancelled"}
+		}
 		reserve := 0
 		if n > 1 {
 			reserve = len(fmt.Sprintf(" (%d)", n))

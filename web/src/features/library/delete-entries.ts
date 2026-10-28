@@ -26,7 +26,8 @@ type DeleteOptions = {
 function deleteRequest(e: Entry) {
   return api(`/entries/${e.id}`, {
     method: 'DELETE',
-    body: { version: e.version, confirmed: true }
+    headers: { 'If-Match': e.etag },
+    body: { confirmed: true }
   })
 }
 

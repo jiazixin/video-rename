@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http/httptest"
@@ -12,8 +13,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"video-rename/internal/config"
+	"video-rename/internal/storage"
 )
 
 func TestMissingRecordFailureUsesReadableMessage(t *testing.T) {
@@ -42,7 +45,9 @@ func TestHistoryDateFiltersCompareInstants(t *testing.T) {
 	}
 	defer shutdown(t, a)
 	for _, stamp := range []string{"2026-10-02T00:00:00Z", "2026-10-02T00:00:01.5Z", "2026-10-02T00:00:02Z"} {
-		if _, err := a.DB.Exec("INSERT INTO events(category,action,created) VALUES('success','manual',?)", stamp); err != nil {
+		if _, err := storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(t.Context(), "INSERT INTO events(category,action,created) VALUES('success','manual',?)", stamp)
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -83,7 +88,7 @@ func TestStaticSPAAndProtectedAPI(t *testing.T) {
 	}
 	defer shutdown(t, a)
 	h := a.Handler()
-	for _, p := range []string{"/", "/login", "/library"} {
+	for _, p := range []string{"/", "/login", "/library", "/settings/models"} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", p, nil))
 		if w.Code != 200 || w.Header().Get("Content-Type") != "text/html; charset=utf-8" {
@@ -92,6 +97,11 @@ func TestStaticSPAAndProtectedAPI(t *testing.T) {
 		if got := w.Header().Get("Content-Security-Policy"); got != contentSecurityPolicy {
 			t.Fatalf("%s: got CSP %q, want %q", p, got, contentSecurityPolicy)
 		}
+	}
+	missing := httptest.NewRecorder()
+	h.ServeHTTP(missing, httptest.NewRequest("GET", "/assets/missing.js", nil))
+	if missing.Code != 404 {
+		t.Fatalf("missing asset status=%d", missing.Code)
 	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("GET", "/api/system", nil))
@@ -112,11 +122,13 @@ func TestDataDirectoryPersistenceAndShortPasswordLogin(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err = a.DB.Exec("INSERT INTO events(category,action,message,created) VALUES('success','manual','retained','now')"); err != nil {
+	if _, err = storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "INSERT INTO events(category,action,message,created) VALUES('success','manual','retained','2026-10-01T00:00:00.000Z')")
+	}); err != nil {
 		shutdown(t, a)
 		t.Fatal(err)
 	}
-	secret, err := a.DB.Seal("retained-key")
+	secret, err := a.db.Seal("retained-key")
 	if err != nil {
 		shutdown(t, a)
 		t.Fatal(err)
@@ -129,12 +141,14 @@ func TestDataDirectoryPersistenceAndShortPasswordLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer shutdown(t, a)
-	plain, err := a.DB.Unseal(secret)
+	plain, err := a.db.Unseal(secret)
 	if err != nil || plain != "retained-key" {
 		t.Fatal("key not preserved", err)
 	}
 	var count int
-	if err = a.DB.QueryRow("SELECT count(*) FROM events WHERE message='retained'").Scan(&count); err != nil || count != 1 {
+	if err = a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM events WHERE message='retained'").Scan(&count)
+	}); err != nil || count != 1 {
 		t.Fatal("data not preserved", err)
 	}
 	w := httptest.NewRecorder()
@@ -143,6 +157,28 @@ func TestDataDirectoryPersistenceAndShortPasswordLogin(t *testing.T) {
 	a.Handler().ServeHTTP(w, r)
 	if w.Code != 200 {
 		t.Fatalf("short password login: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestShutdownTimeoutLeavesStoresOpen(t *testing.T) {
+	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer shutdown(t, a)
+	release := make(chan struct{})
+	defer close(release)
+	a.wg.Go(func() { <-release })
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+	if err := a.Shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("shutdown error = %v, want deadline exceeded", err)
+	}
+	if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+		var count int
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM events").Scan(&count)
+	}); err != nil {
+		t.Fatalf("store closed while worker still active: %v", err)
 	}
 }
 

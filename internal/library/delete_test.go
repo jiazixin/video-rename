@@ -2,6 +2,7 @@ package library
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -41,7 +42,9 @@ func TestDeleteFileAndDirectory(t *testing.T) {
 		t.Fatalf("symlink target was touched: %v", err)
 	}
 	var count int
-	if err := l.DB.QueryRow("SELECT count(*) FROM directory_items").Scan(&count); err != nil || count != 0 {
+	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM directory_items").Scan(&count)
+	}); err != nil || count != 0 {
 		t.Fatalf("stale index: count=%d err=%v", count, err)
 	}
 }

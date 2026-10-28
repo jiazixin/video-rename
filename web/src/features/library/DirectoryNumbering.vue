@@ -119,7 +119,7 @@
     page.value = 0;
     busy.value = true;
     try {
-      const state = await task.run(parent, 'preview');
+      const state = await task.run({ parent, action: 'preview' });
       if (!show.value) return;
       previewKey.value = state.key;
       await loadPage(0);
@@ -179,12 +179,12 @@
     const pending = batches.value.filter((b) => b.changed),
       undo = restoring.value;
     try {
-      const state = await task.run(
+      const state = await task.run({
         parent,
-        'apply',
-        previewKey.value ? undefined : pending.map((b) => b.id),
-        previewKey.value || undefined
-      );
+        action: 'apply',
+        batches: previewKey.value ? undefined : pending.map((b) => b.id),
+        preview: previewKey.value || undefined
+      });
       if (show.value)
         emit(
           'notice',

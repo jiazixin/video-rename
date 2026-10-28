@@ -1,6 +1,7 @@
 package app
 
 import (
+	"database/sql"
 	"encoding/json/v2"
 	"log/slog"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 
 	"video-rename/internal/config"
 	"video-rename/internal/library"
+	"video-rename/internal/storage"
 )
 
 func TestDirectoryProcessingStatusAPI(t *testing.T) {
@@ -29,7 +31,9 @@ func TestDirectoryProcessingStatusAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, source := range map[string]string{"2.jpg": "marked", "photo2.jpg": "manual", "photo10.jpg": "manual", "video.mp4": "automatic"} {
-		if _, err := a.DB.Exec(`INSERT INTO marks(identity,size,mtime,source) SELECT identity,size,mtime,? FROM entries WHERE name=?`, source, name); err != nil {
+		if _, err := storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(t.Context(), `INSERT INTO marks(identity,size,mtime_ns,source) SELECT identity,size,mtime_ns,? FROM entries WHERE name=?`, source, name)
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -73,7 +77,7 @@ func TestDirectoryProcessingStatusAPI(t *testing.T) {
 	}
 	w = request("POST", "/api/directories/1/numberings/preview", `{"media":"image","query":"photo","status":"manual","sort":"status_desc"}`)
 	var preview library.Numbering
-	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &preview) != nil || preview.Total != 2 || len(preview.Items) != 2 || preview.Items[0].Old != "photo10.jpg" || preview.Items[0].New != "3.jpg" || preview.Items[1].Old != "photo2.jpg" || preview.Items[1].New != "4.jpg" {
+	if w.Code != 201 || json.Unmarshal(w.Body.Bytes(), &preview) != nil || preview.Total != 2 || len(preview.Items) != 2 || preview.Items[0].Old != "photo10.jpg" || preview.Items[0].New != "3.jpg" || preview.Items[1].Old != "photo2.jpg" || preview.Items[1].New != "4.jpg" {
 		t.Fatalf("filtered numbering request: %d %s", w.Code, w.Body.String())
 	}
 	for _, endpoint := range []struct{ method, path, body string }{
@@ -106,14 +110,18 @@ func TestDirectoryStatusAPIFiltersCompletedSubtrees(t *testing.T) {
 	defer shutdown(t, a)
 	for _, name := range []string{"", "completed", "nested", "partial"} {
 		var id int64
-		if err := a.DB.Read().QueryRow("SELECT id FROM entries WHERE name=? AND present=1", name).Scan(&id); err != nil {
+		if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+			return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name=? AND present=1", name).Scan(&id)
+		}); err != nil {
 			t.Fatal(err)
 		}
 		if err := a.Library.Refresh(t.Context(), id); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := a.DB.Exec(`INSERT INTO marks(identity,size,mtime,source) SELECT identity,size,mtime,'manual' FROM entries WHERE kind='file' AND name IN ('clip.mp4','one.mp4')`); err != nil {
+	if _, err := storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `INSERT INTO marks(identity,size,mtime_ns,source) SELECT identity,size,mtime_ns,'manual' FROM entries WHERE kind='file' AND name IN ('clip.mp4','one.mp4')`)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	handler := a.Handler()

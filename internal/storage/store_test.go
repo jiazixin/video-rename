@@ -23,7 +23,7 @@ func TestDatabaseFilesArePrivate(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec("INSERT INTO sessions VALUES('token',123,'fingerprint')"); err != nil {
+	if _, err := db.write.ExecContext(t.Context(), "INSERT INTO sessions VALUES('token',123,'fingerprint')"); err != nil {
 		t.Fatal(err)
 	}
 	for _, suffix := range []string{"", ".key", ".lock", "-wal", "-shm"} {
@@ -48,7 +48,7 @@ func TestExclusiveInstanceAndForeignKeys(t *testing.T) {
 		t.Fatal("second writer instance allowed")
 	}
 	var mode string
-	if err = a.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil || mode != "wal" {
+	if err = a.write.QueryRowContext(t.Context(), "PRAGMA journal_mode").Scan(&mode); err != nil || mode != "wal" {
 		t.Fatal(mode, err)
 	}
 	a.Close()
@@ -175,7 +175,7 @@ func TestMissingEncryptionKeyNeverSilentlyReplacesCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec("INSERT INTO prompts(id,title,body,created,updated) VALUES(1,'x','body','now','now'); INSERT INTO model_configs(title,prompt_id,created,updated,api_key) VALUES('x',1,'now','now',?)", sealed); err != nil {
+	if _, err = db.write.ExecContext(t.Context(), "INSERT INTO prompts(id,title,body,created,updated) VALUES(1,'x','body','now','now'); INSERT INTO model_configs(title,prompt_id,created,updated,api_key) VALUES('x',1,'now','now',?)", sealed); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -194,7 +194,7 @@ func TestCurrentSchemaReopensWithoutChangingData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec(`INSERT INTO prompts(id,title,body,created,updated) VALUES(1,'标题','正文','now','now');
+	if _, err = db.write.ExecContext(t.Context(), `INSERT INTO prompts(id,title,body,created,updated) VALUES(1,'标题','正文','now','now');
  INSERT INTO model_configs(id,title,prompt_id,created,updated) VALUES(1,'模型',1,'now','now');
  INSERT INTO schedules(name,targets,recursive,kind,expression,timezone,enabled,next,task,model_config_id) VALUES('抽帧','[1]',1,'daily','0 2 * * *','UTC',0,'later','extract',0)`); err != nil {
 		t.Fatal(err)
@@ -210,23 +210,23 @@ func TestCurrentSchemaReopensWithoutChangingData(t *testing.T) {
 	}
 	defer db.Close()
 	var indexCount int
-	if err = db.QueryRow("SELECT count(*) FROM sqlite_schema WHERE type='index' AND name='entry_parent_id'").Scan(&indexCount); err != nil || indexCount != 1 {
+	if err = db.write.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_schema WHERE type='index' AND name='entry_parent_id'").Scan(&indexCount); err != nil || indexCount != 1 {
 		t.Fatal("current schema missing cursor index", indexCount, err)
 	}
 	if plain, err := db.Unseal(sealed); err != nil || plain != "secret" {
 		t.Fatal(plain, err)
 	}
 	var body, task string
-	if err = db.QueryRow("SELECT p.body FROM model_configs c JOIN prompts p ON p.id=c.prompt_id").Scan(&body); err != nil || body != "正文" {
+	if err = db.write.QueryRowContext(t.Context(), "SELECT p.body FROM model_configs c JOIN prompts p ON p.id=c.prompt_id").Scan(&body); err != nil || body != "正文" {
 		t.Fatal(body, err)
 	}
-	if err = db.QueryRow("SELECT task FROM schedules").Scan(&task); err != nil || task != "extract" {
+	if err = db.write.QueryRowContext(t.Context(), "SELECT task FROM schedules").Scan(&task); err != nil || task != "extract" {
 		t.Fatal(task, err)
 	}
-	if _, err = db.Exec("DELETE FROM prompts WHERE id=1"); err == nil {
+	if _, err = db.write.ExecContext(t.Context(), "DELETE FROM prompts WHERE id=1"); err == nil {
 		t.Fatal("deleted referenced prompt")
 	}
-	if _, err = db.Exec("UPDATE model_configs SET prompt_id=999 WHERE id=1"); err == nil {
+	if _, err = db.write.ExecContext(t.Context(), "UPDATE model_configs SET prompt_id=999 WHERE id=1"); err == nil {
 		t.Fatal("accepted missing prompt")
 	}
 }
@@ -239,7 +239,7 @@ func TestUnsupportedDatabaseRemainsIntact(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err = db.Exec("CREATE TABLE old_data(value TEXT); INSERT INTO old_data VALUES('keep'); PRAGMA user_version=" + fmt.Sprint(version)); err != nil {
+			if _, err = db.ExecContext(t.Context(), "CREATE TABLE old_data(value TEXT); INSERT INTO old_data VALUES('keep'); PRAGMA user_version="+fmt.Sprint(version)); err != nil {
 				t.Fatal(err)
 			}
 			db.Close()
@@ -253,15 +253,15 @@ func TestUnsupportedDatabaseRemainsIntact(t *testing.T) {
 			}
 			defer db.Close()
 			var journal string
-			if err = db.QueryRow("PRAGMA journal_mode").Scan(&journal); err != nil || journal != "delete" {
+			if err = db.QueryRowContext(t.Context(), "PRAGMA journal_mode").Scan(&journal); err != nil || journal != "delete" {
 				t.Fatal("unsupported database journal mode changed", journal, err)
 			}
 			var value string
-			if err = db.QueryRow("SELECT value FROM old_data").Scan(&value); err != nil || value != "keep" {
+			if err = db.QueryRowContext(t.Context(), "SELECT value FROM old_data").Scan(&value); err != nil || value != "keep" {
 				t.Fatal(value, err)
 			}
 			var tables int
-			if err = db.QueryRow("SELECT count(*) FROM sqlite_schema WHERE type='table'").Scan(&tables); err != nil || tables != 1 {
+			if err = db.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_schema WHERE type='table'").Scan(&tables); err != nil || tables != 1 {
 				t.Fatal(tables, err)
 			}
 		})
@@ -274,12 +274,12 @@ func TestForeignKeysSurviveConnectionReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	db.SetMaxIdleConns(0)
+	db.write.SetMaxIdleConns(0)
 	var enabled int
-	if err = db.QueryRow("PRAGMA foreign_keys").Scan(&enabled); err != nil || enabled != 1 {
+	if err = db.write.QueryRowContext(t.Context(), "PRAGMA foreign_keys").Scan(&enabled); err != nil || enabled != 1 {
 		t.Fatal("foreign keys lost on reconnect", enabled, err)
 	}
-	if _, err = db.Exec("INSERT INTO model_configs(title,prompt_id,created,updated) VALUES('x',999,'now','now')"); err == nil {
+	if _, err = db.write.ExecContext(t.Context(), "INSERT INTO model_configs(title,prompt_id,created,updated) VALUES('x',999,'now','now')"); err == nil {
 		t.Fatal("missing reference accepted on new connection")
 	}
 }
@@ -296,15 +296,15 @@ func TestDeletedEntityIDsAreNeverReused(t *testing.T) {
 		{"schedules", `INSERT INTO schedules(name,targets,recursive,kind,expression,timezone,enabled,next) VALUES('s','[1]',1,'daily','0 2 * * *','UTC',0,'later')`},
 		{"extraction_records", `INSERT INTO extraction_records(path,source,status,started) VALUES('x','manual','success','now')`},
 	} {
-		first, err := db.Exec(table.insert)
+		first, err := db.write.ExecContext(t.Context(), table.insert)
 		if err != nil {
 			t.Fatal(err)
 		}
 		id, _ := first.LastInsertId()
-		if _, err = db.Exec("DELETE FROM "+table.name+" WHERE id=?", id); err != nil {
+		if _, err = db.write.ExecContext(t.Context(), "DELETE FROM "+table.name+" WHERE id=?", id); err != nil {
 			t.Fatal(err)
 		}
-		second, err := db.Exec(table.insert)
+		second, err := db.write.ExecContext(t.Context(), table.insert)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -1,6 +1,7 @@
 package library
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -11,11 +12,14 @@ import (
 
 	"video-rename/internal/domain"
 	"video-rename/internal/storage"
+	"video-rename/internal/timefmt"
 )
 
 func setTestProcessingSource(t *testing.T, l *Library, parent int64, name, source string) {
 	t.Helper()
-	result, err := l.DB.Exec(`INSERT INTO marks(identity,size,mtime,source) SELECT identity,size,mtime,? FROM entries WHERE parent=? AND name=? AND present=1`, source, parent, name)
+	result, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `INSERT INTO marks(identity,size,mtime_ns,source) SELECT identity,size,mtime_ns,? FROM entries WHERE parent=? AND name=? AND present=1`, source, parent, name)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +46,9 @@ func TestProcessingStatusFiltersAndSortingAcrossPages(t *testing.T) {
 		}
 	}
 	// A mark from an older file snapshot must not count as the current state.
-	if _, err := l.DB.Exec(`UPDATE marks SET size=size+1 WHERE identity=(SELECT identity FROM entries WHERE name='clip254.mp4')`); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `UPDATE marks SET size=size+1 WHERE identity=(SELECT identity FROM entries WHERE name='clip254.mp4')`)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	for _, status := range []string{"", "unprocessed", "processed", "marked", "manual", "automatic", "restore", "active"} {
@@ -79,11 +85,11 @@ func TestProcessingStatusFiltersAndSortingAcrossPages(t *testing.T) {
 				cursor := 0
 				var generation int64
 				for page := 1; ; page++ {
-					p, err := l.ListPage(t.Context(), 1, page, 50, "", "video", status, "status_"+direction)
+					p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: page, Limit: 50, Query: "", Kind: "video", Status: status, SortBy: "status_" + direction})
 					if err != nil || p.Number != page || p.Total != len(expected) {
 						t.Fatalf("page %d: %+v, %v", page, p, err)
 					}
-					c, err := l.ListOrdered(t.Context(), 1, cursor, 50, generation, "", "video", status, false, "status_"+direction)
+					c, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: cursor, Limit: 50, Generation: generation, Query: "", Kind: "video", Status: status, Force: false, SortBy: "status_" + direction})
 					if err != nil || c.Total != p.Total || c.Next != p.Next || !slices.EqualFunc(c.Items, p.Items, func(a, b Entry) bool { return a.ID == b.ID }) {
 						t.Fatalf("cursor disagrees with page %d: %v", page, err)
 					}
@@ -101,15 +107,15 @@ func TestProcessingStatusFiltersAndSortingAcrossPages(t *testing.T) {
 			})
 		}
 	}
-	p, err := l.ListPage(t.Context(), 1, 99, 50, "clip12", "video", "manual", "status_asc")
+	p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: 99, Limit: 50, Query: "clip12", Kind: "video", Status: "manual", SortBy: "status_asc"})
 	if err != nil || p.Number != 1 || p.Total != 3 || len(p.Items) != 3 || p.Items[0].Name != "clip12.mp4" || p.Items[1].Name != "clip122.mp4" || p.Items[2].Name != "clip127.mp4" {
 		t.Fatalf("combined filters and clamping: %+v, %v", p, err)
 	}
-	p, err = l.ListPage(t.Context(), 1, 1, 50, "", "image", "processed", "status_asc")
+	p, err = l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: 1, Limit: 50, Query: "", Kind: "image", Status: "processed", SortBy: "status_asc"})
 	if err != nil || p.Total != 0 || len(p.Items) != 0 {
 		t.Fatalf("unknown directories incorrectly reported as processed: %+v, %v", p, err)
 	}
-	if _, err := l.ListPage(t.Context(), 1, 1, 50, "", "", "invalid' OR 1=1", "status_asc"); err == nil {
+	if _, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: 1, Limit: 50, Query: "", Kind: "", Status: "invalid' OR 1=1", SortBy: "status_asc"}); err == nil {
 		t.Fatal("invalid status accepted")
 	}
 }
@@ -125,12 +131,14 @@ func TestProcessingStatusUsesLiveTaskPrecedenceAndScope(t *testing.T) {
 	refresh(t, l, dir.ID)
 	file := entry(t, l, dir.ID, "clip.mp4")
 	setTestProcessingSource(t, l, dir.ID, file.Name, "manual")
-	if _, err := l.DB.Exec(`INSERT INTO runs(id,source,targets,recursive,status,created,request_key) VALUES(1,'manual','[1]',1,'scanning','now','status-scope')`); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `INSERT INTO runs(id,source,targets,recursive,status,created,request_key) VALUES(1,'manual','[1]',1,'scanning','2026-10-28T00:00:00.000Z','status-scope')`)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	assertStatus := func(filter, task string, count int) {
 		t.Helper()
-		p, err := l.ListPage(t.Context(), dir.ID, 1, 50, "", "video", filter, "status_asc")
+		p, err := l.ListPage(t.Context(), ListPageOptions{ID: dir.ID, Page: 1, Limit: 50, Query: "", Kind: "video", Status: filter, SortBy: "status_asc"})
 		if err != nil || p.Total != count || len(p.Items) != count {
 			t.Fatalf("filter %s: %+v, %v", filter, p, err)
 		}
@@ -142,17 +150,23 @@ func TestProcessingStatusUsesLiveTaskPrecedenceAndScope(t *testing.T) {
 	assertStatus("queued", "queued", 1)
 	assertStatus("processed", "", 0)
 	assertStatus("manual", "", 0)
-	if _, err := l.DB.Exec(`INSERT INTO run_items(run,entry,identity,size,mtime,status) VALUES(1,?,?,?,?, 'running')`, file.ID, file.Identity, file.Size, file.Mtime); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `INSERT INTO run_items(run,entry,identity,size,mtime_ns,status) VALUES(1,?,?,?,?, 'running')`, file.ID, file.Identity, file.Size, file.ModifiedNS)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	assertStatus("running", "running", 1)
-	if _, err := l.DB.Exec(`UPDATE runs SET status='paused' WHERE id=1`); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `UPDATE runs SET status='paused' WHERE id=1`)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	assertStatus("active", "paused", 1)
 	assertStatus("paused", "paused", 1)
 	assertStatus("running", "", 0)
-	if _, err := l.DB.Exec(`UPDATE run_items SET status='done' WHERE run=1`); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `UPDATE run_items SET status='done' WHERE run=1`)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	assertStatus("active", "", 0)
@@ -199,81 +213,79 @@ func TestNumberingStatusFilterKeepsHiddenNumbersAndUsesStatusSorting(t *testing.
 			t.Fatalf("unexpected numbering result: %s: %v", name, err)
 		}
 	}
-	if _, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "image", Status: "marked", Sort: "status_asc", Settings: settings}); err == nil || !errors.Is(err, domain.Fail(domain.KindInvalid, "numbering_nothing_selected", "")) {
+	if _, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "image", Status: "marked", Sort: "status_asc", Settings: settings}); err == nil || !errors.Is(err, domain.Fail(domain.KindInvalid, domain.Record{Code: "numbering_nothing_selected", Message: ""})) {
 		t.Fatalf("protected marked files entered numbering: %v", err)
 	}
 }
 
 func TestDirectoryProcessingFiltersUseSubtreesBeforePaging(t *testing.T) {
 	l, _, _ := fixture(t)
-	tx, err := l.DB.Begin()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback()
-	// The index below is synthetic; the media root on disk is empty. Listing a
-	// directory refreshed over 30 seconds ago rescans it, and under -race this
-	// test runs longer than that, so a rescan would publish the empty disk
-	// state mid-test. Stamp the root as refreshed in the future instead.
-	refreshed := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339Nano)
-	if _, err := tx.Exec("INSERT INTO directory_state(dir,generation,refreshed) VALUES(1,1,?)", refreshed); err != nil {
-		t.Fatal(err)
-	}
 	want := map[string][]string{}
-	for i := range 210 {
-		dir := int64(10 + i*4)
-		name := fmt.Sprintf("folder%d", i)
-		if _, err := tx.Exec(`INSERT INTO entries(id,parent,name,kind,identity,size,mtime,observed) VALUES(?,1,?,'directory',?,0,'now','now');
- INSERT INTO directory_items(dir,generation,entry,name,kind,size,mtime) VALUES(1,1,?,?,'directory',0,'now')`, dir, name, name, dir, name); err != nil {
+	if err := l.db.Write(t.Context(), func(tx *sql.Tx) error {
+		// The index below is synthetic; the media root on disk is empty. Listing a
+		// directory refreshed over 30 seconds ago rescans it, and under -race this
+		// test runs longer than that, so a rescan would publish the empty disk
+		// state mid-test. Stamp the root as refreshed in the future instead.
+		refreshed := timefmt.Format(time.Now().Add(24 * time.Hour))
+		if _, err := tx.ExecContext(t.Context(), "INSERT INTO directory_state(dir,generation,refreshed) VALUES(1,1,?)", refreshed); err != nil {
 			t.Fatal(err)
 		}
-		want[""] = append(want[""], name)
-		state := i % 7
-		// One seventh is undiscovered; another is a known empty directory.
-		if state == 5 {
-			want["unprocessed"] = append(want["unprocessed"], name)
-			continue
-		}
-		if _, err := tx.Exec("INSERT INTO directory_state(dir,generation,refreshed) VALUES(?,1,?)", dir, storage.Now()); err != nil {
-			t.Fatal(err)
-		}
-		if state == 6 {
-			continue
-		}
-		// Videos are two levels below each listed directory: testing only direct
-		// children would accidentally treat every folder as empty.
-		if _, err := tx.Exec(`INSERT INTO entries(id,parent,name,kind,identity,size,mtime,observed) VALUES(?,?,'nested','directory',?,0,'now','now');
- INSERT INTO directory_state(dir,generation,refreshed) VALUES(?,1,?)`, dir+1, dir, name+"/nested", dir+1, storage.Now()); err != nil {
-			t.Fatal(err)
-		}
-		for j := range 2 {
-			identity := fmt.Sprintf("%s/video%d", name, j)
-			if _, err := tx.Exec(`INSERT INTO entries(id,parent,name,kind,identity,size,mtime,observed) VALUES(?,?,'clip'||?||'.mp4','file',?,1,'now','now')`, dir+2+int64(j), dir+1, j, identity); err != nil {
+		for i := range 210 {
+			dir := int64(10 + i*4)
+			name := fmt.Sprintf("folder%d", i)
+			if _, err := tx.ExecContext(t.Context(), `INSERT INTO entries(id,parent,name,kind,identity,size,mtime_ns,observed) VALUES(?,1,?,'directory',?,0,0,0);
+ INSERT INTO directory_items(dir,generation,entry,name,kind,size,mtime_ns) VALUES(1,1,?,?,'directory',0,0)`, dir, name, name, dir, name); err != nil {
 				t.Fatal(err)
 			}
-			source := ""
-			if state < 3 {
-				source = []string{"marked", "manual", "automatic"}[state]
-			} else if state == 3 && j == 0 {
-				source = "manual"
+			want[""] = append(want[""], name)
+			state := i % 7
+			// One seventh is undiscovered; another is a known empty directory.
+			if state == 5 {
+				want["unprocessed"] = append(want["unprocessed"], name)
+				continue
 			}
-			if source != "" {
-				if _, err := tx.Exec(`INSERT INTO marks(identity,size,mtime,source) VALUES(?,1,'now',?)`, identity, source); err != nil {
+			if _, err := tx.ExecContext(t.Context(), "INSERT INTO directory_state(dir,generation,refreshed) VALUES(?,1,?)", dir, storage.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if state == 6 {
+				continue
+			}
+			// Videos are two levels below each listed directory: testing only direct
+			// children would accidentally treat every folder as empty.
+			if _, err := tx.ExecContext(t.Context(), `INSERT INTO entries(id,parent,name,kind,identity,size,mtime_ns,observed) VALUES(?,?,'nested','directory',?,0,0,0);
+ INSERT INTO directory_state(dir,generation,refreshed) VALUES(?,1,?)`, dir+1, dir, name+"/nested", dir+1, storage.Now()); err != nil {
+				t.Fatal(err)
+			}
+			for j := range 2 {
+				identity := fmt.Sprintf("%s/video%d", name, j)
+				if _, err := tx.ExecContext(t.Context(), `INSERT INTO entries(id,parent,name,kind,identity,size,mtime_ns,observed) VALUES(?,?,'clip'||?||'.mp4','file',?,1,0,0)`, dir+2+int64(j), dir+1, j, identity); err != nil {
 					t.Fatal(err)
+				}
+				source := ""
+				if state < 3 {
+					source = []string{"marked", "manual", "automatic"}[state]
+				} else if state == 3 && j == 0 {
+					source = "manual"
+				}
+				if source != "" {
+					if _, err := tx.ExecContext(t.Context(), `INSERT INTO marks(identity,size,mtime_ns,source) VALUES(?,1,0,?)`, identity, source); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if state < 3 {
+				want["processed"] = append(want["processed"], name)
+				want[[]string{"marked", "manual", "automatic"}[state]] = append(want[[]string{"marked", "manual", "automatic"}[state]], name)
+			} else {
+				want["unprocessed"] = append(want["unprocessed"], name)
+				if state == 3 {
+					want["manual"] = append(want["manual"], name)
 				}
 			}
 		}
-		if state < 3 {
-			want["processed"] = append(want["processed"], name)
-			want[[]string{"marked", "manual", "automatic"}[state]] = append(want[[]string{"marked", "manual", "automatic"}[state]], name)
-		} else {
-			want["unprocessed"] = append(want["unprocessed"], name)
-			if state == 3 {
-				want["manual"] = append(want["manual"], name)
-			}
-		}
-	}
-	if err := tx.Commit(); err != nil {
+
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	for _, field := range []string{"name", "status"} {
@@ -299,11 +311,11 @@ func TestDirectoryProcessingFiltersUseSubtreesBeforePaging(t *testing.T) {
 					var actual []string
 					cursor := 0
 					for page := 1; ; page++ {
-						p, err := l.ListPage(t.Context(), 1, page, 50, "", "video", status, field+"_"+direction)
+						p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: page, Limit: 50, Query: "", Kind: "video", Status: status, SortBy: field + "_" + direction})
 						if err != nil || p.Total != len(expected) {
 							t.Fatalf("page %d: total %d, want %d, error %v", page, p.Total, len(expected), err)
 						}
-						c, err := l.ListOrdered(t.Context(), 1, cursor, 50, p.Generation, "", "video", status, false, field+"_"+direction)
+						c, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: cursor, Limit: 50, Generation: p.Generation, Query: "", Kind: "video", Status: status, Force: false, SortBy: field + "_" + direction})
 						if err != nil || c.Total != p.Total || c.Next != p.Next || !slices.EqualFunc(c.Items, p.Items, func(a, b Entry) bool { return a.ID == b.ID }) {
 							t.Fatalf("cursor disagrees on page %d: %v", page, err)
 						}
@@ -323,7 +335,7 @@ func TestDirectoryProcessingFiltersUseSubtreesBeforePaging(t *testing.T) {
 		}
 	}
 	// Filtering removes later pages before clamping, and combines with search.
-	p, err := l.ListPage(t.Context(), 1, 100, 50, "folder20", "image", "unprocessed", "name_asc")
+	p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: 100, Limit: 50, Query: "folder20", Kind: "image", Status: "unprocessed", SortBy: "name_asc"})
 	if err != nil || p.Number != 1 || p.Total != 5 {
 		t.Fatalf("search/media/clamping: page %d, total %d, error %v", p.Number, p.Total, err)
 	}
@@ -346,7 +358,7 @@ func TestDirectoryFiltersUseLiveTaskStateAndUnknownDescendants(t *testing.T) {
 	}
 	assertNames := func(status string, expected ...string) {
 		t.Helper()
-		p, err := l.ListPage(t.Context(), 1, 1, 50, "", "", status, "name_asc")
+		p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: 1, Limit: 50, Query: "", Kind: "", Status: status, SortBy: "name_asc"})
 		if err != nil || p.Total != len(expected) {
 			t.Fatalf("%s: total %d, error %v", status, p.Total, err)
 		}
@@ -362,20 +374,26 @@ func TestDirectoryFiltersUseLiveTaskStateAndUnknownDescendants(t *testing.T) {
 	assertNames("processed", "completed")
 	assertNames("manual", "completed", "unknown")
 	file := entry(t, l, completed.ID, "clip.mp4")
-	if _, err := l.DB.Exec(`INSERT INTO runs(id,source,targets,recursive,status,created,request_key) VALUES(1,'manual',?,0,'scanning','now','directory-filter')`, fmt.Sprintf("[%d]", file.ID)); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `INSERT INTO runs(id,source,targets,recursive,status,created,request_key) VALUES(1,'manual',?,0,'scanning','2026-10-28T00:00:00.000Z','directory-filter')`, fmt.Sprintf("[%d]", file.ID))
+	}); err != nil {
 		t.Fatal(err)
 	}
 	assertNames("active", "completed")
 	assertNames("queued", "completed")
 	assertNames("manual", "unknown")
-	if _, err := l.DB.Exec(`UPDATE runs SET targets=?,recursive=1,status='paused' WHERE id=1`, fmt.Sprintf("[%d]", completed.ID)); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `UPDATE runs SET targets=?,recursive=1,status='paused' WHERE id=1`, fmt.Sprintf("[%d]", completed.ID))
+	}); err != nil {
 		t.Fatal(err)
 	}
 	assertNames("paused", "completed")
 	assertNames("active", "completed")
 	assertNames("processed")
 	assertNames("unprocessed", "unknown")
-	if _, err := l.DB.Exec(`UPDATE runs SET status='completed' WHERE id=1; UPDATE marks SET size=size+1 WHERE identity=?`, file.Identity); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `UPDATE runs SET status='completed' WHERE id=1; UPDATE marks SET size=size+1 WHERE identity=?`, file.Identity)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	assertNames("unprocessed", "completed", "unknown")

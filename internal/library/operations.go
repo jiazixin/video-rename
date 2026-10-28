@@ -29,7 +29,7 @@ type Operation struct {
 	New         string        `json:"new_name"`
 	Identity    string        `json:"-"`
 	Size        int64         `json:"-"`
-	Mtime       string        `json:"-"`
+	ModifiedNS  int64         `json:"-"`
 	Kind        string        `json:"kind"`
 	Source      string        `json:"source"`
 	Status      string        `json:"status"`
@@ -40,37 +40,32 @@ type Operation struct {
 	Run         int64         `json:"run"`
 }
 
-const operationColumns = "id,entry,parent,old_name,new_name,identity,size,mtime,kind,source,status,undo_of,undone,created,error,run,raw_request,raw_response"
+const operationColumns = "id,entry,parent,old_name,new_name,identity,size,mtime_ns,kind,source,status,undo_of,undone,created,error,run,raw_request,raw_response"
 
 func scanOp(row interface{ Scan(...any) error }) (o Operation, err error) {
-	err = row.Scan(&o.ID, &o.Entry, &o.Parent, &o.Old, &o.New, &o.Identity, &o.Size, &o.Mtime, &o.Kind, &o.Source, &o.Status, &o.UndoOf, &o.Undone, &o.Created, &o.Error, &o.Run, &o.RawRequest, &o.RawResponse)
+	err = row.Scan(&o.ID, &o.Entry, &o.Parent, &o.Old, &o.New, &o.Identity, &o.Size, &o.ModifiedNS, &o.Kind, &o.Source, &o.Status, &o.UndoOf, &o.Undone, &o.Created, &o.Error, &o.Run, &o.RawRequest, &o.RawResponse)
 	return
 }
 
 // Operation returns operation id.
 func (l *Library) Operation(ctx context.Context, id int64) (Operation, error) {
-	return scanOp(l.DB.Read().QueryRowContext(ctx, "SELECT "+operationColumns+" FROM operations WHERE id=?", id))
+	return storage.ReadValue(ctx, l.db, func(tx *sql.Tx) (Operation, error) {
+		return scanOp(tx.QueryRowContext(ctx, "SELECT "+operationColumns+" FROM operations WHERE id=?", id))
+	})
 }
 
 // History returns the operations of entry id older than before.
 func (l *Library) History(ctx context.Context, id int64, before int64) ([]Operation, error) {
-	if before <= 0 {
-		before = 1 << 62
-	}
-	rows, err := l.DB.Read().QueryContext(ctx, "SELECT "+operationColumns+" FROM operations WHERE entry=? AND id<? ORDER BY id DESC LIMIT 100", id, before)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []Operation{}
-	for rows.Next() {
-		o, e := scanOp(rows)
-		if e != nil {
-			return nil, e
+	return storage.ReadValue(ctx, l.db, func(tx *sql.Tx) ([]Operation, error) {
+		if before <= 0 {
+			before = 1 << 62
 		}
-		out = append(out, o)
-	}
-	return out, rows.Err()
+		rows, err := tx.QueryContext(ctx, "SELECT "+operationColumns+" FROM operations WHERE entry=? AND id<? ORDER BY id DESC LIMIT 100", id, before)
+		if err != nil {
+			return nil, err
+		}
+		return storage.CollectRows(rows, func(rows *sql.Rows) (Operation, error) { return scanOp(rows) })
+	})
 }
 
 // ValidName reports whether name is a valid file name.
@@ -86,9 +81,19 @@ func ValidName(name string) error {
 	return nil
 }
 
+// RenameRequest groups the inputs for Rename.
+type RenameRequest struct {
+	ID      int64
+	Version int64
+	Name    string
+	Key     string
+}
+
 // Rename renames entry id, at version, to name; key makes the request
 // idempotent.
-func (l *Library) Rename(ctx context.Context, id, version int64, name, key string) (o Operation, err error) {
+func (l *Library) Rename(ctx context.Context, params RenameRequest) (o Operation, err error) {
+	id, version, name, key := params.ID, params.Version, params.Name, params.Key
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e, err := l.Get(ctx, id)
@@ -99,7 +104,7 @@ func (l *Library) Rename(ctx context.Context, id, version int64, name, key strin
 		ext := filepath.Ext(name)
 		name = strings.TrimSuffix(name, ext) + naming.NormalizeExtension(ext)
 	}
-	if existing, er := scanOp(l.DB.QueryRowContext(ctx, "SELECT "+operationColumns+" FROM operations WHERE request_key=?", key)); er == nil {
+	if existing, er := l.operationByKey(ctx, key); er == nil {
 		if existing.Entry == id && existing.New == name && existing.Status == "committed" {
 			return existing, nil
 		}
@@ -114,14 +119,14 @@ func (l *Library) Rename(ctx context.Context, id, version int64, name, key strin
 	if e.Version != version {
 		return o, errChanged
 	}
-	return l.commit(ctx, e, name, "manual", key, 0, 0)
+	return l.commit(ctx, commitOptions{Entry: e, Name: name, Source: "manual", Key: key, Undo: 0, Run: 0})
 }
 
 // Restore undoes operation id; key makes the request idempotent.
 func (l *Library) Restore(ctx context.Context, id int64, key string) (Operation, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if existing, er := scanOp(l.DB.QueryRowContext(ctx, "SELECT "+operationColumns+" FROM operations WHERE request_key=?", key)); er == nil {
+	if existing, er := l.operationByKey(ctx, key); er == nil {
 		if existing.UndoOf == id && existing.Status == "committed" {
 			return existing, nil
 		}
@@ -142,7 +147,7 @@ func (l *Library) Restore(ctx context.Context, id int64, key string) (Operation,
 		return Operation{}, err
 	}
 	if e.RestoreID != id || e.Name != old.New {
-		return Operation{}, domain.Fail(domain.KindConflict, "restore_not_latest", "only the latest rename that is not undone can be restored")
+		return Operation{}, domain.Fail(domain.KindConflict, domain.Record{Code: "restore_not_latest", Message: "only the latest rename that is not undone can be restored"})
 	}
 	p, err := l.Path(ctx, e.ID)
 	if err != nil {
@@ -152,25 +157,50 @@ func (l *Library) Restore(ctx context.Context, id int64, key string) (Operation,
 	if err != nil {
 		return Operation{}, err
 	}
-	if Identity(s) != old.Identity || (e.Kind != "directory" && (s.Size != old.Size || stamp(s) != old.Mtime)) {
-		return Operation{}, domain.Fail(domain.KindConflict, "restore_source_changed", "file identity or content changed; cannot restore")
+	if Identity(s) != old.Identity || (e.Kind != "directory" && (s.Size != old.Size || stamp(s) != old.ModifiedNS)) {
+		return Operation{}, domain.Fail(domain.KindConflict, domain.Record{Code: "restore_source_changed", Message: "file identity or content changed; cannot restore"})
 	}
-	return l.commit(ctx, e, old.Old, "restore", key, id, 0)
+	return l.commit(ctx, commitOptions{Entry: e, Name: old.Old, Source: "restore", Key: key, Undo: id, Run: 0})
+}
+
+// AutoCommitOptions groups the inputs for AutoCommit.
+type AutoCommitOptions struct {
+	ID          int64
+	Snap        domain.Snapshot
+	Title       string
+	Key         string
+	Run         int64
+	Diagnostics []domain.ModelDiagnostics
 }
 
 // AutoCommit renames entry id to the model title after checking that it still
 // matches snap.
-func (l *Library) AutoCommit(ctx context.Context, id int64, snap domain.Snapshot, title, key string, run int64, diagnostics ...domain.ModelDiagnostics) (Operation, error) {
-	return l.autoCommit(ctx, id, snap, title, key, run, 0, diagnostics...)
+func (l *Library) AutoCommit(ctx context.Context, params AutoCommitOptions) (Operation, error) {
+	id, snap, title, key, run, diagnostics := params.ID, params.Snap, params.Title, params.Key, params.Run, params.Diagnostics
+
+	return l.autoCommit(ctx, autoCommitOptions{ID: id, Snap: snap, Title: title, Key: key, Run: run, RetryOperation: 0, Diagnostics: diagnostics})
+}
+
+// RetryAutoCommitOptions groups the inputs for RetryAutoCommit.
+type RetryAutoCommitOptions struct {
+	ID          int64
+	Snap        domain.Snapshot
+	Title       string
+	Key         string
+	Run         int64
+	Operation   int64
+	Diagnostics []domain.ModelDiagnostics
 }
 
 // RetryAutoCommit permits one explicit retry of the current automatic rename.
 // The existing mark stays intact until the new rename commits successfully.
-func (l *Library) RetryAutoCommit(ctx context.Context, id int64, snap domain.Snapshot, title, key string, run, operation int64, diagnostics ...domain.ModelDiagnostics) (Operation, error) {
+func (l *Library) RetryAutoCommit(ctx context.Context, params RetryAutoCommitOptions) (Operation, error) {
+	id, snap, title, key, run, operation, diagnostics := params.ID, params.Snap, params.Title, params.Key, params.Run, params.Operation, params.Diagnostics
+
 	if operation <= 0 {
 		return Operation{}, domain.InvalidField("operation", "invalid")
 	}
-	return l.autoCommit(ctx, id, snap, title, key, run, operation, diagnostics...)
+	return l.autoCommit(ctx, autoCommitOptions{ID: id, Snap: snap, Title: title, Key: key, Run: run, RetryOperation: operation, Diagnostics: diagnostics})
 }
 
 // CheckAutomaticRetry checks that entry id can still be renamed automatically
@@ -181,7 +211,7 @@ func (l *Library) CheckAutomaticRetry(ctx context.Context, id, operation int64) 
 	e, err := l.Get(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Fail(domain.KindNotFound, "entry_not_indexed", "file is no longer indexed")
+			return domain.Fail(domain.KindNotFound, domain.Record{Code: "entry_not_indexed", Message: "file is no longer indexed"})
 		}
 		return err
 	}
@@ -190,24 +220,37 @@ func (l *Library) CheckAutomaticRetry(ctx context.Context, id, operation int64) 
 
 func (l *Library) checkAutomaticRetry(ctx context.Context, e Entry, operation int64) error {
 	if operation <= 0 {
-		return domain.Fail(domain.KindConflict, "retry_operation_missing", "record has no automatic rename to retry")
+		return domain.Fail(domain.KindConflict, domain.Record{Code: "retry_operation_missing", Message: "record has no automatic rename to retry"})
 	}
 	o, err := l.Operation(ctx, operation)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Fail(domain.KindConflict, "retry_operation_missing", "automatic rename operation does not exist")
+			return domain.Fail(domain.KindConflict, domain.Record{Code: "retry_operation_missing", Message: "automatic rename operation does not exist"})
 		}
 		return err
 	}
 	if e.Kind != "file" || e.Processed != "automatic" || e.RestoreID != operation ||
 		o.Entry != e.ID || o.Source != "automatic" || o.Status != "committed" || o.Undone ||
-		o.New != e.Name || o.Identity != e.Identity || o.Size != e.Size || o.Mtime != e.Mtime {
-		return domain.Fail(domain.KindConflict, "retry_operation_stale", "only the current automatic rename can be retried")
+		o.New != e.Name || o.Identity != e.Identity || o.Size != e.Size || o.ModifiedNS != e.ModifiedNS {
+		return domain.Fail(domain.KindConflict, domain.Record{Code: "retry_operation_stale", Message: "only the current automatic rename can be retried"})
 	}
 	return l.CheckAvailable(ctx, e.ID)
 }
 
-func (l *Library) autoCommit(ctx context.Context, id int64, snap domain.Snapshot, title, key string, run, retryOperation int64, diagnostics ...domain.ModelDiagnostics) (Operation, error) {
+// autoCommitOptions groups the inputs for autoCommit.
+type autoCommitOptions struct {
+	ID             int64
+	Snap           domain.Snapshot
+	Title          string
+	Key            string
+	Run            int64
+	RetryOperation int64
+	Diagnostics    []domain.ModelDiagnostics
+}
+
+func (l *Library) autoCommit(ctx context.Context, params autoCommitOptions) (Operation, error) {
+	id, snap, title, key, run, retryOperation, diagnostics := params.ID, params.Snap, params.Title, params.Key, params.Run, params.RetryOperation, params.Diagnostics
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e, err := l.Get(ctx, id)
@@ -219,7 +262,7 @@ func (l *Library) autoCommit(ctx context.Context, id int64, snap domain.Snapshot
 			return Operation{}, err
 		}
 	} else if e.Processed != "" {
-		return Operation{}, domain.Fail(domain.KindConflict, "already_processed", "file is already processed")
+		return Operation{}, domain.Fail(domain.KindConflict, domain.Record{Code: "already_processed", Message: "file is already processed"})
 	}
 	p, err := l.Path(ctx, id)
 	if err != nil {
@@ -227,10 +270,10 @@ func (l *Library) autoCommit(ctx context.Context, id int64, snap domain.Snapshot
 	}
 	cur, err := domain.StatSnapshot(p)
 	if err != nil {
-		return Operation{}, domain.Fail(domain.KindConflict, "source_unreadable", "source file cannot be read after analysis").Wrap(err)
+		return Operation{}, domain.Fail(domain.KindConflict, domain.Record{Code: "source_unreadable", Message: "source file cannot be read after analysis"}).Wrap(err)
 	}
 	if !cur.Same(snap) {
-		return Operation{}, domain.SourceChangedError("source file changed during analysis", domain.StageBeforeRename, p, snap, cur)
+		return Operation{}, domain.SourceChangedError(domain.SourceChange{Message: "source file changed during analysis", Stage: domain.StageBeforeRename, Path: p, Before: snap, After: cur})
 	}
 	clean, je := naming.CleanTitle(title, filepath.Ext(e.Name))
 	if je != nil {
@@ -238,20 +281,34 @@ func (l *Library) autoCommit(ctx context.Context, id int64, snap domain.Snapshot
 	}
 	alloc := naming.NewAllocator()
 	for i := range 9999 {
-		res, je := alloc.Allocate(filepath.Dir(p), clean, filepath.Ext(e.Name), domain.VideoJob{Path: p, Snapshot: snap})
+		res, je := alloc.Allocate(ctx, naming.Allocation{Directory: filepath.Dir(p), Title: clean, Extension: filepath.Ext(e.Name), Job: domain.VideoJob{Path: p, Snapshot: snap}})
 		if je != nil {
 			return Operation{}, je
 		}
-		o, err := l.commit(ctx, e, filepath.Base(res.Target), "automatic", fmt.Sprintf("%s:%d", key, i), 0, run, diagnostics...)
+		o, err := l.commit(ctx, commitOptions{Entry: e, Name: filepath.Base(res.Target), Source: "automatic", Key: fmt.Sprintf("%s:%d", key, i), Undo: 0, Run: run, Diagnostics: diagnostics})
 		if re, ok := errors.AsType[*domain.JobError](err); ok && re.Code == domain.CodeRenameConflict {
 			alloc.Release(filepath.Dir(p), filepath.Base(res.Target))
 			continue
 		}
 		return o, err
 	}
-	return Operation{}, domain.Fail(domain.KindConflict, "too_many_conflicts", "too many name conflicts")
+	return Operation{}, domain.Fail(domain.KindConflict, domain.Record{Code: "too_many_conflicts", Message: "too many name conflicts"})
 }
-func (l *Library) commit(ctx context.Context, e Entry, name, source, key string, undo, run int64, diagnostics ...domain.ModelDiagnostics) (Operation, error) {
+
+// commitOptions groups the inputs for commit.
+type commitOptions struct {
+	Entry       Entry
+	Name        string
+	Source      string
+	Key         string
+	Undo        int64
+	Run         int64
+	Diagnostics []domain.ModelDiagnostics
+}
+
+func (l *Library) commit(ctx context.Context, params commitOptions) (Operation, error) {
+	e, name, source, key, undo, run, diagnostics := params.Entry, params.Name, params.Source, params.Key, params.Undo, params.Run, params.Diagnostics
+
 	if err := l.checkNumberingAvailable(ctx, e.ID); err != nil {
 		return Operation{}, err
 	}
@@ -261,13 +318,13 @@ func (l *Library) commit(ctx context.Context, e Entry, name, source, key string,
 	if key == "" || len(key) > 200 {
 		return Operation{}, domain.InvalidField("key", "invalid")
 	}
-	existing, er := scanOp(l.DB.QueryRowContext(ctx, "SELECT "+operationColumns+" FROM operations WHERE request_key=?", key))
+	existing, er := l.operationByKey(ctx, key)
 	if er == nil {
 		if existing.Entry != e.ID || existing.New != name {
 			return Operation{}, errOperationKey
 		}
 		if existing.Status != "committed" {
-			return existing, domain.Fail(domain.KindConflict, "operation_not_committed", "previous operation is not committed", "status", existing.Status)
+			return existing, domain.Fail(domain.KindConflict, domain.Record{Code: "operation_not_committed", Message: "previous operation is not committed", Details: map[string]any{"status": existing.Status}})
 		}
 		return existing, nil
 	}
@@ -281,7 +338,9 @@ func (l *Library) commit(ctx context.Context, e Entry, name, source, key string,
 		return Operation{}, err
 	}
 	var blocked int
-	if err := l.DB.QueryRowContext(ctx, "SELECT count(*) FROM operations WHERE status IN ('prepared','review') AND entry=?", e.ID).Scan(&blocked); err != nil {
+	if err := l.db.View(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT count(*) FROM operations WHERE status IN ('prepared','review') AND entry=?", e.ID).Scan(&blocked)
+	}); err != nil {
 		return Operation{}, err
 	}
 	if blocked > 0 {
@@ -300,7 +359,7 @@ func (l *Library) commit(ctx context.Context, e Entry, name, source, key string,
 	if err != nil {
 		return Operation{}, err
 	}
-	if Identity(snap) != e.Identity || (e.Kind != "directory" && (snap.Size != e.Size || stamp(snap) != e.Mtime)) {
+	if Identity(snap) != e.Identity || (e.Kind != "directory" && (snap.Size != e.Size || stamp(snap) != e.ModifiedNS)) {
 		return Operation{}, errChanged
 	}
 	if name == e.Name && source == "manual" {
@@ -309,6 +368,7 @@ func (l *Library) commit(ctx context.Context, e Entry, name, source, key string,
 	// Invalidate scans before journaling or moving, including uncertain outcomes.
 	l.indexEpoch.Add(1)
 	target := filepath.Join(filepath.Dir(p), name)
+	// Both paths share the verified absolute library root.
 	oldrel, _ := filepath.Rel(l.Root, p)
 	newrel, _ := filepath.Rel(l.Root, target)
 	var exchange domain.ModelDiagnostics
@@ -322,11 +382,17 @@ func (l *Library) commit(ctx context.Context, e Entry, name, source, key string,
 	// cancelling midway would leave the library halted for review.
 	ctx, cancel := storage.Detach(ctx)
 	defer cancel()
-	res, err := l.DB.ExecContext(ctx, "INSERT INTO operations(entry,parent,old_name,new_name,identity,size,mtime,kind,source,status,undo_of,request_key,created,run,raw_request,raw_response) VALUES(?,?,?,?,?,?,?,?,?,'prepared',?,?,?,?,?,?)", e.ID, e.Parent, e.Name, name, e.Identity, snap.Size, stamp(snap), e.Kind, source, undo, key, storage.Now(), run, exchange.Request, exchange.Response)
+	res, err := storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(ctx, "INSERT INTO operations(entry,parent,old_name,new_name,identity,size,mtime_ns,kind,source,status,undo_of,request_key,created,run,raw_request,raw_response) VALUES(?,?,?,?,?,?,?,?,?,'prepared',?,?,?,?,?,?)", e.ID, e.Parent, e.Name, name, e.Identity, snap.Size, stamp(snap), e.Kind, source, undo, key, storage.Now(), run, exchange.Request, exchange.Response)
+	})
 	if err != nil {
 		return Operation{}, err
 	}
-	oid, _ := res.LastInsertId()
+	oid, err := res.LastInsertId()
+	if err != nil {
+		l.broken = err
+		return Operation{}, fmt.Errorf("read prepared operation ID: %w", err)
+	}
 	o, err := l.Operation(ctx, oid)
 	if err != nil {
 		l.broken = err
@@ -336,11 +402,13 @@ func (l *Library) commit(ctx context.Context, e Entry, name, source, key string,
 	// Retain prepared evidence on any mismatch; recovery must inspect both names.
 	if err = verifyOperationFile(dir, e.Name, o); err != nil {
 		l.broken = err
-		return o, domain.Fail(domain.KindInternal, "journal_source_changed", "source changed after journaling; restart to review").Wrap(err)
+		return o, domain.Fail(domain.KindInternal, domain.Record{Code: "journal_source_changed", Message: "source changed after journaling; restart to review"}).Wrap(err)
 	}
 	if name != e.Name {
 		if je := rename.NoReplaceAt(int(dir.Fd()), e.Name, name); je != nil {
-			_, dbErr := l.DB.ExecContext(ctx, "UPDATE operations SET status='failed',error=? WHERE id=?", domain.RecordText(je), oid)
+			_, dbErr := storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
+				return tx.ExecContext(ctx, "UPDATE operations SET status='failed',error=? WHERE id=?", domain.RecordText(je), oid)
+			})
 			if dbErr != nil {
 				l.broken = dbErr
 			}
@@ -350,20 +418,20 @@ func (l *Library) commit(ctx context.Context, e Entry, name, source, key string,
 		de := dir.Sync()
 		if de != nil {
 			l.broken = de
-			return o, domain.Fail(domain.KindInternal, "rename_sync_failed", "renamed, but syncing the directory failed; restart to review").Wrap(de)
+			return o, domain.Fail(domain.KindInternal, domain.Record{Code: "rename_sync_failed", Message: "renamed, but syncing the directory failed; restart to review"}).Wrap(de)
 		}
 	}
 	if _, err = l.Path(ctx, e.Parent); err != nil {
 		l.broken = err
-		return o, domain.Fail(domain.KindInternal, "rename_parent_changed", "renamed, but the parent directory changed; restart to review").Wrap(err)
+		return o, domain.Fail(domain.KindInternal, domain.Record{Code: "rename_parent_changed", Message: "renamed, but the parent directory changed; restart to review"}).Wrap(err)
 	}
 	if err = verifyOperationFile(dir, name, o); err != nil {
 		l.broken = err
-		return o, domain.Fail(domain.KindInternal, "rename_result_changed", "renamed file identity or content changed; restart to review").Wrap(err)
+		return o, domain.Fail(domain.KindInternal, domain.Record{Code: "rename_result_changed", Message: "renamed file identity or content changed; restart to review"}).Wrap(err)
 	}
 	if err = l.finish(ctx, o, oldrel, newrel); err != nil {
 		l.broken = err
-		return o, domain.Fail(domain.KindInternal, "rename_unconfirmed", "file may be renamed but the result is unconfirmed; restart to recover").Wrap(err)
+		return o, domain.Fail(domain.KindInternal, domain.Record{Code: "rename_unconfirmed", Message: "file may be renamed but the result is unconfirmed; restart to recover"}).Wrap(err)
 	}
 	o.Status = "committed"
 	return o, nil
@@ -374,39 +442,47 @@ func verifyOperationFile(dir *os.File, name string, o Operation) error {
 	if err != nil {
 		return err
 	}
-	if Identity(snap) != o.Identity || (o.Kind != "directory" && (snap.Size != o.Size || stamp(snap) != o.Mtime)) {
+	if Identity(snap) != o.Identity || (o.Kind != "directory" && (snap.Size != o.Size || stamp(snap) != o.ModifiedNS)) {
 		return errors.New("file identity or content does not match the operation journal")
 	}
 	return nil
 }
 func (l *Library) finish(ctx context.Context, o Operation, oldrel, newrel string) error {
-	tx, err := l.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err = l.finishTx(ctx, tx, o, oldrel, newrel); err != nil {
-		return err
-	}
-	// Revalidate after database writes as well: they can wait on storage while
-	// another process changes the renamed leaf. Roll back the success journal.
-	dir, err := l.openDirectory(ctx, o.Parent)
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	if err = verifyOperationFile(dir, o.New, o); err != nil {
-		return err
-	}
-	if _, err = l.Path(ctx, o.Parent); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return l.db.Write(ctx, func(tx *sql.Tx) error {
+		var err error
+		if err = l.finishTx(ctx, finishTxOptions{Tx: tx, O: o, Oldrel: oldrel, Newrel: newrel}); err != nil {
+			return err
+		}
+		// Revalidate after database writes as well: they can wait on storage while
+		// another process changes the renamed leaf. Roll back the success journal.
+		dir, err := l.openDirectory(ctx, o.Parent)
+		if err != nil {
+			return err
+		}
+		defer dir.Close()
+		if err = verifyOperationFile(dir, o.New, o); err != nil {
+			return err
+		}
+		if _, err = l.Path(ctx, o.Parent); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
-func (l *Library) finishTx(ctx context.Context, tx *sql.Tx, o Operation, oldrel, newrel string) error {
+// finishTxOptions groups the inputs for finishTx.
+type finishTxOptions struct {
+	Tx     *sql.Tx
+	O      Operation
+	Oldrel string
+	Newrel string
+}
+
+func (l *Library) finishTx(ctx context.Context, params finishTxOptions) error {
+	tx, o, oldrel, newrel := params.Tx, params.O, params.Oldrel, params.Newrel
+
 	var err error
-	if _, err = tx.ExecContext(ctx, "UPDATE entries SET name=?,version=version+1,size=?,mtime=? WHERE id=?", o.New, o.Size, o.Mtime, o.Entry); err != nil {
+	if _, err = tx.ExecContext(ctx, "UPDATE entries SET name=?,version=version+1,size=?,mtime_ns=? WHERE id=?", o.New, o.Size, o.ModifiedNS, o.Entry); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, "UPDATE operations SET status='committed' WHERE id=?", o.ID); err != nil {
@@ -418,12 +494,12 @@ func (l *Library) finishTx(ctx context.Context, tx *sql.Tx, o Operation, oldrel,
 		}
 	}
 	if o.Kind == "file" && o.Source == "restore" {
-		if _, err = tx.ExecContext(ctx, "DELETE FROM marks WHERE identity=? AND size=? AND mtime=?", o.Identity, o.Size, o.Mtime); err != nil {
+		if _, err = tx.ExecContext(ctx, "DELETE FROM marks WHERE identity=? AND size=? AND mtime_ns=?", o.Identity, o.Size, o.ModifiedNS); err != nil {
 			return err
 		}
 	} else if o.Kind == "file" {
 		keepMark := IsImage(o.New) || IsAudio(o.New)
-		if _, err = tx.ExecContext(ctx, "INSERT INTO marks VALUES(?,?,?,?,?) ON CONFLICT(identity,size,mtime) DO UPDATE SET source=CASE WHEN marks.source='marked' AND ? THEN marks.source ELSE excluded.source END,operation=CASE WHEN marks.source='marked' AND ? THEN marks.operation ELSE excluded.operation END", o.Identity, o.Size, o.Mtime, o.Source, o.ID, keepMark, keepMark); err != nil {
+		if _, err = tx.ExecContext(ctx, "INSERT INTO marks VALUES(?,?,?,?,?) ON CONFLICT(identity,size,mtime_ns) DO UPDATE SET source=CASE WHEN marks.source='marked' AND ? THEN marks.source ELSE excluded.source END,operation=CASE WHEN marks.source='marked' AND ? THEN marks.operation ELSE excluded.operation END", o.Identity, o.Size, o.ModifiedNS, o.Source, o.ID, keepMark, keepMark); err != nil {
 			return err
 		}
 	}
@@ -444,36 +520,48 @@ func (l *Library) finishTx(ctx context.Context, tx *sql.Tx, o Operation, oldrel,
 	return nil
 }
 
+// EventInput groups the inputs for Event.
+type EventInput struct {
+	Category  string
+	Action    string
+	Entry     int64
+	Operation int64
+	Run       int64
+	Old       string
+	New       string
+	Message   string
+}
+
 // Event records a library event.
-func (l *Library) Event(ctx context.Context, category, action string, entry, operation, run int64, old, new, message string) error {
-	_, err := l.DB.ExecContext(ctx, "INSERT INTO events(category,action,entry,operation,run,old_path,new_path,message,created) VALUES(?,?,?,?,?,?,?,?,?)", category, action, entry, operation, run, old, new, message, storage.Now())
+func (l *Library) Event(ctx context.Context, params EventInput) error {
+	category, action, entry, operation, run, old, new, message := params.Category, params.Action, params.Entry, params.Operation, params.Run, params.Old, params.New, params.Message
+
+	_, err := storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(ctx, "INSERT INTO events(category,action,entry,operation,run,old_path,new_path,message,created) VALUES(?,?,?,?,?,?,?,?,?)", category, action, entry, operation, run, old, new, message, storage.Now())
+	})
 	return err
 }
 
 // Recover resolves operations interrupted after preparation.
 func (l *Library) Recover(ctx context.Context) error {
-	rows, err := l.DB.QueryContext(ctx, "SELECT "+operationColumns+" FROM operations WHERE status='prepared'")
-	if err != nil {
-		return err
-	}
 	ops := []Operation{}
-	for rows.Next() {
-		o, er := scanOp(rows)
-		if er != nil {
-			rows.Close()
-			return er
+	err := l.db.View(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT "+operationColumns+" FROM operations WHERE status='prepared'")
+		if err != nil {
+			return err
 		}
-		ops = append(ops, o)
-	}
-	err = rows.Err()
-	rows.Close()
+		ops, err = storage.CollectRows(rows, func(rows *sql.Rows) (Operation, error) { return scanOp(rows) })
+		return err
+	})
 	if err != nil {
 		return err
 	}
 	for _, o := range ops {
 		parent, pe := l.Path(ctx, o.Parent)
 		if pe != nil {
-			if _, err = l.DB.ExecContext(ctx, "UPDATE operations SET status='review',error=? WHERE id=?", domain.Record{Code: "parent_unverifiable", Message: "parent directory cannot be verified"}.Text(), o.ID); err != nil {
+			if _, err = storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
+				return tx.ExecContext(ctx, "UPDATE operations SET status='review',error=? WHERE id=?", domain.Record{Code: "parent_unverifiable", Message: "parent directory cannot be verified"}.Text(), o.ID)
+			}); err != nil {
 				return err
 			}
 			continue
@@ -482,8 +570,9 @@ func (l *Library) Recover(ctx context.Context) error {
 		a, ae := domain.StatSnapshot(old)
 		b, be := domain.StatSnapshot(new)
 		match := func(s domain.Snapshot) bool {
-			return Identity(s) == o.Identity && (o.Kind == "directory" || (s.Size == o.Size && stamp(s) == o.Mtime))
+			return Identity(s) == o.Identity && (o.Kind == "directory" || (s.Size == o.Size && stamp(s) == o.ModifiedNS))
 		}
+		// Recovery paths share the verified absolute library root.
 		oldrel, _ := filepath.Rel(l.Root, old)
 		newrel, _ := filepath.Rel(l.Root, new)
 		if (errors.Is(ae, fs.ErrNotExist) || o.Old == o.New) && be == nil && match(b) {
@@ -497,10 +586,12 @@ func (l *Library) Recover(ctx context.Context) error {
 			status = "interrupted"
 			msg = domain.Record{Code: "rename_not_started", Message: "rename did not happen; the run was interrupted"}.Text()
 		}
-		if _, err = l.DB.ExecContext(ctx, "UPDATE operations SET status=?,error=? WHERE id=?", status, msg, o.ID); err != nil {
+		if _, err = storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(ctx, "UPDATE operations SET status=?,error=? WHERE id=?", status, msg, o.ID)
+		}); err != nil {
 			return err
 		}
-		if err = l.Event(ctx, "failure", "recovery", o.Entry, o.ID, o.Run, oldrel, newrel, msg); err != nil {
+		if err = l.Event(ctx, EventInput{Category: "failure", Action: "recovery", Entry: o.Entry, Operation: o.ID, Run: o.Run, Old: oldrel, New: newrel, Message: msg}); err != nil {
 			return err
 		}
 	}
@@ -513,14 +604,18 @@ func (l *Library) CheckAvailable(ctx context.Context, id int64) error {
 		return err
 	}
 	var pending bool
-	if err := l.DB.Read().QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM operations WHERE status IN ('prepared','review'))").Scan(&pending); err != nil {
+	if err := l.db.View(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM operations WHERE status IN ('prepared','review'))").Scan(&pending)
+	}); err != nil {
 		return err
 	}
 	if !pending {
 		return nil
 	}
 	var n int
-	err := l.DB.Read().QueryRowContext(ctx, `WITH RECURSIVE descendants(id) AS (SELECT ? UNION ALL SELECT e.id FROM entries e JOIN descendants d ON e.parent=d.id WHERE e.present=1), ancestors(id,parent) AS (SELECT id,parent FROM entries WHERE id=? UNION ALL SELECT e.id,e.parent FROM entries e JOIN ancestors a ON e.id=a.parent) SELECT count(*) FROM operations WHERE status IN ('prepared','review') AND (entry IN (SELECT id FROM descendants) OR entry IN (SELECT id FROM ancestors))`, id, id).Scan(&n)
+	err := l.db.View(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `WITH RECURSIVE descendants(id) AS (SELECT ? UNION ALL SELECT e.id FROM entries e JOIN descendants d ON e.parent=d.id WHERE e.present=1), ancestors(id,parent) AS (SELECT id,parent FROM entries WHERE id=? UNION ALL SELECT e.id,e.parent FROM entries e JOIN ancestors a ON e.id=a.parent) SELECT count(*) FROM operations WHERE status IN ('prepared','review') AND (entry IN (SELECT id FROM descendants) OR entry IN (SELECT id FROM ancestors))`, id, id).Scan(&n)
+	})
 	if err != nil {
 		return err
 	}
@@ -533,3 +628,9 @@ func (l *Library) CheckAvailable(ctx context.Context, id int64) error {
 // Halted reports whether the library stopped changing files after an
 // unrecoverable failure.
 func (l *Library) Halted() bool { l.mu.Lock(); defer l.mu.Unlock(); return l.broken != nil }
+
+func (l *Library) operationByKey(ctx context.Context, key string) (Operation, error) {
+	return storage.ReadValue(ctx, l.db, func(tx *sql.Tx) (Operation, error) {
+		return scanOp(tx.QueryRowContext(ctx, "SELECT "+operationColumns+" FROM operations WHERE request_key=?", key))
+	})
+}

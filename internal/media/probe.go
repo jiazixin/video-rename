@@ -121,14 +121,14 @@ func (p *Prober) Probe(ctx context.Context, job domain.VideoJob) (domain.VideoMe
 			Details: map[string]any{"limit": p.stdoutLimit()},
 		}
 	}
-	if ctx.Err() == context.DeadlineExceeded {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return domain.VideoMeta{}, &domain.JobError{
 			Code:       domain.CodeProbeTimeout,
 			Message:    "ffprobe timed out",
 			StderrTail: string(tail),
 		}
 	}
-	if ctx.Err() == context.Canceled {
+	if errors.Is(ctx.Err(), context.Canceled) {
 		return domain.VideoMeta{}, &domain.JobError{
 			Code:    domain.CodeCancelled,
 			Message: "probe cancelled",

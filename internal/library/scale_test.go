@@ -3,6 +3,7 @@
 package library
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -41,7 +42,7 @@ func TestScaleDirectoryPagination(t *testing.T) {
 	var generation int64
 	for range 30 {
 		start = time.Now()
-		p, err := l.ListOrdered(t.Context(), dir.ID, cursor, 100, generation, "", "", "", false, "name_asc")
+		p, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: dir.ID, Offset: cursor, Limit: 100, Generation: generation, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -60,7 +61,7 @@ func TestScaleDirectoryPagination(t *testing.T) {
 	}
 	for _, page := range []int{1, 250, 500} {
 		start = time.Now()
-		p, err := l.ListPage(t.Context(), dir.ID, page, 100, "", "video", "", "name_asc")
+		p, err := l.ListPage(t.Context(), ListPageOptions{ID: dir.ID, Page: page, Limit: 100, Query: "", Kind: "video", Status: "", SortBy: "name_asc"})
 		elapsed := time.Since(start)
 		t.Logf("50,000-file numbered page %d: %s", page, elapsed)
 		if err != nil || p.Number != page || p.Total != 50000 || len(p.Items) != 100 || p.Items[0].Name != fmt.Sprintf("clip-%05d.mp4", (page-1)*100) {
@@ -93,7 +94,9 @@ func TestScaleProcessedMarks(t *testing.T) {
 			t.Fatalf("incomplete marking: %+v", result)
 		}
 		var count int
-		if err := l.DB.QueryRow("SELECT count(*) FROM marks").Scan(&count); err != nil {
+		if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+			return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM marks").Scan(&count)
+		}); err != nil {
 			t.Fatal(err)
 		}
 		want := 0

@@ -2,9 +2,11 @@ package app
 
 import (
 	"net/http"
+	"strconv"
 
-	"video-rename/internal/prompts"
-	"video-rename/internal/systemsettings"
+	"video-rename/internal/domain"
+	"video-rename/internal/prompt"
+	"video-rename/internal/systemsetting"
 )
 
 // promptRoutes serves the prompt settings tab: the global fixed prompt (a hard
@@ -12,8 +14,8 @@ import (
 // reusable library that model configs reference by id. The list payload also
 // carries the built-in default fixed prompt so the page can restore it.
 func (a *App) promptRoutes(api *router) {
-	store := prompts.Store{DB: a.DB}
-	settings := systemsettings.Store{DB: a.DB}
+	store := prompt.New(a.db)
+	settings := systemsetting.New(a.db)
 	api.HandleFunc("GET /api/prompts", func(w http.ResponseWriter, r *http.Request) {
 		fixed, err := settings.FixedPrompt(r.Context())
 		if err != nil {
@@ -31,7 +33,7 @@ func (a *App) promptRoutes(api *router) {
 			return
 		}
 		w.Header().Set("Cache-Control", "private, no-store")
-		send(w, http.StatusOK, map[string]any{"fixed_prompt": fixed, "default_fixed_prompt": systemsettings.DefaultFixedPrompt, "failure_keywords": keywords, "default_failure_keywords": systemsettings.DefaultFailureKeywords(), "prompts": list})
+		send(w, http.StatusOK, map[string]any{"fixed_prompt": fixed, "default_fixed_prompt": systemsetting.DefaultFixedPrompt, "failure_keywords": keywords, "default_failure_keywords": systemsetting.DefaultFailureKeywords(), "prompts": list})
 	})
 	api.HandleFunc("PUT /api/prompts/failure-keywords", func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
@@ -41,7 +43,7 @@ func (a *App) promptRoutes(api *router) {
 			return
 		}
 		if input.FailureKeywords == nil {
-			invalid(w, r, "failure_keywords", "required")
+			writeError(w, r, domain.InvalidField("failure_keywords", "required"))
 			return
 		}
 		keywords, err := settings.SaveFailureKeywords(r.Context(), *input.FailureKeywords)
@@ -65,33 +67,63 @@ func (a *App) promptRoutes(api *router) {
 		}
 		send(w, http.StatusOK, map[string]string{"fixed_prompt": fixed})
 	})
-	save := func(w http.ResponseWriter, r *http.Request) {
-		var p prompts.Profile
-		if !decode(w, r, &p) {
+	api.HandleFunc("GET /api/prompts/{id}", func(w http.ResponseWriter, r *http.Request) {
+		value, err := store.Get(r.Context(), number(r.PathValue("id")))
+		if err != nil {
+			writeError(w, r, err)
 			return
+		}
+		send(w, http.StatusOK, value)
+	})
+	save := func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Title string `json:"title"`
+			Body  string `json:"body"`
 		}
 		id, ok := creationOrUpdateID(w, r)
 		if !ok {
 			return
 		}
-		p.ID = id
-		out, err := store.Save(r.Context(), p)
+		var version int64
+		if id != 0 {
+			current, err := store.Get(r.Context(), id)
+			if err != nil {
+				writeError(w, r, err)
+				return
+			}
+			if !matchVersion(w, r, current.Version) {
+				return
+			}
+			input.Title, input.Body, version = current.Title, current.Body, current.Version
+			if !decodePatch(w, r, &input) {
+				return
+			}
+		} else if !decode(w, r, &input) {
+			return
+		}
+		out, err := store.Save(r.Context(), prompt.Profile{ID: id, Version: version, Title: input.Title, Body: input.Body})
 		if err != nil {
 			writeError(w, r, err)
 			return
 		}
-		send(w, http.StatusOK, out)
+		if id == 0 {
+			w.Header().Set("Location", "/api/prompts/"+strconv.FormatInt(out.ID, 10))
+		}
+		send(w, creationStatus(r), out)
 	}
 	api.HandleFunc("POST /api/prompts", save)
 	api.HandleFunc("PATCH /api/prompts/{id}", save)
 	api.HandleFunc("DELETE /api/prompts/{id}", func(w http.ResponseWriter, r *http.Request) {
-		var input struct {
-			Version int64 `json:"version"`
-		}
-		if !decode(w, r, &input) {
+		id := number(r.PathValue("id"))
+		current, err := store.Get(r.Context(), id)
+		if err != nil {
+			writeError(w, r, err)
 			return
 		}
-		if err := store.Delete(r.Context(), number(r.PathValue("id")), input.Version); err != nil {
+		if !matchVersion(w, r, current.Version) || !decodeEmpty(w, r) {
+			return
+		}
+		if err := store.Delete(r.Context(), id, current.Version); err != nil {
 			writeError(w, r, err)
 			return
 		}

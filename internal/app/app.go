@@ -20,13 +20,14 @@ import (
 
 	"video-rename/internal/auth"
 	"video-rename/internal/config"
-	"video-rename/internal/jobs"
+	jobqueue "video-rename/internal/job"
 	"video-rename/internal/library"
 	"video-rename/internal/libraryscan"
-	"video-rename/internal/notifications"
+	"video-rename/internal/notification"
 	"video-rename/internal/scheduler"
 	"video-rename/internal/storage"
-	"video-rename/internal/systemsettings"
+	"video-rename/internal/systemsetting"
+	"video-rename/internal/timefmt"
 )
 
 // App is the video-rename service with its stores, managers and background
@@ -34,12 +35,14 @@ import (
 // numberingJobs and numberingClosed.
 type App struct {
 	logger          *slog.Logger
-	version         string
-	Notifications   *notifications.Service
-	DB              *storage.Store
+	build           Build
+	requestMu       sync.Mutex
+	requests        map[string]chan struct{}
+	Notifications   *notification.Service
+	db              *storage.Store
 	Library         *library.Library
 	Scanner         *libraryscan.Manager
-	Jobs            *jobs.Manager
+	Jobs            *jobqueue.Manager
 	Scheduler       *scheduler.Scheduler
 	Auth            *auth.Auth
 	stop            context.CancelFunc
@@ -62,23 +65,23 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 	if err != nil {
 		return nil, err
 	}
-	l, err := library.New(ctx, db, cfg.Path)
+	l, err := library.New(ctx, db, cfg.Path, logger)
 	if err != nil {
-		db.Close()
-		return nil, err
+		return nil, errors.Join(err, db.Close())
 	}
-	j, err := jobs.New(ctx, db, l, cfg, logger)
+	j, err := jobqueue.New(ctx, jobqueue.Options{Store: db, Library: l, Config: cfg, Logger: logger})
 	if err != nil {
-		db.Close()
-		return nil, err
+		return nil, errors.Join(err, db.Close())
 	}
-	s := &scheduler.Scheduler{DB: db, Jobs: j}
+	s := scheduler.New(db, j)
 	if err = s.ResetNext(ctx, time.Now()); err != nil {
-		j.Cache.Close()
-		db.Close()
-		return nil, err
+		return nil, errors.Join(err, j.Cache.Close(), db.Close())
 	}
-	return &App{logger: logger, Notifications: notifications.New(db, logger), DB: db, Library: l, Scanner: libraryscan.New(l, systemsettings.Store{DB: db}), Jobs: j, Scheduler: s, Auth: auth.New(db, cfg.Auth),
+	administrator, err := auth.New(ctx, db, cfg.Auth)
+	if err != nil {
+		return nil, errors.Join(err, j.Cache.Close(), db.Close())
+	}
+	return &App{logger: logger, Notifications: notification.New(db, logger), db: db, Library: l, Scanner: libraryscan.New(l, systemsetting.New(db)), Jobs: j, Scheduler: s, Auth: administrator,
 		closeStores: sync.OnceValue(func() error { return errors.Join(j.Cache.Close(), db.Close()) })}, nil
 }
 
@@ -134,20 +137,23 @@ func (a *App) Shutdown(ctx context.Context) error {
 		a.stop()
 	}
 	stopped := make(chan struct{})
-	// The waiter only observes the owned goroutines below and ends with them.
-	go func() {
+	var stopping sync.WaitGroup
+	// The waiter ends with the owned work even if this call reaches its deadline.
+	// Do not defer Wait: a timeout must leave the stores open and return promptly.
+	stopping.Go(func() {
 		defer close(stopped)
 		a.Scanner.Close()
 		a.numberingWG.Wait()
 		a.markWG.Wait()
 		a.wg.Wait()
 		a.Library.Close()
-	}()
+	})
 	select {
 	case <-stopped:
 	case <-ctx.Done():
 		return fmt.Errorf("wait for background work: %w", context.Cause(ctx))
 	}
+	stopping.Wait()
 	return a.closeStores()
 }
 
@@ -159,12 +165,13 @@ const (
 )
 
 // Serve listens before starting background work and shuts down when ctx ends.
-func Serve(ctx context.Context, cfg config.Config, logger *slog.Logger, version string) (err error) {
+func Serve(ctx context.Context, options ServeOptions) (err error) {
+	cfg, logger := options.Config, options.Logger
 	a, err := New(ctx, &cfg, logger)
 	if err != nil {
 		return err
 	}
-	a.version = version
+	a.build = options.Build
 	defer func() {
 		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workerStopTimeout)
 		defer cancel()
@@ -186,14 +193,21 @@ func Serve(ctx context.Context, cfg config.Config, logger *slog.Logger, version 
 	if err != nil {
 		return fmt.Errorf("http listen failed: %w", err)
 	}
-	defer listener.Close()
+	var serving sync.WaitGroup
+	defer func() {
+		// Serve and Shutdown usually close the listener before this cleanup.
+		if closeErr := listener.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			err = errors.Join(err, fmt.Errorf("close http listener: %w", closeErr))
+		}
+		serving.Wait()
+	}()
 	// Workers keep running while HTTP drains; the deferred Shutdown stops them.
 	if err := a.Start(context.WithoutCancel(ctx)); err != nil {
 		return err
 	}
 	logger.Info("service_listening", "listen", listener.Addr().String())
 	done := make(chan error, 1)
-	go func() { done <- srv.Serve(listener) }()
+	serving.Go(func() { done <- srv.Serve(listener) })
 	select {
 	case err := <-done:
 		return fmt.Errorf("serve http: %w", err)
@@ -209,4 +223,19 @@ func Serve(ctx context.Context, cfg config.Config, logger *slog.Logger, version 
 		return fmt.Errorf("serve http: %w", err)
 	}
 	return nil
+}
+
+// Build contains the binary identity determined by the command entrypoint.
+type Build struct {
+	Version  string       `json:"version"`
+	Revision string       `json:"revision,omitzero"`
+	Time     timefmt.Time `json:"build_time,omitzero"`
+	Modified bool         `json:"modified"`
+}
+
+// ServeOptions supplies the assembled server inputs.
+type ServeOptions struct {
+	Config config.Config
+	Logger *slog.Logger
+	Build  Build
 }

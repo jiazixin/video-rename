@@ -1,6 +1,8 @@
 package app
 
 import (
+	"database/sql"
+	"encoding/json/v2"
 	"fmt"
 	"log/slog"
 	"net/http/httptest"
@@ -27,7 +29,9 @@ func TestEntryMarksAndSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	var id int64
-	a.DB.QueryRow("SELECT id FROM entries WHERE name='a.mp4'").Scan(&id)
+	a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name='a.mp4'").Scan(&id)
+	})
 	for _, body := range []string{`{"targets":[],"marked":true}`, `{"targets":[1]}`, `{"targets":[0],"marked":true}`} {
 		w := httptest.NewRecorder()
 		a.markEntries(w, jsonRequest("POST", "/api/entries/processed", strings.NewReader(body)))
@@ -37,8 +41,15 @@ func TestEntryMarksAndSnapshots(t *testing.T) {
 	}
 	w := httptest.NewRecorder()
 	a.markEntries(w, jsonRequest("POST", "/api/entries/processed", strings.NewReader(fmt.Sprintf(`{"targets":[%d],"marked":true}`, id))))
-	if w.Code != 200 {
+	if w.Code != 202 {
 		t.Fatal(w.Body.String())
+	}
+	var pending markStatus
+	if err := json.Unmarshal(w.Body.Bytes(), &pending); err != nil {
+		t.Fatal(err)
+	}
+	if done := awaitMark(t, a, pending.Key); done.Changed != 1 {
+		t.Fatal(done)
 	}
 	w = httptest.NewRecorder()
 	a.entryStatus(w, httptest.NewRequest("GET", fmt.Sprintf("/api/entries/status?ids=1,%d,999999", id), nil))

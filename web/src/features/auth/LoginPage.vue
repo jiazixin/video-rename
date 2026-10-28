@@ -3,7 +3,7 @@
   import './login.css';
   import { ref } from 'vue';
   import { ArrowRight, Eye, EyeOff, Folder, FileVideo, Check, ShieldCheck } from '@lucide/vue';
-  import { api, session } from '../../app/api';
+  import { api, setSession } from '../../app/api';
   const username = ref(''),
     password = ref(''),
     visible = ref(false),
@@ -13,13 +13,15 @@
     busy.value = true;
     error.value = '';
     try {
-      session.value = await api('/auth/login', {
-        method: 'POST',
-        body: {
-          username: username.value,
-          password: password.value
-        }
-      });
+      setSession(
+        await api('/auth/login', {
+          method: 'POST',
+          body: {
+            username: username.value,
+            password: password.value
+          }
+        })
+      );
     } catch (e) {
       error.value = errorText(e);
     } finally {

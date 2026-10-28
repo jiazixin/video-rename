@@ -25,7 +25,7 @@ func TestCacheMustNotDeleteMedia(t *testing.T) {
 		t.Logf("safely rejected: %v", err)
 		return
 	}
-	cache, err := framecache.New(cfg.TempStorage, 1<<30, slog.New(slog.DiscardHandler))
+	cache, err := framecache.New(t.Context(), framecache.Options{Base: cfg.TempStorage, LimitBytes: 1 << 30, Logger: slog.New(slog.DiscardHandler)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestCacheNamespaceAllowsSiblingAndParentLayouts(t *testing.T) {
 			if err := cfg.Validate(); err != nil {
 				t.Fatal(err)
 			}
-			cache, err := framecache.New(cfg.TempStorage, 1<<20, slog.New(slog.DiscardHandler))
+			cache, err := framecache.New(t.Context(), framecache.Options{Base: cfg.TempStorage, LimitBytes: 1 << 20, Logger: slog.New(slog.DiscardHandler)})
 			if err != nil {
 				t.Fatal(err)
 			}

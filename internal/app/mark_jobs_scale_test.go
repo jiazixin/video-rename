@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 )
@@ -21,7 +22,9 @@ func TestScaleBackgroundMarksDisconnected(t *testing.T) {
 		t.Fatalf("incomplete after disconnect: %+v", result)
 	}
 	var count int
-	if err := a.DB.QueryRow("SELECT count(*) FROM marks").Scan(&count); err != nil || count != 20000 {
+	if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM marks").Scan(&count)
+	}); err != nil || count != 20000 {
 		t.Fatal(count, err)
 	}
 	t.Logf("20,000 persisted marks after request cancellation in %s", time.Since(start))

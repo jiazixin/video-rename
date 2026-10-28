@@ -1,3 +1,73 @@
+.prompt-preview p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.9;
+}
+.prompt-picker {
+  margin: 20px 0;
+}
+.prompt-picker .select-field {
+  width: 100%;
+}
+.prompt-picker label {
+  margin-bottom: 10px;
+}
+.prompt-preview {
+  border: 1px solid var(--palette-e4eae6);
+  border-radius: 7px;
+  background: var(--palette-f8faf9);
+  margin: 10px 0 18px;
+  padding: 10px 12px;
+}
+.prompt-preview summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--palette-4d7864);
+}
+.prompt-preview p {
+  margin-top: 12px;
+  max-height: 220px;
+  overflow: auto;
+}
+.model-card-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 6px 12px;
+  gap: 6px;
+  border: 1px solid var(--control-line);
+  border-radius: 8px;
+  background: var(--palette-ffffff);
+  color: var(--steel);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.model-card-actions button:hover:not(:disabled) {
+  background: var(--control-hover);
+  border-color: var(--control-line-hover);
+  color: var(--ink);
+}
+.model-card-actions button > svg {
+  width: 16px;
+  height: 16px;
+}
+.model-card-actions button.model-delete {
+  color: var(--tone-red-ink);
+  background: var(--tone-red-bg);
+  border-color: var(--tone-red-line);
+  gap: 6px;
+  line-height: 20px;
+}
+.model-card-actions button.model-delete:hover:not(:disabled) {
+  color: var(--tone-red-ink);
+  background: var(--tone-red-bg);
+  border-color: var(--tone-red-line);
+  filter: saturate(1.35) brightness(0.97);
+}
+
 .model-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 390px), 1fr));

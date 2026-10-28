@@ -3,9 +3,11 @@ package library
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"video-rename/internal/discovery"
 	"video-rename/internal/domain"
+	"video-rename/internal/storage"
 )
 
 // MarkFailure reports an entry whose mark could not be changed.
@@ -48,7 +50,9 @@ func (l *Library) SetProcessedWithProgress(ctx context.Context, ids []int64, mar
 			continue
 		}
 		var e Entry
-		err := l.DB.Read().QueryRowContext(ctx, "SELECT id,parent,name,kind FROM entries WHERE id=? AND present=1", id).Scan(&e.ID, &e.Parent, &e.Name, &e.Kind)
+		err := l.db.View(ctx, func(tx *sql.Tx) error {
+			return tx.QueryRowContext(ctx, "SELECT id,parent,name,kind FROM entries WHERE id=? AND present=1", id).Scan(&e.ID, &e.Parent, &e.Name, &e.Kind)
+		})
 		if err != nil {
 			w.seen[id] = true
 			w.fail(ctx, id, err)
@@ -166,20 +170,17 @@ func (w *markWalk) walkDirectory(ctx context.Context, e Entry) {
 }
 
 func (w *markWalk) childPage(ctx context.Context, parent, after int64) ([]Entry, error) {
-	rows, err := w.l.DB.Read().QueryContext(ctx, "SELECT id,parent,name,kind FROM entries WHERE parent=? AND present=1 AND id>? ORDER BY id LIMIT ?", parent, after, markBatchSize)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	children := make([]Entry, 0, markBatchSize)
-	for rows.Next() {
-		var child Entry
-		if err = rows.Scan(&child.ID, &child.Parent, &child.Name, &child.Kind); err != nil {
+	return storage.ReadValue(ctx, w.l.db, func(tx *sql.Tx) ([]Entry, error) {
+		rows, err := tx.QueryContext(ctx, "SELECT id,parent,name,kind FROM entries WHERE parent=? AND present=1 AND id>? ORDER BY id LIMIT ?", parent, after, markBatchSize)
+		if err != nil {
 			return nil, err
 		}
-		children = append(children, child)
-	}
-	return children, rows.Err()
+		return storage.CollectRows(rows, func(rows *sql.Rows) (Entry, error) {
+			var child Entry
+			err := rows.Scan(&child.ID, &child.Parent, &child.Name, &child.Kind)
+			return child, err
+		})
+	})
 }
 
 type fileMarkResult struct {
@@ -200,7 +201,7 @@ func (l *Library) setFilesProcessed(ctx context.Context, ids []int64, marked boo
 		for i := range files {
 			if files[i].err == nil {
 				files[i].changed = 0
-				files[i].err = domain.Fail(domain.KindInternal, "mark_batch_failed", "mark batch not committed").Wrap(err)
+				files[i].err = domain.Fail(domain.KindInternal, domain.Record{Code: "mark_batch_failed", Message: "mark batch not committed"}).Wrap(err)
 			}
 		}
 	}
@@ -223,51 +224,41 @@ func (l *Library) setFilesProcessed(ctx context.Context, ids []int64, marked boo
 	}
 	// All filesystem and write-pool queries finish before taking the sole
 	// writer connection. Keep only SQL in this short transaction.
-	tx, err := l.DB.BeginTx(ctx, nil)
+	err := l.db.Write(ctx, func(tx *sql.Tx) (err error) {
+		statements := make(map[string]*sql.Stmt)
+		defer func() {
+			for _, statement := range statements {
+				err = errors.Join(err, statement.Close())
+			}
+		}()
+		for i := range files {
+			file := &files[i]
+			if file.err != nil {
+				continue
+			}
+			query := processedQuery(file.entry, marked)
+			statement := statements[query]
+			if statement == nil {
+				statement, err = tx.PrepareContext(ctx, query)
+				if err != nil {
+					return err
+				}
+				statements[query] = statement
+			}
+			res, err := statement.ExecContext(ctx, file.entry.Identity, file.entry.Size, file.entry.ModifiedNS)
+			if err != nil {
+				return err
+			}
+			file.changed, err = res.RowsAffected()
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 	if err != nil {
 		batchFailed(err)
-		return
-	}
-	defer tx.Rollback()
-	statements := make(map[string]*sql.Stmt)
-	defer func() {
-		for _, statement := range statements {
-			statement.Close()
-		}
-	}()
-	for i := range files {
-		file := &files[i]
-		if file.err != nil {
-			continue
-		}
-		query := processedQuery(file.entry, marked)
-		statement := statements[query]
-		if statement == nil {
-			statement, err = tx.PrepareContext(ctx, query)
-			if err != nil {
-				batchFailed(err)
-				return
-			}
-			statements[query] = statement
-		}
-		res, err := statement.ExecContext(ctx, file.entry.Identity, file.entry.Size, file.entry.Mtime)
-		if err != nil {
-			batchFailed(err)
-			return
-		}
-		file.changed, err = res.RowsAffected()
-		if err != nil {
-			batchFailed(err)
-			return
-		}
-	}
-	if err = ctx.Err(); err != nil {
-		batchFailed(err)
-		return
-	}
-	if err = tx.Commit(); err != nil {
-		batchFailed(err)
-		return
 	}
 	return
 }
@@ -294,20 +285,20 @@ func (l *Library) validateProcessedFile(ctx context.Context, id int64) (Entry, e
 	if err != nil {
 		return Entry{}, err
 	}
-	if Identity(snap) != e.Identity || snap.Size != e.Size || stamp(snap) != e.Mtime {
+	if Identity(snap) != e.Identity || snap.Size != e.Size || stamp(snap) != e.ModifiedNS {
 		return Entry{}, errChanged
 	}
 	return e, nil
 }
 
 func processedQuery(e Entry, marked bool) string {
-	query := "DELETE FROM marks WHERE identity=? AND size=? AND mtime=?"
+	query := "DELETE FROM marks WHERE identity=? AND size=? AND mtime_ns=?"
 	if marked {
-		query = "INSERT INTO marks(identity,size,mtime,source,operation) VALUES(?,?,?,'marked',NULL) ON CONFLICT(identity,size,mtime) DO NOTHING"
+		query = "INSERT INTO marks(identity,size,mtime_ns,source,operation) VALUES(?,?,?,'marked',NULL) ON CONFLICT(identity,size,mtime_ns) DO NOTHING"
 		// Numbering also writes a manual processing state. An explicit media
 		// mark must replace it so users can protect an already numbered file.
 		if IsImage(e.Name) || IsAudio(e.Name) {
-			query = "INSERT INTO marks(identity,size,mtime,source,operation) VALUES(?,?,?,'marked',NULL) ON CONFLICT(identity,size,mtime) DO UPDATE SET source='marked',operation=NULL WHERE source<>'marked'"
+			query = "INSERT INTO marks(identity,size,mtime_ns,source,operation) VALUES(?,?,?,'marked',NULL) ON CONFLICT(identity,size,mtime_ns) DO UPDATE SET source='marked',operation=NULL WHERE source<>'marked'"
 		}
 	}
 	return query

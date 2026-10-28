@@ -2,6 +2,7 @@ package library
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -29,8 +30,12 @@ func BenchmarkDirectoryScanUnchanged(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				b.Cleanup(func() { db.Close() })
-				l, err := New(b.Context(), db, root)
+				b.Cleanup(func() {
+					if err := db.Close(); err != nil {
+						b.Error(err)
+					}
+				})
+				l, err := New(b.Context(), db, root, slog.New(slog.DiscardHandler))
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -44,7 +49,11 @@ func BenchmarkDirectoryScanUnchanged(b *testing.B) {
 					if err != nil {
 						b.Fatal(err)
 					}
-					b.Cleanup(func() { scanner.Close() })
+					b.Cleanup(func() {
+						if err := scanner.Close(); err != nil {
+							b.Error(err)
+						}
+					})
 					scan = scanner.ScanDirectory
 				}
 				b.ReportAllocs()

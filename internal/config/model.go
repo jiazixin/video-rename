@@ -7,24 +7,25 @@ import (
 	"time"
 
 	"video-rename/internal/domain"
+	"video-rename/internal/secret"
 )
 
 // ServerConfig is a runtime model snapshot, never a deployment YAML section.
 type ServerConfig struct {
-	Workers         int     `json:"workers"`
-	Thinking        string  `json:"thinking"`
-	ThinkingAdapter string  `json:"thinking_adapter"`
-	ThinkingEffort  string  `json:"thinking_effort"`
-	ThinkingBudget  int     `json:"thinking_budget"`
-	Provider        string  `json:"provider"`
-	Protocol        string  `json:"protocol"`
-	BaseURL         string  `json:"base_url"`
-	APIKey          string  `json:"-"`
-	Model           string  `json:"model"`
-	Timeout         string  `json:"timeout"`
-	Temperature     float64 `json:"temperature"`
-	MaxTokens       int     `json:"max_tokens"`
-	OmitTemperature bool    `json:"omit_temperature"`
+	Workers         int          `json:"workers"`
+	Thinking        string       `json:"thinking"`
+	ThinkingAdapter string       `json:"thinking_adapter"`
+	ThinkingEffort  string       `json:"thinking_effort"`
+	ThinkingBudget  int          `json:"thinking_budget"`
+	Provider        string       `json:"provider"`
+	Protocol        string       `json:"protocol"`
+	BaseURL         string       `json:"base_url"`
+	APIKey          secret.Value `json:"-"`
+	Model           string       `json:"model"`
+	Timeout         string       `json:"timeout"`
+	Temperature     float64      `json:"temperature"`
+	MaxTokens       int          `json:"max_tokens"`
+	OmitTemperature bool         `json:"omit_temperature"`
 }
 
 // ValidateConnection checks the provider, protocol and endpoint settings of s.
@@ -54,7 +55,7 @@ func ValidateConnection(s *ServerConfig) error {
 	if len(s.BaseURL) > 2048 {
 		return domain.InvalidField("base_url", "too_long")
 	}
-	if len(s.APIKey) > 8192 || strings.ContainsAny(s.APIKey, "\r\n") {
+	if len(s.APIKey) > 8192 || strings.ContainsAny(s.APIKey.Reveal(), "\r\n") {
 		return domain.InvalidField("api_key", "invalid")
 	}
 	return nil

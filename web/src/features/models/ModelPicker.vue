@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import './models.css';
   import { errorText } from '../../app/errors';
   import { computed, onMounted, ref } from 'vue';
   import { apiItems } from '../../app/api';

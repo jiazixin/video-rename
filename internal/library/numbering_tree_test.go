@@ -8,10 +8,76 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"video-rename/internal/domain"
 )
+
+func TestNumberingTreeHistoryConcurrentRequests(t *testing.T) {
+	l, root, _ := fixture(t)
+	if err := os.Mkdir(filepath.Join(root, "child"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"photo.jpg", "child/photo.jpg"} {
+		put(t, filepath.Join(root, name))
+	}
+	batches, err := l.PreviewNumberingTree(t.Context(), 1, domain.DefaultNumberingSettings())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batches) != 2 {
+		t.Fatalf("preview created %d batches, want 2", len(batches))
+	}
+	want := make(map[string]string, len(batches))
+	for _, batch := range batches {
+		if _, err := l.ApplyNumbering(t.Context(), batch.ID, nil); err != nil {
+			t.Fatal(err)
+		}
+		want[batch.ID] = batch.Path
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	const requests = 8
+	start := make(chan struct{})
+	results := make(chan error, requests)
+	var ready sync.WaitGroup
+	ready.Add(requests)
+	for range requests {
+		go func() {
+			ready.Done()
+			<-start
+			for range 8 {
+				history, err := l.NumberingTreeHistory(ctx, 1)
+				if err != nil {
+					results <- err
+					return
+				}
+				if len(history) != len(want) {
+					results <- fmt.Errorf("history returned %d batches, want %d", len(history), len(want))
+					return
+				}
+				for _, batch := range history {
+					path, ok := want[batch.ID]
+					if !ok || batch.Path != path || batch.Total != 1 || batch.Items != nil {
+						results <- fmt.Errorf("unexpected history batch: %+v", batch)
+						return
+					}
+				}
+			}
+			results <- nil
+		}()
+	}
+	ready.Wait()
+	close(start)
+	for range requests {
+		if err := <-results; err != nil {
+			t.Errorf("concurrent history request failed: %v", err)
+		}
+	}
+}
 
 func TestNumberingTreeIndexesEveryLevelAndRestores(t *testing.T) {
 	l, root, _ := fixture(t)

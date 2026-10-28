@@ -1,4 +1,4 @@
-import { createRouter, createWebHashHistory, type RouteLocationNormalized } from 'vue-router'
+import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vue-router'
 
 const settingsTabs = [
   'processing',
@@ -15,10 +15,9 @@ function param(route: RouteLocationNormalized, name: string): string {
   return typeof value === 'string' ? value : ''
 }
 
-// Hash routing: the Go server serves index.html only at "/". Older links such
-// as "#settings/numbering" resolve to the same routes.
+// The Go asset handler falls back to index.html for application routes.
 export const router = createRouter({
-  history: createWebHashHistory(),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     { path: '/', redirect: '/library' },
     {
@@ -57,7 +56,7 @@ export const router = createRouter({
     {
       path: '/settings/:tab?',
       name: 'settings',
-      component: () => import('./SystemSettingsPage.vue'),
+      component: () => import('../features/settings/SystemSettingsPage.vue'),
       props: (route) => {
         const tab = param(route, 'tab')
         return { tab: settingsTabs.includes(tab) ? tab : 'processing' }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import './history.css';
   import { errorText } from '../../app/errors';
   import PageNavigation from '../../components/PageNavigation.vue';
   import { useToast } from '../../app/use-toast';
@@ -97,12 +98,12 @@
       const params = new URLSearchParams({
         limit: String(limit.value),
         q: q.value,
-        run: run.value,
         success_page: String(pages.value.success),
         failure_page: String(pages.value.failure),
         from: from.value ? new Date(from.value + 'T00:00:00').toISOString() : '',
         to: to.value ? new Date(to.value + 'T23:59:59.999').toISOString() : ''
       });
+      if (run.value) params.set('run', run.value);
       const [data, ids] = await Promise.all([
         api<Report>(`/extractions?${params}`, { signal: controller.signal }),
         apiItems<number>('/logs/batches?category=extraction', { signal: controller.signal })

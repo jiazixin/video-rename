@@ -22,8 +22,8 @@
   const emit = defineEmits<{ previous: []; next: []; select: [entry: Entry] }>();
   const list = ref<HTMLElement>();
   // A stable colour per file name stands in for cover art, which the server does not extract.
-  const hue = computed(() =>
-    Array.from(entry.name).reduce((sum, ch) => (sum * 31 + ch.charCodeAt(0)) % 360, 7)
+  const tone = computed(() =>
+    Array.from(entry.name).reduce((sum, ch) => (sum * 31 + ch.charCodeAt(0)) % 6, 1)
   );
   const audio = ref<HTMLAudioElement>(),
     paused = ref(true),
@@ -123,7 +123,7 @@
 <template>
   <div class="audio-deck">
     <section class="now-playing" aria-label="正在播放">
-      <div class="cover" :style="{ '--hue': hue }" aria-hidden="true"
+      <div class="cover" :data-tone="tone" aria-hidden="true"
         ><Music :size="38" :class="{ pulsing: !paused }"
       /></div>
       <p class="track-position">{{ position ? `第 ${position} 首` : '同目录音频' }}</p>
@@ -235,7 +235,6 @@
     min-width: 0;
   }
   .cover {
-    --hue: 150;
     align-self: center;
     width: 132px;
     aspect-ratio: 1;
@@ -243,12 +242,23 @@
     place-items: center;
     border-radius: 16px;
     color: var(--palette-rgba-255-255-255-0_92);
-    background: linear-gradient(
-      135deg,
-      var(--palette-hsl-var-hue-42-34),
-      var(--palette-hsl-calc-var-hue-36-48-66)
-    );
+    background: linear-gradient(135deg, var(--audio-cover-0-start), var(--audio-cover-0-end));
     box-shadow: 0 12px 26px var(--palette-rgba-20-40-30-0_18);
+  }
+  .cover[data-tone='1'] {
+    background: linear-gradient(135deg, var(--audio-cover-1-start), var(--audio-cover-1-end));
+  }
+  .cover[data-tone='2'] {
+    background: linear-gradient(135deg, var(--audio-cover-2-start), var(--audio-cover-2-end));
+  }
+  .cover[data-tone='3'] {
+    background: linear-gradient(135deg, var(--audio-cover-3-start), var(--audio-cover-3-end));
+  }
+  .cover[data-tone='4'] {
+    background: linear-gradient(135deg, var(--audio-cover-4-start), var(--audio-cover-4-end));
+  }
+  .cover[data-tone='5'] {
+    background: linear-gradient(135deg, var(--audio-cover-5-start), var(--audio-cover-5-end));
   }
   .cover .pulsing {
     animation: cover-pulse 1.6s linear infinite;

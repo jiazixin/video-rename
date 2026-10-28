@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -31,7 +32,7 @@ func TestLargeLibraryQueriesSeekByEntry(t *testing.T) {
 		{"SELECT id FROM run_items WHERE run=? AND status='failed' ORDER BY MAX(started_ms,finished_ms) DESC,id DESC LIMIT 100", "item_failures", []any{1}},
 		{"SELECT count(*) FROM events WHERE category=? AND run=?", "category=? AND run=?", []any{"success", 1}},
 	} {
-		rows, err := s.Query("EXPLAIN QUERY PLAN "+tc.query, tc.args...)
+		rows, err := s.write.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+tc.query, tc.args...)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -61,7 +62,7 @@ func TestCandidateDeletionDoesNotScanForeignKeyTables(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	rows, err := s.QueryContext(t.Context(), "EXPLAIN QUERY PLAN DELETE FROM entries WHERE id=? AND present=0", 123)
+	rows, err := s.write.QueryContext(t.Context(), "EXPLAIN QUERY PLAN DELETE FROM entries WHERE id=? AND present=0", 123)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,15 +91,24 @@ func TestAnalysisTimestampPreservesMillisecondBoundaries(t *testing.T) {
 	for _, tc := range []struct {
 		started, created string
 		want             int64
+		wantError        bool
 	}{
-		{"2026-10-05T00:00:00.123999999Z", "", 1791158400123},
-		{"", "1970-01-01T00:00:00.001999999Z", 1},
-		{"invalid", "1970-01-01T00:00:00.002Z", 2},
-		{"1970-01-01T00:00:00Z", "1970-01-01T00:00:00.003Z", 3},
+		{"2026-10-05T00:00:00.123Z", "", 1791158400123, false},
+		{"", "1970-01-01T00:00:00.001Z", 1, false},
+		{"1970-01-01T00:00:00.000Z", "1970-01-01T00:00:00.003Z", 0, false},
+		{"", "", 0, false},
+		{"2026-10-05T00:00:00.123999999Z", "", 0, true},
+		{"", "1970-01-01T00:00:00.001999999Z", 0, true},
+		{"invalid", "1970-01-01T00:00:00.002Z", 0, true},
+		{"1970-01-01T00:00:00Z", "1970-01-01T00:00:00.003Z", 0, true},
+		{"1970-01-01T01:00:00.000+01:00", "", 0, true},
 	} {
 		var got int64
-		if err := s.Read().QueryRow("SELECT video_rename_start_ms(?,?)", tc.started, tc.created).Scan(&got); err != nil || got != tc.want {
-			t.Fatal(tc, got, err)
+		err := s.View(t.Context(), func(tx *sql.Tx) error {
+			return tx.QueryRowContext(t.Context(), "SELECT video_rename_start_ms(?,?)", tc.started, tc.created).Scan(&got)
+		})
+		if (err != nil) != tc.wantError || !tc.wantError && got != tc.want {
+			t.Fatalf("analysis timestamp: got %d error=%v, want %d error=%v (%+v)", got, err, tc.want, tc.wantError, tc)
 		}
 	}
 }

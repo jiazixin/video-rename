@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"fmt"
 	"log/slog"
@@ -9,14 +10,15 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"video-rename/internal/config"
-	"video-rename/internal/domain"
-	"video-rename/internal/jobs"
-	"video-rename/internal/models"
-	"video-rename/internal/systemsettings"
+	"video-rename/internal/job"
+	"video-rename/internal/library"
+	"video-rename/internal/storage"
+	"video-rename/internal/systemsetting"
 )
 
 func TestRunDirectoryRecords(t *testing.T) {
@@ -26,7 +28,9 @@ func TestRunDirectoryRecords(t *testing.T) {
 	}
 	t.Cleanup(func() { shutdown(t, a) })
 	for id := range 2 {
-		if _, err := a.DB.Exec(`INSERT INTO runs(id,source,targets,recursive,status,created,request_key) VALUES(?,'manual','[]',0,'running','now',?)`, id+1, fmt.Sprint(id)); err != nil {
+		if _, err := storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(t.Context(), `INSERT INTO runs(id,source,targets,recursive,status,created,request_key) VALUES(?,'manual','[]',0,'running','2026-10-01T00:00:00.000Z',?)`, id+1, fmt.Sprint(id))
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -42,15 +46,21 @@ func TestRunDirectoryRecords(t *testing.T) {
 		if id == 205 {
 			directory, status = "", "queued"
 		}
-		if _, err := a.DB.Exec(`INSERT INTO run_items(id,run,entry,identity,size,mtime,status,original_path) VALUES(?,1,1,?,0,'now',?,?)`, id, fmt.Sprint(id), status, directory+fmt.Sprintf("clip-%03d.mp4", id)); err != nil {
+		if _, err := storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(t.Context(), `INSERT INTO run_items(id,run,entry,identity,size,mtime_ns,status,original_path) VALUES(?,1,1,?,0,0,?,?)`, id, fmt.Sprint(id), status, directory+fmt.Sprintf("clip-%03d.mp4", id))
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := a.DB.Exec(`INSERT INTO run_items(id,run,entry,identity,size,mtime,status,original_path) VALUES(206,2,1,'other',0,'now','failed','其他 / clip.mp4')`); err != nil {
+	if _, err := storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `INSERT INTO run_items(id,run,entry,identity,size,mtime_ns,status,original_path) VALUES(206,2,1,'other',0,0,'failed','其他 / clip.mp4')`)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	for n := 1; n <= 4; n++ {
-		if _, err := a.DB.Exec(`INSERT INTO model_attempts VALUES(3,?,1,'主模型','vision',?,'2026-10-07T00:00:00Z',100,'failed',?)`, n, n == 4, fmt.Sprintf(`{"code":"naming_failed","message":"failed %d"}`, n)); err != nil {
+		if _, err := storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(t.Context(), `INSERT INTO model_attempts VALUES(3,?,1,'主模型','vision',?,'2026-10-07T00:00:00.000Z',100,'failed',?)`, n, n == 4, fmt.Sprintf(`{"code":"naming_failed","message":"failed %d"}`, n))
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -66,7 +76,9 @@ func TestRunDirectoryRecords(t *testing.T) {
 		{"run:1:item:3:0", "未提交名称.mp4", "failed", 1},
 		{"run:1:item:10:0", "其他条目.mp4", "committed", 1},
 	} {
-		if _, err := a.DB.Exec(`INSERT INTO operations(entry,parent,old_name,new_name,identity,size,mtime,kind,source,status,request_key,created,run,undone) VALUES(1,1,'old.mp4',?,'x',0,'now','file','automatic',?,?,'now',?,1)`, op.name, op.status, op.key, op.run); err != nil {
+		if _, err := storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(t.Context(), `INSERT INTO operations(entry,parent,old_name,new_name,identity,size,mtime_ns,kind,source,status,request_key,created,run,undone) VALUES(1,1,'old.mp4',?,'x',0,0,'file','automatic',?,?,0,?,1)`, op.name, op.status, op.key, op.run)
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -163,18 +175,22 @@ func TestRunDirectoryRecords(t *testing.T) {
 			t.Fatal("inexact directory filter", p)
 		}
 	}
-	if _, err := a.DB.Exec(`UPDATE run_items SET status='failed' WHERE id=205`); err != nil {
+	if _, err := storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `UPDATE run_items SET status='failed' WHERE id=205`)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	refreshed := read("status=failed&directory=")
 	if refreshed.Total != 1 || refreshed.FailedTotal != 69 || refreshed.Items[0].ID != 205 {
 		t.Fatal("live summary not updated", refreshed)
 	}
-	if _, err := a.DB.Exec(`UPDATE run_items SET status='skipped',message='{"code":"skip_processed","message":"already processed; skipped"}' WHERE id IN (1,4);
+	if _, err := storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `UPDATE run_items SET status='skipped',message='{"code":"skip_processed","message":"already processed; skipped"}' WHERE id IN (1,4);
 UPDATE run_items SET status='skipped',message='{"code":"skip_unstable","message":"file not stable yet"}' WHERE id=2;
 UPDATE run_items SET status='running',started_ms=50 WHERE id=5;
 UPDATE run_items SET status='running',started_ms=10 WHERE id=7;
-UPDATE run_items SET finished_ms=100 WHERE id=8`); err != nil {
+UPDATE run_items SET finished_ms=100 WHERE id=8`)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	var counts struct {
@@ -237,7 +253,9 @@ UPDATE run_items SET finished_ms=100 WHERE id=8`); err != nil {
 			t.Fatal("unfinished item in recent", item)
 		}
 	}
-	if _, err := a.DB.Exec(`DELETE FROM model_attempts; DELETE FROM run_items WHERE run=1`); err != nil {
+	if _, err := storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `DELETE FROM model_attempts; DELETE FROM run_items WHERE run=1`)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	empty := read("status=failed&page=99")
@@ -259,7 +277,7 @@ UPDATE run_items SET finished_ms=100 WHERE id=8`); err != nil {
 // previously hid a mismatch with the suffix added by Library.AutoCommit.
 // automaticRunApp prepares an isolated app with stub media tools, a local
 // model profile and one video fixture for automatic rename runs.
-func automaticRunApp(t *testing.T) (*App, string) {
+func automaticRunApp(t *testing.T, reply func(context.Context, string) (string, error)) (*App, string) {
 	t.Helper()
 	root := t.TempDir()
 	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
@@ -267,24 +285,10 @@ func automaticRunApp(t *testing.T) (*App, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { shutdown(t, a) })
-	tools := t.TempDir()
-	for _, name := range []string{"ffmpeg", "ffprobe"} {
-		if err := os.WriteFile(filepath.Join(tools, name), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Setenv("PATH", tools)
-	profile, err := (models.Store{DB: a.DB}).Get(t.Context(), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	profile.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test", Timeout: "2s", MaxTokens: 128}
-	if _, err := (models.Store{DB: a.DB}).Save(t.Context(), profile); err != nil {
-		t.Fatal(err)
-	}
-	settings := systemsettings.Default()
+	installPipelineFixture(t, a, pipelineFixture{model: "test", reply: reply})
+	settings := systemsetting.Default()
 	settings.StabilitySeconds = 0
-	if err := (systemsettings.Store{DB: a.DB}).Save(t.Context(), settings); err != nil {
+	if err := (systemsetting.New(a.db)).Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "原视频.mp4"), []byte("isolated video fixture"), 0o600); err != nil {
@@ -294,11 +298,10 @@ func automaticRunApp(t *testing.T) (*App, string) {
 }
 
 func TestRunRecordsAfterAutomaticRenameAndRestore(t *testing.T) {
-	a, root := automaticRunApp(t)
-	a.Jobs.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
+	a, root := automaticRunApp(t, func(context.Context, string) (string, error) {
 		return "本批次标题", nil
-	}
-	run, err := a.Jobs.Create(t.Context(), jobs.Request{Targets: []int64{1}, Key: "record-integration"}, "manual", 0)
+	})
+	run, err := a.Jobs.Create(t.Context(), job.Request{Targets: []int64{1}, Key: "record-integration"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +310,9 @@ func TestRunRecordsAfterAutomaticRenameAndRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	var operation, entry int64
-	if err := a.DB.QueryRow("SELECT id,entry FROM operations WHERE run=? AND status='committed'", run).Scan(&operation, &entry); err != nil {
+	if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id,entry FROM operations WHERE run=? AND status='committed'", run).Scan(&operation, &entry)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	check := func(undone bool, current string) {
@@ -346,7 +351,7 @@ func TestRunRecordsAfterAutomaticRenameAndRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Library.Rename(t.Context(), entry, e.Version, "后续手动标题.mp4", "record-later-rename"); err != nil {
+	if _, err := a.Library.Rename(t.Context(), library.RenameRequest{ID: entry, Version: e.Version, Name: "后续手动标题.mp4", Key: "record-later-rename"}); err != nil {
 		t.Fatal(err)
 	}
 	check(true, "后续手动标题.mp4")
@@ -355,14 +360,21 @@ func TestRunRecordsAfterAutomaticRenameAndRestore(t *testing.T) {
 // A running item exposes its in-memory stage; once finished it moves to the
 // recent list with the committed name and the stage is dropped.
 func TestRunRecordsLiveStage(t *testing.T) {
-	a, _ := automaticRunApp(t)
 	entered, release := make(chan struct{}), make(chan struct{})
-	a.Jobs.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
-		close(entered)
-		<-release
-		return "实时标题", nil
-	}
-	run, err := a.Jobs.Create(t.Context(), jobs.Request{Targets: []int64{1}, Key: "live-stage"}, "manual", 0)
+	var enteredOnce, releaseOnce sync.Once
+	// Register the release after the server cleanup so fatal assertions cannot
+	// strand an in-flight request during cleanup.
+	a, _ := automaticRunApp(t, func(ctx context.Context, _ string) (string, error) {
+		enteredOnce.Do(func() { close(entered) })
+		select {
+		case <-release:
+			return "实时标题", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	})
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	run, err := a.Jobs.Create(t.Context(), job.Request{Targets: []int64{1}, Key: "live-stage"}, "manual", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,9 +390,9 @@ func TestRunRecordsLiveStage(t *testing.T) {
 	}
 	type page struct {
 		Items []struct {
-			ID           int64           `json:"id"`
-			OriginalName string          `json:"original_name"`
-			Stage        *jobs.LiveStage `json:"stage"`
+			ID           int64          `json:"id"`
+			OriginalName string         `json:"original_name"`
+			Stage        *job.LiveStage `json:"stage"`
 		} `json:"items"`
 		Recent []struct {
 			Status  string `json:"status"`
@@ -408,8 +420,12 @@ func TestRunRecordsLiveStage(t *testing.T) {
 	if item.OriginalName != "原视频.mp4" || item.Stage == nil || item.Stage.Stage != "model" || item.Stage.Attempt != 1 || item.Stage.Fallback || item.Stage.SinceMS == 0 {
 		t.Fatalf("live stage: %+v %+v", item, item.Stage)
 	}
-	close(release)
-	<-done
+	releaseOnce.Do(func() { close(release) })
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("run did not finish after model response")
+	}
 	finished := read()
 	if finished.RunningTotal != 0 || len(finished.Items) != 0 || len(finished.Recent) != 1 || finished.Recent[0].Status != "done" || finished.Recent[0].NewName != "实时标题.mp4" {
 		t.Fatalf("finished page: %+v", finished)

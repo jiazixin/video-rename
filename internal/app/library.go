@@ -13,9 +13,9 @@ func (a *App) libraryRoutes(api *router) {
 		var p library.Page
 		var err error
 		if q.Has("page") {
-			p, err = a.Library.ListPage(r.Context(), number(r.PathValue("id")), int(number(q.Get("page"))), int(number(q.Get("limit"))), q.Get("q"), q.Get("kind"), q.Get("status"), q.Get("sort"))
+			p, err = a.Library.ListPage(r.Context(), library.ListPageOptions{ID: number(r.PathValue("id")), Page: int(number(q.Get("page"))), Limit: int(number(q.Get("limit"))), Query: q.Get("q"), Kind: q.Get("kind"), Status: q.Get("status"), SortBy: q.Get("sort")})
 		} else {
-			p, err = a.Library.ListOrdered(r.Context(), number(r.PathValue("id")), int(number(q.Get("offset"))), int(number(q.Get("limit"))), number(q.Get("generation")), q.Get("q"), q.Get("kind"), q.Get("status"), false, q.Get("sort"))
+			p, err = a.Library.ListOrdered(r.Context(), library.ListOrderedOptions{ID: number(r.PathValue("id")), Offset: int(number(q.Get("offset"))), Limit: int(number(q.Get("limit"))), Generation: number(q.Get("generation")), Query: q.Get("q"), Kind: q.Get("kind"), Status: q.Get("status"), Force: false, SortBy: q.Get("sort")})
 		}
 		if err != nil {
 			writeError(w, r, err)
@@ -36,17 +36,25 @@ func (a *App) libraryRoutes(api *router) {
 	})
 	api.HandleFunc("DELETE /api/entries/{id}", func(w http.ResponseWriter, r *http.Request) {
 		var v struct {
-			Version   int64 `json:"version"`
-			Confirmed bool  `json:"confirmed"`
+			Confirmed bool `json:"confirmed"`
 		}
 		if !decode(w, r, &v) {
 			return
 		}
 		if !v.Confirmed {
-			invalid(w, r, "confirmed", "confirmation_required")
+			writeError(w, r, domain.InvalidField("confirmed", "confirmation_required"))
 			return
 		}
-		if err := a.Library.Delete(r.Context(), number(r.PathValue("id")), v.Version); err != nil {
+		id := number(r.PathValue("id"))
+		current, err := a.Library.Get(r.Context(), id)
+		if err != nil {
+			writeError(w, r, err)
+			return
+		}
+		if !matchVersion(w, r, current.Version) {
+			return
+		}
+		if err := a.Library.Delete(r.Context(), id, current.Version); err != nil {
 			writeError(w, r, err)
 			return
 		}
@@ -54,21 +62,29 @@ func (a *App) libraryRoutes(api *router) {
 	})
 	api.HandleFunc("POST /api/entries/{id}/rename", func(w http.ResponseWriter, r *http.Request) {
 		var v struct {
-			Name    string `json:"name"`
-			Version int64  `json:"version"`
-			Key     string `json:"key"`
+			Name string `json:"name"`
 		}
 		if !decode(w, r, &v) {
 			return
 		}
 		id := number(r.PathValue("id"))
-		o, err := a.Library.Rename(r.Context(), id, v.Version, v.Name, v.Key)
+		current, err := a.Library.Get(r.Context(), id)
 		if err != nil {
-			_ = a.Library.Event(r.Context(), "failure", "manual", id, 0, 0, a.Library.Relative(r.Context(), id), "", domain.RecordText(err))
 			writeError(w, r, err)
 			return
 		}
-		send(w, http.StatusOK, o)
+		if !matchVersion(w, r, current.Version) {
+			return
+		}
+		o, err := a.Library.Rename(r.Context(), library.RenameRequest{ID: id, Version: current.Version, Name: v.Name, Key: requestKey(r)})
+		if err != nil {
+			if recordErr := a.Library.Event(r.Context(), library.EventInput{Category: "failure", Action: "manual", Entry: id, Operation: 0, Run: 0, Old: a.Library.Relative(r.Context(), id), New: "", Message: domain.RecordText(err)}); recordErr != nil {
+				requestLogger(r).Error("record_operation_failure", "error", recordErr)
+			}
+			writeError(w, r, err)
+			return
+		}
+		send(w, http.StatusCreated, o)
 	})
 	api.HandleFunc("GET /api/entries/{id}/history", func(w http.ResponseWriter, r *http.Request) {
 		v, err := a.Library.History(r.Context(), number(r.PathValue("id")), number(r.URL.Query().Get("before")))
@@ -79,18 +95,17 @@ func (a *App) libraryRoutes(api *router) {
 		send(w, http.StatusOK, v)
 	})
 	api.HandleFunc("POST /api/operations/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
-		var v struct {
-			Key string `json:"key"`
-		}
-		if !decode(w, r, &v) {
+		if !decodeEmpty(w, r) {
 			return
 		}
-		o, err := a.Library.Restore(r.Context(), number(r.PathValue("id")), v.Key)
+		o, err := a.Library.Restore(r.Context(), number(r.PathValue("id")), requestKey(r))
 		if err != nil {
-			_ = a.Library.Event(r.Context(), "failure", "restore", 0, number(r.PathValue("id")), 0, "", "", domain.RecordText(err))
+			if recordErr := a.Library.Event(r.Context(), library.EventInput{Category: "failure", Action: "restore", Entry: 0, Operation: number(r.PathValue("id")), Run: 0, Old: "", New: "", Message: domain.RecordText(err)}); recordErr != nil {
+				requestLogger(r).Error("record_operation_failure", "error", recordErr)
+			}
 			writeError(w, r, err)
 			return
 		}
-		send(w, http.StatusOK, o)
+		send(w, http.StatusCreated, o)
 	})
 }

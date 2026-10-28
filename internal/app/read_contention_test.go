@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"log/slog"
 	"net/http"
@@ -13,8 +14,9 @@ import (
 
 	"video-rename/internal/config"
 	"video-rename/internal/domain"
-	"video-rename/internal/models"
-	"video-rename/internal/systemsettings"
+	"video-rename/internal/model"
+	"video-rename/internal/storage"
+	"video-rename/internal/systemsetting"
 )
 
 func TestSettingsReloadReadsWhileWriterBusy(t *testing.T) {
@@ -31,9 +33,9 @@ func testSettingsReloadReadsWhileWriterBusy(t *testing.T, renewalDue bool) {
 		t.Fatal(err)
 	}
 	defer shutdown(t, a)
-	settings := systemsettings.Default()
+	settings := systemsetting.Default()
 	settings.ExtractWorkers, settings.CacheGB, settings.StabilitySeconds = 3, 2, 17
-	store := systemsettings.Store{DB: a.DB}
+	store := systemsetting.New(a.db)
 	if err := store.Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +44,7 @@ func testSettingsReloadReadsWhileWriterBusy(t *testing.T, renewalDue bool) {
 	if err := store.SaveNumbering(t.Context(), numbering); err != nil {
 		t.Fatal(err)
 	}
-	modelStore := models.Store{DB: a.DB}
+	modelStore := model.New(a.db)
 	profile, err := modelStore.Get(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)
@@ -72,141 +74,146 @@ func testSettingsReloadReadsWhileWriterBusy(t *testing.T, renewalDue bool) {
 		t.Fatal("login did not issue a session cookie")
 	}
 	if renewalDue {
-		if _, err := a.DB.ExecContext(t.Context(), "UPDATE sessions SET expires=?", time.Now().Add(time.Hour).Unix()); err != nil {
+		if _, err := storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(t.Context(), "UPDATE sessions SET expires=?", time.Now().Add(time.Hour).Unix())
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	var committedExpiry int64
-	if err := a.DB.Read().QueryRowContext(t.Context(), "SELECT expires FROM sessions").Scan(&committedExpiry); err != nil {
+	if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT expires FROM sessions").Scan(&committedExpiry)
+	}); err != nil {
 		t.Fatal(err)
 	}
 
-	tx, err := a.DB.BeginTx(t.Context(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(t.Context(), "UPDATE system_settings SET extract_workers=21,cache_gb=99,numbering=? WHERE id=1", `{"image":{"padding":1,"prefix":"UNCOMMITTED_","lowercase":true,"compact":true},"audio":{"padding":1,"prefix":"UNCOMMITTED_","lowercase":true,"compact":true},"shared":false}`); err != nil {
-		t.Fatal(err)
-	}
-	uncommittedModel := profile.ServerConfig
-	uncommittedModel.Model = "uncommitted-model"
-	raw, err := json.Marshal(uncommittedModel)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.ExecContext(t.Context(), "UPDATE model_configs SET title='uncommitted profile',settings=? WHERE id=?", string(raw), profile.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.ExecContext(t.Context(), "UPDATE sessions SET expires=0"); err != nil {
-		t.Fatal(err)
-	}
+	if err := a.db.Write(t.Context(), func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(t.Context(), "UPDATE system_settings SET extract_workers=21,cache_gb=99,numbering=? WHERE id=1", `{"image":{"padding":1,"prefix":"UNCOMMITTED_","lowercase":true,"compact":true},"audio":{"padding":1,"prefix":"UNCOMMITTED_","lowercase":true,"compact":true},"shared":false}`); err != nil {
+			t.Fatal(err)
+		}
+		uncommittedModel := profile.ServerConfig
+		uncommittedModel.Model = "uncommitted-model"
+		raw, err := json.Marshal(uncommittedModel)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.ExecContext(t.Context(), "UPDATE model_configs SET title='uncommitted profile',settings=? WHERE id=?", string(raw), profile.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.ExecContext(t.Context(), "UPDATE sessions SET expires=0"); err != nil {
+			t.Fatal(err)
+		}
 
-	// Every request must use its committed WAL view while the sole writer still
-	// holds these updates, including sessions that are due for renewal.
-	paths := []string{"/api/auth/session", "/api/system", "/api/system/settings", "/api/model-configs", "/api/numbering/settings"}
-	type response struct {
-		path string
-		w    *httptest.ResponseRecorder
-	}
-	responses := make(chan response, len(paths))
-	var requests sync.WaitGroup
-	ctx, cancel := context.WithCancel(t.Context())
-	remaining := len(paths)
-	defer func() {
-		// Release the writer before draining failed requests. Otherwise an
-		// accidental writer-pool read can also prevent App.Close from returning.
-		cancel()
-		_ = tx.Rollback()
+		// Every request must use its committed WAL view while the sole writer still
+		// holds these updates, including sessions that are due for renewal.
+		paths := []string{"/api/auth/session", "/api/system", "/api/system/settings", "/api/model-configs", "/api/numbering/settings"}
+		type response struct {
+			path string
+			w    *httptest.ResponseRecorder
+		}
+		responses := make(chan response, len(paths))
+		var requests sync.WaitGroup
+		ctx, cancel := context.WithCancel(t.Context())
+		remaining := len(paths)
+		defer func() {
+			// Cancel failed reads so they release their wait for a connection before
+			// this callback closes the writer transaction.
+			cancel()
+			deadline := time.NewTimer(2 * time.Second)
+			defer deadline.Stop()
+			for remaining > 0 {
+				select {
+				case <-responses:
+					remaining--
+				case <-deadline.C:
+					t.Errorf("%d settings requests did not exit after cancellation and writer rollback", remaining)
+					return
+				}
+			}
+			requests.Wait()
+		}()
+		for _, path := range paths {
+			requests.Go(func() {
+				r := httptest.NewRequest(http.MethodGet, path, nil).WithContext(ctx)
+				for _, cookie := range cookies {
+					r.AddCookie(cookie)
+				}
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, r)
+				responses <- response{path: path, w: w}
+			})
+		}
 		deadline := time.NewTimer(2 * time.Second)
 		defer deadline.Stop()
 		for remaining > 0 {
+			var result response
 			select {
-			case <-responses:
+			case result = <-responses:
 				remaining--
 			case <-deadline.C:
-				t.Errorf("%d settings requests did not exit after cancellation and writer rollback", remaining)
-				return
+				t.Errorf("%d settings reload requests waited for the writer", remaining)
+				return nil
+			}
+			w := result.w
+			if w.Code != http.StatusOK {
+				t.Errorf("%s: status=%d body=%s", result.path, w.Code, w.Body.String())
+				continue
+			}
+			if cookies := w.Result().Cookies(); len(cookies) != 0 {
+				t.Errorf("%s reissued a cookie before session renewal was committed: %+v", result.path, cookies)
+			}
+			switch result.path {
+			case "/api/auth/session":
+				var got struct {
+					Username string `json:"username"`
+				}
+				if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got != session {
+					t.Errorf("session did not read committed values: got=%+v err=%v", got, err)
+				}
+			case "/api/system":
+				var got struct {
+					RootID int64  `json:"root_id"`
+					Model  string `json:"model"`
+				}
+				if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.RootID != 1 || got.Model != profile.Model {
+					t.Errorf("system did not read committed model: got=%+v err=%v", got, err)
+				}
+			case "/api/system/settings":
+				var got struct {
+					Settings systemsetting.Settings `json:"settings"`
+					Cache    struct {
+						Path string `json:"path"`
+					} `json:"cache"`
+				}
+				if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.Settings != settings || got.Cache.Path == "" {
+					t.Errorf("settings did not read committed values and cache state: got=%+v err=%v", got, err)
+				}
+			case "/api/model-configs":
+				var got []model.Profile
+				if err := decodeItems(w.Body.Bytes(), &got); err != nil || len(got) != 1 || got[0].ID != profile.ID || got[0].Title != profile.Title || got[0].Model != profile.Model || !got[0].Default {
+					t.Errorf("models did not read committed profile: got=%+v err=%v", got, err)
+				}
+			case "/api/numbering/settings":
+				var got struct {
+					Settings domain.NumberingSettings `json:"settings"`
+				}
+				if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.Settings != numbering {
+					t.Errorf("numbering did not read committed values: got=%+v err=%v", got, err)
+				}
 			}
 		}
-		requests.Wait()
-	}()
-	for _, path := range paths {
-		requests.Go(func() {
-			r := httptest.NewRequest(http.MethodGet, path, nil).WithContext(ctx)
-			for _, cookie := range cookies {
-				r.AddCookie(cookie)
-			}
-			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, r)
-			responses <- response{path: path, w: w}
-		})
-	}
-	deadline := time.NewTimer(2 * time.Second)
-	defer deadline.Stop()
-	for remaining > 0 {
-		var result response
-		select {
-		case result = <-responses:
-			remaining--
-		case <-deadline.C:
-			t.Errorf("%d settings reload requests waited for the writer", remaining)
-			return
+		var heldWorkers int
+		if err := tx.QueryRowContext(t.Context(), "SELECT extract_workers FROM system_settings WHERE id=1").Scan(&heldWorkers); err != nil || heldWorkers != 21 {
+			t.Errorf("requests did not leave the writer transaction open: workers=%d err=%v", heldWorkers, err)
 		}
-		w := result.w
-		if w.Code != http.StatusOK {
-			t.Errorf("%s: status=%d body=%s", result.path, w.Code, w.Body.String())
-			continue
+		var expiry int64
+		if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+			return tx.QueryRowContext(t.Context(), "SELECT expires FROM sessions").Scan(&expiry)
+		}); err != nil || expiry != committedExpiry {
+			t.Errorf("requests changed the committed session while the writer was held: expiry=%d want=%d err=%v", expiry, committedExpiry, err)
 		}
-		if cookies := w.Result().Cookies(); len(cookies) != 0 {
-			t.Errorf("%s reissued a cookie before session renewal was committed: %+v", result.path, cookies)
-		}
-		switch result.path {
-		case "/api/auth/session":
-			var got struct {
-				Username string `json:"username"`
-			}
-			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got != session {
-				t.Errorf("session did not read committed values: got=%+v err=%v", got, err)
-			}
-		case "/api/system":
-			var got struct {
-				RootID int64  `json:"root_id"`
-				Model  string `json:"model"`
-			}
-			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.RootID != 1 || got.Model != profile.Model {
-				t.Errorf("system did not read committed model: got=%+v err=%v", got, err)
-			}
-		case "/api/system/settings":
-			var got struct {
-				Settings systemsettings.Settings `json:"settings"`
-				Cache    struct {
-					Path string `json:"path"`
-				} `json:"cache"`
-			}
-			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.Settings != settings || got.Cache.Path == "" {
-				t.Errorf("settings did not read committed values and cache state: got=%+v err=%v", got, err)
-			}
-		case "/api/model-configs":
-			var got []models.Profile
-			if err := decodeItems(w.Body.Bytes(), &got); err != nil || len(got) != 1 || got[0].ID != profile.ID || got[0].Title != profile.Title || got[0].Model != profile.Model || !got[0].Default {
-				t.Errorf("models did not read committed profile: got=%+v err=%v", got, err)
-			}
-		case "/api/numbering/settings":
-			var got struct {
-				Settings domain.NumberingSettings `json:"settings"`
-			}
-			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.Settings != numbering {
-				t.Errorf("numbering did not read committed values: got=%+v err=%v", got, err)
-			}
-		}
-	}
-	var heldWorkers int
-	if err := tx.QueryRowContext(t.Context(), "SELECT extract_workers FROM system_settings WHERE id=1").Scan(&heldWorkers); err != nil || heldWorkers != 21 {
-		t.Errorf("requests did not leave the writer transaction open: workers=%d err=%v", heldWorkers, err)
-	}
-	var expiry int64
-	if err := a.DB.Read().QueryRowContext(t.Context(), "SELECT expires FROM sessions").Scan(&expiry); err != nil || expiry != committedExpiry {
-		t.Errorf("requests changed the committed session while the writer was held: expiry=%d want=%d err=%v", expiry, committedExpiry, err)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

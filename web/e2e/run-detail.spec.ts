@@ -16,8 +16,8 @@ const sampleRun = () => ({
   skipped: 108,
   failed: 1,
   discovered: 1996,
-  created: '2026-10-03T10:48:45Z',
-  started: '2026-10-03T10:48:46Z',
+  created: '2026-10-03T10:48:45.000Z',
+  started: '2026-10-03T10:48:46.000Z',
   finished: '',
   model_config_id: 1,
   model_config_title: 'zcb',
@@ -56,7 +56,7 @@ const sampleItems = () => [
         model_config_title: '主模型配置',
         model: 'vision-main',
         fallback: false,
-        started: '2026-10-03T10:51:32Z',
+        started: '2026-10-03T10:51:32.000Z',
         duration_ms: 12300,
         status: 'success'
       }
@@ -74,7 +74,7 @@ const sampleItems = () => [
       model_config_title: i ? '兜底配置' : '主模型配置',
       model: i ? '5060ti' : 'vision-main',
       fallback: i > 0,
-      started: '2026-10-03T12:31:22Z',
+      started: '2026-10-03T12:31:22.000Z',
       duration_ms: 12000,
       status: 'failed',
       error: { code: 'api_timeout' }
@@ -117,7 +117,7 @@ type SampleRun = Omit<ReturnType<typeof sampleRun>, 'request_config'> & {
 }
 
 async function openSample(page: Page, run: SampleRun = sampleRun()) {
-  await page.clock.setFixedTime(new Date('2026-10-03T13:02:10Z'))
+  await page.clock.setFixedTime(new Date('2026-10-03T13:02:10.000Z'))
   await mockRunPages(page, [run])
   await page.route('**/api/runs/146', (route) => route.fulfill({ json: run }))
   await page.route('**/api/runs/146/items?*', (route) => {
@@ -278,8 +278,10 @@ test('失败、取消、完成与未开始批次的生命周期', async ({ page 
     'scanning'
   ]) {
     run.status = status
-    run.started = ['queued', 'scanning', 'cancelled'].includes(status) ? '' : '2026-10-03T10:48:46Z'
-    run.finished = ['queued', 'scanning'].includes(status) ? '' : '2026-10-03T13:02:10Z'
+    run.started = ['queued', 'scanning', 'cancelled'].includes(status)
+      ? ''
+      : '2026-10-03T10:48:46.000Z'
+    run.finished = ['queued', 'scanning'].includes(status) ? '' : '2026-10-03T13:02:10.000Z'
     await expect(dialog.getByRole('status', { name: '批次状态' })).toHaveAttribute(
       'data-status',
       status,

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import './library.css';
   import { errorText } from '../../app/errors';
   import PageNavigation from '../../components/PageNavigation.vue';
   import { useToast } from '../../app/use-toast';
@@ -29,7 +30,7 @@
   } from '@lucide/vue';
   import './library-actions.css';
   import './theater.css';
-  import { api, newRequestKey, apiItems } from '../../app/api';
+  import { api, apiItems } from '../../app/api';
   import { formatTime } from '../../lib/format/date';
   import { formatSize } from '../../lib/format/bytes';
   import {
@@ -111,8 +112,7 @@
         task,
         targets: entries.map((e) => e.id),
         recursive: recursive.value,
-        model_config_id: extracting ? 0 : modelConfigID.value,
-        key: newRequestKey()
+        model_config_id: extracting ? 0 : modelConfigID.value
       }
     });
     trackRun(run.id, entries);
@@ -1299,6 +1299,23 @@
 </template>
 
 <style scoped>
+  .page-footnote {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 17px;
+    font-size: 10px;
+    color: var(--palette-93979c);
+  }
+  .page-footnote button {
+    font-size: 10px;
+  }
+  @media (max-width: 800px) {
+    .page-footnote {
+      gap: 10px;
+    }
+  }
+
   .library-scan-status {
     margin-bottom: 12px;
   }

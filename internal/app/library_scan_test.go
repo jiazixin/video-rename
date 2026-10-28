@@ -1,6 +1,7 @@
 package app
 
 import (
+	"database/sql"
 	"encoding/json/v2"
 	"fmt"
 	"log/slog"
@@ -14,7 +15,7 @@ import (
 
 	"video-rename/internal/config"
 	"video-rename/internal/libraryscan"
-	"video-rename/internal/systemsettings"
+	"video-rename/internal/systemsetting"
 )
 
 func scanAPI(t *testing.T) (*App, string, func(string, string, string, bool) *httptest.ResponseRecorder) {
@@ -61,8 +62,8 @@ func scanAPI(t *testing.T) (*App, string, func(string, string, string, bool) *ht
 func TestLibraryScanAPISettingsAndDiscovery(t *testing.T) {
 	a, root, request := scanAPI(t)
 	var response struct {
-		Settings systemsettings.ScanSettings `json:"settings"`
-		Status   libraryscan.Status          `json:"status"`
+		Settings systemsetting.ScanSettings `json:"settings"`
+		Status   libraryscan.Status         `json:"status"`
 	}
 	w := request("GET", "/api/library/scan", "", true)
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &response) != nil || !response.Settings.Enabled || response.Settings.IntervalMinutes != 60 {
@@ -124,11 +125,15 @@ func TestLibraryScanAPISettingsAndDiscovery(t *testing.T) {
 		t.Fatalf("manual scan while auto disabled: %+v", response)
 	}
 	var files, runs, operations int
-	if err := a.DB.QueryRow("SELECT (SELECT count(*) FROM entries WHERE present=1 AND name='added.mp4'),(SELECT count(*) FROM runs),(SELECT count(*) FROM operations)").Scan(&files, &runs, &operations); err != nil || files != 2 || runs != 0 || operations != 0 {
+	if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT (SELECT count(*) FROM entries WHERE present=1 AND name='added.mp4'),(SELECT count(*) FROM runs),(SELECT count(*) FROM operations)").Scan(&files, &runs, &operations)
+	}); err != nil || files != 2 || runs != 0 || operations != 0 {
 		t.Fatalf("discovery triggered processing: files=%d runs=%d operations=%d %v", files, runs, operations, err)
 	}
 	var fileID int64
-	if err := a.DB.QueryRow("SELECT id FROM entries WHERE name='added.mp4' LIMIT 1").Scan(&fileID); err != nil {
+	if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name='added.mp4' LIMIT 1").Scan(&fileID)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if w := request("PUT", "/api/library/scan/settings", fmt.Sprintf(`{"enabled":true,"interval_minutes":60,"targets":[%d]}`, fileID), true); w.Code < 400 {
@@ -152,7 +157,9 @@ func TestDirectoryStatePollingDoesNotScanDisk(t *testing.T) {
 		}
 	}
 	var count int
-	if err := a.DB.QueryRow("SELECT count(*) FROM entries WHERE parent=1").Scan(&count); err != nil || count != 0 {
+	if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM entries WHERE parent=1").Scan(&count)
+	}); err != nil || count != 0 {
 		t.Fatalf("state polling scanned the filesystem: %d %v", count, err)
 	}
 }
@@ -169,27 +176,33 @@ func TestScanExcludedTargetsAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	var parent, child, file int64
-	if err := a.DB.QueryRow("SELECT id FROM entries WHERE name='excluded'").Scan(&parent); err != nil {
+	if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name='excluded'").Scan(&parent)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.Library.ScanDirectory(t.Context(), parent); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.DB.QueryRow("SELECT id FROM entries WHERE name='child'").Scan(&child); err != nil {
+	if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name='child'").Scan(&child)
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.DB.QueryRow("SELECT id FROM entries WHERE name='file.mp4'").Scan(&file); err != nil {
+	if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name='file.mp4'").Scan(&file)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	w := request("PUT", "/api/library/scan/settings", fmt.Sprintf(`{"enabled":false,"interval_minutes":60,"targets":[1],"excluded_targets":[%d,%d]}`, child, parent), true)
-	var saved systemsettings.ScanSettings
+	var saved systemsetting.ScanSettings
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &saved) != nil || len(saved.ExcludedTargets) != 1 || saved.ExcludedTargets[0] != parent {
 		t.Fatalf("normalize exclusions: %d %s", w.Code, w.Body.String())
 	}
 	w = request("GET", "/api/library/scan", "", true)
 	var state struct {
-		Settings systemsettings.ScanSettings `json:"settings"`
-		Paths    map[int64]string            `json:"directory_paths"`
+		Settings systemsetting.ScanSettings `json:"settings"`
+		Paths    map[int64]string           `json:"directory_paths"`
 	}
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &state) != nil || state.Paths[parent] != "excluded" || len(state.Settings.ExcludedTargets) != 1 {
 		t.Fatalf("saved labels: %d %s", w.Code, w.Body.String())

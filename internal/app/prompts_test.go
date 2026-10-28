@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"video-rename/internal/config"
-	"video-rename/internal/systemsettings"
+	"video-rename/internal/systemsetting"
 )
 
 func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
@@ -26,8 +26,7 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 	var cookie *http.Cookie
 	call := func(method, path string, payload any, sameSite bool) *httptest.ResponseRecorder {
 		raw, _ := json.Marshal(payload)
-		r := httptest.NewRequest(method, "http://example.com"+path, bytes.NewReader(raw))
-		r.Header.Set("Content-Type", "application/json")
+		r := jsonRequest(method, "http://example.com"+path, bytes.NewReader(raw))
 		r.Header.Set("Origin", "http://example.com")
 		if cookie != nil {
 			r.AddCookie(cookie)
@@ -74,10 +73,10 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 		} `json:"prompts"`
 	}
 	json.Unmarshal(w.Body.Bytes(), &page)
-	if page.DefaultFixedPrompt != systemsettings.DefaultFixedPrompt || page.FixedPrompt != page.DefaultFixedPrompt {
+	if page.DefaultFixedPrompt != systemsetting.DefaultFixedPrompt || page.FixedPrompt != page.DefaultFixedPrompt {
 		t.Fatal("default fixed prompt missing from payload", w.Body.String())
 	}
-	if !slices.Equal(page.FailureKeywords, systemsettings.DefaultFailureKeywords()) || !slices.Equal(page.DefaultFailureKeywords, page.FailureKeywords) {
+	if !slices.Equal(page.FailureKeywords, systemsetting.DefaultFailureKeywords()) || !slices.Equal(page.DefaultFailureKeywords, page.FailureKeywords) {
 		t.Fatal("failure keyword defaults missing from payload", w.Body.String())
 	}
 	if w = call("PUT", "/api/prompts/failure-keywords", map[string]any{"failure_keywords": []string{}}, false); w.Code != http.StatusForbidden {
@@ -96,7 +95,7 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 			t.Fatal("malformed failure keywords accepted", payload, w.Code, w.Body.String())
 		}
 	}
-	if got, err := (systemsettings.Store{DB: a.DB}).FailureKeywords(t.Context()); err != nil || !slices.Equal(got, page.FailureKeywords) {
+	if got, err := (systemsetting.New(a.db)).FailureKeywords(t.Context()); err != nil || !slices.Equal(got, page.FailureKeywords) {
 		t.Fatal("rejected request changed rules", got, err)
 	}
 	for _, keywords := range [][]string{{" "}, {strings.Repeat("字", 201)}, make([]string, 101)} {
@@ -104,7 +103,7 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 			t.Fatal("invalid failure keywords accepted", keywords, w.Code, w.Body.String())
 		}
 	}
-	for _, keywords := range [][]string{{"  自定义失败句子  ", "Sorry", "SORRY"}, {}, systemsettings.DefaultFailureKeywords()} {
+	for _, keywords := range [][]string{{"  自定义失败句子  ", "Sorry", "SORRY"}, {}, systemsetting.DefaultFailureKeywords()} {
 		if w = call("PUT", "/api/prompts/failure-keywords", map[string]any{"failure_keywords": keywords}, true); w.Code != http.StatusOK {
 			t.Fatal("failure keyword save failed", w.Code, w.Body.String())
 		}
@@ -114,7 +113,7 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 			t.Fatal(err)
 		}
-		want, err := systemsettings.NormalizeFailureKeywords(keywords)
+		want, err := systemsetting.NormalizeFailureKeywords(keywords)
 		if err != nil || response.FailureKeywords == nil || !slices.Equal(response.FailureKeywords, want) {
 			t.Fatal("unexpected failure keyword response", w.Body.String(), err)
 		}
@@ -135,7 +134,7 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 	if w = call("PUT", "/api/prompts/fixed", map[string]any{"fixed_prompt": "只输出标题。"}, true); w.Code != 200 || !strings.Contains(w.Body.String(), "只输出标题。") {
 		t.Fatal("fixed prompt save failed", w.Code, w.Body.String())
 	}
-	if w = call("POST", "/api/prompts", map[string]any{"title": "旅行", "body": "描述旅行风景"}, true); w.Code != 200 {
+	if w = call("POST", "/api/prompts", map[string]any{"title": "旅行", "body": "描述旅行风景"}, true); w.Code != 201 {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	var entry struct {
@@ -149,7 +148,7 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 		t.Fatal("created prompt mismatch", w.Body.String())
 	}
 	profile := map[string]any{"title": "引用配置", "prompt_id": entry.ID, "provider": "custom", "protocol": "openai", "base_url": "http://localhost:8080/v1", "model": "vision", "temperature": 0, "max_tokens": 128, "timeout": "10s"}
-	if w = call("POST", "/api/model-configs", profile, true); w.Code != 200 {
+	if w = call("POST", "/api/model-configs", profile, true); w.Code != 201 {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	if !strings.Contains(w.Body.String(), `"prompt_title":"旅行"`) || !strings.Contains(w.Body.String(), "描述旅行风景") {
@@ -167,10 +166,9 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 	if w = call("DELETE", fmt.Sprintf("/api/prompts/%d", entry.ID), map[string]any{"version": entry.Version}, true); w.Code != 409 || !strings.Contains(w.Body.String(), `"configs":1`) {
 		t.Fatal("referenced prompt deleted", w.Code, w.Body.String())
 	}
-	if w = call("DELETE", fmt.Sprintf("/api/prompts/%d", entry.ID), map[string]any{"version": entry.Version + 1}, true); w.Code != 409 {
+	if w = call("DELETE", fmt.Sprintf("/api/prompts/%d", entry.ID), map[string]any{"version": entry.Version + 1}, true); w.Code != 412 {
 		t.Fatal("stale delete accepted", w.Code)
 	}
-	profile["id"] = saved.ID
 	profile["version"] = saved.Version
 	profile["prompt_id"] = page.Prompts[0].ID
 	if w = call("PATCH", fmt.Sprintf("/api/model-configs/%d", saved.ID), profile, true); w.Code != 200 {

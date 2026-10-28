@@ -28,7 +28,7 @@ func (l *Library) AdjacentImage(ctx context.Context, id int64, previous bool) (E
 		return Entry{}, err
 	}
 	if current.Kind != "file" || !IsImage(current.Name) {
-		return Entry{}, domain.Fail(domain.KindInvalid, "not_image", "entry is not an image")
+		return Entry{}, domain.Fail(domain.KindInvalid, domain.Record{Code: "not_image", Message: "entry is not an image"})
 	}
 	order, compare := "ASC", ">"
 	if previous {
@@ -36,9 +36,13 @@ func (l *Library) AdjacentImage(ctx context.Context, id int64, previous bool) (E
 	}
 	base := `SELECT id FROM entries WHERE parent=? AND present=1 AND kind='file' AND (lower(name) LIKE '%.jpg' OR lower(name) LIKE '%.jpeg' OR lower(name) LIKE '%.png' OR lower(name) LIKE '%.gif' OR lower(name) LIKE '%.webp' OR lower(name) LIKE '%.avif' OR lower(name) LIKE '%.bmp')`
 	var next int64
-	err = l.DB.Read().QueryRowContext(ctx, base+" AND name COLLATE NATURAL_NAME"+compare+"? ORDER BY name COLLATE NATURAL_NAME "+order+" LIMIT 1", current.Parent, current.Name).Scan(&next)
+	err = l.db.View(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, base+" AND name COLLATE NATURAL_NAME"+compare+"? ORDER BY name COLLATE NATURAL_NAME "+order+" LIMIT 1", current.Parent, current.Name).Scan(&next)
+	})
 	if errors.Is(err, sql.ErrNoRows) {
-		err = l.DB.Read().QueryRowContext(ctx, base+" ORDER BY name COLLATE NATURAL_NAME "+order+" LIMIT 1", current.Parent).Scan(&next)
+		err = l.db.View(ctx, func(tx *sql.Tx) error {
+			return tx.QueryRowContext(ctx, base+" ORDER BY name COLLATE NATURAL_NAME "+order+" LIMIT 1", current.Parent).Scan(&next)
+		})
 	}
 	if err != nil {
 		return Entry{}, err

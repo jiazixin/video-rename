@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"format\":{\"duration\":\"1.25\"},\"streams\":[{\"codec_type\":\"video\",\"width\":1920,\"height\":1080,\"sample_aspect_ratio\":\"1:1\"}]}")

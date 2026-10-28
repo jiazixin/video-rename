@@ -14,6 +14,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"video-rename/internal/auth"
+	"video-rename/internal/domain"
+	"video-rename/internal/secret"
 )
 
 // Handler returns the HTTP handler for the API and the embedded web assets.
@@ -74,7 +78,7 @@ func (rt *router) HandleFunc(pattern string, handler http.HandlerFunc) {
 	}
 	rt.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		if id, err := strconv.ParseInt(r.PathValue("id"), 10, 64); err != nil || id <= 0 {
-			invalid(w, r, "id", "invalid_number")
+			writeError(w, r, domain.InvalidField("id", "invalid_number"))
 			return
 		}
 		handler(w, r)
@@ -91,7 +95,7 @@ func malformedNumber(query url.Values) (string, bool) {
 			continue
 		}
 		for _, value := range values {
-			if _, err := strconv.ParseInt(value, 10, 64); value != "" && err != nil {
+			if _, err := strconv.ParseInt(value, 10, 64); err != nil {
 				return name, true
 			}
 		}
@@ -107,22 +111,22 @@ func (a *App) requireSession(api *http.ServeMux) http.Handler {
 			return
 		}
 		if name, ok := malformedNumber(r.URL.Query()); ok {
-			invalid(w, r, name, "invalid_number")
+			writeError(w, r, domain.InvalidField(name, "invalid_number"))
 			return
 		}
-		api.ServeHTTP(w, r)
+		a.idempotent(api).ServeHTTP(w, r)
 	})
 }
 
 func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username string       `json:"username"`
+		Password secret.Value `json:"password"`
 	}
 	if !decode(w, r, &input) {
 		return
 	}
-	if err := a.Auth.Login(w, r, input.Username, input.Password); err != nil {
+	if err := a.Auth.Login(w, r, auth.Credentials{Username: input.Username, Password: input.Password}); err != nil {
 		writeError(w, r, err)
 		return
 	}
@@ -142,8 +146,11 @@ func (a *App) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 // info reports the service version and the optional features clients may use.
-func (a *App) info(w http.ResponseWriter, _ *http.Request) {
-	send(w, http.StatusOK, map[string]any{"version": a.version, "capabilities": []string{"image_numbering", "notifications", "schedules"}})
+func (a *App) info(w http.ResponseWriter, r *http.Request) {
+	send(w, http.StatusOK, struct {
+		Build
+		Capabilities []string `json:"capabilities"`
+	}{Build: a.build, Capabilities: []string{"image_numbering", "notifications", "schedules"}})
 }
 
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
@@ -176,7 +183,7 @@ func (a *App) middleware(next http.Handler) http.Handler {
 		r = r.WithContext(context.WithValue(r.Context(), loggerKey{}, logger))
 		recorder := &responseRecorder{ResponseWriter: w}
 		started := time.Now()
-		defer logAccess(logger, r, recorder, started)
+		defer recorder.logAccess(logger, r, started)
 		defer recoverPanic(recorder, r, logger)
 		header := recorder.Header()
 		header.Set("X-Content-Type-Options", "nosniff")
@@ -209,7 +216,7 @@ func recoverPanic(w *responseRecorder, r *http.Request, logger *slog.Logger) {
 }
 
 // logAccess records API requests; pages, assets and health checks log at debug.
-func logAccess(logger *slog.Logger, r *http.Request, w *responseRecorder, started time.Time) {
+func (w *responseRecorder) logAccess(logger *slog.Logger, r *http.Request, started time.Time) {
 	level := slog.LevelInfo
 	if !strings.HasPrefix(r.URL.Path, "/api/") {
 		level = slog.LevelDebug
@@ -299,6 +306,7 @@ func (r *responseRecorder) Flush() {
 	if !r.wroteHeader {
 		r.WriteHeader(http.StatusOK)
 	}
+	// Flush cannot return an error through http.Flusher; the server owns a disconnected stream.
 	_ = http.NewResponseController(r.ResponseWriter).Flush()
 }
 

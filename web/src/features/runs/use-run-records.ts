@@ -1,5 +1,5 @@
 import { errorText } from '../../app/errors'
-import { onUnmounted, reactive, ref, watch } from 'vue'
+import { onScopeDispose, reactive, ref, watch } from 'vue'
 import { api } from '../../app/api'
 import type { ServerRecord } from '../../app/contracts'
 
@@ -169,7 +169,7 @@ export function useRunRecords(runID: () => number, enabled: () => boolean, activ
     },
     { immediate: true }
   )
-  onUnmounted(() => {
+  onScopeDispose(() => {
     alive = false
     cancel()
   })

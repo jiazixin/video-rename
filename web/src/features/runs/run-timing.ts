@@ -1,5 +1,6 @@
 import { onScopeDispose, ref } from 'vue'
 import { isActiveRunStatus, type Run } from '../../app/contracts'
+import { formatElapsedTime, formatEstimatedTime } from '../../lib/format/date'
 
 /** Files of r that reached a final result. */
 export const processed = (r: Run) => (r.done || 0) + (r.skipped || 0) + (r.failed || 0)
@@ -14,13 +15,6 @@ const ETA_ALPHA = 0.3
 function etaWarmup(total: number) {
   if (total <= 2) return Infinity
   return total <= 10 ? Math.max(2, Math.ceil(total / 2)) : 10
-}
-
-function etaFormat(seconds: number) {
-  const s = Math.max(0, Math.round(seconds))
-  if (s < 60) return `${s}s`
-  if (s < 3600) return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`
-  return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`
 }
 
 type EtaState = { base: number; at: number; prev: number; prevAt: number; rate: number }
@@ -44,16 +38,7 @@ export function useRunTiming(runs: () => Run[]) {
     if (r.finished) end = Date.parse(r.finished)
     else if (isActiveRunStatus(r.status)) end = now.value
     if (!Number.isFinite(start) || !Number.isFinite(end)) return '—'
-    const seconds = Math.max(0, Math.floor((end - start) / 1000))
-    const days = Math.floor(seconds / 86400),
-      hours = Math.floor((seconds % 86400) / 3600),
-      minutes = Math.floor((seconds % 3600) / 60)
-    const parts: string[] = []
-    if (days) parts.push(`${days}d`)
-    if (days || hours) parts.push(`${hours}h`)
-    if (days || hours || minutes) parts.push(`${minutes}m`)
-    parts.push(`${seconds % 60}s`)
-    return parts.join('')
+    return formatElapsedTime((end - start) / 1000)
   }
   /** Updates the estimates from a fresh list; call once per poll. */
   function trackEta(list: Run[]) {
@@ -84,7 +69,7 @@ export function useRunTiming(runs: () => Run[]) {
       let rate = s.rate
       if (!(rate > 0) && p - s.base > 0) rate = (p - s.base) / runFor
       if (total > 0 && p - s.base >= warm && runFor >= 5 && rate > 0)
-        next[r.id] = remaining > 0 ? etaFormat(remaining / rate) : '<1s'
+        next[r.id] = remaining > 0 ? formatEstimatedTime(remaining / rate) : '<1s'
       else next[r.id] = '预计时间计算中…'
     }
     for (const id of [...etaState.keys()]) if (!live.some((r) => r.id === id)) etaState.delete(id)

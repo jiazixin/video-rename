@@ -4,12 +4,27 @@
 
 ## 通用约定
 
-- `GET /healthz` 无需登录，返回 `{"status": "ok"}`；`GET /api/info` 无需登录，返回 `{"version", "capabilities"}`（`image_numbering`、`notifications`、`schedules`）。
+- `GET /healthz` 无需登录，返回 `{"status": "ok"}`；`GET /api/info` 无需登录，返回 `{"version", "revision", "build_time", "modified", "capabilities"}`（`image_numbering`、`notifications`、`schedules`）。`revision` 与 `build_time` 在未知时省略，已知构建时间同样采用 UTC 固定毫秒格式。
 - 其余 `/api/` 接口需要会话 Cookie（`vr_session`）；写请求经 `http.CrossOriginProtection` 校验 `Sec-Fetch-Site` / `Origin`。
 - 每个响应带 `X-Request-ID`（入站值匹配 `^[A-Za-z0-9-]{1,64}$` 时沿用），与服务端日志的 `request_id` 相同；`/api/` 响应带 `Cache-Control: no-store`。
-- 请求体必须是 `application/json`（否则 415 `unsupported_media_type`），不超过 64 KiB（否则 413 `payload_too_large`），未知字段返回 400。整数查询参数（`before`、`limit`、`page`、`size`、`offset`、`run` 等）与数字路径 ID 格式错误返回 400 `invalid_argument`（`reason` 为 `invalid_number`）。
+- JSON 请求使用 `application/json`，PATCH 也接受 `application/merge-patch+json`（其他媒体类型返回 415 `unsupported_media_type`），不超过 64 KiB（否则 413 `payload_too_large`），未知字段返回 400。整数查询参数（`before`、`limit`、`page`、`size`、`offset`、`run` 等）与数字路径 ID 格式错误返回 400 `invalid_argument`（`reason` 为 `invalid_number`）；可选整数查询参数可以省略，显式空值、非整数和溢出值均拒绝。
 - 列表响应是对象：分页接口返回各自的分页字段（如 `{"items", "total", "page"}`），不分页的列表为 `{"items": [...]}`，不返回裸数组。
-- 没有响应体的成功操作返回 204（如登出、删除、暂停与继续）；已接受的后台刷新返回 202。
+- 创建提示词、模型配置（含复制）、计划、改名/还原操作和编号预览返回 201；提示词、配置和计划返回 `Location`。创建后台运行、重试运行、扫描、标记和编号任务返回 202，使用响应中的 ID 或 key 查询进度。无需创建资源的计算、设置更新和动作结果返回 200，没有响应体的成功操作返回 204。
+- 接口时间输出统一为 UTC 固定毫秒：`2026-10-28T00:00:00.000Z`。文件内容核验使用内部纳秒指纹，不向接口暴露。
+
+## 修改与并发
+
+提示词、模型配置和计划的 PATCH 遵循 JSON Merge Patch（RFC 7396）：未提供的成员保持不变，`null` 清空成员，嵌套对象逐成员合并，数组整体替换。清空必填字段仍须通过领域校验，否则返回 400；未知或只读成员拒绝。模型密钥 `api_key` 缺省保留，`null` 或空字符串清除。
+
+资源 GET、创建和修改响应带强 `ETag`，列表中的资源也带 `etag` 字段。客户端把该值原样放入 `If-Match`，用于上述三个资源的 PATCH/DELETE，以及文件改名/删除。缺失、过期或弱 validator 返回 412 `precondition_failed`；数据库写入仍原子检查内部版本。请求体不接受 `version`、只读 `id` 或响应元数据。读取接口为 `GET /api/prompts/{id}`、`GET /api/model-configs/{id}`、`GET /api/schedules/{id}`，文件可从目录或状态批量接口获取 `etag`。
+
+## 幂等请求
+
+所有已认证的 POST 支持 `Idempotency-Key` 请求头，取值匹配 `^[A-Za-z0-9_-]{8,128}$`。创建请求应提供此头；请求体不接受旧 `key` / `request_key` 字段。键在整个 API 中唯一，身份为请求方法、路径及查询、`If-Match` 与原始请求体的组合。同键同请求重放第一次已记录的 HTTP 状态、响应体及 `Content-Type` / `ETag` / `Location` / `Retry-After` / `Allow`，同键异请求返回 409 `idempotency_key_reused`。不带键的 POST 可以执行，但客户端不得自动重试。
+
+记录持久保留至少 24 小时，重启后仍可重放。并发同键请求串行等待，取消等待不取消已经开始的业务动作。结果先持久化再发送；如果服务在业务完成与结果记录之间中断，未完成保留项返回 409 `idempotency_pending`，避免再次执行不确定的文件操作，应先核对资源与操作日志。结果记录最多 10,000 条、合计 64 MiB；未完成项按每项 512 KiB 预留，单次结果（含选定响应头）不超过该值，达到容量时新请求返回 409 `idempotency_capacity`，不会提前驱逐仍在保留期的结果。后台任务的进度资源有自己的生命周期；重放 202 表示原提交已接受，不会重新启动任务。
+
+管理台为 POST 创建一次请求键，在网络错误、超时、429 或 503 后至多重试两次，同一逻辑请求始终沿用同一键；只读 GET 同样可重试。认证登录/登出不自动分配幂等键或重试。`Retry-After` 超过 10 秒时直接展示错误。
 
 服务端只返回英文说明和代码；管理台按代码显示中文，不展示服务端的英文说明。唯一例外是 `details.detail`：它是 FFmpeg、文件系统、模型或通知服务等外部来源的原始诊断，管理台把它附在中文说明之后。
 
@@ -24,7 +39,7 @@
 - `details`：可选，结构按错误码定义。
 - 编号预览、执行和恢复失败时，`details.processing_log` 带英文诊断全文。
 
-HTTP 状态由失败类别决定：参数无效 400、未登录 401、跨站 403、记录不存在 404、状态冲突 409、数量或频率超限 429、暂时不可用 503、服务端错误 500。未分类的错误统一为 500 `internal`，详情只写服务日志，不在响应中返回。
+HTTP 状态由失败类别决定：参数无效 400、未登录 401、跨站 403、记录不存在 404、状态或容量冲突 409、前置条件失败 412、频率超限 429、暂时不可用 503、服务端错误 500。未分类的错误统一为 500 `internal`，详情只写服务日志，不在响应中返回。
 
 | 状态码 | `code` | 含义 | `details` |
 | --- | --- | --- | --- |
@@ -33,16 +48,19 @@ HTTP 状态由失败类别决定：参数无效 400、未登录 401、跨站 403
 | 403 | `permission_denied` | 写请求跨站（`Sec-Fetch-Site` / `Origin` 不是本站） | — |
 | 405 | `method_not_allowed` | 方法不支持，带 `Allow` | — |
 | 413 | `payload_too_large` | 请求体超过 64 KiB | — |
-| 415 | `unsupported_media_type` | 请求体不是 `application/json` | — |
+| 415 | `unsupported_media_type` | 请求媒体类型不受支持 | — |
 | 404 | `not_found`、`mark_result_gone`、`numbering_job_gone`、`prompt_not_found`、`model_config_not_found`、`entry_not_indexed` | 记录或任务结果不存在 | — |
-| 409 | 文件与目录：`entry_busy`、`descendant_busy`、`entry_changed`、`identity_changed`、`invalid_hierarchy`、`directory_refreshed`、`directory_changed`、`review_pending`、`scan_changed`、`scan_hierarchy_changed` | 当前文件状态不允许该操作 | — |
+| 409 | 文件与目录：`entry_busy`、`descendant_busy`、`identity_changed`、`invalid_hierarchy`、`directory_refreshed`、`directory_changed`、`review_pending`、`scan_changed`、`scan_hierarchy_changed` | 当前文件状态不允许该操作 | — |
 | 409 | 改名与还原：`operation_key_conflict`、`operation_not_committed`、`restore_not_latest`、`restore_source_changed`、`already_processed`、`source_unreadable`、`too_many_conflicts`、`retry_operation_missing`、`retry_operation_stale` | 改名日志或文件状态不允许该操作 | `operation_not_committed`：`status` |
 | 409 | 编号：`numbering_*`、`preview_stale`、`preview_not_ready` | 编号批次状态不允许该操作 | 视代码带 `media`（image、audio、mixed）、`name`、`status`、`cause`、`recovery` |
 | 409 | 运行：`run_active`、`run_not_pausable`、`run_not_paused`、`run_overlap`、`run_targets_unavailable` | 批次状态不允许该操作 | `run_overlap`、`run_targets_unavailable`：`run` |
-| 409 | 配置：`request_key_reused`、`mark_running`、`prompt_changed`、`prompt_in_use`、`model_config_changed`、`model_config_is_default`、`model_config_is_fallback`、`model_config_in_use`、`schedule_changed`、`notification_not_configured`、`fallback_model_unavailable` | 资源已修改或仍被使用 | `prompt_in_use`：`configs`；`model_config_in_use`：`plans` |
+| 409 | 配置：`mark_running`、`prompt_in_use`、`model_config_is_default`、`model_config_is_fallback`、`model_config_in_use`、`notification_not_configured`、`fallback_model_unavailable` | 资源已修改或仍被使用 | `prompt_in_use`：`configs`；`model_config_in_use`：`plans` |
 | 409 | 小写的任务错误码，如 `source_changed`、`rename_conflict` | 由文件处理产生的失败（见“任务与记录错误”） | 同记录 |
 | 400 | `nothing_to_number`、`numbering_nothing_selected`、`target_not_runnable`、`retry_scope_invalid`、`not_directory`、`not_regular_file`、`not_image`、`illegal_path`、`symlink_not_allowed`、`protected_entry`、`unsupported_channel`、`model_config_incomplete`、`fallback_model_invalid`、`model_snapshot_missing`、`model_snapshot_invalid`、`sampling_snapshot_invalid`、`scan_too_deep` | 请求对象不符合操作要求 | `model_config_incomplete`、`fallback_model_invalid` 以 `detail` 带出具体字段问题 |
-| 429 | `rate_limited`、`numbering_jobs_full`、`waiting_runs_full`、`prompts_full`、`model_configs_full`、`schedules_full` | 频率或数量超过上限 | `waiting_runs_full`：`limit` |
+| 409 | `idempotency_key_reused`、`idempotency_pending`、`idempotency_capacity` | 幂等请求冲突、结果未确定或保留容量已满 | — |
+| 409 | `numbering_jobs_full`、`waiting_runs_full`、`prompts_full`、`model_configs_full`、`schedules_full` | 资源数量超过上限 | `waiting_runs_full`：`limit` |
+| 412 | `precondition_failed` | `If-Match` 缺失、过期或不匹配 | — |
+| 429 | `rate_limited` | 请求频率超过上限，带 `Retry-After` | — |
 | 500 | `internal`、`library_halted`、`secret_invalid`、`secret_unreadable`、`notification_credentials_unreadable`、`notification_config_invalid`、`scan_settings_unreadable`、`cache_clear_incomplete`、`delete_*`、`rename_*`（改名后核对失败）、`journal_source_changed`、`numbering_unconfirmed`、`numbering_evidence_unsaved`、`numbering_item_ambiguous`、`numbering_item_modified`、`mark_batch_failed` | 服务端错误或需要重启核对 | `cache_clear_incomplete`：`deleted` |
 | 503 | `shutting_down`、`root_unavailable`、`scan_closed`、`scan_target_unavailable`、`temp_capacity_too_small`、`frames_over_reservation`、`discovery_*`、`notification_failed` | 服务或外部依赖暂时不可用 | `scan_target_unavailable`：`path`；`discovery_timeout`：`timeout`；`discovery_http_error`：`status`；`notification_failed`：`reason`（`encode`、`invalid_endpoint`、`unreachable`、`response_unreadable`、`http_status`、`response_invalid`、`rejected`），`http_status` 另带 `status` |
 

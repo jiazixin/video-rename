@@ -1,3 +1,60 @@
+.prompt-list {
+  display: grid;
+  gap: 16px;
+}
+.prompt-card {
+  padding: 23px 25px;
+}
+.prompt-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.prompt-card h2 {
+  font-size: 16px;
+  margin-bottom: 7px;
+}
+.prompt-card header .subtle {
+  font-size: 10px;
+}
+.prompt-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.9;
+}
+.prompt-body {
+  max-height: 220px;
+  overflow: auto;
+  padding-right: 10px;
+}
+.prompt-card-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 6px 12px;
+  gap: 6px;
+  border: 1px solid var(--control-line);
+  border-radius: 8px;
+  background: var(--palette-ffffff);
+  color: var(--steel);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.prompt-card-actions button:hover:not(:disabled) {
+  background: var(--control-hover);
+  border-color: var(--control-line-hover);
+  color: var(--ink);
+}
+.prompt-card-actions button > svg {
+  width: 16px;
+  height: 16px;
+}
+
 .prompts-page {
   min-width: 0;
 }

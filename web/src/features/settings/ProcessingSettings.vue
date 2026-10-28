@@ -505,6 +505,20 @@
   </section>
 </template>
 <style scoped>
+  button.cache-clear {
+    color: var(--tone-red-ink);
+    background: var(--tone-red-bg);
+    border-color: var(--tone-red-line);
+    gap: 6px;
+    line-height: 20px;
+  }
+  button.cache-clear:hover:not(:disabled) {
+    color: var(--tone-red-ink);
+    background: var(--tone-red-bg);
+    border-color: var(--tone-red-line);
+    filter: saturate(1.35) brightness(0.97);
+  }
+
   .retry-config-row {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));

@@ -1,0 +1,370 @@
+package job
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"sync"
+	"testing"
+
+	"video-rename/internal/config"
+	"video-rename/internal/domain"
+	"video-rename/internal/library"
+	"video-rename/internal/storage"
+)
+
+func TestSubmissionDefersMediaPathValidation(t *testing.T) {
+	for _, mode := range []string{"missing-file", "replaced-directory", "symlink", "missing-mount"} {
+		t.Run(mode, func(t *testing.T) {
+			m, ids := scopeFixture(t)
+			root := m.Library.Root
+			target := ids["direct.mp4"]
+			switch mode {
+			case "missing-file":
+				if err := os.Remove(filepath.Join(root, "outer/direct.mp4")); err != nil {
+					t.Fatal(err)
+				}
+			case "replaced-directory":
+				target = ids["outer"]
+				if err := os.Rename(filepath.Join(root, "outer"), filepath.Join(root, "old-outer")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(filepath.Join(root, "outer"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				path := filepath.Join(root, "outer/direct.mp4")
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(root, "alias.mp4"), path); err != nil {
+					t.Fatal(err)
+				}
+			case "missing-mount":
+				if err := os.Rename(root, root+"-unmounted"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			id, err := m.Create(t.Context(), Request{Targets: []int64{ids["sibling"], target}, Recursive: true, Key: "defer-path-validation"}, "manual", 0)
+			if err != nil {
+				t.Fatal("submission accessed media paths", err)
+			}
+			m.analyzeTest = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
+				t.Error("invalid path reached model processing")
+				return "unexpected", nil
+			}
+			m.Execute(t.Context(), id)
+			run, err := m.Get(t.Context(), id)
+			if err != nil || run.Status != "failed" || run.Error.Message == "" {
+				t.Fatalf("invalid path not rejected by worker: %+v, err=%v", run, err)
+			}
+			var count int
+			if err := m.db.View(t.Context(), func(tx *sql.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM run_items WHERE run=?", id).Scan(&count)
+			}); err != nil || count != 0 {
+				t.Fatal("validation must precede scanning every target", count, err)
+			}
+		})
+	}
+}
+
+func scopeFixture(t *testing.T) (*Manager, map[string]int64) {
+	t.Helper()
+	m, root := setup(t)
+	for _, dir := range []string{"outer/nested", "sibling"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"outer/direct.mp4", "outer/nested/deep.mp4", "sibling/other.mp4"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("fixture"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Link(filepath.Join(root, "outer/direct.mp4"), filepath.Join(root, "alias.mp4")); err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]int64{"root": 1}
+	for _, name := range []string{"root", "outer", "nested", "sibling"} {
+		if name != "root" {
+			var idsValue int64
+			if err := m.db.View(t.Context(), func(tx *sql.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name=? AND present=1", name).Scan(&idsValue)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			ids[name] = idsValue
+		}
+		if err := m.Library.Refresh(t.Context(), ids[name]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"direct.mp4", "deep.mp4", "other.mp4", "alias.mp4"} {
+		var id int64
+		if err := m.db.View(t.Context(), func(tx *sql.Tx) error {
+			return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name=? AND present=1", name).Scan(&id)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		ids[name] = id
+	}
+	return m, ids
+}
+
+func TestSubmissionNormalizesSelectedAncestors(t *testing.T) {
+	for _, recursive := range []bool{true, false} {
+		t.Run(fmt.Sprint(recursive), func(t *testing.T) {
+			m, ids := scopeFixture(t)
+			targets := []int64{ids["deep.mp4"], ids["outer"], ids["nested"], ids["outer"]}
+			original := slices.Clone(targets)
+			id, err := m.Create(t.Context(), Request{Targets: targets, Recursive: recursive, Key: "normalize-targets"}, "manual", 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(targets, original) {
+				t.Fatal("submission changed caller's selection")
+			}
+			run, err := m.Get(t.Context(), id)
+			want := []int64{ids["outer"]}
+			if !recursive {
+				want = []int64{ids["outer"], ids["nested"], ids["deep.mp4"]}
+				slices.Sort(want)
+			}
+			if err != nil || !slices.Equal(run.Targets, want) {
+				t.Fatal(run.Targets, want, err)
+			}
+			same, err := m.Create(t.Context(), Request{Targets: want, Recursive: recursive, Key: "normalize-targets"}, "manual", 0)
+			if err != nil || same != id {
+				t.Fatal("normalized retry lost idempotency", same, err)
+			}
+		})
+	}
+}
+
+func TestSubmissionScopeOverlapSemantics(t *testing.T) {
+	for _, tt := range []struct {
+		name, first, second                      string
+		firstRecursive, secondRecursive, overlap bool
+	}{
+		{"recursive ancestor", "outer", "deep.mp4", true, false, true},
+		{"recursive parent submitted later", "deep.mp4", "outer", false, true, true},
+		{"nonrecursive excludes grandchildren", "outer", "deep.mp4", false, false, false},
+		{"nonrecursive includes direct file", "outer", "direct.mp4", false, false, true},
+		{"nonrecursive parent submitted later", "direct.mp4", "outer", false, false, true},
+		{"nonrecursive allows child directory", "outer", "nested", false, true, false},
+		{"recursive excludes sibling", "outer", "sibling", true, true, false},
+		{"hard links", "direct.mp4", "alias.mp4", false, false, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m, ids := scopeFixture(t)
+			if _, err := m.Create(t.Context(), Request{Targets: []int64{ids[tt.first]}, Recursive: tt.firstRecursive, Key: "first-scope-test"}, "manual", 0); err != nil {
+				t.Fatal(err)
+			}
+			_, err := m.Create(t.Context(), Request{Targets: []int64{ids[tt.second]}, Recursive: tt.secondRecursive, Key: "second-scope-test"}, "manual", 0)
+			if tt.overlap && (err == nil || !errors.Is(err, domain.Fail(domain.KindConflict, domain.Record{Code: "run_overlap", Message: ""}))) || !tt.overlap && err != nil {
+				t.Fatalf("overlap=%v, err=%v", tt.overlap, err)
+			}
+		})
+	}
+}
+
+func TestQueuedScopeVisibleAndRejectsOtherBatch(t *testing.T) {
+	m, root := setup(t)
+	for _, name := range []string{"a.mp4", "b.mp4"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("video"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := m.Library.Refresh(t.Context(), 1); err != nil {
+		t.Fatal(err)
+	}
+	var a, b int64
+	if err := m.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name='a.mp4'").Scan(&a)
+	}); err != nil {
+		t.Error(err)
+	}
+	if err := m.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name='b.mp4'").Scan(&b)
+	}); err != nil {
+		t.Error(err)
+	}
+	first, err := m.Create(t.Context(), Request{Targets: []int64{a}, Key: "first-running"}, "manual", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.WriteValue(t.Context(), m.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "UPDATE runs SET status='running' WHERE id=?", first)
+	}); err != nil {
+		t.Error(err)
+	}
+	second, err := m.Create(t.Context(), Request{Targets: []int64{b}, Key: "second-queued"}, "manual", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = m.Library.Refresh(t.Context(), 1); err != nil {
+		t.Fatal(err)
+	}
+	e, err := m.Library.Get(t.Context(), b)
+	if err != nil || e.TaskStatus != "queued" {
+		t.Fatalf("queued state lost: %+v %v", e, err)
+	}
+	if _, err = m.Create(t.Context(), Request{Targets: []int64{b}, Key: "duplicate-file"}, "manual", 0); err == nil || !errors.Is(err, domain.Fail(domain.KindConflict, domain.Record{Code: "run_overlap", Message: ""})) {
+		t.Fatalf("duplicate allowed: %v", err)
+	}
+	if _, err = m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "duplicate-parent"}, "manual", 0); err == nil {
+		t.Fatal("overlapping parent allowed")
+	}
+	if err = m.Cancel(t.Context(), second); err != nil {
+		t.Fatal(err)
+	}
+	e = readEntry(t, m, b)
+	if e.TaskStatus != "" {
+		t.Fatal("cancel did not release scope")
+	}
+	var wg sync.WaitGroup
+	successes := make(chan int64, 2)
+	for _, key := range []string{"parallel-one", "parallel-two"} {
+		wg.Go(func() {
+			id, err := m.Create(t.Context(), Request{Targets: []int64{b}, Key: key}, "manual", 0)
+			if err == nil {
+				successes <- id
+			}
+		})
+	}
+	wg.Wait()
+	close(successes)
+	if len(successes) != 1 {
+		t.Fatalf("concurrent duplicate batches: %d", len(successes))
+	}
+}
+
+func TestQueuedDirectoryCoversIndexedChildren(t *testing.T) {
+	m, root := setup(t)
+	if err := os.Mkdir(filepath.Join(root, "sub"), 0o700); err != nil {
+		t.Error(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sub", "a.mp4"), []byte("video"), 0o600); err != nil {
+		t.Error(err)
+	}
+	m.Library.Refresh(t.Context(), 1)
+	var dir, file int64
+	if err := m.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name='sub'").Scan(&dir)
+	}); err != nil {
+		t.Error(err)
+	}
+	m.Library.Refresh(t.Context(), dir)
+	if err := m.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name='a.mp4'").Scan(&file)
+	}); err != nil {
+		t.Error(err)
+	}
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: false, Key: "nonrecursive-root"}, "manual", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := readEntry(t, m, file)
+	if e.TaskStatus != "" {
+		t.Fatal("nonrecursive scope leaked")
+	}
+	m.Cancel(t.Context(), id)
+	_, err = m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "recursive-root"}, "manual", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []int64{1, dir, file} {
+		e, err := m.Library.Get(t.Context(), entry)
+		if err != nil || e.TaskStatus != "queued" {
+			t.Fatalf("missing queued scope: %+v %v", e, err)
+		}
+	}
+	if _, err = m.Create(t.Context(), Request{Targets: []int64{file}, Key: "covered-child"}, "manual", 0); err == nil {
+		t.Fatal("covered child allowed")
+	}
+}
+
+func TestQueuedAndPausedScopesBlockManualMutations(t *testing.T) {
+	for _, paused := range []bool{false, true} {
+		t.Run(fmt.Sprintf("paused=%v", paused), func(t *testing.T) {
+			m, ids := scopeFixture(t)
+			e, err := m.Library.Get(t.Context(), ids["deep.mp4"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			op, err := m.Library.Rename(t.Context(), library.RenameRequest{ID: e.ID, Version: e.Version, Name: "renamed.mp4", Key: "before-queue"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			id, err := m.Create(t.Context(), Request{Targets: []int64{e.ID}, Key: "manual-mutation-scope"}, "manual", 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if paused {
+				if err := m.Pause(t.Context(), id); err != nil {
+					t.Fatal(err)
+				}
+			}
+			e, err = m.Library.Get(t.Context(), e.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.Library.Rename(t.Context(), library.RenameRequest{ID: e.ID, Version: e.Version, Name: "changed.mp4", Key: "while-queued"}); err == nil {
+				t.Fatal("queued file was manually renamed")
+			}
+			if _, err := m.Library.Restore(t.Context(), op.ID, "restore-while-queued"); err == nil {
+				t.Fatal("queued file was restored")
+			}
+			marks := m.Library.SetProcessed(t.Context(), []int64{e.ID}, false)
+			if marks.Changed != 0 || marks.Failed != 1 {
+				t.Fatalf("queued file protection was changed: %+v", marks)
+			}
+			dir, err := m.Library.Get(t.Context(), ids["outer"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.Library.Rename(t.Context(), library.RenameRequest{ID: dir.ID, Version: dir.Version, Name: "changed-directory", Key: "parent-while-queued"}); err == nil {
+				t.Fatal("ancestor of queued target was renamed")
+			}
+			if err := m.Cancel(t.Context(), id); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.Library.Restore(t.Context(), op.ID, "restore-after-cancel"); err != nil {
+				t.Fatalf("cancel did not release mutation scope: %v", err)
+			}
+		})
+	}
+}
+
+func TestBusyUsesPersistentScopeBoundaries(t *testing.T) {
+	for _, c := range []struct {
+		name, target string
+		recursive    bool
+		busy, free   []string
+	}{
+		{"nonrecursive", "outer", false, []string{"outer", "direct.mp4"}, []string{"deep.mp4", "sibling", "other.mp4"}},
+		{"recursive", "outer", true, []string{"outer", "nested", "deep.mp4"}, []string{"sibling", "other.mp4"}},
+		{"hard links and ancestors", "direct.mp4", false, []string{"direct.mp4", "alias.mp4", "outer"}, []string{"deep.mp4", "sibling", "other.mp4"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m, ids := scopeFixture(t)
+			if _, err := m.Create(t.Context(), Request{Targets: []int64{ids[c.target]}, Recursive: c.recursive, Key: "persistent-busy-scope"}, "manual", 0); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range c.busy {
+				if !m.Busy(t.Context(), ids[name]) {
+					t.Errorf("%s did not retain occupancy", name)
+				}
+			}
+			for _, name := range c.free {
+				if m.Busy(t.Context(), ids[name]) {
+					t.Errorf("%s outside task scope is busy", name)
+				}
+			}
+		})
+	}
+}

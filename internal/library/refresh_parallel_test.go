@@ -2,6 +2,7 @@ package library
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"video-rename/internal/storage"
 )
 
 func startTestDirectoryRefresh(t *testing.T, l *Library, ctx context.Context, batch []os.DirEntry) <-chan error {
@@ -104,13 +107,17 @@ func TestRefreshParallelMetadataBoundedAndOrdered(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	var indexed int
-	if err := l.DB.QueryRowContext(ctx, "SELECT count(*) FROM entries WHERE parent=1").Scan(&indexed); err != nil {
+	if err := l.db.View(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT count(*) FROM entries WHERE parent=1").Scan(&indexed)
+	}); err != nil {
 		t.Fatalf("metadata collection held the database connection: %v", err)
 	}
 	if indexed != 0 {
 		t.Fatalf("incomplete metadata page inserted %d entries", indexed)
 	}
-	if _, err := l.DB.ExecContext(ctx, "UPDATE entries SET observed=observed WHERE id=1"); err != nil {
+	if _, err := storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(ctx, "UPDATE entries SET observed=observed WHERE id=1")
+	}); err != nil {
 		t.Fatalf("metadata collection blocked database writes: %v", err)
 	}
 	releaseFirst()
@@ -120,27 +127,32 @@ func TestRefreshParallelMetadataBoundedAndOrdered(t *testing.T) {
 	if peak.Load() != 4 || calls.Load() != int64(len(entries)) || active.Load() != 0 {
 		t.Fatalf("unbounded or incomplete reads: peak=%d calls=%d active=%d", peak.Load(), calls.Load(), active.Load())
 	}
-	rows, err := l.DB.Read().QueryContext(t.Context(), "SELECT name FROM entries WHERE parent=1 AND present=1 ORDER BY id")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var count int
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			t.Fatal(err)
+	if err := l.db.View(t.Context(), func(tx *sql.Tx) (err error) {
+		rows, err := tx.QueryContext(t.Context(), "SELECT name FROM entries WHERE parent=1 AND present=1 ORDER BY id")
+		if err != nil {
+			return err
 		}
-		if count >= len(entries) || name != entries[count].Name() {
-			t.Fatalf("parallel scan changed insertion order at %d: %q", count, name)
+		defer func() { err = errors.Join(err, rows.Close()) }()
+		var count int
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				return err
+			}
+			if count >= len(entries) || name != entries[count].Name() {
+				t.Fatalf("parallel scan changed insertion order at %d: %q", count, name)
+			}
+			count++
 		}
-		count++
-	}
-	if err := rows.Err(); err != nil {
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if count != len(entries) {
+			t.Fatalf("inserted %d of %d entries", count, len(entries))
+		}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
-	}
-	if count != len(entries) {
-		t.Fatalf("inserted %d of %d entries", count, len(entries))
 	}
 }
 
@@ -149,7 +161,9 @@ func TestRefreshParallelCancellationJoinsMetadataWorkers(t *testing.T) {
 	put(t, filepath.Join(root, "old.mp4"))
 	refresh(t, l, 1)
 	var generation int64
-	if err := l.DB.QueryRow("SELECT generation FROM directory_state WHERE dir=1").Scan(&generation); err != nil {
+	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT generation FROM directory_state WHERE dir=1").Scan(&generation)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	for i := range 12 {
@@ -209,7 +223,9 @@ func TestRefreshParallelMetadataErrorDiscardsWholePage(t *testing.T) {
 	put(t, filepath.Join(root, "old.mp4"))
 	refresh(t, l, 1)
 	var generation int64
-	if err := l.DB.QueryRow("SELECT generation FROM directory_state WHERE dir=1").Scan(&generation); err != nil {
+	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT generation FROM directory_state WHERE dir=1").Scan(&generation)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	for i := range 8 {
@@ -302,7 +318,9 @@ func TestRefreshParallelMetadataReportsEarlierInputError(t *testing.T) {
 		t.Fatalf("failed scan started later inputs or leaked workers: calls=%d active=%d", calls.Load(), active.Load())
 	}
 	var count int
-	if err := l.DB.QueryRow("SELECT count(*) FROM entries WHERE parent=1").Scan(&count); err != nil || count != 0 {
+	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM entries WHERE parent=1").Scan(&count)
+	}); err != nil || count != 0 {
 		t.Fatalf("failed metadata page wrote entries: count=%d error=%v", count, err)
 	}
 }
@@ -313,11 +331,15 @@ func TestRefreshIndexPageFailureRollsBackEntriesAndItems(t *testing.T) {
 	refresh(t, l, 1)
 	old := entry(t, l, 1, "00-old.mp4")
 	var generation int64
-	if err := l.DB.QueryRow("SELECT generation FROM directory_state WHERE dir=1").Scan(&generation); err != nil {
+	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT generation FROM directory_state WHERE dir=1").Scan(&generation)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	const oldObservation = "2000-01-01T00:00:00Z"
-	if _, err := l.DB.ExecContext(t.Context(), "UPDATE entries SET observed=? WHERE id=?", oldObservation, old.ID); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "UPDATE entries SET observed=? WHERE id=?", oldObservation, old.ID)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	for i := range 4 {
@@ -325,7 +347,7 @@ func TestRefreshIndexPageFailureRollsBackEntriesAndItems(t *testing.T) {
 	}
 	trigger := `CREATE TRIGGER reject_index_item BEFORE INSERT ON directory_items
 WHEN NEW.dir=1 AND NEW.name='new-02.mp4' BEGIN SELECT RAISE(ABORT,'injected directory item failure'); END`
-	if _, err := l.DB.ExecContext(t.Context(), trigger); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) { return tx.ExecContext(t.Context(), trigger) }); err != nil {
 		t.Fatal(err)
 	}
 	if err := l.Refresh(t.Context(), 1); err == nil {
@@ -334,17 +356,21 @@ WHEN NEW.dir=1 AND NEW.name='new-02.mp4' BEGIN SELECT RAISE(ABORT,'injected dire
 	assertFailedRefreshPreservedGeneration(t, l, generation, 1)
 	current := entry(t, l, 1, old.Name)
 	var observed string
-	if err := l.DB.QueryRow("SELECT observed FROM entries WHERE id=?", old.ID).Scan(&observed); err != nil {
+	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT observed FROM entries WHERE id=?", old.ID).Scan(&observed)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if current.ID != old.ID || current.Version != old.Version || observed != oldObservation {
 		t.Fatalf("failed index page retained an entry update: before=%+v after=%+v observed=%q", old, current, observed)
 	}
-	if _, err := l.DB.ExecContext(t.Context(), "DROP TRIGGER reject_index_item"); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "DROP TRIGGER reject_index_item")
+	}); err != nil {
 		t.Fatal(err)
 	}
 	refresh(t, l, 1)
-	page, err := l.ListOrdered(t.Context(), 1, 0, 50, 0, "", "", "", false, "name_asc")
+	page, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 50, Generation: 0, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"})
 	if err != nil || len(page.Items) != 5 || page.Error.Message != "" || page.Generation == generation {
 		t.Fatalf("retry did not publish rolled-back page: %+v %v", page, err)
 	}
@@ -354,17 +380,23 @@ func assertFailedRefreshPreservedGeneration(t *testing.T, l *Library, generation
 	t.Helper()
 	var published int64
 	var scanError string
-	if err := l.DB.QueryRow("SELECT generation,error FROM directory_state WHERE dir=1").Scan(&published, &scanError); err != nil {
+	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT generation,error FROM directory_state WHERE dir=1").Scan(&published, &scanError)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if published != generation || scanError == "" {
 		t.Fatalf("failed scan published a generation: %d -> %d, error=%q", generation, published, scanError)
 	}
 	var entries, unpublished int
-	if err := l.DB.QueryRow("SELECT count(*) FROM entries WHERE parent=1 AND present=1").Scan(&entries); err != nil {
+	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM entries WHERE parent=1 AND present=1").Scan(&entries)
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := l.DB.QueryRow("SELECT count(*) FROM directory_items WHERE dir=1 AND generation<>?", generation).Scan(&unpublished); err != nil {
+	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM directory_items WHERE dir=1 AND generation<>?", generation).Scan(&unpublished)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if entries != indexed || unpublished != 0 {
@@ -388,10 +420,14 @@ func TestRefreshUnchangedEntriesKeepObservationAndVersion(t *testing.T) {
 		before = append(before, entry(t, l, 1, name))
 	}
 	const oldObservation = "2000-01-01T00:00:00Z"
-	if _, err := l.DB.Exec("UPDATE entries SET observed=? WHERE parent=1", oldObservation); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "UPDATE entries SET observed=? WHERE parent=1", oldObservation)
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := l.DB.Exec("UPDATE directory_state SET refreshed=?,error='previous scan failed' WHERE dir=1", oldObservation); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "UPDATE directory_state SET refreshed=?,error='previous scan failed' WHERE dir=1", oldObservation)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	refresh(t, l, 1)
@@ -400,16 +436,20 @@ func TestRefreshUnchangedEntriesKeepObservationAndVersion(t *testing.T) {
 		t.Fatalf("unchanged refresh changed the generation or retained stale status: before=%+v after=%+v error=%v", state, after, err)
 	}
 	var unpublished int
-	if err := l.DB.QueryRow("SELECT count(*) FROM directory_items WHERE dir=1 AND generation<>?", state.Generation).Scan(&unpublished); err != nil || unpublished != 0 {
+	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM directory_items WHERE dir=1 AND generation<>?", state.Generation).Scan(&unpublished)
+	}); err != nil || unpublished != 0 {
 		t.Fatalf("unchanged refresh left staging items: %d %v", unpublished, err)
 	}
 	for _, old := range before {
 		current := entry(t, l, 1, old.Name)
-		if current.ID != old.ID || current.Version != old.Version || current.Identity != old.Identity || current.Kind != old.Kind || current.Size != old.Size || current.Mtime != old.Mtime {
+		if current.ID != old.ID || current.Version != old.Version || current.Identity != old.Identity || current.Kind != old.Kind || current.Size != old.Size || current.ModifiedNS != old.ModifiedNS {
 			t.Fatalf("unchanged file received a new snapshot/version: before=%+v after=%+v", old, current)
 		}
 		var observed string
-		if err := l.DB.QueryRow("SELECT observed FROM entries WHERE id=?", old.ID).Scan(&observed); err != nil {
+		if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+			return tx.QueryRowContext(t.Context(), "SELECT observed FROM entries WHERE id=?", old.ID).Scan(&observed)
+		}); err != nil {
 			t.Fatal(err)
 		}
 		if observed != oldObservation {
@@ -424,7 +464,7 @@ func TestRefreshReplacementAllocatesEntryAndRejectsOldGeneration(t *testing.T) {
 	put(t, filepath.Join(root, "keep.mp4"))
 	refresh(t, l, 1)
 	old := entry(t, l, 1, "a.mp4")
-	page, err := l.ListOrdered(t.Context(), 1, 0, 50, 0, "", "", "", false, "name_asc")
+	page, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 50, Generation: 0, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -439,10 +479,12 @@ func TestRefreshReplacementAllocatesEntryAndRejectsOldGeneration(t *testing.T) {
 		t.Fatalf("replacement reused the old indexed identity: before=%+v after=%+v", old, current)
 	}
 	var present int
-	if err := l.DB.QueryRow("SELECT present FROM entries WHERE id=?", old.ID).Scan(&present); err != nil || present != 0 {
+	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT present FROM entries WHERE id=?", old.ID).Scan(&present)
+	}); err != nil || present != 0 {
 		t.Fatalf("replaced entry remains present: %d %v", present, err)
 	}
-	if _, err := l.ListOrdered(t.Context(), 1, 1, 50, page.Generation, "", "", "", false, "name_asc"); err == nil {
+	if _, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 1, Limit: 50, Generation: page.Generation, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"}); err == nil {
 		t.Fatal("old generation accepted after replacement scan")
 	}
 }
@@ -455,7 +497,9 @@ func TestRefreshPublishFailureRollsBackAndRecordsError(t *testing.T) {
 			refresh(t, l, 1)
 			old := entry(t, l, 1, "old.mp4")
 			var generation int64
-			if err := l.DB.QueryRow("SELECT generation FROM directory_state WHERE dir=1").Scan(&generation); err != nil {
+			if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT generation FROM directory_state WHERE dir=1").Scan(&generation)
+			}); err != nil {
 				t.Fatal(err)
 			}
 			put(t, filepath.Join(root, "new.mp4"))
@@ -464,7 +508,7 @@ func TestRefreshPublishFailureRollsBackAndRecordsError(t *testing.T) {
 			}
 			trigger := `CREATE TRIGGER reject_publish BEFORE UPDATE OF generation ON directory_state
 WHEN OLD.dir=1 BEGIN SELECT RAISE(ABORT,'injected generation publication failure'); END`
-			if _, err := l.DB.ExecContext(t.Context(), trigger); err != nil {
+			if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) { return tx.ExecContext(t.Context(), trigger) }); err != nil {
 				t.Fatal(err)
 			}
 			if err := l.Refresh(t.Context(), 1); err == nil {
@@ -472,31 +516,39 @@ WHEN OLD.dir=1 BEGIN SELECT RAISE(ABORT,'injected generation publication failure
 			}
 			var published int64
 			var scanError string
-			if err := l.DB.QueryRow("SELECT generation,error FROM directory_state WHERE dir=1").Scan(&published, &scanError); err != nil {
+			if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT generation,error FROM directory_state WHERE dir=1").Scan(&published, &scanError)
+			}); err != nil {
 				t.Fatal(err)
 			}
 			if published != generation || scanError == "" {
 				t.Fatalf("failed publication lost old generation/error: %d -> %d, error=%q", generation, published, scanError)
 			}
 			var present, oldItems int
-			if err := l.DB.QueryRow("SELECT present FROM entries WHERE id=?", old.ID).Scan(&present); err != nil {
+			if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT present FROM entries WHERE id=?", old.ID).Scan(&present)
+			}); err != nil {
 				t.Fatal(err)
 			}
-			if err := l.DB.QueryRow("SELECT count(*) FROM directory_items WHERE dir=1 AND generation=?", generation).Scan(&oldItems); err != nil {
+			if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM directory_items WHERE dir=1 AND generation=?", generation).Scan(&oldItems)
+			}); err != nil {
 				t.Fatal(err)
 			}
 			if present != 1 || oldItems != 1 {
 				t.Fatalf("failed publication kept partial mutations: old present=%d old items=%d", present, oldItems)
 			}
-			page, err := l.ListOrdered(t.Context(), 1, 0, 50, generation, "", "", "", false, "name_asc")
+			page, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 50, Generation: generation, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"})
 			if err != nil || len(page.Items) != 1 || page.Items[0].Name != "old.mp4" || page.Error.Message == "" {
 				t.Fatalf("previous complete generation is unavailable: %+v %v", page, err)
 			}
-			if _, err := l.DB.ExecContext(t.Context(), "DROP TRIGGER reject_publish"); err != nil {
+			if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+				return tx.ExecContext(t.Context(), "DROP TRIGGER reject_publish")
+			}); err != nil {
 				t.Fatal(err)
 			}
 			refresh(t, l, 1)
-			page, err = l.ListOrdered(t.Context(), 1, 0, 50, 0, "", "", "", false, "name_asc")
+			page, err = l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 50, Generation: 0, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"})
 			if err != nil || page.Generation == generation || page.Error.Message != "" || len(page.Items) != 1 || page.Items[0].Name != "new.mp4" {
 				t.Fatalf("retry did not publish complete replacement generation: %+v %v", page, err)
 			}

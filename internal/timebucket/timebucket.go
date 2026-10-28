@@ -6,6 +6,8 @@ package timebucket
 import (
 	"iter"
 	"time"
+
+	"video-rename/internal/timefmt"
 )
 
 // maxBuckets bounds one series so a malformed range cannot render forever.
@@ -84,7 +86,7 @@ func (b Bucketing) Spans(from, to int64) iter.Seq2[int64, int64] {
 	}
 }
 
-// Format renders a bucket boundary in the report's timezone.
+// Format serializes a boundary in UTC; bucket alignment still uses the report timezone.
 func (b Bucketing) Format(ms int64) string {
-	return time.UnixMilli(ms).In(b.loc).Format(time.RFC3339)
+	return timefmt.Format(time.UnixMilli(ms))
 }

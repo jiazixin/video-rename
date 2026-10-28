@@ -20,7 +20,7 @@ import (
 
 // ErrDirectoryScanChanged asks the caller to retry instead of publishing stale evidence.
 // A mismatch alone does not prove that a user or program changed the directory.
-var ErrDirectoryScanChanged = domain.Fail(domain.KindConflict, "scan_changed", "directory scan check mismatch; retry later")
+var ErrDirectoryScanChanged = domain.Fail(domain.KindConflict, domain.Record{Code: "scan_changed", Message: "directory scan check mismatch; retry later"})
 
 // ScanDirectoryResult summarizes a directory scan. Counts refer to indexed
 // entries; Files counts regular files of every media type.
@@ -91,26 +91,24 @@ func (l *Library) ScanDirectory(ctx context.Context, id int64) (ScanDirectoryRes
 // DirectoryScanner reuses one bounded, disposable SQLite stage for a recursive
 // round. Directory evidence and the index baseline are captured afresh on every
 // call; no filesystem or epoch evidence is cached between directories.
+// mu serializes scans and protects the stage's lifetime.
 type DirectoryScanner struct {
 	library *Library
-	stage   *sql.DB
-	path    string
+	stage   *storage.ScanStore
 	mu      sync.Mutex
 }
 
 // NewDirectoryScanner creates a scanner that indexes directories in a private
 // staging area.
 func (l *Library) NewDirectoryScanner(ctx context.Context) (*DirectoryScanner, error) {
-	stage, path, err := newScanStage(ctx)
+	stage, err := newScanStage(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if err = l.captureScanOrphans(ctx, stage); err != nil {
-		stage.Close()
-		os.Remove(path)
-		return nil, err
+		return nil, errors.Join(err, stage.Close())
 	}
-	return &DirectoryScanner{library: l, stage: stage, path: path}, nil
+	return &DirectoryScanner{library: l, stage: stage}, nil
 }
 
 // Close waits for an in-flight directory before removing the local stage.
@@ -120,9 +118,11 @@ func (s *DirectoryScanner) Close() error {
 	if s.stage == nil {
 		return nil
 	}
-	err := s.stage.Close()
+	if err := s.stage.Close(); err != nil {
+		return err
+	}
 	s.stage = nil
-	return errors.Join(err, os.Remove(s.path))
+	return nil
 }
 
 // ScanDirectory indexes directory id and reports what changed.
@@ -137,30 +137,42 @@ func (s *DirectoryScanner) ScanDirectory(ctx context.Context, id int64) (ScanDir
 	}
 	// A failed or cancelled directory may have left local observations. Reset
 	// all three tables before capturing any evidence for the next directory.
-	if _, err := s.stage.ExecContext(ctx, "DELETE FROM baseline; DELETE FROM snapshot; DELETE FROM verification"); err != nil {
+	if err := s.stage.Write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "DELETE FROM baseline; DELETE FROM snapshot; DELETE FROM verification")
+		return err
+	}); err != nil {
 		return ScanDirectoryResult{}, err
 	}
-	return s.library.scanDirectoryWithStage(ctx, id, s.stage, s.path,
-		func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) }, scanPinnedDirectoryEntry)
+	return s.library.scanDirectoryWithStage(ctx, scanDirectoryWithStageOptions{ID: id, Stage: s.stage, Read: func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) }, Inspect: scanPinnedDirectoryEntry})
 }
 
 func (l *Library) scanDirectory(ctx context.Context, id int64, read func(*os.File, int) ([]os.DirEntry, error)) (ScanDirectoryResult, error) {
 	return l.scanDirectoryWithMetadata(ctx, id, read, scanPinnedDirectoryEntry)
 }
 
-func (l *Library) scanDirectoryWithMetadata(ctx context.Context, id int64, read func(*os.File, int) ([]os.DirEntry, error), inspect func(*os.File, os.DirEntry) (scannedDirectoryEntry, error)) (ScanDirectoryResult, error) {
-	stage, path, err := newScanStage(ctx)
+func (l *Library) scanDirectoryWithMetadata(ctx context.Context, id int64, read func(*os.File, int) ([]os.DirEntry, error), inspect func(*os.File, os.DirEntry) (scannedDirectoryEntry, error)) (result ScanDirectoryResult, err error) {
+	stage, err := newScanStage(ctx)
 	if err != nil {
 		return ScanDirectoryResult{}, err
 	}
-	defer func() { stage.Close(); _ = os.Remove(path) }()
+	defer func() { err = errors.Join(err, stage.Close()) }()
 	if err = l.captureScanOrphans(ctx, stage); err != nil {
 		return ScanDirectoryResult{}, err
 	}
-	return l.scanDirectoryWithStage(ctx, id, stage, path, read, inspect)
+	return l.scanDirectoryWithStage(ctx, scanDirectoryWithStageOptions{ID: id, Stage: stage, Read: read, Inspect: inspect})
 }
 
-func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *sql.DB, path string, read func(*os.File, int) ([]os.DirEntry, error), inspect func(*os.File, os.DirEntry) (scannedDirectoryEntry, error)) (result ScanDirectoryResult, err error) {
+// scanDirectoryWithStageOptions groups the inputs for scanDirectoryWithStage.
+type scanDirectoryWithStageOptions struct {
+	ID      int64
+	Stage   *storage.ScanStore
+	Read    func(*os.File, int) ([]os.DirEntry, error)
+	Inspect func(*os.File, os.DirEntry) (scannedDirectoryEntry, error)
+}
+
+func (l *Library) scanDirectoryWithStage(ctx context.Context, params scanDirectoryWithStageOptions) (result ScanDirectoryResult, err error) {
+	id, stage, read, inspect := params.ID, params.Stage, params.Read, params.Inspect
+
 	release, err := l.lockDirectoryScan(ctx, id)
 	if err != nil {
 		return result, err
@@ -179,7 +191,12 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *s
 		if err != nil {
 			failureCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
-			_, _ = l.DB.ExecContext(failureCtx, "INSERT INTO directory_state(dir,error) VALUES(?,?) ON CONFLICT(dir) DO UPDATE SET error=excluded.error", id, domain.RecordText(err))
+			if recordErr := l.db.Write(failureCtx, func(tx *sql.Tx) error {
+				_, writeErr := tx.ExecContext(failureCtx, "INSERT INTO directory_state(dir,error) VALUES(?,?) ON CONFLICT(dir) DO UPDATE SET error=excluded.error", id, domain.RecordText(err))
+				return writeErr
+			}); recordErr != nil {
+				err = errors.Join(err, fmt.Errorf("record directory %d scan failure: %w", id, recordErr))
+			}
 		}
 	}()
 	baseline, err := l.captureScanBaseline(ctx, id, stage)
@@ -190,7 +207,7 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *s
 	if err != nil {
 		return result, err
 	}
-	defer pinned.Close()
+	defer func() { err = errors.Join(err, pinned.Close()) }()
 	var observed domain.Snapshot
 	for _, table := range []string{"snapshot", "verification"} {
 		dir := pinned
@@ -210,17 +227,14 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *s
 			scanErr = scanSnapshotDifference("directory attributes between the two reads", observed, before)
 		}
 		if scanErr == nil {
-			scanErr = collectScanMetadata(ctx, stage, table, dir, read, inspect)
+			scanErr = collectScanMetadata(ctx, collectScanMetadataOptions{Stage: stage, Table: table, Dir: dir, Read: read, Inspectors: []func(*os.File, os.DirEntry) (scannedDirectoryEntry, error){inspect}})
 		}
 		after, statErr := scanDirectorySnapshot(dir)
 		if dir != pinned {
-			dir.Close()
+			statErr = errors.Join(statErr, dir.Close())
 		}
-		if scanErr != nil {
-			return result, scanErr
-		}
-		if statErr != nil {
-			return result, statErr
+		if scanErr != nil || statErr != nil {
+			return result, errors.Join(scanErr, statErr)
 		}
 		if !before.Same(after) {
 			phase := "directory attributes during the first read"
@@ -234,14 +248,19 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *s
 	if err = scanMetadataDifference(ctx, stage); err != nil {
 		return result, err
 	}
-	if _, err = stage.ExecContext(ctx, `UPDATE snapshot SET entry=COALESCE((SELECT id FROM baseline b WHERE b.name=snapshot.name AND b.identity=snapshot.identity),0)`); err != nil {
+	if err = stage.Write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE snapshot SET entry=COALESCE((SELECT id FROM baseline b WHERE b.name=snapshot.name AND b.identity=snapshot.identity),0)`)
+		return err
+	}); err != nil {
 		return result, err
 	}
-	if err = stage.QueryRowContext(ctx, `SELECT
+	if err = stage.View(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT
 	 (SELECT count(*) FROM snapshot WHERE kind='file'),
 	 (SELECT count(*) FROM snapshot WHERE entry=0),
-	 (SELECT count(*) FROM snapshot s JOIN baseline b ON s.entry=b.id WHERE s.kind<>b.kind OR s.size<>b.size OR s.mtime<>b.mtime),
-	 (SELECT count(*) FROM baseline b WHERE NOT EXISTS(SELECT 1 FROM snapshot s WHERE s.entry=b.id))`).Scan(&result.Files, &result.Added, &result.Changed, &result.Removed); err != nil {
+	 (SELECT count(*) FROM snapshot s JOIN baseline b ON s.entry=b.id WHERE s.kind<>b.kind OR s.size<>b.size OR s.mtime_ns<>b.mtime_ns),
+	 (SELECT count(*) FROM baseline b WHERE NOT EXISTS(SELECT 1 FROM snapshot s WHERE s.entry=b.id))`).Scan(&result.Files, &result.Added, &result.Changed, &result.Removed)
+	}); err != nil {
 		return result, err
 	}
 	gen := baseline.generation
@@ -254,29 +273,25 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *s
 			if !published {
 				cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 				defer cancel()
-				l.cleanScanStaging(cleanupCtx, stage, id, gen, marker, false)
+				err = errors.Join(err, l.cleanScanStaging(cleanupCtx, cleanScanStagingOptions{Stage: stage, ID: id, Gen: gen, Marker: marker, Published: false}))
 			}
 		}()
-		if err = l.buildScanGeneration(ctx, id, gen, marker, stage); err != nil {
+		if err = l.buildScanGeneration(ctx, buildScanGenerationOptions{ID: id, Gen: gen, Marker: marker, Stage: stage}); err != nil {
 			return result, err
 		}
 	}
-	rows, err := stage.QueryContext(ctx, "SELECT entry FROM snapshot WHERE kind='directory' ORDER BY entry")
-	if err != nil {
-		return result, err
-	}
-	for rows.Next() {
-		var child int64
-		if err = rows.Scan(&child); err != nil {
-			break
+	if err = stage.View(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT entry FROM snapshot WHERE kind='directory' ORDER BY entry")
+		if err != nil {
+			return err
 		}
-		result.Directories = append(result.Directories, child)
-	}
-	if err == nil {
-		err = rows.Err()
-	}
-	rows.Close()
-	if err != nil {
+		result.Directories, err = storage.CollectRows(rows, func(rows *sql.Rows) (int64, error) {
+			var child int64
+			err := rows.Scan(&child)
+			return child, err
+		})
+		return err
+	}); err != nil {
 		return result, err
 	}
 	// Reopen the frozen ancestor chain and check the directory after staging. NAS
@@ -286,105 +301,89 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, id int64, stage *s
 		return result, err
 	}
 	current, err := scanDirectorySnapshot(dir)
-	dir.Close()
+	err = errors.Join(err, dir.Close())
 	if err != nil {
 		return result, err
 	}
 	if !current.Same(observed) {
 		return result, scanSnapshotDifference("directory attributes before publishing", observed, current)
 	}
-	if err = l.publishDirectoryScan(ctx, id, gen, marker, baseline, path, rebuild); err != nil {
+	if err = l.publishDirectoryScan(ctx, publishDirectoryScanOptions{ID: id, Gen: gen, Marker: marker, Baseline: baseline, StagePath: stage.Path(), Rebuild: rebuild}); err != nil {
 		return result, err
 	}
 	published = true
 	// Reclaim interrupted staging even when this directory has not changed. Old
 	// generations are no longer visible; bounded writes let user operations
 	// acquire both the mutex and writer between pages.
-	l.cleanScanStaging(ctx, stage, id, gen, marker, true)
-	return result, nil
+	return result, l.cleanScanStaging(ctx, cleanScanStagingOptions{Stage: stage, ID: id, Gen: gen, Marker: marker, Published: true})
 }
 
-func newScanStage(ctx context.Context) (*sql.DB, string, error) {
-	file, err := os.CreateTemp("", "video-rename-scan-*.sqlite")
-	if err != nil {
-		return nil, "", err
-	}
-	path := file.Name()
-	file.Close()
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		os.Remove(path)
-		return nil, "", err
-	}
-	db.SetMaxOpenConns(1)
-	_, err = db.ExecContext(ctx, `PRAGMA journal_mode=MEMORY; PRAGMA synchronous=OFF;
-	 CREATE TABLE baseline(id INTEGER PRIMARY KEY,name TEXT NOT NULL UNIQUE,kind TEXT NOT NULL,identity TEXT NOT NULL,size INTEGER NOT NULL,mtime TEXT NOT NULL,version INTEGER NOT NULL);
-	 CREATE TABLE snapshot(name TEXT PRIMARY KEY,kind TEXT NOT NULL,identity TEXT NOT NULL,size INTEGER NOT NULL,mtime TEXT NOT NULL,entry INTEGER NOT NULL DEFAULT 0);
+const scanStageSchema = `CREATE TABLE baseline(id INTEGER PRIMARY KEY,name TEXT NOT NULL UNIQUE,kind TEXT NOT NULL,identity TEXT NOT NULL,size INTEGER NOT NULL,mtime_ns INTEGER NOT NULL,version INTEGER NOT NULL);
+	 CREATE TABLE snapshot(name TEXT PRIMARY KEY,kind TEXT NOT NULL,identity TEXT NOT NULL,size INTEGER NOT NULL,mtime_ns INTEGER NOT NULL,entry INTEGER NOT NULL DEFAULT 0);
 	 CREATE INDEX snapshot_entry ON snapshot(entry);
-	 CREATE TABLE verification(name TEXT PRIMARY KEY,kind TEXT NOT NULL,identity TEXT NOT NULL,size INTEGER NOT NULL,mtime TEXT NOT NULL);
+	 CREATE TABLE verification(name TEXT PRIMARY KEY,kind TEXT NOT NULL,identity TEXT NOT NULL,size INTEGER NOT NULL,mtime_ns INTEGER NOT NULL);
 	 CREATE TABLE orphan_candidates(entry INTEGER PRIMARY KEY,parent INTEGER NOT NULL,observed TEXT NOT NULL);
-	 CREATE INDEX orphan_parent_entry ON orphan_candidates(parent,entry);`)
-	if err != nil {
-		db.Close()
-		os.Remove(path)
-		return nil, "", err
-	}
-	return db, path, nil
+	 CREATE INDEX orphan_parent_entry ON orphan_candidates(parent,entry);`
+
+func newScanStage(ctx context.Context) (*storage.ScanStore, error) {
+	return storage.NewScan(ctx, scanStageSchema)
 }
 
 // An interrupted candidate page can precede its directory_items rows.
 // Capture them once per recursive round through the read pool, then seek the
 // temporary parent index instead of rescanning all entries for every directory.
-func (l *Library) captureScanOrphans(ctx context.Context, stage *sql.DB) error {
-	rows, err := l.DB.Read().QueryContext(ctx, `SELECT e.id,e.parent,e.observed FROM entries e
+func (l *Library) captureScanOrphans(ctx context.Context, stage *storage.ScanStore) error {
+	return l.db.View(ctx, func(tx *sql.Tx) (err error) {
+		rows, err := tx.QueryContext(ctx, `SELECT e.id,e.parent,e.observed FROM entries e
 	 WHERE e.present=0 AND e.observed GLOB 'directory-scan:*'
 	 AND NOT EXISTS(SELECT 1 FROM directory_items i WHERE i.dir=e.parent AND i.entry=e.id)`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	batch := make([]scanOrphan, 0, refreshPageSize)
-	flush := func() error {
-		tx, err := stage.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback()
-		stmt, err := tx.PrepareContext(ctx, "INSERT INTO orphan_candidates VALUES(?,?,?)")
-		if err != nil {
-			return err
-		}
-		defer stmt.Close()
-		for _, item := range batch {
-			if _, err = stmt.ExecContext(ctx, item.entry, item.parent, item.observed); err != nil {
+		defer func() { err = errors.Join(err, rows.Close()) }()
+		batch := make([]scanOrphan, 0, refreshPageSize)
+		flush := func() error {
+			if err := stage.Write(ctx, func(tx *sql.Tx) (err error) {
+				stmt, err := tx.PrepareContext(ctx, "INSERT INTO orphan_candidates VALUES(?,?,?)")
+				if err != nil {
+					return err
+				}
+				defer func() { err = errors.Join(err, stmt.Close()) }()
+				for _, item := range batch {
+					if _, err := stmt.ExecContext(ctx, item.entry, item.parent, item.observed); err != nil {
+						return err
+					}
+				}
+				return nil
+			}); err != nil {
 				return err
 			}
+			batch = batch[:0]
+			return nil
 		}
-		batch = batch[:0]
-		return tx.Commit()
-	}
-	for rows.Next() {
-		var item scanOrphan
-		if err = rows.Scan(&item.entry, &item.parent, &item.observed); err != nil {
-			return err
-		}
-		batch = append(batch, item)
-		if len(batch) == refreshPageSize {
-			if err = flush(); err != nil {
+		for rows.Next() {
+			var item scanOrphan
+			if err = rows.Scan(&item.entry, &item.parent, &item.observed); err != nil {
 				return err
 			}
+			batch = append(batch, item)
+			if len(batch) == refreshPageSize {
+				if err = flush(); err != nil {
+					return err
+				}
+			}
 		}
-	}
-	if err = rows.Err(); err != nil {
-		return err
-	}
-	if len(batch) > 0 {
-		return flush()
-	}
-	return nil
+		if err = rows.Err(); err != nil {
+			return err
+		}
+		if len(batch) > 0 {
+			return flush()
+		}
+		return nil
+	})
 }
 
-func (l *Library) captureScanBaseline(ctx context.Context, id int64, stage *sql.DB) (baseline scanBaseline, err error) {
+func (l *Library) captureScanBaseline(ctx context.Context, id int64, stage *storage.ScanStore) (baseline scanBaseline, err error) {
 	if err = l.lockNumbering(ctx); err != nil {
 		return baseline, err
 	}
@@ -398,77 +397,74 @@ func (l *Library) captureScanBaseline(ctx context.Context, id int64, stage *sql.
 	if err != nil {
 		return baseline, err
 	}
-	tx, err := l.DB.Read().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return baseline, err
-	}
-	defer tx.Rollback()
-	seen := map[int64]bool{}
-	for ancestor := id; ; {
-		if ancestor <= 0 || seen[ancestor] || len(baseline.chain) > 1024 {
-			return baseline, errBadHierarchy
-		}
-		seen[ancestor] = true
-		var e Entry
-		if err = tx.QueryRowContext(ctx, `SELECT id,parent,name,kind,identity,size,mtime,version FROM entries WHERE id=? AND present=1`, ancestor).Scan(&e.ID, &e.Parent, &e.Name, &e.Kind, &e.Identity, &e.Size, &e.Mtime, &e.Version); err != nil {
-			return baseline, err
-		}
-		if e.Kind != "directory" {
-			return baseline, errNotDirectory
-		}
-		baseline.chain = append(baseline.chain, e)
-		if ancestor == 1 {
-			break
-		}
-		ancestor = e.Parent
-	}
-	if err = tx.QueryRowContext(ctx, "SELECT generation FROM directory_state WHERE dir=?", id).Scan(&baseline.generation); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return baseline, err
-	}
-	rows, err := tx.QueryContext(ctx, "SELECT id,name,kind,identity,size,mtime,version FROM entries WHERE parent=? AND present=1 ORDER BY id", id)
-	if err != nil {
-		return baseline, err
-	}
-	defer rows.Close()
-	batch := make([]Entry, 0, refreshPageSize)
-	flush := func() error {
-		write, err := stage.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		defer write.Rollback()
-		stmt, err := write.PrepareContext(ctx, "INSERT INTO baseline VALUES(?,?,?,?,?,?,?)")
-		if err != nil {
-			return err
-		}
-		defer stmt.Close()
-		for _, e := range batch {
-			if _, err = stmt.ExecContext(ctx, e.ID, e.Name, e.Kind, e.Identity, e.Size, e.Mtime, e.Version); err != nil {
-				return err
+	return storage.ReadValue(ctx, l.db, func(tx *sql.Tx) (_ scanBaseline, err error) {
+		seen := map[int64]bool{}
+		for ancestor := id; ; {
+			if ancestor <= 0 || seen[ancestor] || len(baseline.chain) > 1024 {
+				return baseline, errBadHierarchy
 			}
-		}
-		batch = batch[:0]
-		return write.Commit()
-	}
-	for rows.Next() {
-		var e Entry
-		if err = rows.Scan(&e.ID, &e.Name, &e.Kind, &e.Identity, &e.Size, &e.Mtime, &e.Version); err != nil {
-			return baseline, err
-		}
-		batch = append(batch, e)
-		if len(batch) == refreshPageSize {
-			if err = flush(); err != nil {
+			seen[ancestor] = true
+			var e Entry
+			if err = tx.QueryRowContext(ctx, `SELECT id,parent,name,kind,identity,size,mtime_ns,version FROM entries WHERE id=? AND present=1`, ancestor).Scan(&e.ID, &e.Parent, &e.Name, &e.Kind, &e.Identity, &e.Size, &e.ModifiedNS, &e.Version); err != nil {
 				return baseline, err
 			}
+			if e.Kind != "directory" {
+				return baseline, errNotDirectory
+			}
+			baseline.chain = append(baseline.chain, e)
+			if ancestor == 1 {
+				break
+			}
+			ancestor = e.Parent
 		}
-	}
-	if err = rows.Err(); err != nil {
+		if err = tx.QueryRowContext(ctx, "SELECT generation FROM directory_state WHERE dir=?", id).Scan(&baseline.generation); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return baseline, err
+		}
+		rows, err := tx.QueryContext(ctx, "SELECT id,name,kind,identity,size,mtime_ns,version FROM entries WHERE parent=? AND present=1 ORDER BY id", id)
+		if err != nil {
+			return baseline, err
+		}
+		defer func() { err = errors.Join(err, rows.Close()) }()
+		batch := make([]Entry, 0, refreshPageSize)
+		flush := func() error {
+			if err := stage.Write(ctx, func(tx *sql.Tx) (err error) {
+				stmt, err := tx.PrepareContext(ctx, "INSERT INTO baseline VALUES(?,?,?,?,?,?,?)")
+				if err != nil {
+					return err
+				}
+				defer func() { err = errors.Join(err, stmt.Close()) }()
+				for _, e := range batch {
+					if _, err := stmt.ExecContext(ctx, e.ID, e.Name, e.Kind, e.Identity, e.Size, e.ModifiedNS, e.Version); err != nil {
+						return err
+					}
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+			batch = batch[:0]
+			return nil
+		}
+		for rows.Next() {
+			var e Entry
+			if err = rows.Scan(&e.ID, &e.Name, &e.Kind, &e.Identity, &e.Size, &e.ModifiedNS, &e.Version); err != nil {
+				return baseline, err
+			}
+			batch = append(batch, e)
+			if len(batch) == refreshPageSize {
+				if err = flush(); err != nil {
+					return baseline, err
+				}
+			}
+		}
+		if err = rows.Err(); err != nil {
+			return baseline, err
+		}
+		if len(batch) > 0 {
+			err = flush()
+		}
 		return baseline, err
-	}
-	if len(batch) > 0 {
-		err = flush()
-	}
-	return baseline, err
+	})
 }
 
 func openScanDirectory(root string, chain []Entry) (*os.File, error) {
@@ -478,27 +474,28 @@ func openScanDirectory(root string, chain []Entry) (*os.File, error) {
 		parent, name := unix.AT_FDCWD, root
 		if dir != nil {
 			if e.Name == "" || e.Name == "." || e.Name == ".." || filepath.Base(e.Name) != e.Name {
-				dir.Close()
-				return nil, errIllegalPath
+				return nil, errors.Join(errIllegalPath, dir.Close())
 			}
 			parent, name = int(dir.Fd()), e.Name
 			displayPath = filepath.Join(displayPath, e.Name)
 		}
 		fd, err := unix.Openat(parent, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 		if dir != nil {
-			dir.Close()
+			err = errors.Join(err, dir.Close())
 		}
 		if err != nil {
+			if fd >= 0 {
+				err = errors.Join(err, unix.Close(fd))
+			}
 			return nil, fmt.Errorf("open media directory: %w", err)
 		}
 		dir = os.NewFile(uintptr(fd), displayPath)
 		snapshot, err := scanDirectorySnapshot(dir)
 		if err != nil || Identity(snapshot) != e.Identity {
-			dir.Close()
-			if err != nil {
-				return nil, err
+			if err == nil {
+				err = errIdentityChanged
 			}
-			return nil, errIdentityChanged
+			return nil, errors.Join(err, dir.Close())
 		}
 	}
 	return dir, nil
@@ -537,7 +534,27 @@ func scanPinnedDirectoryEntry(dir *os.File, de os.DirEntry) (scannedDirectoryEnt
 	return scannedDirectoryEntry{name, kind, Identity(snap), stamp(snap), snap.Size}, nil
 }
 
-func collectScanMetadata(ctx context.Context, stage *sql.DB, table string, dir *os.File, read func(*os.File, int) ([]os.DirEntry, error), inspectors ...func(*os.File, os.DirEntry) (scannedDirectoryEntry, error)) error {
+// collectScanMetadataOptions groups the inputs for collectScanMetadata.
+type collectScanMetadataOptions struct {
+	Stage      *storage.ScanStore
+	Table      string
+	Dir        *os.File
+	Read       func(*os.File, int) ([]os.DirEntry, error)
+	Inspectors []func(*os.File, os.DirEntry) (scannedDirectoryEntry, error)
+}
+
+func collectScanMetadata(ctx context.Context, params collectScanMetadataOptions) error {
+	stage, table, dir, read, inspectors := params.Stage, params.Table, params.Dir, params.Read, params.Inspectors
+
+	var statement string
+	switch table {
+	case "snapshot":
+		statement = "INSERT INTO snapshot(name,kind,identity,size,mtime_ns) VALUES(?,?,?,?,?)"
+	case "verification":
+		statement = "INSERT INTO verification(name,kind,identity,size,mtime_ns) VALUES(?,?,?,?,?)"
+	default:
+		return fmt.Errorf("unknown scan metadata table %q", table)
+	}
 	inspect := scanPinnedDirectoryEntry
 	if len(inspectors) > 0 {
 		inspect = inspectors[0]
@@ -552,24 +569,19 @@ func collectScanMetadata(ctx context.Context, stage *sql.DB, table string, dir *
 			return err
 		}
 		if len(scanned) > 0 {
-			tx, err := stage.BeginTx(ctx, nil)
-			if err != nil {
-				return err
-			}
-			stmt, err := tx.PrepareContext(ctx, "INSERT INTO "+table+"(name,kind,identity,size,mtime) VALUES(?,?,?,?,?)")
-			if err == nil {
+			if err := stage.Write(ctx, func(tx *sql.Tx) (err error) {
+				stmt, err := tx.PrepareContext(ctx, statement)
+				if err != nil {
+					return err
+				}
+				defer func() { err = errors.Join(err, stmt.Close()) }()
 				for _, item := range scanned {
-					if _, err = stmt.ExecContext(ctx, item.name, item.kind, item.identity, item.size, item.mtime); err != nil {
-						break
+					if _, err := stmt.ExecContext(ctx, item.name, item.kind, item.identity, item.size, item.mtime); err != nil {
+						return err
 					}
 				}
-				stmt.Close()
-			}
-			if err == nil {
-				err = tx.Commit()
-			}
-			tx.Rollback()
-			if err != nil {
+				return nil
+			}); err != nil {
 				return err
 			}
 		}
@@ -587,95 +599,117 @@ type stagedScanItem struct {
 	entry int64
 }
 
-func (l *Library) buildScanGeneration(ctx context.Context, id, gen int64, marker string, stage *sql.DB) error {
+// buildScanGenerationOptions groups the inputs for buildScanGeneration.
+type buildScanGenerationOptions struct {
+	ID     int64
+	Gen    int64
+	Marker string
+	Stage  *storage.ScanStore
+}
+
+func (l *Library) buildScanGeneration(ctx context.Context, params buildScanGenerationOptions) error {
+	id, gen, marker, stage := params.ID, params.Gen, params.Marker, params.Stage
+
 	var after string
 	for {
-		rows, err := stage.QueryContext(ctx, "SELECT name,kind,identity,size,mtime,entry FROM snapshot WHERE name>? ORDER BY name LIMIT ?", after, refreshPageSize)
-		if err != nil {
-			return err
-		}
-		items := make([]stagedScanItem, 0, refreshPageSize)
-		for rows.Next() {
-			var item stagedScanItem
-			if err = rows.Scan(&item.name, &item.kind, &item.identity, &item.size, &item.mtime, &item.entry); err != nil {
-				break
+		var items []stagedScanItem
+		if err := stage.View(ctx, func(tx *sql.Tx) error {
+			rows, err := tx.QueryContext(ctx, "SELECT name,kind,identity,size,mtime_ns,entry FROM snapshot WHERE name>? ORDER BY name LIMIT ?", after, refreshPageSize)
+			if err != nil {
+				return err
 			}
-			items = append(items, item)
-		}
-		if err == nil {
-			err = rows.Err()
-		}
-		rows.Close()
-		if err != nil {
+			items, err = storage.CollectRows(rows, func(rows *sql.Rows) (stagedScanItem, error) {
+				var item stagedScanItem
+				err := rows.Scan(&item.name, &item.kind, &item.identity, &item.size, &item.mtime, &item.entry)
+				return item, err
+			})
+			return err
+		}); err != nil {
 			return err
 		}
 		if len(items) == 0 {
 			return nil
 		}
-		if err = l.writeScanGenerationPage(ctx, id, gen, marker, items); err != nil {
+		if err := l.writeScanGenerationPage(ctx, writeScanGenerationPageOptions{ID: id, Gen: gen, Marker: marker, Items: items}); err != nil {
 			return err
 		}
-		if err = updateScanStageEntries(ctx, stage, items); err != nil {
+		if err := updateScanStageEntries(ctx, stage, items); err != nil {
 			return err
 		}
 		after = items[len(items)-1].name
 	}
 }
 
-func updateScanStageEntries(ctx context.Context, stage *sql.DB, items []stagedScanItem) error {
-	tx, err := stage.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	stmt, err := tx.PrepareContext(ctx, "UPDATE snapshot SET entry=? WHERE name=?")
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-	for _, item := range items {
-		if _, err = stmt.ExecContext(ctx, item.entry, item.name); err != nil {
+func updateScanStageEntries(ctx context.Context, stage *storage.ScanStore, items []stagedScanItem) error {
+	return stage.Write(ctx, func(tx *sql.Tx) (err error) {
+		stmt, err := tx.PrepareContext(ctx, "UPDATE snapshot SET entry=? WHERE name=?")
+		if err != nil {
 			return err
 		}
-	}
-	return tx.Commit()
-}
-
-func (l *Library) writeScanGenerationPage(ctx context.Context, id, gen int64, marker string, items []stagedScanItem) error {
-	tx, err := l.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	entryStmt, err := tx.PrepareContext(ctx, "INSERT INTO entries(parent,name,kind,identity,size,mtime,present,observed) VALUES(?,?,?,?,?,?,0,?)")
-	if err != nil {
-		return err
-	}
-	defer entryStmt.Close()
-	itemStmt, err := tx.PrepareContext(ctx, "INSERT INTO directory_items VALUES(?,?,?,?,?,?,?)")
-	if err != nil {
-		return err
-	}
-	defer itemStmt.Close()
-	for i := range items {
-		item := &items[i]
-		if item.entry == 0 {
-			res, err := entryStmt.ExecContext(ctx, id, item.name, item.kind, item.identity, item.size, item.mtime, marker)
-			if err != nil {
-				return err
-			}
-			if item.entry, err = res.LastInsertId(); err != nil {
+		defer func() { err = errors.Join(err, stmt.Close()) }()
+		for _, item := range items {
+			if _, err := stmt.ExecContext(ctx, item.entry, item.name); err != nil {
 				return err
 			}
 		}
-		if _, err = itemStmt.ExecContext(ctx, id, gen, item.entry, item.name, item.kind, item.size, item.mtime); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+		return nil
+	})
 }
 
-func (l *Library) publishDirectoryScan(ctx context.Context, id, gen int64, marker string, baseline scanBaseline, stagePath string, rebuild bool) error {
+// writeScanGenerationPageOptions groups the inputs for writeScanGenerationPage.
+type writeScanGenerationPageOptions struct {
+	ID     int64
+	Gen    int64
+	Marker string
+	Items  []stagedScanItem
+}
+
+func (l *Library) writeScanGenerationPage(ctx context.Context, params writeScanGenerationPageOptions) error {
+	id, gen, marker, items := params.ID, params.Gen, params.Marker, params.Items
+
+	return l.db.Write(ctx, func(tx *sql.Tx) (err error) {
+		entryStmt, err := tx.PrepareContext(ctx, "INSERT INTO entries(parent,name,kind,identity,size,mtime_ns,present,observed) VALUES(?,?,?,?,?,?,0,?)")
+		if err != nil {
+			return err
+		}
+		defer func() { err = errors.Join(err, entryStmt.Close()) }()
+		itemStmt, err := tx.PrepareContext(ctx, "INSERT INTO directory_items VALUES(?,?,?,?,?,?,?)")
+		if err != nil {
+			return err
+		}
+		defer func() { err = errors.Join(err, itemStmt.Close()) }()
+		for i := range items {
+			item := &items[i]
+			if item.entry == 0 {
+				res, err := entryStmt.ExecContext(ctx, id, item.name, item.kind, item.identity, item.size, item.mtime, marker)
+				if err != nil {
+					return err
+				}
+				if item.entry, err = res.LastInsertId(); err != nil {
+					return err
+				}
+			}
+			if _, err = itemStmt.ExecContext(ctx, id, gen, item.entry, item.name, item.kind, item.size, item.mtime); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// publishDirectoryScanOptions groups the inputs for publishDirectoryScan.
+type publishDirectoryScanOptions struct {
+	ID        int64
+	Gen       int64
+	Marker    string
+	Baseline  scanBaseline
+	StagePath string
+	Rebuild   bool
+}
+
+func (l *Library) publishDirectoryScan(ctx context.Context, params publishDirectoryScanOptions) error {
+	id, gen, marker, baseline, stagePath, rebuild := params.ID, params.Gen, params.Marker, params.Baseline, params.StagePath, params.Rebuild
+
 	if err := l.lockNumbering(ctx); err != nil {
 		return err
 	}
@@ -686,53 +720,43 @@ func (l *Library) publishDirectoryScan(ctx context.Context, id, gen int64, marke
 	if err := l.CheckAvailable(ctx, id); err != nil {
 		return err
 	}
-	conn, err := l.DB.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	if _, err = conn.ExecContext(ctx, "ATTACH DATABASE ? AS directory_scan", stagePath); err != nil {
-		return err
-	}
-	defer conn.ExecContext(context.WithoutCancel(ctx), "DETACH DATABASE directory_scan")
-	tx, err := conn.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var generation int64
-	if err = tx.QueryRowContext(ctx, "SELECT generation FROM directory_state WHERE dir=?", id).Scan(&generation); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	if generation != baseline.generation {
-		return ErrDirectoryScanChanged.Wrap(fmt.Errorf("directory index generation %d -> %d", baseline.generation, generation))
-	}
-	if l.indexEpoch.Load() != baseline.epoch {
-		if err = validateScanBaseline(ctx, tx, id, baseline); err != nil {
+	err := l.db.WriteScan(ctx, stagePath, func(tx *sql.Tx) error {
+		var err error
+		var generation int64
+		if err = tx.QueryRowContext(ctx, "SELECT generation FROM directory_state WHERE dir=?", id).Scan(&generation); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-	}
-	if rebuild {
-		if _, err = tx.ExecContext(ctx, `UPDATE entries SET present=0 WHERE id IN
+		if generation != baseline.generation {
+			return ErrDirectoryScanChanged.Wrap(fmt.Errorf("directory index generation %d -> %d", baseline.generation, generation))
+		}
+		if l.indexEpoch.Load() != baseline.epoch {
+			if err = validateScanBaseline(ctx, tx, id, baseline); err != nil {
+				return err
+			}
+		}
+		if rebuild {
+			if _, err = tx.ExecContext(ctx, `UPDATE entries SET present=0 WHERE id IN
 		 (SELECT b.id FROM directory_scan.baseline b WHERE NOT EXISTS(SELECT 1 FROM directory_scan.snapshot s WHERE s.entry=b.id))`); err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, promoteScanCandidatesSQL, storage.Now(), id, marker); err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, `UPDATE entries AS e SET
-		 version=e.version+CASE WHEN e.size<>s.size OR e.mtime<>s.mtime THEN 1 ELSE 0 END,
-		 kind=s.kind,size=s.size,mtime=s.mtime,observed=?
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, promoteScanCandidatesSQL, storage.Now(), id, marker); err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE entries AS e SET
+		 version=e.version+CASE WHEN e.size<>s.size OR e.mtime_ns<>s.mtime_ns THEN 1 ELSE 0 END,
+		 kind=s.kind,size=s.size,mtime_ns=s.mtime_ns,observed=?
 		 FROM directory_scan.snapshot s JOIN directory_scan.baseline b ON s.entry=b.id
-		 WHERE e.id=s.entry AND (s.kind<>b.kind OR s.size<>b.size OR s.mtime<>b.mtime)`, storage.Now()); err != nil {
+		 WHERE e.id=s.entry AND (s.kind<>b.kind OR s.size<>b.size OR s.mtime_ns<>b.mtime_ns)`, storage.Now()); err != nil {
+				return err
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO directory_state(dir,generation,refreshed,error) VALUES(?,?,?,'')
+	 ON CONFLICT(dir) DO UPDATE SET generation=excluded.generation,refreshed=excluded.refreshed,error=''`, id, gen, storage.Now()); err != nil {
 			return err
 		}
-	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO directory_state(dir,generation,refreshed,error) VALUES(?,?,?,'')
-	 ON CONFLICT(dir) DO UPDATE SET generation=excluded.generation,refreshed=excluded.refreshed,error=''`, id, gen, storage.Now()); err != nil {
-		return err
-	}
-	if err = tx.Commit(); err != nil {
+		return nil
+	})
+	if err != nil {
 		return err
 	}
 	if rebuild {
@@ -741,107 +765,125 @@ func (l *Library) publishDirectoryScan(ctx context.Context, id, gen int64, marke
 	return nil
 }
 
-func (l *Library) cleanScanStaging(ctx context.Context, stage *sql.DB, id, gen int64, marker string, published bool) {
-	comparison := "="
-	if published {
-		comparison = "<>"
-	}
-	for ctx.Err() == nil {
-		count, err := l.cleanScanGenerationPage(ctx, id, gen, marker, comparison, published)
+// cleanScanStagingOptions groups the inputs for cleanScanStaging.
+type cleanScanStagingOptions struct {
+	Stage     *storage.ScanStore
+	ID        int64
+	Gen       int64
+	Marker    string
+	Published bool
+}
+
+func (l *Library) cleanScanStaging(ctx context.Context, params cleanScanStagingOptions) error {
+	stage, id, gen, marker, published := params.Stage, params.ID, params.Gen, params.Marker, params.Published
+
+	for {
+		count, err := l.cleanScanGenerationPage(ctx, cleanScanGenerationPageOptions{ID: id, Gen: gen, Marker: marker, Published: published})
 		if err != nil {
-			return
+			return fmt.Errorf("clean directory %d scan generation: %w", id, err)
 		}
 		if count == 0 {
 			break
 		}
 	}
 	var after int64
-	for ctx.Err() == nil {
-		rows, err := stage.QueryContext(ctx, "SELECT entry,observed FROM orphan_candidates WHERE parent=? AND entry>? ORDER BY entry LIMIT ?", id, after, refreshPageSize)
-		if err != nil {
-			return
-		}
-		orphans := make([]scanOrphan, 0, refreshPageSize)
-		for rows.Next() {
-			var item scanOrphan
-			if err = rows.Scan(&item.entry, &item.observed); err != nil {
-				break
+	for {
+		var orphans []scanOrphan
+		if err := stage.View(ctx, func(tx *sql.Tx) error {
+			rows, err := tx.QueryContext(ctx, "SELECT entry,observed FROM orphan_candidates WHERE parent=? AND entry>? ORDER BY entry LIMIT ?", id, after, refreshPageSize)
+			if err != nil {
+				return err
 			}
-			orphans = append(orphans, item)
+			orphans, err = storage.CollectRows(rows, func(rows *sql.Rows) (scanOrphan, error) {
+				var item scanOrphan
+				err := rows.Scan(&item.entry, &item.observed)
+				return item, err
+			})
+			return err
+		}); err != nil {
+			return fmt.Errorf("read directory %d scan orphan candidates: %w", id, err)
 		}
-		if err == nil {
-			err = rows.Err()
+		if len(orphans) == 0 {
+			return nil
 		}
-		rows.Close()
-		if err != nil || len(orphans) == 0 {
-			return
-		}
-		tx, err := l.DB.BeginTx(ctx, nil)
-		if err != nil {
-			return
-		}
-		err = deleteCapturedScanOrphans(ctx, tx, id, marker, published, orphans)
-		if err == nil {
-			err = tx.Commit()
-		}
-		tx.Rollback()
-		if err != nil {
-			return
+		if err := l.db.Write(ctx, func(tx *sql.Tx) error {
+			return deleteCapturedScanOrphans(ctx, deleteCapturedScanOrphansOptions{Tx: tx, ID: id, Marker: marker, Published: published, Orphans: orphans})
+		}); err != nil {
+			return fmt.Errorf("clean directory %d scan orphan candidates: %w", id, err)
 		}
 		after = orphans[len(orphans)-1].entry
 	}
+}
+
+// cleanScanGenerationPageOptions groups the inputs for cleanScanGenerationPage.
+type cleanScanGenerationPageOptions struct {
+	ID        int64
+	Gen       int64
+	Marker    string
+	Published bool
 }
 
 // Removing obsolete generation rows and their invisible candidates in one
 // transaction prevents cleanup interruption from creating new orphan entries.
 // The indexed generation rows also identify candidates whose page committed
 // before a local stage update failed.
-func (l *Library) cleanScanGenerationPage(ctx context.Context, id, gen int64, marker, comparison string, published bool) (int, error) {
-	tx, err := l.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
+func (l *Library) cleanScanGenerationPage(ctx context.Context, params cleanScanGenerationPageOptions) (int, error) {
+	id, gen, marker, published := params.ID, params.Gen, params.Marker, params.Published
+
+	comparison := "="
+	if published {
+		comparison = "<>"
 	}
-	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, "SELECT rowid,entry FROM directory_items WHERE dir=? AND generation"+comparison+"? AND generation<>COALESCE((SELECT generation FROM directory_state WHERE dir=?),0) LIMIT ?", id, gen, id, refreshPageSize)
-	if err != nil {
-		return 0, err
-	}
-	var rowIDs, entries []int64
-	for rows.Next() {
-		var row, entry int64
-		if err = rows.Scan(&row, &entry); err != nil {
-			break
-		}
-		rowIDs = append(rowIDs, row)
-		entries = append(entries, entry)
-	}
-	if err == nil {
-		err = rows.Err()
-	}
-	rows.Close()
-	if err != nil || len(rowIDs) == 0 {
-		return 0, err
-	}
-	stmt, err := tx.PrepareContext(ctx, "DELETE FROM directory_items WHERE rowid=?")
-	if err != nil {
-		return 0, err
-	}
-	defer stmt.Close()
-	for _, row := range rowIDs {
-		if _, err = stmt.ExecContext(ctx, row); err != nil {
+	return storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (_ int, err error) {
+		rows, err := tx.QueryContext(ctx, "SELECT rowid,entry FROM directory_items WHERE dir=? AND generation"+comparison+"? AND generation<>COALESCE((SELECT generation FROM directory_state WHERE dir=?),0) LIMIT ?", id, gen, id, refreshPageSize)
+		if err != nil {
 			return 0, err
 		}
-	}
-	if err = deleteScanCandidates(ctx, tx, id, marker, published, entries); err != nil {
-		return 0, err
-	}
-	if err = tx.Commit(); err != nil {
-		return 0, err
-	}
-	return len(rowIDs), nil
+		var rowIDs, entries []int64
+		for rows.Next() {
+			var row, entry int64
+			if err = rows.Scan(&row, &entry); err != nil {
+				break
+			}
+			rowIDs = append(rowIDs, row)
+			entries = append(entries, entry)
+		}
+		if err == nil {
+			err = rows.Err()
+		}
+		err = errors.Join(err, rows.Close())
+		if err != nil || len(rowIDs) == 0 {
+			return 0, err
+		}
+		stmt, err := tx.PrepareContext(ctx, "DELETE FROM directory_items WHERE rowid=?")
+		if err != nil {
+			return 0, err
+		}
+		defer func() { err = errors.Join(err, stmt.Close()) }()
+		for _, row := range rowIDs {
+			if _, err = stmt.ExecContext(ctx, row); err != nil {
+				return 0, err
+			}
+		}
+		if err = deleteScanCandidates(ctx, deleteScanCandidatesOptions{Tx: tx, ID: id, Marker: marker, Published: published, Entries: entries}); err != nil {
+			return 0, err
+		}
+		return len(rowIDs), nil
+	})
 }
 
-func deleteScanCandidates(ctx context.Context, tx *sql.Tx, id int64, marker string, published bool, entries []int64) error {
+// deleteScanCandidatesOptions groups the inputs for deleteScanCandidates.
+type deleteScanCandidatesOptions struct {
+	Tx        *sql.Tx
+	ID        int64
+	Marker    string
+	Published bool
+	Entries   []int64
+}
+
+func deleteScanCandidates(ctx context.Context, params deleteScanCandidatesOptions) (err error) {
+	tx, id, marker, published, entries := params.Tx, params.ID, params.Marker, params.Published, params.Entries
+
 	filter, value := "observed=?", marker
 	if published {
 		filter, value = "observed LIKE ?", "directory-scan:%"
@@ -850,7 +892,7 @@ func deleteScanCandidates(ctx context.Context, tx *sql.Tx, id int64, marker stri
 	if err != nil {
 		return err
 	}
-	defer stmt.Close()
+	defer func() { err = errors.Join(err, stmt.Close()) }()
 	for _, entry := range entries {
 		if _, err = stmt.ExecContext(ctx, entry, id, value); err != nil {
 			return err
@@ -859,13 +901,24 @@ func deleteScanCandidates(ctx context.Context, tx *sql.Tx, id int64, marker stri
 	return nil
 }
 
-func deleteCapturedScanOrphans(ctx context.Context, tx *sql.Tx, id int64, marker string, published bool, orphans []scanOrphan) error {
+// deleteCapturedScanOrphansOptions groups the inputs for deleteCapturedScanOrphans.
+type deleteCapturedScanOrphansOptions struct {
+	Tx        *sql.Tx
+	ID        int64
+	Marker    string
+	Published bool
+	Orphans   []scanOrphan
+}
+
+func deleteCapturedScanOrphans(ctx context.Context, params deleteCapturedScanOrphansOptions) (err error) {
+	tx, id, marker, published, orphans := params.Tx, params.ID, params.Marker, params.Published, params.Orphans
+
 	stmt, err := tx.PrepareContext(ctx, `DELETE FROM entries WHERE id=? AND parent=? AND present=0 AND observed=?
 	 AND NOT EXISTS(SELECT 1 FROM directory_items i WHERE i.dir=entries.parent AND i.entry=entries.id)`)
 	if err != nil {
 		return err
 	}
-	defer stmt.Close()
+	defer func() { err = errors.Join(err, stmt.Close()) }()
 	for _, item := range orphans {
 		if !published && item.observed != marker {
 			continue

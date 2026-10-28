@@ -1,6 +1,6 @@
 import { errorText } from '../../app/errors'
 import { ref, nextTick } from 'vue'
-import { api, newRequestKey } from '../../app/api'
+import { api } from '../../app/api'
 import type { Entry } from '../../app/contracts'
 import { nameWithoutExtension, normalizedExtension } from './entry-types'
 
@@ -10,7 +10,7 @@ export function useInlineRename(options: { beforeSave: () => void; onSaved: () =
     inlineInput = ref<HTMLInputElement>(),
     inlineName = ref(''),
     inlineExtension = ref(''),
-    inlineVersion = ref(0),
+    inlineETag = ref(''),
     inlineSaving = ref(false),
     inlineError = ref('')
   function setInlineInput(el: unknown) {
@@ -25,7 +25,7 @@ export function useInlineRename(options: { beforeSave: () => void; onSaved: () =
     if (e.kind !== 'file' || inlineSaving.value) return
     inlineFullName.value = false
     inlineEntry.value = e
-    inlineVersion.value = e.version
+    inlineETag.value = e.etag
     inlineError.value = ''
     inlineExtension.value = normalizedExtension(e.name)
     inlineName.value = nameWithoutExtension(e.name)
@@ -71,10 +71,9 @@ export function useInlineRename(options: { beforeSave: () => void; onSaved: () =
     try {
       await api<unknown>(`/entries/${e.id}/rename`, {
         method: 'POST',
+        headers: { 'If-Match': inlineETag.value },
         body: {
-          name,
-          version: inlineVersion.value,
-          key: newRequestKey()
+          name
         }
       })
       await options.onSaved()

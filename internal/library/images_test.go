@@ -1,6 +1,7 @@
 package library
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,7 +18,9 @@ func TestAdjacentImagesWrapAndSkipVideos(t *testing.T) {
 		t.Fatal(err)
 	}
 	var id int64
-	l.DB.QueryRow("SELECT id FROM entries WHERE name='a.png'").Scan(&id)
+	l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name='a.png'").Scan(&id)
+	})
 	for _, name := range []string{"c.JPG", "e.gif", "a.png"} {
 		e, err := l.AdjacentImage(t.Context(), id, false)
 		if err != nil || e.Name != name {
@@ -29,7 +32,9 @@ func TestAdjacentImagesWrapAndSkipVideos(t *testing.T) {
 	if err != nil || e.Name != "e.gif" {
 		t.Fatal(e, err)
 	}
-	l.DB.QueryRow("SELECT id FROM entries WHERE name='b.mp4'").Scan(&id)
+	l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name='b.mp4'").Scan(&id)
+	})
 	if _, err = l.AdjacentImage(t.Context(), id, false); err == nil {
 		t.Fatal("video accepted")
 	}

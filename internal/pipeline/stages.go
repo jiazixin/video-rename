@@ -9,8 +9,18 @@ import (
 	"video-rename/internal/vision"
 )
 
+// PrepareRequest supplies the source, extraction configuration and owned workspace.
+type PrepareRequest struct {
+	Config     *config.TaskConfig
+	Job        domain.VideoJob
+	ProbePath  string
+	FFmpegPath string
+	WorkDir    string
+}
+
 // Prepare is independent of model concurrency. Successful output belongs to the cache.
-func Prepare(ctx context.Context, cfg *config.TaskConfig, job domain.VideoJob, probe, ffmpeg, work string) (domain.FrameSet, error) {
+func Prepare(ctx context.Context, request PrepareRequest) (domain.FrameSet, error) {
+	cfg, job, probe, ffmpeg, work := request.Config, request.Job, request.ProbePath, request.FFmpegPath, request.WorkDir
 	meta, err := (&media.Prober{FFprobePath: probe}).Probe(ctx, job)
 	if err != nil {
 		return domain.FrameSet{}, err

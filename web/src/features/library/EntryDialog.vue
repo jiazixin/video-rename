@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import './library.css';
   import { computed } from 'vue';
   import { ArrowRight, FileVideo, Folder, Undo2 } from '@lucide/vue';
   import ModalDialog from '../../components/ModalDialog.vue';
@@ -104,3 +105,22 @@
     ></ModalDialog
   >
 </template>
+
+<style scoped>
+  .selection-summary {
+    padding: 15px;
+    background: var(--control-hover);
+    border-radius: 8px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 22px;
+    overflow-wrap: anywhere;
+  }
+  .selection-summary svg {
+    color: var(--palette-7a9284);
+  }
+  .selection-summary strong {
+    font-size: 13px;
+  }
+</style>

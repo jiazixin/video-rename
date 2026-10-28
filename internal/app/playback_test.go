@@ -1,6 +1,7 @@
 package app
 
 import (
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"net/http/httptest"
@@ -24,7 +25,9 @@ func TestPlaybackRangeAndRestrictions(t *testing.T) {
 		t.Fatal(err)
 	}
 	var id int64
-	a.DB.QueryRow("SELECT id FROM entries WHERE name='clip.mp4'").Scan(&id)
+	a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name='clip.mp4'").Scan(&id)
+	})
 	request := func() *httptest.ResponseRecorder {
 		r := httptest.NewRequest("GET", fmt.Sprintf("/api/entries/%d/video", id), nil)
 		r.SetPathValue("id", fmt.Sprint(id))
@@ -47,7 +50,9 @@ func TestPlaybackRangeAndRestrictions(t *testing.T) {
 	if w = request(); w.Code == 200 || w.Code == 206 {
 		t.Fatal("served symlink")
 	}
-	a.DB.QueryRow("SELECT id FROM entries WHERE name='secret.txt'").Scan(&id)
+	a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name='secret.txt'").Scan(&id)
+	})
 	if w = request(); w.Code != 400 {
 		t.Fatal("served non-video", w.Code)
 	}
@@ -66,7 +71,9 @@ func TestAudioPlaybackRestrictions(t *testing.T) {
 		t.Fatal(err)
 	}
 	var id int64
-	a.DB.QueryRow("SELECT id FROM entries WHERE name='track.mp3'").Scan(&id)
+	a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name='track.mp3'").Scan(&id)
+	})
 	request := func() *httptest.ResponseRecorder {
 		r := httptest.NewRequest("GET", fmt.Sprintf("/api/entries/%d/audio", id), nil)
 		r.SetPathValue("id", fmt.Sprint(id))
@@ -91,7 +98,9 @@ func TestAudioPlaybackRestrictions(t *testing.T) {
 	if w.Code != 401 {
 		t.Fatal("unprotected audio", w.Code)
 	}
-	a.DB.QueryRow("SELECT id FROM entries WHERE name='notes.txt'").Scan(&id)
+	a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name='notes.txt'").Scan(&id)
+	})
 	if w = request(); w.Code != 400 {
 		t.Fatal("served non-audio", w.Code)
 	}
@@ -111,7 +120,9 @@ func TestImagePreviewRestrictions(t *testing.T) {
 	}
 	for _, name := range []string{"photo.png", "active.svg"} {
 		var id int64
-		a.DB.QueryRow("SELECT id FROM entries WHERE name=?", name).Scan(&id)
+		a.db.View(t.Context(), func(tx *sql.Tx) error {
+			return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name=?", name).Scan(&id)
+		})
 		r := httptest.NewRequest("GET", fmt.Sprintf("/api/entries/%d/image", id), nil)
 		r.SetPathValue("id", fmt.Sprint(id))
 		w := httptest.NewRecorder()

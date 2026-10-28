@@ -1,4 +1,4 @@
-import { ref, type Ref } from 'vue'
+import { onScopeDispose, ref, type Ref } from 'vue'
 
 type StickyHeaderElements = {
   /** The sticky controls whose height moves the header. */
@@ -37,6 +37,7 @@ export function useStickyHeader({ fixedControls, fileTable, headerScroll }: Stic
     if (target && target.scrollLeft !== source.scrollLeft) target.scrollLeft = source.scrollLeft
   }
   function observeLayout() {
+    stopObservingLayout()
     layoutObserver = new ResizeObserver(scheduleHeaderLayout)
     if (fixedControls.value) layoutObserver.observe(fixedControls.value)
     if (fileTable.value) layoutObserver.observe(fileTable.value)
@@ -48,6 +49,7 @@ export function useStickyHeader({ fixedControls, fileTable, headerScroll }: Stic
     cancelAnimationFrame(headerFrame)
     headerFrame = 0
   }
+  onScopeDispose(stopObservingLayout)
   return {
     headerColumns,
     headerWidth,

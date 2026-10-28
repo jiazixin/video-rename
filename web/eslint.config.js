@@ -17,10 +17,10 @@ export default defineConfigWithVueTs(
       '@typescript-eslint/no-misused-promises': 'error',
       '@typescript-eslint/consistent-type-imports': 'error',
       '@typescript-eslint/consistent-type-definitions': ['error', 'type'],
-      // Numbers read naturally in template literals; see README 代码例外.
+      // Numbers read naturally in template literals; see the README code exceptions.
       '@typescript-eslint/restrict-template-expressions': ['error', { allowNumber: true }],
       'no-console': ['error', { allow: ['warn', 'error'] }],
-      // Web代码规范 §2: no nested conditional expressions.
+      // Web standards section 2 forbids nested conditional expressions.
       'no-nested-ternary': 'error',
       'vue/block-order': ['error', { order: ['script', 'template', 'style'] }],
       'vue/component-api-style': ['error', ['script-setup']],

@@ -3,9 +3,11 @@ package library
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"fmt"
 
 	"video-rename/internal/domain"
+	"video-rename/internal/storage"
 )
 
 // BatchRestoreResult reports the outcome of restoring several renames.
@@ -28,27 +30,27 @@ type BatchRestoreFailure struct {
 func (l *Library) RestoreBatch(ctx context.Context, run int64) (BatchRestoreResult, error) {
 	out := BatchRestoreResult{Errors: []BatchRestoreFailure{}}
 	var status string
-	if err := l.DB.QueryRowContext(ctx, "SELECT status FROM runs WHERE id=?", run).Scan(&status); err != nil {
+	if err := l.db.View(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT status FROM runs WHERE id=?", run).Scan(&status)
+	}); err != nil {
 		return out, err
 	}
 	if domain.ActiveRunStatus(status) {
-		return out, domain.Fail(domain.KindConflict, "run_active", "cancel the run and wait for it to finish first")
-	}
-	rows, err := l.DB.QueryContext(ctx, "SELECT id FROM operations WHERE run=? AND source='automatic' AND status='committed' AND undo_of=0 ORDER BY id DESC", run)
-	if err != nil {
-		return out, err
+		return out, domain.Fail(domain.KindConflict, domain.Record{Code: "run_active", Message: "cancel the run and wait for it to finish first"})
 	}
 	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err = rows.Scan(&id); err != nil {
-			rows.Close()
-			return out, err
+	err := l.db.View(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT id FROM operations WHERE run=? AND source='automatic' AND status='committed' AND undo_of=0 ORDER BY id DESC", run)
+		if err != nil {
+			return err
 		}
-		ids = append(ids, id)
-	}
-	err = rows.Err()
-	rows.Close()
+		ids, err = storage.CollectRows(rows, func(rows *sql.Rows) (int64, error) {
+			var id int64
+			err := rows.Scan(&id)
+			return id, err
+		})
+		return err
+	})
 	if err != nil {
 		return out, err
 	}

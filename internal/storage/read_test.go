@@ -14,20 +14,20 @@ func TestReadPoolIsolationAndWriterAvailability(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if _, err = s.Exec("INSERT INTO prompts(id,title,body,created,updated) VALUES(1,'before','body','now','now')"); err != nil {
+	if _, err = s.write.ExecContext(t.Context(), "INSERT INTO prompts(id,title,body,created,updated) VALUES(1,'before','body','now','now')"); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	write, err := s.BeginTx(ctx, nil)
+	write, err := s.write.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer write.Rollback()
-	if _, err = write.Exec("UPDATE prompts SET title='after' WHERE id=1"); err != nil {
+	if _, err = write.ExecContext(t.Context(), "UPDATE prompts SET title='after' WHERE id=1"); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := s.Read().BeginTx(ctx, nil)
+	snapshot, err := s.read.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestReadPoolIsolationAndWriterAvailability(t *testing.T) {
 	if err = write.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ExecContext(ctx, "UPDATE prompts SET body='changed' WHERE id=1"); err != nil {
+	if _, err = s.write.ExecContext(ctx, "UPDATE prompts SET body='changed' WHERE id=1"); err != nil {
 		t.Fatalf("reader blocked writer: %v", err)
 	}
 	if err = snapshot.QueryRowContext(ctx, "SELECT title FROM prompts WHERE id=1").Scan(&title); err != nil || title != "before" {
@@ -48,7 +48,7 @@ func TestReadPoolIsolationAndWriterAvailability(t *testing.T) {
 	if err = snapshot.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Read().QueryRowContext(ctx, "SELECT title FROM prompts WHERE id=1").Scan(&title); err != nil || title != "after" {
+	if err = s.read.QueryRowContext(ctx, "SELECT title FROM prompts WHERE id=1").Scan(&title); err != nil || title != "after" {
 		t.Fatalf("committed write invisible: %q %v", title, err)
 	}
 	// Hold every reader so settings are checked on distinct physical connections.
@@ -59,7 +59,7 @@ func TestReadPoolIsolationAndWriterAvailability(t *testing.T) {
 		}
 	}()
 	for range 4 {
-		c, err := s.Read().Conn(ctx)
+		c, err := s.read.Conn(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -75,7 +75,7 @@ func TestReadPoolIsolationAndWriterAvailability(t *testing.T) {
 			t.Fatalf("reader collation: %d %v", enabled, err)
 		}
 	}
-	if _, err = s.ExecContext(ctx, "UPDATE prompts SET body='writer remains available' WHERE id=1"); err != nil {
+	if _, err = s.write.ExecContext(ctx, "UPDATE prompts SET body='writer remains available' WHERE id=1"); err != nil {
 		t.Fatal(err)
 	}
 }

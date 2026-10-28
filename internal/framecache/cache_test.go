@@ -13,7 +13,8 @@ import (
 
 	"video-rename/internal/config"
 	"video-rename/internal/domain"
-	"video-rename/internal/systemsettings"
+	"video-rename/internal/systemsetting"
+	"video-rename/internal/timefmt"
 )
 
 func build(work string) (domain.FrameSet, error) {
@@ -23,7 +24,7 @@ func build(work string) (domain.FrameSet, error) {
 }
 func mustCache(t *testing.T, root string, limit int64) *Cache {
 	t.Helper()
-	c, e := New(root, limit, slog.New(slog.DiscardHandler))
+	c, e := New(t.Context(), Options{Base: root, LimitBytes: limit, Logger: slog.New(slog.DiscardHandler)})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -74,10 +75,10 @@ func TestCapacityWaitCancellationEvictionAndPinnedExpiry(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
 	_, err = c.Acquire(ctx, strings.Repeat("b", 64), 100000, build)
-	if err != context.DeadlineExceeded {
+	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal(err)
 	}
-	if err = c.Sweep(time.Now().Add(4 * 24 * time.Hour)); err != nil {
+	if err = c.Sweep(t.Context(), time.Now().Add(4*24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if c.Stats().Entries != 1 {
@@ -92,7 +93,7 @@ func TestCapacityWaitCancellationEvictionAndPinnedExpiry(t *testing.T) {
 		t.Fatal("idle cache not evicted")
 	}
 	b.Release(false)
-	if err = c.Sweep(time.Now().Add(4 * 24 * time.Hour)); err != nil {
+	if err = c.Sweep(t.Context(), time.Now().Add(4*24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if c.Stats().Entries != 0 {
@@ -118,7 +119,7 @@ func TestPartialFailureCleanedAndUnknownFilesUntouched(t *testing.T) {
 	if b, _ := os.ReadFile(sentinel); string(b) != "keep" {
 		t.Fatal("unrelated file changed")
 	}
-	if _, err = New(base, 1000000, slog.New(slog.DiscardHandler)); err == nil {
+	if _, err = New(t.Context(), Options{Base: base, LimitBytes: 1000000, Logger: slog.New(slog.DiscardHandler)}); err == nil {
 		t.Fatal("second process cache accepted")
 	}
 }
@@ -169,9 +170,9 @@ func TestRetentionPoliciesAndRestart(t *testing.T) {
 	for _, mode := range []string{"immediate", "delayed", "keep"} {
 		t.Run(mode, func(t *testing.T) {
 			base := t.TempDir()
-			policy := systemsettings.Default().Policy
+			policy := systemsetting.Default().Policy
 			policy.SuccessCacheMode, policy.SuccessCacheHours, policy.IdleCacheHours = mode, 120, 0
-			c, err := New(base, 1000000, slog.New(slog.DiscardHandler), policy)
+			c, err := New(t.Context(), Options{Base: base, LimitBytes: 1000000, Logger: slog.New(slog.DiscardHandler), Policy: new(policy)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -189,13 +190,13 @@ func TestRetentionPoliciesAndRestart(t *testing.T) {
 				return
 			}
 			c.mu.Lock()
-			c.entries[key].LastUsed = time.Now().Add(-96 * time.Hour)
+			c.entries[key].LastUsed = timefmt.Time(time.Now().Add(-96 * time.Hour))
 			if err = c.persist(c.entries[key]); err != nil {
 				t.Fatal(err)
 			}
 			c.mu.Unlock()
 			c.Close()
-			c, err = New(base, 1000000, slog.New(slog.DiscardHandler), policy)
+			c, err = New(t.Context(), Options{Base: base, LimitBytes: 1000000, Logger: slog.New(slog.DiscardHandler), Policy: new(policy)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -203,7 +204,7 @@ func TestRetentionPoliciesAndRestart(t *testing.T) {
 			if c.Stats().Entries != 1 {
 				t.Fatal("startup used fixed 3-day retention")
 			}
-			if err = c.Sweep(time.Now().Add(121 * time.Hour)); err != nil {
+			if err = c.Sweep(t.Context(), time.Now().Add(121*time.Hour)); err != nil {
 				t.Fatal(err)
 			}
 			want := 1
@@ -231,7 +232,7 @@ func TestClearProtectsLeasesAndBuilders(t *testing.T) {
 	c.building["pending-test"] = true
 	c.building[a.key] = true
 	c.mu.Unlock()
-	result, err := c.Clear()
+	result, err := c.Clear(t.Context())
 	if err != nil || result.Deleted != 1 || result.Retained != 2 || result.FreedBytes <= 0 {
 		t.Fatal(result, err)
 	}
@@ -243,17 +244,17 @@ func TestClearProtectsLeasesAndBuilders(t *testing.T) {
 	delete(c.building, "pending-test")
 	delete(c.building, a.key)
 	c.mu.Unlock()
-	result, err = c.Clear()
+	result, err = c.Clear(t.Context())
 	if err != nil || result.Deleted != 1 || result.Retained != 0 {
 		t.Fatal(result, err)
 	}
 }
 func TestIdleAndSuccessExpiryWhicheverFirst(t *testing.T) {
 	c := mustCache(t, t.TempDir(), 1000000)
-	policy := systemsettings.Default().Policy
+	policy := systemsetting.Default().Policy
 	policy.SuccessCacheMode = "delayed"
 	policy.SuccessCacheHours = 168
-	if err := c.Configure(1000000, policy); err != nil {
+	if err := c.Configure(t.Context(), 1000000, policy); err != nil {
 		t.Fatal(err)
 	}
 	lease, err := c.Acquire(t.Context(), strings.Repeat("d", 64), 100000, build)
@@ -261,7 +262,7 @@ func TestIdleAndSuccessExpiryWhicheverFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	lease.Release(true)
-	if err = c.Sweep(time.Now().Add(73 * time.Hour)); err != nil {
+	if err = c.Sweep(t.Context(), time.Now().Add(73*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if c.Stats().Entries != 0 {

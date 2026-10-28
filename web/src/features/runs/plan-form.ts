@@ -1,5 +1,5 @@
 import { computed, ref } from 'vue'
-import { api, apiItems, newRequestKey } from '../../app/api'
+import { api, apiItems } from '../../app/api'
 import { errorText } from '../../app/errors'
 import type { Plan } from '../../app/contracts'
 
@@ -70,14 +70,14 @@ export function usePlanForm({ mode, source, notify, onSaved }: PlanFormOptions) 
             task: taskType.value,
             model_config_id: extracting ? 0 : modelConfigID.value,
             targets: targets.value,
-            recursive: recursive.value,
-            key: newRequestKey()
+            recursive: recursive.value
           }
         })
         notify(`${extracting ? '抽帧' : '重命名'}批次 #${r.id} 已加入队列，可在批次记录查看进度。`)
       } else {
         await api<unknown>(source ? `/schedules/${source.id}` : '/schedules', {
           method: source ? 'PATCH' : 'POST',
+          headers: source ? { 'If-Match': source.etag } : {},
           body: {
             task: taskType.value,
             name: name.value,
@@ -87,8 +87,7 @@ export function usePlanForm({ mode, source, notify, onSaved }: PlanFormOptions) 
             kind: kind.value,
             expression: expression.value,
             timezone: timezone.value,
-            enabled: enabled.value,
-            version: source?.version || 0
+            enabled: enabled.value
           }
         })
         notify('运行计划已保存')

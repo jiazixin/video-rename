@@ -8,7 +8,7 @@ import (
 )
 
 func (a *App) samplingRoutes(mux *router) {
-	store := sampling.Store{DB: a.DB}
+	store := sampling.New(a.db)
 	mux.HandleFunc("GET /api/sampling", func(w http.ResponseWriter, r *http.Request) {
 		value, err := store.Get(r.Context())
 		if err != nil {

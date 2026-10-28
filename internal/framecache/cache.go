@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,22 +23,25 @@ import (
 
 	"video-rename/internal/config"
 	"video-rename/internal/domain"
-	"video-rename/internal/systemsettings"
+	"video-rename/internal/systemsetting"
+	"video-rename/internal/timefmt"
 )
 
 type record struct {
 	Key         string
 	Set         domain.FrameSet
-	LastUsed    time.Time
+	LastUsed    timefmt.Time
 	Bytes       int64
 	pins        int
-	SucceededAt time.Time
+	SucceededAt timefmt.Time
 	Checksums   map[string]string
 }
 
-// Cache stores reusable frame sets on disk within a byte limit.
+// Cache stores reusable frame sets on disk within a byte limit. mu protects
+// entries, building, reservations and policy; stats is an atomic snapshot.
 type Cache struct {
 	logger    *slog.Logger
+	now       func() time.Time
 	mu        sync.Mutex
 	lock      *os.File
 	root      string
@@ -48,7 +50,7 @@ type Cache struct {
 	usedBytes int64
 	reserved  int64
 	limit     int64
-	policy    systemsettings.Policy
+	policy    systemsetting.Policy
 	changed   chan struct{}
 	stats     atomic.Pointer[Stats]
 }
@@ -69,37 +71,46 @@ type Stats struct {
 	Entries  int    `json:"entries"`
 }
 
-// durationOptions round-trips time.Duration as integer nanoseconds, the format
-// existing manifests and cache keys use; FrameSet has several Duration fields,
-// which json/v2 does not serialize by default.
-var durationOptions = json.JoinOptions(
-	json.WithMarshalers(json.MarshalFunc(func(d time.Duration) ([]byte, error) {
-		return strconv.AppendInt(nil, int64(d), 10), nil
-	})),
-	json.WithUnmarshalers(json.UnmarshalFunc(func(raw []byte, d *time.Duration) error {
-		n, err := strconv.ParseInt(string(raw), 10, 64)
-		if err != nil {
-			return fmt.Errorf("parse duration %s: %w", raw, err)
-		}
-		*d = time.Duration(n)
-		return nil
-	})),
-)
-
 // Key returns the cache key of the frames of job extracted with cfg.
 func Key(job domain.VideoJob, cfg *config.TaskConfig) string {
+	// The key contains only validated finite settings and fixed scalar types.
 	raw, _ := json.Marshal(struct {
-		Version  int
-		Snapshot domain.Snapshot
-		Sampling config.SamplingConfig
-		Images   config.ImagesConfig
-	}{1, job.Snapshot, cfg.Sampling, cfg.Images}, durationOptions)
+		Version  int `json:"version"`
+		Snapshot struct {
+			Dev        uint64 `json:"device"`
+			Ino        uint64 `json:"inode"`
+			Size       int64  `json:"size"`
+			ModifiedNS int64  `json:"modified_ns"`
+		} `json:"snapshot"`
+		Sampling config.SamplingConfig `json:"sampling"`
+		Images   config.ImagesConfig   `json:"images"`
+	}{3, struct {
+		Dev        uint64 `json:"device"`
+		Ino        uint64 `json:"inode"`
+		Size       int64  `json:"size"`
+		ModifiedNS int64  `json:"modified_ns"`
+	}{job.Snapshot.Dev, job.Snapshot.Ino, job.Snapshot.Size, job.Snapshot.ModTime.UnixNano()}, cfg.Sampling, cfg.Images})
 	h := sha256.Sum256(raw)
 	return hex.EncodeToString(h[:])
 }
 
+// Options configures the cache root, capacity and retention policy.
+type Options struct {
+	Base       string
+	LimitBytes int64
+	Logger     *slog.Logger
+	Policy     *systemsetting.Policy
+}
+
 // New opens the frame cache under base with a byte limit.
-func New(base string, limit int64, logger *slog.Logger, policies ...systemsettings.Policy) (*Cache, error) {
+func New(ctx context.Context, options Options) (_ *Cache, err error) {
+	base, limit, logger := options.Base, options.LimitBytes, options.Logger
+	if logger == nil {
+		return nil, errors.New("frame cache logger is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	root := config.FrameCachePath(base)
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, err
@@ -116,25 +127,27 @@ func New(base string, limit int64, logger *slog.Logger, policies ...systemsettin
 		return nil, err
 	}
 	if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
-		lock.Close()
-		return nil, errors.New("frame cache directory is in use by another instance")
+		return nil, errors.Join(fmt.Errorf("lock frame cache directory: %w", err), lock.Close())
 	}
 	ok := false
 	defer func() {
 		if !ok {
-			lock.Close()
+			err = errors.Join(err, lock.Close())
 		}
 	}()
-	c := &Cache{lock: lock, root: root, limit: limit, entries: map[string]*record{}, building: map[string]bool{}, changed: make(chan struct{})}
-	c.policy = systemsettings.Default().Policy
-	if len(policies) > 0 {
-		c.policy = policies[0]
+	c := &Cache{logger: logger, now: time.Now, lock: lock, root: root, limit: limit, entries: map[string]*record{}, building: map[string]bool{}, changed: make(chan struct{})}
+	c.policy = systemsetting.Default().Policy
+	if options.Policy != nil {
+		c.policy = *options.Policy
 	}
 	dirs, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err
 	}
 	for _, d := range dirs {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		// Only generated namespaces are managed. Never traverse unknown paths or symlinks.
 		if !d.IsDir() || d.Type()&os.ModeSymlink != 0 {
 			continue
@@ -149,12 +162,12 @@ func New(base string, limit int64, logger *slog.Logger, policies ...systemsettin
 			continue
 		}
 		var r record
-		raw, e := os.ReadFile(filepath.Join(root, d.Name(), "manifest.json"))
+		raw, e := readCacheFile(ctx, filepath.Join(root, d.Name()), "manifest.json")
 		if e == nil {
-			e = json.Unmarshal(raw, &r, durationOptions)
+			r, e = unmarshalRecord(raw)
 		}
 		if e == nil && r.Key == d.Name() {
-			e = c.validate(&r)
+			e = c.validate(ctx, &r)
 		} else {
 			e = errors.New("invalid manifest")
 		}
@@ -167,7 +180,7 @@ func New(base string, limit int64, logger *slog.Logger, policies ...systemsettin
 		c.entries[r.Key] = &r
 		c.usedBytes += r.Bytes
 	}
-	if err = c.pruneLocked(time.Now(), 0); err != nil {
+	if err = c.pruneLocked(ctx, c.now(), 0); err != nil {
 		return nil, err
 	}
 	c.publishStatsLocked()
@@ -201,10 +214,10 @@ func (c *Cache) Stats() Stats {
 }
 
 // Sweep evicts expired and excess cache entries.
-func (c *Cache) Sweep(now time.Time) error {
+func (c *Cache) Sweep(ctx context.Context, now time.Time) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.pruneLocked(now, 0)
+	return c.pruneLocked(ctx, now, 0)
 }
 
 // Run sweeps the cache every minute until ctx ends.
@@ -216,7 +229,7 @@ func (c *Cache) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case now := <-t.C:
-			if err := c.Sweep(now); err != nil {
+			if err := c.Sweep(ctx, now); err != nil {
 				c.logger.Error("frame_cache_clean_failed", "error", err)
 			}
 		}
@@ -231,15 +244,21 @@ func (c *Cache) remove(r *record) error {
 	c.signal()
 	return nil
 }
-func (c *Cache) pruneLocked(now time.Time, need int64) error {
+func (c *Cache) pruneLocked(ctx context.Context, now time.Time, need int64) error {
 	all := make([]*record, 0, len(c.entries))
 	for r := range maps.Values(c.entries) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if r.pins == 0 {
 			all = append(all, r)
 		}
 	}
 	slices.SortFunc(all, func(a, b *record) int { return a.LastUsed.Compare(b.LastUsed) })
 	for _, r := range all {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if c.expired(r, now) || c.usedBytes+c.reserved+need > c.limit {
 			if err := c.remove(r); err != nil {
 				return err
@@ -250,7 +269,7 @@ func (c *Cache) pruneLocked(now time.Time, need int64) error {
 }
 func (c *Cache) persist(r *record) error {
 	dir := filepath.Join(c.root, r.Key)
-	raw, err := json.Marshal(r, durationOptions)
+	raw, err := marshalRecord(r)
 	if err != nil {
 		return err
 	}
@@ -259,13 +278,16 @@ func (c *Cache) persist(r *record) error {
 	}
 	return os.Rename(filepath.Join(dir, "manifest.next"), filepath.Join(dir, "manifest.json"))
 }
-func (c *Cache) validate(r *record) error {
+func (c *Cache) validate(ctx context.Context, r *record) error {
 	dir := filepath.Join(c.root, r.Key)
 	if len(r.Set.Frames) == 0 || len(r.Set.Frames) > 32 {
 		return errors.New("cached frames are incomplete")
 	}
 	// Stored paths are relative, preventing manifests from redirecting model reads elsewhere.
 	for i := range r.Set.Frames {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		f := &r.Set.Frames[i]
 		if filepath.Base(f.Path) != f.Path || f.Path == "." {
 			return errors.New("cache path is invalid")
@@ -277,7 +299,7 @@ func (c *Cache) validate(r *record) error {
 		if !st.Mode().IsRegular() || st.Size() != int64(f.Bytes) || f.Bytes <= 0 || f.Bytes > 1<<20 {
 			return errors.New("cached frames changed")
 		}
-		data, err := os.ReadFile(filepath.Join(dir, f.Path))
+		data, err := readCacheFile(ctx, dir, f.Path)
 		if err != nil {
 			return err
 		}
@@ -333,11 +355,11 @@ func (c *Cache) Acquire(ctx context.Context, key string, reserve int64, build fu
 		c.mu.Lock()
 		if r := c.entries[key]; r != nil {
 			previousBytes := r.Bytes
-			err := c.validate(r)
+			err := c.validate(ctx, r)
 			c.usedBytes += r.Bytes - previousBytes
 			c.publishStatsLocked()
 			if err == nil {
-				r.LastUsed = time.Now()
+				r.LastUsed = timefmt.Time(c.now())
 				if err = c.persist(r); err != nil {
 					c.mu.Unlock()
 					return nil, err
@@ -357,9 +379,9 @@ func (c *Cache) Acquire(ctx context.Context, key string, reserve int64, build fu
 		}
 		if reserve > c.limit {
 			c.mu.Unlock()
-			return nil, domain.Fail(domain.KindUnavailable, "temp_capacity_too_small", "temp directory capacity cannot hold one video")
+			return nil, domain.Fail(domain.KindUnavailable, domain.Record{Code: "temp_capacity_too_small", Message: "temp directory capacity cannot hold one video"})
 		}
-		if err := c.pruneLocked(time.Now(), reserve); err != nil {
+		if err := c.pruneLocked(ctx, c.now(), reserve); err != nil {
 			c.mu.Unlock()
 			return nil, err
 		}
@@ -388,6 +410,12 @@ func (c *Cache) Acquire(ctx context.Context, key string, reserve int64, build fu
 	if err != nil {
 		return nil, err
 	}
+	// ctx controls admission and may be cancelled by pausing the scheduler.
+	// The builder owns the running job's cancellation. Once it succeeds, finish
+	// publishing its frames within a bounded cleanup window instead of losing
+	// completed work when admission closes.
+	publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
 	// Preserve only frames selected by the extractor, discarding failed/recompression intermediates.
 	dir := filepath.Join(work, "ready")
 	if err = os.Mkdir(dir, 0o700); err != nil {
@@ -418,25 +446,23 @@ func (c *Cache) Acquire(ctx context.Context, key string, reserve int64, build fu
 	if err = os.Rename(dir, filepath.Join(c.root, key)); err != nil {
 		return nil, err
 	}
-	r := &record{Key: key, Set: set, LastUsed: time.Now(), Checksums: map[string]string{}}
+	r := &record{Key: key, Set: set, LastUsed: timefmt.Time(c.now()), Checksums: map[string]string{}}
 	for _, f := range set.Frames {
-		data, e := os.ReadFile(filepath.Join(c.root, key, f.Path))
+		data, e := readCacheFile(publishCtx, filepath.Join(c.root, key), f.Path)
 		if e != nil {
-			_ = os.RemoveAll(filepath.Join(c.root, key))
-			return nil, e
+			return nil, errors.Join(e, os.RemoveAll(filepath.Join(c.root, key)))
 		}
 		hash := sha256.Sum256(data)
 		r.Checksums[f.Path] = hex.EncodeToString(hash[:])
 	}
-	if err = c.validate(r); err == nil && r.Bytes > reserve {
-		err = domain.Fail(domain.KindUnavailable, "frames_over_reservation", "frames exceed the reserved capacity")
+	if err = c.validate(publishCtx, r); err == nil && r.Bytes > reserve {
+		err = domain.Fail(domain.KindUnavailable, domain.Record{Code: "frames_over_reservation", Message: "frames exceed the reserved capacity"})
 	}
 	if err == nil {
 		err = c.persist(r)
 	}
 	if err != nil {
-		_ = os.RemoveAll(filepath.Join(c.root, key))
-		return nil, err
+		return nil, errors.Join(err, os.RemoveAll(filepath.Join(c.root, key)))
 	}
 	c.entries[key] = r
 	c.usedBytes += r.Bytes
@@ -455,12 +481,12 @@ func (l *Lease) Release(success bool) {
 			return
 		}
 		r.pins--
-		r.LastUsed = time.Now()
+		r.LastUsed = timefmt.Time(c.now())
 		var err error
 		if success {
-			r.SucceededAt = time.Now()
+			r.SucceededAt = timefmt.Time(c.now())
 		}
-		if c.expired(r, time.Now()) && r.pins == 0 {
+		if c.expired(r, c.now()) && r.pins == 0 {
 			err = c.remove(r)
 		} else {
 			err = c.persist(r)
@@ -473,15 +499,15 @@ func (l *Lease) Release(success bool) {
 }
 
 // Configure applies current retention settings without touching active leases.
-func (c *Cache) Configure(limit int64, policy systemsettings.Policy) error {
+func (c *Cache) Configure(ctx context.Context, limit int64, policy systemsetting.Policy) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.limit, c.policy = limit, policy
 	c.signal()
-	return c.pruneLocked(time.Now(), 0)
+	return c.pruneLocked(ctx, c.now(), 0)
 }
 func (c *Cache) expired(r *record, now time.Time) bool {
-	if c.policy.IdleCacheHours > 0 && now.Sub(r.LastUsed) >= time.Duration(c.policy.IdleCacheHours)*time.Hour {
+	if c.policy.IdleCacheHours > 0 && now.Sub(time.Time(r.LastUsed)) >= time.Duration(c.policy.IdleCacheHours)*time.Hour {
 		return true
 	}
 	if r.SucceededAt.IsZero() {
@@ -491,7 +517,7 @@ func (c *Cache) expired(r *record, now time.Time) bool {
 	case "", "immediate":
 		return true
 	case "delayed":
-		return now.Sub(r.SucceededAt) >= time.Duration(c.policy.SuccessCacheHours)*time.Hour
+		return now.Sub(time.Time(r.SucceededAt)) >= time.Duration(c.policy.SuccessCacheHours)*time.Hour
 	default:
 		return false
 	}
@@ -505,11 +531,14 @@ type ClearResult struct {
 }
 
 // Clear removes only completed, idle entries. Active builders and leases survive.
-func (c *Cache) Clear() (ClearResult, error) {
+func (c *Cache) Clear(ctx context.Context) (ClearResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	result := ClearResult{Retained: len(c.building)}
 	for r := range maps.Values(c.entries) {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		if r.pins > 0 {
 			if !c.building[r.Key] {
 				result.Retained++

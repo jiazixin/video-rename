@@ -71,7 +71,7 @@ func TestNumberingTemporaryMoveDiagnostic(t *testing.T) {
 	}
 	item := &batch.Items[0]
 	put(t, filepath.Join(root, item.Temp))
-	err = l.moveNumbering(t.Context(), &batch, item, root, item.Temp)
+	err = l.moveNumbering(t.Context(), moveNumberingOptions{Batch: &batch, Item: item, Path: root, Target: item.Temp})
 	diagnostic, ok := errors.AsType[*domain.JobError](err)
 	if !ok || !strings.Contains(diagnostic.ProcessingLog, "phase: temporary_rename") || !strings.Contains(diagnostic.ProcessingLog, item.Temp) {
 		t.Fatalf("%v", err)
@@ -86,20 +86,23 @@ func TestNumberingTemporaryMoveDiagnostic(t *testing.T) {
 
 func TestNumberingErrorRecordPlainAndStructured(t *testing.T) {
 	for _, original := range []Numbering{
-		{Error: domain.Record{Message: "目标已存在"}},
+		{Error: domain.Record{Code: "target_exists", Message: "target already exists"}},
 		{Error: domain.Record{Code: "numbering_rolled_back", Message: "rolled back", Details: map[string]any{"media": "image"}}},
 		{Error: domain.Record{Code: "numbering_recovery_incomplete", Message: "recovery incomplete"}, ProcessingLog: "evidence\nwith \"quotes\""},
 	} {
 		var loaded Numbering
-		loaded.decodeNumberingError(original.numberingErrorRecord())
+		if err := loaded.decodeNumberingError(original.numberingErrorRecord()); err != nil {
+			t.Fatal(err)
+		}
 		if !reflect.DeepEqual(loaded.Error, original.Error) || loaded.ProcessingLog != original.ProcessingLog {
 			t.Fatalf("%+v", loaded)
 		}
 	}
-	// Records written before error codes keep their text.
-	var legacy Numbering
-	legacy.decodeNumberingError(`{"message":"恢复未完成","processing_log":"现场"}`)
-	if legacy.Error.Message != "恢复未完成" || legacy.Error.Code != "" || legacy.ProcessingLog != "现场" {
-		t.Fatalf("%+v", legacy)
+	for _, stored := range []string{`{"message":"recovery incomplete","processing_log":"evidence"}`, `plain text`} {
+		var invalid Numbering
+		if err := invalid.decodeNumberingError(stored); err == nil {
+			t.Fatal("accepted error record without a code", stored)
+		}
 	}
+
 }

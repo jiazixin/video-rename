@@ -41,16 +41,16 @@ func TestParseNormalSelectsDefaultVideoStream(t *testing.T) {
 		t.Fatal(jerr)
 	}
 	if meta.StreamIndex != 0 {
-		t.Errorf("流索引 = %d, 期望 0(跳过音频)", meta.StreamIndex)
+		t.Errorf("stream index = %d, want 0(skip audio)", meta.StreamIndex)
 	}
 	if meta.Duration != 120500*time.Millisecond {
-		t.Errorf("时长 = %v", meta.Duration)
+		t.Errorf("duration = %v", meta.Duration)
 	}
 	if meta.DisplayWidth != 1920 || meta.DisplayHeight != 1080 {
-		t.Errorf("显示尺寸 = %dx%d", meta.DisplayWidth, meta.DisplayHeight)
+		t.Errorf("display dimensions = %dx%d", meta.DisplayWidth, meta.DisplayHeight)
 	}
 	if meta.HDR {
-		t.Error("SDR 视频不应标记 HDR")
+		t.Error("SDR video must not be marked HDR")
 	}
 }
 
@@ -61,7 +61,7 @@ func TestParseCoverSkipped(t *testing.T) {
 		t.Fatal(jerr)
 	}
 	if meta.StreamIndex != 1 {
-		t.Errorf("封面流(index 0)不应被选中,选中 = %d", meta.StreamIndex)
+		t.Errorf("cover stream at index 0 must not be selected; got = %d", meta.StreamIndex)
 	}
 }
 
@@ -72,11 +72,11 @@ func TestParseDurationFallbackToFormat(t *testing.T) {
 		t.Fatal(jerr)
 	}
 	if meta.Duration != 45250*time.Millisecond {
-		t.Errorf("应回退 format.duration, got %v", meta.Duration)
+		t.Errorf("should fall back to format.duration, got %v", meta.Duration)
 	}
 	// SAR 0:1 means square pixels
 	if meta.SARNum != 1 || meta.SARDen != 1 {
-		t.Errorf("SAR 0:1 应按 1:1 处理")
+		t.Errorf("SAR 0:1 should be treated as 1:1")
 	}
 }
 
@@ -88,10 +88,10 @@ func TestParseRotationAndSAR(t *testing.T) {
 	}
 	// 720×480, SAR 8:9 → 640×480; rotation -90 (=270) → 480×640
 	if meta.DisplayWidth != 480 || meta.DisplayHeight != 640 {
-		t.Errorf("显示尺寸 = %dx%d, 期望 480x640", meta.DisplayWidth, meta.DisplayHeight)
+		t.Errorf("display dimensions = %dx%d, want 480x640", meta.DisplayWidth, meta.DisplayHeight)
 	}
 	if meta.Rotation != 270 {
-		t.Errorf("旋转 = %d, 期望 270", meta.Rotation)
+		t.Errorf("rotation = %d, want 270", meta.Rotation)
 	}
 }
 
@@ -99,7 +99,7 @@ func TestParseAudioOnly(t *testing.T) {
 	job, _ := fakeJob(t, 5000)
 	_, jerr := parseProbeOutput(loadProbeFixture(t, "audio_only.json"), job)
 	if jerr == nil || jerr.Code != domain.CodeProbeNoVideo {
-		t.Fatalf("纯音频应报 probe_no_video, got %+v", jerr)
+		t.Fatalf("audio-only input should return probe_no_video, got %+v", jerr)
 	}
 }
 
@@ -110,7 +110,7 @@ func TestParseHDRFlag(t *testing.T) {
 		t.Fatal(jerr)
 	}
 	if !meta.HDR || !meta.HDRNotToneMap {
-		t.Error("smpte2084 应标记 HDR")
+		t.Error("smpte2084 should mark HDR")
 	}
 }
 
@@ -118,12 +118,12 @@ func TestParseUnknownDuration(t *testing.T) {
 	data := `{"streams":[{"index":0,"codec_type":"video","width":640,"height":480,"sample_aspect_ratio":"1:1","disposition":{"default":1}}],"format":{"size":"1"}}`
 	job, _ := fakeJob(t, 1)
 	if _, jerr := parseProbeOutput([]byte(data), job); jerr == nil || jerr.Code != domain.CodeProbeDurationUnknown {
-		t.Fatalf("缺时长应报 probe_duration_unknown, got %+v", jerr)
+		t.Fatalf("missing duration should return probe_duration_unknown, got %+v", jerr)
 	}
 	// negative durations are rejected too
 	data = `{"streams":[{"index":0,"codec_type":"video","width":640,"height":480,"duration":"-5","sample_aspect_ratio":"1:1","disposition":{"default":1}}],"format":{"duration":"-5"}}`
 	if _, jerr := parseProbeOutput([]byte(data), job); jerr == nil || jerr.Code != domain.CodeProbeDurationUnknown {
-		t.Fatalf("负时长应报错, got %+v", jerr)
+		t.Fatalf("negative duration should fail, got %+v", jerr)
 	}
 }
 
@@ -131,7 +131,7 @@ func TestParseBadSARRejected(t *testing.T) {
 	data := `{"streams":[{"index":0,"codec_type":"video","width":640,"height":480,"duration":"10","sample_aspect_ratio":"bogus","disposition":{"default":1}}],"format":{"duration":"10"}}`
 	job, _ := fakeJob(t, 1)
 	if _, jerr := parseProbeOutput([]byte(data), job); jerr == nil || jerr.Code != domain.CodeProbeJSONInvalid {
-		t.Fatalf("异常 SAR 应报错, got %+v", jerr)
+		t.Fatalf("invalid SAR should fail, got %+v", jerr)
 	}
 }
 
@@ -139,7 +139,7 @@ func TestParseBadRotationRejected(t *testing.T) {
 	data := `{"streams":[{"index":0,"codec_type":"video","width":640,"height":480,"duration":"10","sample_aspect_ratio":"1:1","side_data_list":[{"side_data_type":"Display Matrix","rotation":45.0}],"disposition":{"default":1}}],"format":{"duration":"10"}}`
 	job, _ := fakeJob(t, 1)
 	if _, jerr := parseProbeOutput([]byte(data), job); jerr == nil {
-		t.Fatal("45 度旋转应报错")
+		t.Fatal("45-degree rotation should fail")
 	}
 }
 
@@ -149,10 +149,10 @@ func TestParseSizeMismatchUnchangedContinues(t *testing.T) {
 	data := strings.Replace(string(loadProbeFixture(t, "normal.json")), `"size": "1000"`, `"size": "999"`, 1)
 	meta, jerr := parseProbeOutput([]byte(data), job)
 	if jerr != nil {
-		t.Fatalf("文件未变时应继续: %v", jerr)
+		t.Fatalf("unchanged file should proceed: %v", jerr)
 	}
 	if meta.SizeBytes != 1000 {
-		t.Errorf("以 Go stat 为准, got %d", meta.SizeBytes)
+		t.Errorf("want Go stat size, got %d", meta.SizeBytes)
 	}
 	_ = path
 }
@@ -170,7 +170,7 @@ func TestParseSizeMismatchChangedReportsSourceChanged(t *testing.T) {
 	data := strings.Replace(string(loadProbeFixture(t, "normal.json")), `"size": "1000"`, `"size": "2000"`, 1)
 	_, jerr := parseProbeOutput([]byte(data), job)
 	if jerr == nil || jerr.Code != domain.CodeSourceChanged {
-		t.Fatalf("文件已变化应报 source_changed, got %+v", jerr)
+		t.Fatalf("changed file should return source_changed, got %+v", jerr)
 	}
 }
 
@@ -179,7 +179,7 @@ func writeScript(t *testing.T, body string) string {
 	t.Helper()
 	sh, err := exec.LookPath("sh")
 	if err != nil {
-		t.Skip("无 sh 可用")
+		t.Skip("sh is unavailable")
 	}
 	p := filepath.Join(t.TempDir(), "fake-ffprobe")
 	if err := os.WriteFile(p, []byte("#!"+sh+"\n"+body), 0o755); err != nil {
@@ -194,13 +194,13 @@ func TestProbeExecFailure(t *testing.T) {
 	prober := &Prober{FFprobePath: script}
 	_, jerr := prober.Probe(t.Context(), job)
 	if jerr == nil || jerr.Code != domain.CodeProbeExecFailed {
-		t.Fatalf("执行失败应报 probe_exec_failed, got %+v", jerr)
+		t.Fatalf("execution failure should return probe_exec_failed, got %+v", jerr)
 	}
 	if jerr.ExitCode != 1 {
-		t.Errorf("退出码 = %d", jerr.ExitCode)
+		t.Errorf("exit code = %d", jerr.ExitCode)
 	}
 	if !strings.Contains(jerr.StderrTail, "Invalid data") {
-		t.Errorf("stderr 尾部应保留: %q", jerr.StderrTail)
+		t.Errorf("stderr tail should be retained: %q", jerr.StderrTail)
 	}
 }
 
@@ -211,10 +211,10 @@ func TestProbeTimeout(t *testing.T) {
 	start := time.Now()
 	_, jerr := prober.Probe(t.Context(), job)
 	if jerr == nil || jerr.Code != domain.CodeProbeTimeout {
-		t.Fatalf("应报 probe_timeout, got %+v", jerr)
+		t.Fatalf("want probe_timeout, got %+v", jerr)
 	}
 	if time.Since(start) > time.Second {
-		t.Error("超时应及时返回")
+		t.Error("timeout should return promptly")
 	}
 }
 
@@ -224,7 +224,7 @@ func TestProbeOutputLimit(t *testing.T) {
 	prober := &Prober{FFprobePath: script, StdoutLimit: 1024}
 	_, jerr := prober.Probe(t.Context(), job)
 	if jerr == nil || jerr.Code != domain.CodeProbeOutputLimit {
-		t.Fatalf("应报 probe_output_limit, got %+v", jerr)
+		t.Fatalf("want probe_output_limit, got %+v", jerr)
 	}
 }
 
@@ -234,7 +234,7 @@ func TestProbeBadJSON(t *testing.T) {
 	prober := &Prober{FFprobePath: script}
 	_, jerr := prober.Probe(t.Context(), job)
 	if jerr == nil || jerr.Code != domain.CodeProbeJSONInvalid {
-		t.Fatalf("应报 probe_json_invalid, got %+v", jerr)
+		t.Fatalf("want probe_json_invalid, got %+v", jerr)
 	}
 }
 
@@ -251,7 +251,7 @@ func TestProbeMissingBinary(t *testing.T) {
 	prober := &Prober{FFprobePath: resolved}
 	_, jerr := prober.Probe(t.Context(), job)
 	if jerr == nil || jerr.Code != domain.CodeToolNotFound || !jerr.Global {
-		t.Fatalf("探测前工具消失应停止批次, got %+v", jerr)
+		t.Fatalf("missing probe tool should stop the batch, got %+v", jerr)
 	}
 }
 
@@ -266,6 +266,6 @@ func TestProbeScriptOutputsFixture(t *testing.T) {
 		t.Fatal(jerr)
 	}
 	if meta.Duration != 120500*time.Millisecond {
-		t.Errorf("端到端解析异常: %+v", meta)
+		t.Errorf("unexpected end-to-end parse result: %+v", meta)
 	}
 }

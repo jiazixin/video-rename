@@ -2,9 +2,11 @@ package library
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +14,8 @@ import (
 	"time"
 
 	"video-rename/internal/domain"
+	"video-rename/internal/storage"
+	"video-rename/internal/timefmt"
 )
 
 func TestNumberingRules(t *testing.T) {
@@ -36,7 +40,7 @@ func TestNumberingRules(t *testing.T) {
 			}
 			rules := domain.DefaultMediaNumberingRules()
 			rules.Compact = false
-			got := numberingNames(selected, outside, nil, rules, "")
+			got := numberingNames(numberingNamesOptions{Selected: selected, Outside: outside, Peers: nil, Rules: rules, PeerPrefix: ""})
 			for i, g := range got {
 				if g.New != tc.want[i] {
 					t.Fatalf("%s => %s; want %s", g.Old, g.New, tc.want[i])
@@ -117,7 +121,7 @@ func TestNumberingRuleOptions(t *testing.T) {
 		return list
 	}
 	names := func(selected, outside, peers []Entry, r domain.MediaNumberingRules, peerPrefix string) []string {
-		items := numberingNames(selected, outside, peers, r, peerPrefix)
+		items := numberingNames(numberingNamesOptions{Selected: selected, Outside: outside, Peers: peers, Rules: r, PeerPrefix: peerPrefix})
 		got := make([]string, len(items))
 		for i, item := range items {
 			got[i] = item.New
@@ -239,7 +243,7 @@ func TestNumberingApplyRestoreAndIdempotence(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The saved journal survives a service restart and remains restorable.
-	restarted, err := New(t.Context(), l.DB, root)
+	restarted, err := New(t.Context(), l.db, root, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +285,7 @@ func TestNumberingCrossPageOrderAndSearch(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		p, err := l.ListOrdered(t.Context(), 1, 0, 200, 0, "photo", "image", "", false, sort)
+		p, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 200, Generation: 0, Query: "photo", Kind: "image", Status: "", Force: false, SortBy: sort})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -326,7 +330,7 @@ func TestNumberingPreflightProtection(t *testing.T) {
 			t.Fatal(err)
 		}
 		e, _ := l.Get(t.Context(), b.Items[0].Entry)
-		if _, err := l.Rename(t.Context(), e.ID, e.Version, "later.jpg", "later"); err != nil {
+		if _, err := l.Rename(t.Context(), RenameRequest{ID: e.ID, Version: e.Version, Name: "later.jpg", Key: "later"}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := l.PreviewNumberingRestore(t.Context(), b.ID); err == nil {
@@ -347,7 +351,9 @@ func TestNumberingPreflightProtection(t *testing.T) {
 }
 func TestNumberingDatabaseFailureRollsBack(t *testing.T) {
 	l, root, b := numberedFixture(t)
-	if _, err := l.DB.Exec(`CREATE TRIGGER fail_numbering_history BEFORE INSERT ON operations BEGIN SELECT RAISE(ABORT,'injected failure'); END;`); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `CREATE TRIGGER fail_numbering_history BEFORE INSERT ON operations BEGIN SELECT RAISE(ABORT,'injected failure'); END;`)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := l.ApplyNumbering(t.Context(), b.ID, nil); err == nil || !strings.Contains(err.Error(), "original names restored") {
@@ -361,7 +367,9 @@ func TestNumberingDatabaseFailureRollsBack(t *testing.T) {
 		}
 	}
 	var count int
-	l.DB.QueryRow("SELECT count(*) FROM operations").Scan(&count)
+	l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM operations").Scan(&count)
+	})
 	if count != 0 {
 		t.Fatal(count)
 	}
@@ -370,12 +378,16 @@ func TestNumberingCrashRecovery(t *testing.T) {
 	for _, stage := range []string{"intent-only", "move-not-recorded", "staged", "partial-final", "rollback-partial"} {
 		t.Run(stage, func(t *testing.T) {
 			l, root, b := numberedFixture(t)
-			if _, err := l.DB.Exec("UPDATE image_numberings SET status='running' WHERE id=?", b.ID); err != nil {
+			if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+				return tx.ExecContext(t.Context(), "UPDATE image_numberings SET status='running' WHERE id=?", b.ID)
+			}); err != nil {
 				t.Fatal(err)
 			}
 			if stage == "intent-only" || stage == "move-not-recorded" {
 				i := b.Items[0]
-				if _, err := l.DB.Exec("UPDATE image_numbering_items SET pending_name=? WHERE batch=? AND entry=?", i.Temp, b.ID, i.Entry); err != nil {
+				if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+					return tx.ExecContext(t.Context(), "UPDATE image_numbering_items SET pending_name=? WHERE batch=? AND entry=?", i.Temp, b.ID, i.Entry)
+				}); err != nil {
 					t.Fatal(err)
 				}
 				if stage == "move-not-recorded" {
@@ -385,26 +397,28 @@ func TestNumberingCrashRecovery(t *testing.T) {
 				}
 			} else {
 				for idx := range b.Items {
-					if err := l.moveNumbering(t.Context(), &b, &b.Items[idx], root, b.Items[idx].Temp); err != nil {
+					if err := l.moveNumbering(t.Context(), moveNumberingOptions{Batch: &b, Item: &b.Items[idx], Path: root, Target: b.Items[idx].Temp}); err != nil {
 						t.Fatal(err)
 					}
 				}
 				if stage != "staged" {
-					if err := l.moveNumbering(t.Context(), &b, &b.Items[0], root, b.Items[0].New); err != nil {
+					if err := l.moveNumbering(t.Context(), moveNumberingOptions{Batch: &b, Item: &b.Items[0], Path: root, Target: b.Items[0].New}); err != nil {
 						t.Fatal(err)
 					}
 				}
 				if stage == "rollback-partial" {
-					if err := l.moveNumbering(t.Context(), &b, &b.Items[0], root, b.Items[0].Temp); err != nil {
+					if err := l.moveNumbering(t.Context(), moveNumberingOptions{Batch: &b, Item: &b.Items[0], Path: root, Target: b.Items[0].Temp}); err != nil {
 						t.Fatal(err)
 					}
-					if err := l.moveNumbering(t.Context(), &b, &b.Items[0], root, b.Items[0].Old); err != nil {
+					if err := l.moveNumbering(t.Context(), moveNumberingOptions{Batch: &b, Item: &b.Items[0], Path: root, Target: b.Items[0].Old}); err != nil {
 						t.Fatal(err)
 					}
-					l.DB.Exec("UPDATE image_numberings SET status='rollback' WHERE id=?", b.ID)
+					storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+						return tx.ExecContext(t.Context(), "UPDATE image_numberings SET status='rollback' WHERE id=?", b.ID)
+					})
 				}
 			}
-			restarted, err := New(t.Context(), l.DB, root)
+			restarted, err := New(t.Context(), l.db, root, slog.New(slog.DiscardHandler))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -418,15 +432,17 @@ func TestNumberingCrashRecovery(t *testing.T) {
 }
 func TestNumberingRecoveryNeverOverwritesExternalFile(t *testing.T) {
 	l, root, b := numberedFixture(t)
-	l.DB.Exec("UPDATE image_numberings SET status='running' WHERE id=?", b.ID)
+	storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "UPDATE image_numberings SET status='running' WHERE id=?", b.ID)
+	})
 	i := &b.Items[0]
-	if err := l.moveNumbering(t.Context(), &b, i, root, i.Temp); err != nil {
+	if err := l.moveNumbering(t.Context(), moveNumberingOptions{Batch: &b, Item: i, Path: root, Target: i.Temp}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, i.Old), []byte("external"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := New(t.Context(), l.DB, root)
+	restarted, err := New(t.Context(), l.db, root, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -486,7 +502,7 @@ func TestNumberingTargetMovesResolvesActualEntry(t *testing.T) {
 }
 
 func TestNumberingPreviewChecksActualCaseSourceSnapshot(t *testing.T) {
-	for _, field := range []string{"identity", "size", "mtime"} {
+	for _, field := range []string{"identity", "size", "mtime_ns"} {
 		t.Run(field, func(t *testing.T) {
 			l, root, _ := fixture(t)
 			name := "5.JPEG"
@@ -495,16 +511,16 @@ func TestNumberingPreviewChecksActualCaseSourceSnapshot(t *testing.T) {
 			}
 			refresh(t, l, 1)
 			e := entry(t, l, 1, name)
-			item := NumberingItem{Entry: e.ID, Old: name, New: "5.jpeg", Version: e.Version, Identity: e.Identity, Size: e.Size, Mtime: e.Mtime}
+			item := NumberingItem{Entry: e.ID, Old: name, New: "5.jpeg", Version: e.Version, Identity: e.Identity, Size: e.Size, ModifiedNS: e.ModifiedNS}
 			switch field {
 			case "identity":
 				item.Identity = "0:0"
 			case "size":
 				item.Size++
-			case "mtime":
-				item.Mtime = time.Time{}.Format(time.RFC3339Nano)
+			case "mtime_ns":
+				item.ModifiedNS = 0
 			}
-			batch := Numbering{ID: numberingToken(), Parent: 1, Media: "image", Status: "preview", Created: time.Now().UTC().Format(time.RFC3339Nano), Items: []NumberingItem{item}}
+			batch := Numbering{ID: numberingToken(), Parent: 1, Media: "image", Status: "preview", Created: timefmt.Format(time.Now()), Items: []NumberingItem{item}}
 			_, err := l.saveNumberingPreview(t.Context(), batch, root)
 			diagnostic, ok := errors.AsType[*domain.JobError](err)
 			if !ok || diagnostic.Code != domain.CodeRenameConflict {

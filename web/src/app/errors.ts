@@ -10,6 +10,7 @@ const statusTexts: Record<number, string> = {
   403: '没有权限执行此操作',
   404: '请求的内容不存在',
   409: '当前状态不允许此操作，请刷新后重试',
+  412: '内容已被修改，请刷新后重试',
   413: '请求内容过大',
   429: '操作过于频繁，请稍后重试',
   503: '服务暂时不可用，请稍后重试'
@@ -20,7 +21,6 @@ const clientTexts: Record<string, string> = {
   invalid_response: '服务响应异常，请重试',
   network_unavailable: '网络连接失败，请检查网络后重试',
   timeout: '请求超时，请稍后重试',
-  copy_failed: '复制失败',
   copy_busy: '正在复制，请稍后重试',
   copy_manual: '复制失败，请手动选取文本',
   mark_interrupted: '标记任务已中断，仍有目标未处理'

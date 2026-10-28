@@ -14,7 +14,7 @@ func TestPersistenceAndRejectedSave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := Store{DB: db}
+	store := Store{db: db}
 	value, err := store.Get(t.Context())
 	if err != nil || value.Sampling.ParsedStrategy != config.StrategyDuration {
 		t.Fatal(value, err)
@@ -36,8 +36,12 @@ func TestPersistenceAndRejectedSave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	got, err := (Store{DB: db}).Get(t.Context())
+	defer func(fn func() error) {
+		if err := fn(); err != nil {
+			t.Error(err)
+		}
+	}(db.Close)
+	got, err := (Store{db: db}).Get(t.Context())
 	if err != nil || got.Sampling.MaxFrames != 32 || got.Images.MaxDimension != 1024 || got.Images.JPEGQuality != 4 {
 		t.Fatal(got, err)
 	}

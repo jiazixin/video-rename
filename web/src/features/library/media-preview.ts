@@ -1,5 +1,5 @@
 import { errorText } from '../../app/errors'
-import { computed, ref } from 'vue'
+import { computed, onScopeDispose, ref } from 'vue'
 import { api } from '../../app/api'
 import type { Entry, Page } from '../../app/contracts'
 import { isVideo, isAudio, isImage } from './entry-types'
@@ -20,7 +20,11 @@ function useMediaQueue(
   // undefined while loading or closed; null when the list could not be read.
   const queue = ref<MediaQueue | null>()
   let token = 0
+  let controller: AbortController | undefined
   async function load() {
+    controller?.abort()
+    const current = new AbortController()
+    controller = current
     const request = ++token,
       { directory, ...query } = filters(),
       items: Entry[] = []
@@ -36,7 +40,9 @@ function useMediaQueue(
           generation,
           ...query
         })
-        const result = await api<Page>(`/directories/${directory}/entries?${params}`)
+        const result = await api<Page>(`/directories/${directory}/entries?${params}`, {
+          signal: current.signal
+        })
         if (request !== token) return
         items.push(...result.items.filter((e) => e.kind === 'file' && match(e)))
         if (!result.next) {
@@ -53,9 +59,11 @@ function useMediaQueue(
     }
   }
   function clear() {
+    controller?.abort()
     token++
     queue.value = undefined
   }
+  onScopeDispose(clear)
   return { queue, load, clear }
 }
 
@@ -88,7 +96,9 @@ export function useMediaPreview(query: () => MediaQuery) {
     return index < 0 ? [] : items.slice(Math.max(0, index - 4), index + 5)
   })
   let imageSequence = 0
+  let imageController: AbortController | undefined
   function closeImage() {
+    imageController?.abort()
     imageSequence++
     images.clear()
     preview.value = undefined
@@ -96,6 +106,7 @@ export function useMediaPreview(query: () => MediaQuery) {
     galleryError.value = ''
   }
   function showImage(e: Entry) {
+    imageController?.abort()
     imageSequence++
     preview.value = e
     imageBusy.value = false
@@ -111,11 +122,16 @@ export function useMediaPreview(query: () => MediaQuery) {
     if (!preview.value || imageBusy.value) return
     const id = preview.value.id,
       request = ++imageSequence
+    imageController?.abort()
+    const current = new AbortController()
+    imageController = current
     imageBusy.value = true
     galleryError.value = ''
     try {
       const direction = (query().sort === 'name_desc' ? !previous : previous) ? 'previous' : 'next'
-      const next = await api<Entry>(`/entries/${id}/image-neighbor?direction=${direction}`)
+      const next = await api<Entry>(`/entries/${id}/image-neighbor?direction=${direction}`, {
+        signal: current.signal
+      })
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- the compared state can change while awaiting
       if (request === imageSequence && preview.value?.id === id) showImage(next)
     } catch (e) {
@@ -156,6 +172,7 @@ export function useMediaPreview(query: () => MediaQuery) {
     notice: { value: string }
     busy: { value: boolean }
     token: { value: number }
+    controller?: AbortController
   }
   const videoList: MediaList = {
     kind: 'video',
@@ -176,6 +193,7 @@ export function useMediaPreview(query: () => MediaQuery) {
     token: { value: 0 }
   }
   function closeMediaList(list: MediaList) {
+    list.controller?.abort()
     list.token.value++
     list.busy.value = false
     list.current.value = undefined
@@ -194,6 +212,9 @@ export function useMediaPreview(query: () => MediaQuery) {
     if (!list.current.value || list.busy.value) return
     const id = list.current.value.id,
       request = ++list.token.value
+    list.controller?.abort()
+    const current = new AbortController()
+    list.controller = current
     list.busy.value = true
     list.notice.value = ''
     try {
@@ -212,7 +233,9 @@ export function useMediaPreview(query: () => MediaQuery) {
           sort: query().sort,
           generation
         })
-        const result = await api<Page>(`/directories/${query().directory}/entries?${params}`)
+        const result = await api<Page>(`/directories/${query().directory}/entries?${params}`, {
+          signal: current.signal
+        })
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- the compared state can change while awaiting
         if (request !== list.token.value || list.current.value?.id !== id) return
         for (const entry of result.items) {
@@ -268,6 +291,10 @@ export function useMediaPreview(query: () => MediaQuery) {
     audioPlaying.value = e
   }
 
+  onScopeDispose(() => {
+    closeImage()
+    closePlayback()
+  })
   return {
     preview,
     imageBusy,

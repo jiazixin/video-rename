@@ -9,7 +9,7 @@ async function login(page: Page) {
   await page.getByLabel('密码', { exact: true }).fill('test-password-123')
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await expect(page.getByRole('heading', { name: '文件目录.' })).toBeVisible()
-  await page.goto('/#settings/prompts')
+  await page.goto('/settings/prompts')
 }
 
 function removeKeyword(page: Page, keyword: string) {
@@ -79,7 +79,7 @@ test('失败关键词增删、空列表、恢复默认与真实持久化', async
     await page.reload()
     for (const keyword of defaults) await expect(removeKeyword(page, keyword)).toBeVisible()
   } finally {
-    await page.goto('/#settings/prompts')
+    await page.goto('/settings/prompts')
     await expect(restore).toBeVisible()
     if (await restore.isEnabled()) await restore.click()
     if (await save.isEnabled()) {

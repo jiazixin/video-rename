@@ -34,9 +34,16 @@ type markJob struct {
 // startMark detaches the worker from the HTTP request; Shutdown cancels it.
 // While a result is cached, the same key returns its work and counts. Clients retry existing requests through markStatus: a retired result must not
 // be mistaken for a new operation and replayed over a later opposite mark.
-func (a *App) startMark(w http.ResponseWriter, r *http.Request, key string, targets []int64, marked bool) {
+type markRequestInput struct {
+	Key     string
+	Targets []int64
+	Marked  bool
+}
+
+func (a *App) startMark(w http.ResponseWriter, r *http.Request, input markRequestInput) {
+	key, targets, marked := input.Key, input.Targets, input.Marked
 	if len(key) < 8 || len(key) > 128 || strings.ContainsAny(key, "/\\?#") {
-		invalid(w, r, "key", "invalid")
+		writeError(w, r, domain.InvalidField("key", "invalid"))
 		return
 	}
 	a.markMu.Lock()
@@ -57,16 +64,16 @@ func (a *App) startMark(w http.ResponseWriter, r *http.Request, key string, targ
 	})
 	if job, ok := a.markJobs[key]; ok {
 		if job.marked != marked || !slices.Equal(job.targets, targets) {
-			fail(domain.Fail(domain.KindConflict, "request_key_reused", "request key is used by a different request"))
+			fail(domain.Fail(domain.KindConflict, domain.Record{Code: "idempotency_key_reused", Message: "request key is used by a different request"}))
 			return
 		}
-		reply(200, job.status)
+		reply(http.StatusOK, job.status)
 		return
 	}
 	// Serialize mark requests so a second tab cannot interleave opposite states.
 	for _, job := range a.markJobs {
 		if job.finished.IsZero() {
-			fail(domain.Fail(domain.KindConflict, "mark_running", "another mark job is running"))
+			fail(domain.Fail(domain.KindConflict, domain.Record{Code: "mark_running", Message: "another mark job is running"}))
 			return
 		}
 	}
@@ -124,7 +131,7 @@ func (a *App) markStatus(w http.ResponseWriter, r *http.Request) {
 	if !ok || !job.finished.IsZero() && time.Since(job.finished) > markResultRetention {
 		delete(a.markJobs, key)
 		a.markMu.Unlock()
-		reject(w, r, domain.KindNotFound, "mark_result_gone", "mark result expired or the service restarted")
+		writeError(w, r, domain.Fail(domain.KindNotFound, domain.Record{Code: "mark_result_gone", Message: "mark result expired or the service restarted"}))
 		return
 	}
 	status := job.status

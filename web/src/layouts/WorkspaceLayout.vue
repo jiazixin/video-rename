@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import { RouterLink } from 'vue-router';
   import { errorText } from '../app/errors';
   import {
     Settings2,
@@ -11,7 +12,7 @@
     ListVideo,
     Coins
   } from '@lucide/vue';
-  import { api, session } from '../app/api';
+  import { api, session, setSession } from '../app/api';
   import { computed, ref } from 'vue';
   const { page, model, ready } = defineProps<{ page: string; model: string; ready: boolean }>();
   const emit = defineEmits<{ navigate: [page: string] }>();
@@ -45,7 +46,7 @@
   async function logout() {
     try {
       await api<unknown>('/auth/logout', { method: 'POST', body: {} });
-      session.value = null;
+      setSession(null);
     } catch (e) {
       error.value = errorText(e);
     }
@@ -54,9 +55,9 @@
 <template>
   <div class="workspace">
     <aside class="sidebar">
-      <a href="#library" class="brand"
+      <RouterLink to="/library" class="brand"
         ><span class="brand-mark"><img src="/logo.png" alt="" width="40" height="40" /></span
-        ><span>video-rename</span></a
+        ><span>video-rename</span></RouterLink
       >
       <nav aria-label="主导航">
         <div
@@ -107,6 +108,204 @@
   </div>
 </template>
 <style scoped>
+  .signal.off {
+    background: var(--palette-a78240);
+  }
+  .model-box {
+    padding: 16px 12px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .model-box strong {
+    font-size: 12px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .edition {
+    font-size: 9px;
+    color: var(--ash);
+    letter-spacing: 1px;
+    margin-left: 14px;
+    font-weight: 500;
+  }
+  .workspace {
+    display: flex;
+    min-height: 100vh;
+  }
+  .sidebar {
+    width: 224px;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    background: var(--surface);
+    border-right: 1px solid var(--line);
+    padding: 28px 18px 0;
+    display: flex;
+    flex-direction: column;
+    z-index: 10;
+  }
+  .sidebar > .brand {
+    padding: 0 8px;
+    margin-bottom: 52px;
+  }
+  .sidebar-caption {
+    font-size: 10px;
+    color: var(--palette-92959b);
+    letter-spacing: 1px;
+    padding: 0 12px;
+    margin-bottom: 12px;
+  }
+  .sidebar nav {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .sidebar nav button {
+    justify-content: flex-start;
+    border: 1px solid transparent;
+    padding: 12px;
+    background: transparent;
+    color: var(--steel);
+    font-weight: 400;
+    font-size: 13px;
+  }
+  .sidebar nav button.active {
+    background: var(--palette-ffffff);
+    border-color: var(--line);
+    color: var(--ink);
+    font-weight: 500;
+    box-shadow: 0 1px 2px var(--palette-00000003);
+  }
+  .sidebar-footer {
+    margin-top: auto;
+  }
+  .account {
+    border-top: 1px solid var(--line);
+    padding: 20px 4px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--palette-e7e9ed);
+    display: grid;
+    place-items: center;
+    font-size: 12px;
+  }
+  .account strong {
+    font-size: 12px;
+    display: block;
+    max-width: 100px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .account small {
+    font-size: 10px;
+    color: var(--ash);
+    display: block;
+  }
+  .account .icon-btn {
+    margin-left: auto;
+    color: var(--steel);
+  }
+  .workspace-main {
+    margin-left: 224px;
+    min-width: 0;
+    flex: 1;
+    background: var(--palette-ffffff);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .page-main {
+    padding: 40px 40px 56px;
+    max-width: 1600px;
+    width: 100%;
+    margin: 0 auto;
+    flex: 1;
+  }
+  @media (min-width: 1600px) {
+    .page-main {
+      padding: 50px 60px;
+    }
+  }
+  @media (max-width: 1150px) {
+    .page-main {
+      padding: 30px 24px;
+    }
+  }
+  @media (max-width: 1150px) {
+    .sidebar {
+      width: 205px;
+    }
+  }
+  @media (max-width: 1150px) {
+    .workspace-main {
+      margin-left: 205px;
+    }
+  }
+  @media (max-width: 1150px) {
+    .edition {
+      display: none;
+    }
+  }
+  @media (max-width: 800px) {
+    .sidebar {
+      width: 70px;
+      padding: 20px 9px;
+    }
+  }
+  @media (max-width: 800px) {
+    .sidebar .brand > span:not(.brand-mark),
+    .sidebar-caption,
+    .sidebar nav button > span,
+    .sidebar-footer .model-box,
+    .account > div:not(.avatar),
+    .sidebar .brand {
+      display: none;
+    }
+  }
+  @media (max-width: 800px) {
+    .sidebar nav {
+      margin-top: 70px;
+    }
+  }
+  @media (max-width: 800px) {
+    .sidebar nav button {
+      justify-content: center;
+      padding: 12px;
+    }
+  }
+  @media (max-width: 800px) {
+    .account {
+      flex-direction: column;
+      padding: 20px 0;
+    }
+  }
+  @media (max-width: 800px) {
+    .account .icon-btn {
+      margin: 0;
+    }
+  }
+  @media (max-width: 800px) {
+    .workspace-main {
+      margin-left: 70px;
+    }
+  }
+  @media (max-width: 800px) {
+    .page-main {
+      padding: 26px 20px;
+    }
+  }
+
   .workspace {
     --sidebar-width: 256px;
     --sidebar-bg: var(--palette-fbfcfb);

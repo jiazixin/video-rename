@@ -1,6 +1,7 @@
 package library
 
 import (
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"video-rename/internal/domain"
+	"video-rename/internal/storage"
 )
 
 func TestAncestorIdentityDiagnostic(t *testing.T) {
@@ -23,7 +25,9 @@ func TestAncestorIdentityDiagnostic(t *testing.T) {
 	parent := entry(t, l, 1, "folder")
 	refresh(t, l, parent.ID)
 	file := entry(t, l, parent.ID, "a.mp4")
-	if _, err := l.DB.Exec("UPDATE entries SET identity='999:888' WHERE id=?", parent.ID); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "UPDATE entries SET identity='999:888' WHERE id=?", parent.ID)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := l.Path(t.Context(), file.ID)

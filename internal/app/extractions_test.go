@@ -1,6 +1,7 @@
 package app
 
 import (
+	"database/sql"
 	"encoding/json/v2"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,8 @@ import (
 	"testing"
 
 	"video-rename/internal/config"
+	"video-rename/internal/record"
+	"video-rename/internal/storage"
 )
 
 func TestExtractionHistoryGroupsFiltersPaginationAndClear(t *testing.T) {
@@ -19,18 +22,22 @@ func TestExtractionHistoryGroupsFiltersPaginationAndClear(t *testing.T) {
 	defer shutdown(t, a)
 	for _, status := range []string{"success", "failure", "running"} {
 		for i := range 53 {
-			if _, err = a.DB.Exec(`INSERT INTO extraction_records(run,path,source,status,started,finished,duration_ms,processing_log) VALUES(7,?,'manual',?,'2026-09-26T01:00:00Z','2026-09-26T01:00:02Z',2000,'decoder detail')`, fmt.Sprintf("clip%d.mp4", i), status); err != nil {
+			if _, err = storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+				return tx.ExecContext(t.Context(), `INSERT INTO extraction_records(run,path,source,status,started,finished,duration_ms,processing_log) VALUES(7,?,'manual',?,'2026-09-26T01:00:00.000Z','2026-09-26T01:00:02.000Z',2000,'decoder detail')`, fmt.Sprintf("clip%d.mp4", i), status)
+			}); err != nil {
 				t.Fatal(err)
 			}
 		}
 	}
-	if _, err = a.DB.Exec(`INSERT INTO extraction_records(path,source,status,started) VALUES('unbatched.mp4','automatic','success','2026-09-25T01:00:00Z')`); err != nil {
+	if _, err = storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `INSERT INTO extraction_records(path,source,status,started) VALUES('unbatched.mp4','automatic','success','2026-09-25T01:00:00.000Z')`)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	type group struct {
-		Items []extractionRecord `json:"items"`
-		Total int                `json:"total"`
-		Next  int64              `json:"next"`
+		Items []record.Extraction `json:"items"`
+		Total int                 `json:"total"`
+		Next  int64               `json:"next"`
 	}
 	var result struct {
 		Success group `json:"success"`

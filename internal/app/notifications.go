@@ -2,11 +2,11 @@ package app
 
 import (
 	"net/http"
-	"strconv"
 	"time"
 	_ "time/tzdata"
 
-	"video-rename/internal/notifications"
+	"video-rename/internal/domain"
+	"video-rename/internal/notification"
 )
 
 func (a *App) notificationRoutes(mux *router) {
@@ -18,14 +18,14 @@ func (a *App) notificationRoutes(mux *router) {
 			return
 		}
 		if input.Timezone == "" || input.Timezone == "Local" || len(input.Timezone) > 100 {
-			invalid(w, r, "timezone", "invalid_timezone")
+			writeError(w, r, domain.InvalidField("timezone", "invalid_timezone"))
 			return
 		}
 		if _, err := time.LoadLocation(input.Timezone); err != nil {
-			invalid(w, r, "timezone", "invalid_timezone")
+			writeError(w, r, domain.InvalidField("timezone", "invalid_timezone"))
 			return
 		}
-		if _, err := a.DB.ExecContext(r.Context(), "UPDATE notification_preferences SET timezone=? WHERE id=1 AND timezone<>?", input.Timezone, input.Timezone); err != nil {
+		if err := a.Notifications.SetTimezone(r.Context(), input.Timezone); err != nil {
 			writeError(w, r, err)
 			return
 		}
@@ -40,7 +40,7 @@ func (a *App) notificationRoutes(mux *router) {
 		send(w, http.StatusOK, v)
 	})
 	mux.HandleFunc("PUT /api/notifications/{kind}", func(w http.ResponseWriter, r *http.Request) {
-		var v notifications.Input
+		var v notification.Input
 		if !decode(w, r, &v) {
 			return
 		}
@@ -60,8 +60,8 @@ func (a *App) notificationRoutes(mux *router) {
 	})
 	mux.HandleFunc("GET /api/notifications/history", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Has("page") || r.URL.Query().Has("size") {
-			page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-			size, _ := strconv.Atoi(r.URL.Query().Get("size"))
+			page := int(number(r.URL.Query().Get("page")))
+			size := int(number(r.URL.Query().Get("size")))
 			v, err := a.Notifications.ListHistoryPage(r.Context(), page, size)
 			if err != nil {
 				writeError(w, r, err)

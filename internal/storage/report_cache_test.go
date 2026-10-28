@@ -41,14 +41,14 @@ func TestReportRevisionCommitsAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	write, err := s.BeginTx(t.Context(), nil)
+	write, err := s.write.BeginTx(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = write.Exec("INSERT INTO runs(source,targets,recursive,status,created,request_key) VALUES('manual','[]',0,'queued','2026-10-05T00:00:00Z','revision')"); err != nil {
+	if _, err = write.ExecContext(t.Context(), "INSERT INTO runs(source,targets,recursive,status,created,request_key) VALUES('manual','[]',0,'queued','2026-10-05T00:00:00.000Z','revision')"); err != nil {
 		t.Fatal(err)
 	}
-	read, err := s.Read().BeginTx(t.Context(), nil)
+	read, err := s.read.BeginTx(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestReportRevisionCommitsAtomically(t *testing.T) {
 		t.Fatal(same, err)
 	}
 	read.Rollback()
-	read, err = s.Read().BeginTx(t.Context(), nil)
+	read, err = s.read.BeginTx(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

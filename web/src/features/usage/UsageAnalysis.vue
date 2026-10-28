@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import './usage.css';
   import { formatCount, formatPercent } from '../../lib/format/number';
   import { errorText } from '../../app/errors';
   import PageNavigation from '../../components/PageNavigation.vue';

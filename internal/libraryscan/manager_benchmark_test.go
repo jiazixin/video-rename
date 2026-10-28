@@ -2,13 +2,14 @@ package libraryscan
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"video-rename/internal/library"
 	"video-rename/internal/storage"
-	"video-rename/internal/systemsettings"
+	"video-rename/internal/systemsetting"
 )
 
 // Compare identical local trees with per-directory stages and one reused round
@@ -36,11 +37,11 @@ func BenchmarkRecursiveDirectoryScan(b *testing.B) {
 					if err != nil {
 						b.Fatal(err)
 					}
-					l, err := library.New(b.Context(), db, root)
+					l, err := library.New(b.Context(), db, root, slog.New(slog.DiscardHandler))
 					if err != nil {
 						b.Fatal(err)
 					}
-					m := New(l, systemsettings.Store{DB: db})
+					m := New(l, systemsetting.New(db))
 					if !reuse {
 						m.scan = l.ScanDirectory
 					}
@@ -50,7 +51,9 @@ func BenchmarkRecursiveDirectoryScan(b *testing.B) {
 				finish := func() {
 					m.Close()
 					m.library.Close()
-					db.Close()
+					if err := db.Close(); err != nil {
+						b.Error(err)
+					}
 				}
 				b.Cleanup(func() { finish() })
 				run := func() {

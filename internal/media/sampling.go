@@ -23,7 +23,7 @@ func NewSampler(cfg config.SamplingConfig) *Sampler { return &Sampler{Cfg: cfg} 
 //	size uses N0 = Ns, duration uses N0 = Nd.
 //	window A = D×skip_start, Z = D×(1−skip_end), L = Z−A;
 //	N = min(N0, max_frames, max(1, floor(L/1s)));
-//	t[i] = A + (i+0.5)×L/N。
+//	t[i] = A + (i+0.5)×L/N.
 func (s *Sampler) Plan(duration time.Duration, sizeBytes int64) (plan domain.FramePlan, err error) {
 	if duration <= 0 {
 		return plan, fmt.Errorf("duration must be positive: %v", duration)

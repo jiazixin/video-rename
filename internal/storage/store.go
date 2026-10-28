@@ -11,23 +11,28 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
 	_ "modernc.org/sqlite"
+
+	"video-rename/internal/timefmt"
 )
 
-// Store is the SQLite database with a separate read pool.
+// Store is the SQLite database with a separate read pool. closeMu serializes
+// shutdown and protects the instance lock's lifetime.
 type Store struct {
-	*sql.DB
+	write   *sql.DB
 	read    *sql.DB
 	lock    *os.File
 	secret  cipher.AEAD
 	reports reportCache
+	closeMu sync.Mutex
 }
 
 // Open opens or creates the database at path and applies its schema.
-func Open(ctx context.Context, path string) (*Store, error) {
+func Open(ctx context.Context, path string) (_ *Store, err error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -66,38 +71,53 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	s := &Store{lock: lock}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, s.Close())
+		}
+	}()
 	if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
-		lock.Close()
-		return nil, errors.New("database is in use by another instance")
+		if errors.Is(err, unix.EWOULDBLOCK) {
+			return nil, fmt.Errorf("database is in use by another instance: %w", err)
+		}
+		return nil, fmt.Errorf("lock database: %w", err)
 	}
 	dsn := url.URL{Scheme: "file", Path: path}
 	options := url.Values{}
-	for _, pragma := range []string{"foreign_keys(1)", "synchronous(FULL)", "busy_timeout(5000)"} {
+	for _, pragma := range []string{"foreign_keys(1)", "journal_mode(WAL)", "synchronous(FULL)", "busy_timeout(5000)"} {
 		options.Add("_pragma", pragma)
 	}
-	dsn.RawQuery = options.Encode()
-	db, err := sql.Open("sqlite", dsn.String())
+	options.Set("_txlock", "immediate")
+	if err := inspectSchema(ctx, dsn); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
-		lock.Close()
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	s := &Store{DB: db, lock: lock}
+	if err = errors.Join(file.Chmod(0o600), file.Close()); err != nil {
+		return nil, err
+	}
+	dsn.RawQuery = options.Encode()
+	s.write, err = sql.Open("sqlite", dsn.String())
+	if err != nil {
+		return nil, err
+	}
+	s.write.SetMaxOpenConns(1)
 	if err = s.initialize(ctx); err != nil {
-		s.Close()
-		return nil, err
-	}
-	if _, err = db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
-		s.Close()
 		return nil, err
 	}
 	if err = os.Chmod(path, 0o600); err != nil {
-		s.Close()
 		return nil, err
 	}
 	if err = s.initSecret(ctx, path+".key"); err != nil {
-		s.Close()
 		return nil, err
+	}
+	options.Del("_txlock")
+	options.Del("_pragma")
+	for _, pragma := range []string{"foreign_keys(1)", "busy_timeout(5000)"} {
+		options.Add("_pragma", pragma)
 	}
 	options.Set("mode", "ro")
 	options.Add("_pragma", "query_only(1)")
@@ -109,31 +129,38 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		err = s.read.PingContext(ctx)
 	}
 	if err != nil {
-		s.Close()
 		return nil, err
 	}
 	return s, nil
 }
 
-// Read supplies bounded, read-only WAL connections for queries and snapshots.
-// Writes and read-modify-write transactions must continue to use DB.
-func (s *Store) Read() *sql.DB { return s.read }
-
-// Close closes both connection pools.
+// Close closes both connection pools and releases the instance lock. Repeated
+// calls are safe, including after a partially completed Open.
 func (s *Store) Close() error {
-	var readErr error
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
+	var err error
 	if s.read != nil {
-		readErr = s.read.Close()
+		if closeErr := s.read.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close database reader: %w", closeErr))
+		}
 	}
-	err := s.DB.Close()
+	if s.write != nil {
+		if closeErr := s.write.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close database writer: %w", closeErr))
+		}
+	}
 	if s.lock != nil {
-		s.lock.Close()
+		if closeErr := s.lock.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close database instance lock: %w", closeErr))
+		}
+		s.lock = nil
 	}
-	return errors.Join(readErr, err)
+	return err
 }
 
-// Now returns the current UTC time in RFC 3339 format with nanoseconds.
-func Now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
+// Now returns the current UTC time with fixed millisecond precision.
+func Now() string { return timefmt.Format(time.Now()) }
 
 // recordTimeout bounds writes that record the outcome of work after its
 // context has ended.

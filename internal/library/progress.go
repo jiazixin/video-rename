@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json/v2"
+	"errors"
 	"slices"
 
 	"modernc.org/sqlite"
 
 	"video-rename/internal/discovery"
 	"video-rename/internal/domain"
+	"video-rename/internal/storage"
 )
 
 func init() {
@@ -50,42 +52,38 @@ type DirectoryProgress struct {
 // totals cross the SQL boundary; overlapping parents share the same aggregates.
 // The read transaction keeps counts and published generations in one snapshot.
 func (l *Library) WithProgressBatch(ctx context.Context, entries []Entry) ([]Entry, error) {
-	entries = slices.Clone(entries)
-	ids := []int64{}
-	seen := map[int64]bool{}
-	for _, e := range entries {
-		if e.Kind == "directory" && !seen[e.ID] {
-			ids = append(ids, e.ID)
-			seen[e.ID] = true
+	return storage.ReadValue(ctx, l.db, func(tx *sql.Tx) ([]Entry, error) {
+		entries = slices.Clone(entries)
+		ids := []int64{}
+		seen := map[int64]bool{}
+		for _, e := range entries {
+			if e.Kind == "directory" && !seen[e.ID] {
+				ids = append(ids, e.ID)
+				seen[e.ID] = true
+			}
 		}
-	}
-	if len(ids) == 0 {
-		return entries, ctx.Err()
-	}
-	tx, err := l.DB.Read().BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	nodes, contents, err := l.cachedDirectoryProcessing(ctx, tx, ids)
-	if err != nil {
-		return nil, err
-	}
-	if err = tx.Commit(); err != nil {
-		return nil, err
-	}
-	for i, e := range entries {
-		if e.Kind != "directory" {
-			continue
+		if len(ids) == 0 {
+			return entries, ctx.Err()
 		}
-		p := DirectoryProgress{}
-		if n := nodes[e.ID]; n != nil {
-			p = n.progress
+		var err error
+		nodes, contents, err := l.cachedDirectoryProcessing(ctx, tx, ids)
+		if err != nil {
+			return nil, err
 		}
-		entries[i].Progress = &p
-		entries[i].Contents = contents[e.ID]
-	}
-	return entries, nil
+
+		for i, e := range entries {
+			if e.Kind != "directory" {
+				continue
+			}
+			p := DirectoryProgress{}
+			if n := nodes[e.ID]; n != nil {
+				p = n.progress
+			}
+			entries[i].Progress = &p
+			entries[i].Contents = contents[e.ID]
+		}
+		return entries, nil
+	})
 }
 
 // directoryProcessing stores subtree totals without one recursive query per row.
@@ -123,7 +121,7 @@ func readDirectoryProcessing(ctx context.Context, tx *sql.Tx, ids []int64, statu
  SUM(COALESCE(m.source IN ('marked','manual','automatic'),0)) AS processed,
  SUM(EXISTS(SELECT 1 FROM run_items i JOIN runs r ON r.id=i.run WHERE i.entry=e.id AND i.status IN ('queued','running') AND r.status IN `+domain.ActiveRunStatusesSQL+`)) AS active,
  SUM(`+match+`) AS matches
- FROM dirs d JOIN entries e ON e.parent=d.id LEFT JOIN marks m ON m.identity=e.identity AND m.size=e.size AND m.mtime=e.mtime WHERE e.present=1 AND e.kind='file' AND video_rename_media_kind(e.name)=1 GROUP BY e.parent
+ FROM dirs d JOIN entries e ON e.parent=d.id LEFT JOIN marks m ON m.identity=e.identity AND m.size=e.size AND m.mtime_ns=e.mtime_ns WHERE e.present=1 AND e.kind='file' AND video_rename_media_kind(e.name)=1 GROUP BY e.parent
  ) SELECT d.id,d.parent,COALESCE(c.total,0),COALESCE(c.processed,0),COALESCE(c.active,0),
  NOT EXISTS(SELECT 1 FROM directory_state s WHERE s.dir=d.id AND s.generation>0 AND s.error=''),
  COALESCE(c.matches,0),`+task+`
@@ -143,7 +141,7 @@ func readDirectoryProcessing(ctx context.Context, tx *sql.Tx, ids []int64, statu
 	if err == nil {
 		err = rows.Err()
 	}
-	rows.Close()
+	err = errors.Join(err, rows.Close())
 	if err != nil {
 		return nil, err
 	}

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"database/sql"
 	"encoding/json/v2"
 	"log/slog"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"video-rename/internal/config"
+	"video-rename/internal/storage"
 )
 
 func usageApp(t *testing.T) *App {
@@ -18,19 +20,29 @@ func usageApp(t *testing.T) *App {
 	}
 	t.Cleanup(func() { shutdown(t, a) })
 	base := time.Date(2026, 9, 23, 8, 0, 0, 0, time.UTC)
-	if _, err := a.DB.Exec(`INSERT INTO entries(id,parent,name,kind,identity,size,mtime,observed) VALUES(500,1,'clip.mp4','file','i',1,'m','o')`); err != nil {
+	if _, err := storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `INSERT INTO entries(id,parent,name,kind,identity,size,mtime_ns,observed) VALUES(500,1,'clip.mp4','file','i',1,0,'o')`)
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.DB.Exec(`INSERT INTO runs(id,source,targets,recursive,status,created,request_key,config_summary) VALUES(1,'manual','[]',1,'completed','2026-09-01T00:00:00Z','k','{"model":"vision","provider":"custom","protocol":"openai"}')`); err != nil {
+	if _, err := storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `INSERT INTO runs(id,source,targets,recursive,status,created,request_key,config_summary) VALUES(1,'manual','[]',1,'completed','2026-09-01T00:00:00.000Z','k','{"model":"vision","provider":"custom","protocol":"openai"}')`)
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.DB.Exec(`INSERT INTO run_items(id,run,entry,identity,size,mtime) VALUES(1,1,500,'i',1,'m')`); err != nil {
+	if _, err := storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `INSERT INTO run_items(id,run,entry,identity,size,mtime_ns) VALUES(1,1,500,'i',1,0)`)
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.DB.Exec(`INSERT INTO token_usage_records(run,item,recorded_at,tokens,records,estimated_records) VALUES(1,1,?,?,1,0)`, base.UnixMilli(), int64(120)); err != nil {
+	if _, err := storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `INSERT INTO token_usage_records(run,item,recorded_at,tokens,records,estimated_records) VALUES(1,1,?,?,1,0)`, base.UnixMilli(), int64(120))
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.DB.Exec(`INSERT INTO run_token_usage(run,token_count,token_records,token_estimated_records) VALUES(1,120,1,0)`); err != nil {
+	if _, err := storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `INSERT INTO run_token_usage(run,token_count,token_records,token_estimated_records) VALUES(1,120,1,0)`)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	return a

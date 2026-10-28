@@ -1,6 +1,7 @@
 package library
 
 import (
+	"database/sql"
 	"encoding/json/v2"
 	"errors"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"video-rename/internal/domain"
+	"video-rename/internal/storage"
 )
 
 func TestNumberingSnapshotDiagnosesNonParticipatingEntries(t *testing.T) {
@@ -59,7 +61,9 @@ func TestNumberingRejectsInvalidPreviewFormat(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := l.DB.Exec("UPDATE image_numberings SET fingerprint=? WHERE id=?", tc.raw, b.ID); err != nil {
+			if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+				return tx.ExecContext(t.Context(), "UPDATE image_numberings SET fingerprint=? WHERE id=?", tc.raw, b.ID)
+			}); err != nil {
 				t.Fatal(err)
 			}
 			_, err = l.ApplyNumbering(t.Context(), b.ID, nil)
@@ -76,14 +80,16 @@ func TestNumberingRejectsInvalidPreviewFormat(t *testing.T) {
 				t.Fatal("invalid preview was rewritten", saved, err)
 			}
 			var operations int
-			if err := l.DB.QueryRow("SELECT count(*) FROM operations").Scan(&operations); err != nil || operations != 0 {
+			if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM operations").Scan(&operations)
+			}); err != nil || operations != 0 {
 				t.Fatal("invalid preview created file operations", operations, err)
 			}
 		})
 	}
 }
 func TestNumberingSnapshotReportsIdentityOnlyDrift(t *testing.T) {
-	before := numberingDirectorySnapshot{Version: 3, Hash: "old", Entries: []numberingEntrySnapshot{{Name: "photo.jpg", Type: "----------", Identity: "1:100", Size: 42, Mtime: "2026-09-27T00:00:00Z"}}}
+	before := numberingDirectorySnapshot{Version: 4, Hash: "old", Entries: []numberingEntrySnapshot{{Name: "photo.jpg", Type: "----------", Identity: "1:100", Size: 42, ModifiedNS: 1790467200000000000}}}
 	old, err := json.Marshal(before)
 	if err != nil {
 		t.Fatal(err)

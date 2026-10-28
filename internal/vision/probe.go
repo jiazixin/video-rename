@@ -14,8 +14,8 @@ func (c *Client) Probe(ctx context.Context, prompt string, frame domain.Frame) (
 	}
 	text, status, httpErr := c.doOnce(ctx, body)
 	if httpErr != nil {
-		httpErr.Message = safeDiagnostic(httpErr.Message, c.summaryLimit, c.apiKey, prompt)
+		httpErr.Message = safeDiagnostic(httpErr.Message, c.summaryLimit, c.apiKey.Reveal(), prompt)
 		return "", status, &httpErr.JobError
 	}
-	return safeDiagnostic(text, 4096, c.apiKey), status, nil
+	return safeDiagnostic(text, 4096, c.apiKey.Reveal()), status, nil
 }

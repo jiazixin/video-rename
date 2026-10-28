@@ -40,9 +40,20 @@ func padNumber(n *big.Int, width int) string {
 	return s
 }
 
+// numberingNamesOptions groups the inputs for numberingNames.
+type numberingNamesOptions struct {
+	Selected   []Entry
+	Outside    []Entry
+	Peers      []Entry
+	Rules      domain.MediaNumberingRules
+	PeerPrefix string
+}
+
 // Every format shares one sequence. Unselected files of the same class, and
 // the peer class when one sequence is shared, reserve their numbers too.
-func numberingNames(selected, outside, peers []Entry, r domain.MediaNumberingRules, peerPrefix string) []NumberingItem {
+func numberingNames(params numberingNamesOptions) []NumberingItem {
+	selected, outside, peers, r, peerPrefix := params.Selected, params.Outside, params.Peers, params.Rules, params.PeerPrefix
+
 	max := new(big.Int)
 	used := map[string]bool{}
 	// Selected files raise the ceiling but never block their own number;
@@ -89,7 +100,7 @@ func numberingNames(selected, outside, peers []Entry, r domain.MediaNumberingRul
 		if r.Lowercase || strings.EqualFold(ext, ".jpeg") {
 			ext = naming.NormalizeExtension(ext)
 		}
-		result = append(result, NumberingItem{Entry: e.ID, Old: e.Name, New: r.Prefix + padNumber(n, r.Padding) + ext, Version: e.Version, Identity: e.Identity, Size: e.Size, Mtime: e.Mtime})
+		result = append(result, NumberingItem{Entry: e.ID, Old: e.Name, New: r.Prefix + padNumber(n, r.Padding) + ext, Version: e.Version, Identity: e.Identity, Size: e.Size, ModifiedNS: e.ModifiedNS})
 	}
 	return result
 }
@@ -118,7 +129,7 @@ func mixedNumberingNames(entries, outside []Entry, settings domain.NumberingSett
 			peers = append(peers, audio...)
 		}
 	}
-	items := numberingNames(images, keptImages, peers, settings.Image, settings.Audio.Prefix)
+	items := numberingNames(numberingNamesOptions{Selected: images, Outside: keptImages, Peers: peers, Rules: settings.Image, PeerPrefix: settings.Audio.Prefix})
 	peers = nil
 	if settings.Shared {
 		peers = append(peers, keptImages...)
@@ -126,5 +137,5 @@ func mixedNumberingNames(entries, outside []Entry, settings domain.NumberingSett
 			peers = append(peers, Entry{Name: item.New})
 		}
 	}
-	return append(items, numberingNames(audio, keptAudio, peers, settings.Audio, settings.Image.Prefix)...)
+	return append(items, numberingNames(numberingNamesOptions{Selected: audio, Outside: keptAudio, Peers: peers, Rules: settings.Audio, PeerPrefix: settings.Image.Prefix})...)
 }

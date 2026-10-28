@@ -8,7 +8,8 @@ import (
 	"os"
 
 	"video-rename/internal/domain"
-	"video-rename/internal/jobs"
+	"video-rename/internal/job"
+	recordstore "video-rename/internal/record"
 )
 
 // retryHistory resubmits chosen history records as one batch on the chosen
@@ -18,33 +19,34 @@ func (a *App) retryHistory(w http.ResponseWriter, r *http.Request) {
 		Category      string  `json:"category"`
 		IDs           []int64 `json:"ids"`
 		All           bool    `json:"all"`
-		Key           string  `json:"key"`
+		Key           string  `json:"-"`
 		ModelConfigID int64   `json:"model_config_id"`
 	}
 	if !decode(w, r, &input) {
 		return
 	}
+	input.Key = requestKey(r)
 	if input.Category == "" {
 		input.Category = "failure"
 	}
 	if (input.Category != "failure" && input.Category != "success") || (input.Category == "success" && input.All) || (input.All && len(input.IDs) > 0) || (!input.All && len(input.IDs) == 0) || input.ModelConfigID < 0 || len(input.Key) < 8 || len(input.Key) > 120 {
-		invalid(w, r, "", "invalid_retry_request")
+		writeError(w, r, domain.InvalidField("", "invalid_retry_request"))
 		return
 	}
-	var records []retryRecord
+	var selectedRecords []retryRecord
 	var problems []retryProblem
 	var skipped int
 	var err error
 	if input.All {
-		records, skipped, err = a.allRetryableFailures(r.Context())
+		selectedRecords, skipped, err = recordstore.New(a.db).AllRetryableFailures(r.Context())
 	} else {
-		records, problems, err = a.chosenRetryRecords(r.Context(), input.IDs, input.Category)
+		selectedRecords, problems, err = recordstore.New(a.db).ChosenRetryRecords(r.Context(), input.IDs, input.Category)
 	}
 	if err != nil {
 		writeError(w, r, err)
 		return
 	}
-	targets, retryOperations, targetProblems := a.retryTargets(r.Context(), records, input.Category)
+	targets, retryOperations, targetProblems := a.retryTargets(r.Context(), selectedRecords, input.Category)
 	problems = append(problems, targetProblems...)
 	accepted, runs := []int64{}, []int64{}
 	if len(targets) > 0 {
@@ -52,7 +54,7 @@ func (a *App) retryHistory(w http.ResponseWriter, r *http.Request) {
 		for _, target := range targets {
 			entries = append(entries, target.entry)
 		}
-		run, err := a.Jobs.Create(r.Context(), jobs.Request{Targets: entries, ModelConfigID: input.ModelConfigID, Key: input.Key, RetryOperations: retryOperations}, "manual", 0)
+		run, err := a.Jobs.Create(r.Context(), job.Request{Targets: entries, ModelConfigID: input.ModelConfigID, Key: input.Key, RetryOperations: retryOperations}, "manual", 0)
 		if err != nil {
 			problem := domain.RecordOf(err)
 			if errors.Is(err, sql.ErrNoRows) {
@@ -69,64 +71,23 @@ func (a *App) retryHistory(w http.ResponseWriter, r *http.Request) {
 	if problems == nil {
 		problems = []retryProblem{}
 	}
-	send(w, http.StatusOK, map[string]any{"accepted": accepted, "runs": runs, "errors": problems, "skipped": skipped})
+	status := http.StatusOK
+	if len(runs) > 0 {
+		status = http.StatusAccepted
+	}
+	send(w, status, map[string]any{"accepted": accepted, "runs": runs, "errors": problems, "skipped": skipped})
 }
 
 // retryProblem is a record, or a group of Files, that was not resubmitted.
-type retryProblem struct {
-	Record int64         `json:"record,omitzero"`
-	Files  int           `json:"files,omitzero"`
-	Error  domain.Record `json:"error"`
-}
+type retryProblem = recordstore.RetryProblem
 
 // retryRecord is one history event to resubmit.
-type retryRecord struct{ id, entry, operation int64 }
+type retryRecord = recordstore.RetryRecord
 
 // retryTarget is one file to rename again and the records it answers.
 type retryTarget struct {
 	entry   int64
 	records []int64
-}
-
-// allRetryableFailures lists every automatic failure with a file; other
-// failures are counted as skipped.
-func (a *App) allRetryableFailures(ctx context.Context) (records []retryRecord, skipped int, err error) {
-	rows, err := a.DB.Read().QueryContext(ctx, "SELECT id,entry,action FROM events WHERE category='failure' ORDER BY id DESC")
-	if err != nil {
-		return nil, 0, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var record retryRecord
-		var action string
-		if err = rows.Scan(&record.id, &record.entry, &action); err != nil {
-			return nil, 0, err
-		}
-		if action != "automatic" || record.entry <= 0 {
-			skipped++
-			continue
-		}
-		records = append(records, record)
-	}
-	return records, skipped, rows.Err()
-}
-
-// chosenRetryRecords loads the chosen automatic records of one category and
-// reports the ones that cannot be retried.
-func (a *App) chosenRetryRecords(ctx context.Context, ids []int64, category string) (records []retryRecord, problems []retryProblem, err error) {
-	for _, id := range ids {
-		record := retryRecord{id: id}
-		err := a.DB.Read().QueryRowContext(ctx, "SELECT entry,operation FROM events WHERE id=? AND category=? AND action='automatic' AND entry>0", id, category).Scan(&record.entry, &record.operation)
-		if errors.Is(err, sql.ErrNoRows) {
-			problems = append(problems, retryProblem{Record: id, Error: domain.Record{Code: "record_not_retryable", Message: "record does not exist or cannot be retried automatically"}})
-			continue
-		}
-		if err != nil {
-			return nil, nil, err
-		}
-		records = append(records, record)
-	}
-	return records, problems, nil
 }
 
 // retryTargets groups records by file, keeping only files that still resolve.
@@ -136,24 +97,24 @@ func (a *App) retryTargets(ctx context.Context, records []retryRecord, category 
 	byEntry := map[int64]*retryTarget{}
 	for _, record := range records {
 		if category == "success" {
-			if err := a.Library.CheckAutomaticRetry(ctx, record.entry, record.operation); err != nil {
-				problems = append(problems, retryProblem{Record: record.id, Error: domain.RecordOf(err)})
+			if err := a.Library.CheckAutomaticRetry(ctx, record.Entry, record.Operation); err != nil {
+				problems = append(problems, retryProblem{Record: record.ID, Error: domain.RecordOf(err)})
 				continue
 			}
 		}
-		if target, ok := byEntry[record.entry]; ok {
-			target.records = append(target.records, record.id)
+		if target, ok := byEntry[record.Entry]; ok {
+			target.records = append(target.records, record.ID)
 			continue
 		}
-		if _, err := a.Library.Path(ctx, record.entry); err != nil {
-			problems = append(problems, retryProblem{Record: record.id, Error: retryPathProblem(err)})
+		if _, err := a.Library.Path(ctx, record.Entry); err != nil {
+			problems = append(problems, retryProblem{Record: record.ID, Error: retryPathProblem(err)})
 			continue
 		}
-		target := &retryTarget{entry: record.entry, records: []int64{record.id}}
-		byEntry[record.entry] = target
+		target := &retryTarget{entry: record.Entry, records: []int64{record.ID}}
+		byEntry[record.Entry] = target
 		targets = append(targets, target)
 		if category == "success" {
-			operations[record.entry] = record.operation
+			operations[record.Entry] = record.Operation
 		}
 	}
 	return targets, operations, problems

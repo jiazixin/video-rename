@@ -191,7 +191,7 @@ test('分组导航独立入口、刷新与前进后退', async ({ page }) => {
 test('用量总览、趋势数据表与模型对比', async ({ page }) => {
   await login(page)
   await page.route('**/api/usage/analytics*', (route) => route.fulfill({ json: fixture() }))
-  await page.goto('/#usage')
+  await page.goto('/usage')
   await expect(
     page.getByRole('list', { name: '用量概览' }).getByRole('listitem').first()
   ).toContainText('4.7K')
@@ -219,7 +219,7 @@ test('有数据明细窄屏标题完整且分页换行', async ({ page }) => {
   await login(page)
   await page.route('**/api/usage/analytics*', (route) => route.fulfill({ json: fixture() }))
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/#usage')
+  await page.goto('/usage')
   const title = page.getByRole('heading', { name: '批次明细', exact: true })
   const panel = page.getByRole('region', { name: '批次明细', exact: true })
   const navigation = panel.getByRole('navigation', { name: '分页导航' })
@@ -253,7 +253,7 @@ test('趋势悬停沿时间轴顺序移动且同一时间点附近保持稳定',
     estimated_records: 6_446
   })
   await page.route('**/api/usage/analytics*', (route) => route.fulfill({ json: report }))
-  await page.goto('/#usage')
+  await page.goto('/usage')
   const svg = page.getByRole('img', { name: /^Token 消耗趋势图/ })
   const tooltip = page.getByRole('status', { name: '数据点详情' })
   await expect(svg).toBeVisible()
@@ -303,7 +303,7 @@ test('高消耗批次、明细、筛选与分页请求', async ({ page }) => {
     }
     await route.fulfill({ json: filtered })
   })
-  await page.goto('/#usage')
+  await page.goto('/usage')
   await expect(page.getByRole('cell', { name: 'vision-a', exact: true }).first()).toBeVisible()
   await expect(page.getByText('共 2 个批次 · 第 1 / 1 页', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '仅看此批次' }).first().click()
@@ -367,7 +367,7 @@ test('空区间显示无数据而不是伪造零值', async ({ page }) => {
       }
     })
   )
-  await page.goto('/#usage')
+  await page.goto('/usage')
   await expect(page.getByText('所选区间没有记录到的用量', { exact: true })).toBeVisible()
   await expect(page.getByText('区间内没有模型用量记录', { exact: true })).toBeVisible()
   await expect(page.getByText('当前筛选没有批次用量记录', { exact: true })).toBeVisible()
@@ -404,7 +404,7 @@ test('接口错误显示重试而不是空数据', async ({ page }) => {
       }
     })
   )
-  await page.goto('/#usage')
+  await page.goto('/usage')
   await expect(page.getByRole('alert')).toContainText('数据库暂时不可用')
   let recovered = false
   await page.unroute('**/api/usage/analytics*')
@@ -428,7 +428,7 @@ test('无效自定义区间会中止上一请求并保留校验提示', async ({
     await route.fulfill({ json: fixture() })
   })
   const started = page.waitForRequest((req) => req.url().includes('/api/usage/analytics'))
-  await page.goto('/#usage')
+  await page.goto('/usage')
   await started
   const aborted = page.waitForEvent('requestfailed', (req) =>
     req.url().includes('/api/usage/analytics')
@@ -456,7 +456,7 @@ test('非法 JSON 响应显示错误并可重试', async ({ page }) => {
         })
       : route.fulfill({ json: fixture() })
   )
-  await page.goto('/#usage')
+  await page.goto('/usage')
   await expect(page.getByRole('alert')).toContainText('服务响应异常，请重试')
   malformed = false
   await page.getByRole('button', { name: '重试', exact: true }).click()
@@ -490,7 +490,7 @@ test('模型筛选联动配置并区分删除后重建的同名配置', async ({
     report.totals.tokens = compatible ? 4700 : 0
     await route.fulfill({ json: report })
   })
-  await page.goto('/#usage')
+  await page.goto('/usage')
   const model = page.getByRole('combobox', { name: '模型', exact: true })
   const config = page.getByRole('combobox', { name: '模型配置', exact: true })
   await config.click()

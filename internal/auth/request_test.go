@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"database/sql"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -21,33 +22,35 @@ func requestAuth(t *testing.T) (*Auth, http.Handler) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
-	a := New(db, config.AuthConfig{Username: "admin", Password: "test-password"})
-	return a, testHandler(a, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	a := newAuth(t, db, config.AuthConfig{Username: "admin", Password: "test-password"})
+	return a, testHandler(t, a, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
 }
 
 func TestAuthWritesHonorRequestCancellation(t *testing.T) {
 	for _, action := range []string{"login", "logout"} {
 		t.Run(action, func(t *testing.T) {
 			a, handler := requestAuth(t)
-			if _, err := a.DB.Exec("INSERT INTO sessions VALUES(?,?,?)", hash("valid"), time.Now().Add(sessionLifetime).Unix(), a.fingerprint); err != nil {
+			if _, err := storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+				return tx.ExecContext(t.Context(), "INSERT INTO sessions VALUES(?,?,?)", hash("valid"), time.Now().Add(sessionLifetime).Unix(), a.fingerprint)
+			}); err != nil {
 				t.Fatal(err)
 			}
-			tx, err := a.DB.BeginTx(t.Context(), nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer tx.Rollback()
+			finish := holdAuthWrite(t, a.db, func(*sql.Tx) error { return nil })
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			r := httptest.NewRequest("POST", "http://example.test/api/auth/"+action, strings.NewReader(`{"username":"admin","password":"test-password"}`)).WithContext(ctx)
 			r.Header.Set("Content-Type", "application/json")
 			r.AddCookie(&http.Cookie{Name: "vr_session", Value: "valid"})
-			before := a.DB.Stats().WaitCount
+			before := a.db.PoolStats().Writes.WaitCount
 			done := make(chan *httptest.ResponseRecorder, 1)
 			go func() { w := httptest.NewRecorder(); handler.ServeHTTP(w, r); done <- w }()
 			deadline := time.Now().Add(time.Second)
-			for a.DB.Stats().WaitCount == before && time.Now().Before(deadline) {
+			for a.db.PoolStats().Writes.WaitCount == before && time.Now().Before(deadline) {
 				time.Sleep(time.Millisecond)
 			}
 			cancel()
@@ -57,13 +60,15 @@ func TestAuthWritesHonorRequestCancellation(t *testing.T) {
 					t.Fatal("cancelled write acknowledged", w.Code)
 				}
 			case <-time.After(time.Second):
-				tx.Rollback()
+				finish(false)
 				<-done
 				t.Fatal("cancelled authentication request waited for writer")
 			}
-			tx.Rollback()
+			finish(false)
 			var count int
-			if err := a.DB.QueryRow("SELECT count(*) FROM sessions").Scan(&count); err != nil || count != 1 {
+			if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM sessions").Scan(&count)
+			}); err != nil || count != 1 {
 				t.Fatal("cancelled request mutated sessions", count, err)
 			}
 		})
@@ -73,7 +78,9 @@ func TestAuthWritesHonorRequestCancellation(t *testing.T) {
 // Login body decoding is the app layer's; see internal/app/auth_test.go.
 func TestAuthReadMethods(t *testing.T) {
 	a, handler := requestAuth(t)
-	if _, err := a.DB.Exec("INSERT INTO sessions VALUES(?,?,?)", hash("valid"), time.Now().Add(sessionLifetime).Unix(), a.fingerprint); err != nil {
+	if _, err := storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "INSERT INTO sessions VALUES(?,?,?)", hash("valid"), time.Now().Add(sessionLifetime).Unix(), a.fingerprint)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {

@@ -2,9 +2,12 @@ package library
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"path/filepath"
 
 	"video-rename/internal/domain"
+	"video-rename/internal/storage"
 )
 
 // DirectoryNumbering is the numbering of one directory within a tree.
@@ -49,26 +52,27 @@ func (l *Library) PreviewNumberingTreeWithProgress(ctx context.Context, parent i
 		if err != nil {
 			return nil, err
 		}
-		rows, err := l.DB.QueryContext(ctx, `SELECT e.id,e.kind,e.name,COALESCE((SELECT source FROM marks m WHERE m.identity=e.identity AND m.size=e.size AND m.mtime=e.mtime),'') FROM entries e WHERE e.parent=? AND e.present=1 ORDER BY e.name COLLATE NATURAL_NAME,e.id`, id)
-		if err != nil {
-			return nil, err
-		}
 		hasMedia := false
-		for rows.Next() {
-			var child int64
-			var kind, name, processed string
-			if err = rows.Scan(&child, &kind, &name, &processed); err != nil {
-				rows.Close()
-				return nil, err
+		err = l.db.View(ctx, func(tx *sql.Tx) (err error) {
+			rows, err := tx.QueryContext(ctx, `SELECT e.id,e.kind,e.name,COALESCE((SELECT source FROM marks m WHERE m.identity=e.identity AND m.size=e.size AND m.mtime_ns=e.mtime_ns),'') FROM entries e WHERE e.parent=? AND e.present=1 ORDER BY e.name COLLATE NATURAL_NAME,e.id`, id)
+			if err != nil {
+				return err
 			}
-			if kind == "directory" {
-				pending = append(pending, child)
-			} else if kind == "file" && (IsImage(name) || IsAudio(name)) && processed != "marked" {
-				hasMedia = true
+			defer func() { err = errors.Join(err, rows.Close()) }()
+			for rows.Next() {
+				var child int64
+				var kind, name, processed string
+				if err = rows.Scan(&child, &kind, &name, &processed); err != nil {
+					return err
+				}
+				if kind == "directory" {
+					pending = append(pending, child)
+				} else if kind == "file" && (IsImage(name) || IsAudio(name)) && processed != "marked" {
+					hasMedia = true
+				}
 			}
-		}
-		err = rows.Err()
-		rows.Close()
+			return rows.Err()
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -94,25 +98,22 @@ func (l *Library) NumberingTreeHistory(ctx context.Context, parent int64) ([]Dir
 	if _, err := l.Path(ctx, parent); err != nil {
 		return nil, err
 	}
-	rows, err := l.DB.QueryContext(ctx, `WITH RECURSIVE dirs(id) AS (SELECT ? UNION ALL SELECT e.id FROM entries e JOIN dirs d ON e.parent=d.id WHERE e.present=1 AND e.kind='directory')
+	ids, err := storage.ReadValue(ctx, l.db, func(tx *sql.Tx) ([]string, error) {
+		rows, err := tx.QueryContext(ctx, `WITH RECURSIVE dirs(id) AS (SELECT ? UNION ALL SELECT e.id FROM entries e JOIN dirs d ON e.parent=d.id WHERE e.present=1 AND e.kind='directory')
 	SELECT b.id FROM image_numberings b WHERE b.parent IN (SELECT id FROM dirs) AND b.status<>'preview' ORDER BY b.created DESC,b.id DESC LIMIT 100`, parent)
-	if err != nil {
-		return nil, err
-	}
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
-			rows.Close()
+		if err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
-	}
-	err = rows.Err()
-	rows.Close()
+		return storage.CollectRows(rows, func(rows *sql.Rows) (string, error) {
+			var id string
+			err := rows.Scan(&id)
+			return id, err
+		})
+	})
 	if err != nil {
 		return nil, err
 	}
+	// Release the ID snapshot before methods that acquire their own read transactions.
 	result := []DirectoryNumbering{}
 	for _, id := range ids {
 		b, err := l.Numbering(ctx, id)

@@ -2,6 +2,7 @@ package library
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -27,7 +28,7 @@ func (l *Library) ApplyNumbering(ctx context.Context, id string, progress func(i
 		return b, nil
 	}
 	if b.Status != "preview" {
-		return b, domain.Fail(domain.KindConflict, "numbering_not_preview", "numbering batch is not a preview", "status", b.Status)
+		return b, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_not_preview", Message: "numbering batch is not a preview", Details: map[string]any{"status": b.Status}})
 	}
 	if l.broken != nil {
 		return b, errHalted
@@ -36,7 +37,7 @@ func (l *Library) ApplyNumbering(ctx context.Context, id string, progress func(i
 		return b, err
 	}
 	if l.Busy != nil && l.Busy(ctx, b.Parent) {
-		return b, domain.Fail(domain.KindConflict, "descendant_busy", "a descendant has an active job")
+		return b, domain.Fail(domain.KindConflict, domain.Record{Code: "descendant_busy", Message: "a descendant has an active job"})
 	}
 	path, err := l.Path(ctx, b.Parent)
 	if err != nil {
@@ -55,7 +56,7 @@ func (l *Library) ApplyNumbering(ctx context.Context, id string, progress func(i
 			return b, err
 		}
 		if original.Status != "committed" {
-			return b, domain.Fail(domain.KindConflict, "numbering_original_unavailable", "original batch is restored or unavailable")
+			return b, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_original_unavailable", Message: "original batch is restored or unavailable"})
 		}
 	}
 	for _, i := range b.Items {
@@ -67,22 +68,24 @@ func (l *Library) ApplyNumbering(ctx context.Context, id string, progress func(i
 			return b, err
 		}
 		if b.UndoOf == "" && e.Processed == "marked" {
-			return b, domain.Fail(domain.KindConflict, "numbering_item_marked", "file is marked to skip numbering; preview again", "media", b.Media, "name", e.Name)
+			return b, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_item_marked", Message: "file is marked to skip numbering; preview again", Details: map[string]any{"media": b.Media, "name": e.Name}})
 		}
 		if e.Parent != b.Parent || e.Version != i.Version || e.Name != i.Old || !numberingMatch(filepath.Join(path, i.Old), i) {
-			return b, domain.Fail(domain.KindConflict, "numbering_item_changed", "file changed; preview again", "media", b.Media, "name", i.Old)
+			return b, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_item_changed", Message: "file changed; preview again", Details: map[string]any{"media": b.Media, "name": i.Old}})
 		}
 		if err = l.CheckAvailable(ctx, i.Entry); err != nil {
 			return b, err
 		}
 		if e.TaskStatus != "" || (l.Busy != nil && l.Busy(ctx, i.Entry)) {
-			return b, domain.Fail(domain.KindConflict, "numbering_item_busy", "a file has an active job", "media", b.Media)
+			return b, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_item_busy", Message: "a file has an active job", Details: map[string]any{"media": b.Media}})
 		}
 		if i.UndoOf != 0 && e.RestoreID != i.UndoOf {
-			return b, domain.Fail(domain.KindConflict, "numbering_item_renamed", "a file was renamed later; the batch cannot be restored", "media", b.Media)
+			return b, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_item_renamed", Message: "a file was renamed later; the batch cannot be restored", Details: map[string]any{"media": b.Media}})
 		}
 	}
-	if _, err = l.DB.ExecContext(ctx, "UPDATE image_numberings SET status='running' WHERE id=?", id); err != nil {
+	if _, err = storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(ctx, "UPDATE image_numberings SET status='running' WHERE id=?", id)
+	}); err != nil {
 		return b, err
 	}
 	b.Status = "running"
@@ -96,7 +99,7 @@ func (l *Library) ApplyNumbering(ctx context.Context, id string, progress func(i
 		persisted, readErr := l.Numbering(ctx, id)
 		if readErr != nil {
 			l.broken = readErr
-			return b, domain.Fail(domain.KindInternal, "numbering_unconfirmed", "numbering result needs review; restart to recover").Wrap(readErr)
+			return b, domain.Fail(domain.KindInternal, domain.Record{Code: "numbering_unconfirmed", Message: "numbering result needs review; restart to recover"}).Wrap(readErr)
 		}
 		if persisted.Status == "committed" {
 			return persisted, nil
@@ -108,9 +111,11 @@ func (l *Library) ApplyNumbering(ctx context.Context, id string, progress func(i
 		}
 		b.Error = domain.RecordOf(cause)
 		// Save the captured failure before rollback changes the filesystem.
-		if _, saveErr := l.DB.ExecContext(ctx, "UPDATE image_numberings SET error=? WHERE id=?", b.numberingErrorRecord(), id); saveErr != nil {
+		if _, saveErr := storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(ctx, "UPDATE image_numberings SET error=? WHERE id=?", b.numberingErrorRecord(), id)
+		}); saveErr != nil {
 			l.broken = saveErr
-			return b, domain.Fail(domain.KindInternal, "numbering_evidence_unsaved", "saving the numbering failure failed; restart to review").Wrap(saveErr)
+			return b, domain.Fail(domain.KindInternal, domain.Record{Code: "numbering_evidence_unsaved", Message: "saving the numbering failure failed; restart to review"}).Wrap(saveErr)
 		}
 		if recovery := l.rollbackNumbering(ctx, &b, path); recovery != nil {
 			b.Status = "review"
@@ -122,7 +127,9 @@ func (l *Library) ApplyNumbering(ctx context.Context, id string, progress func(i
 			b.Status = "rolled_back"
 			b.Error = domain.Record{Code: "numbering_rolled_back", Message: "numbering failed; original names restored: " + cause.Error(), Details: map[string]any{"cause": domain.RecordOf(cause)}}
 		}
-		if _, dbErr := l.DB.ExecContext(ctx, "UPDATE image_numberings SET status=?,error=? WHERE id=?", b.Status, b.numberingErrorRecord(), id); dbErr != nil {
+		if _, dbErr := storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(ctx, "UPDATE image_numberings SET status=?,error=? WHERE id=?", b.Status, b.numberingErrorRecord(), id)
+		}); dbErr != nil {
 			l.broken = dbErr
 		}
 		return b, &domain.JobError{Code: domain.ErrorCode(b.Error.Code), Message: b.Error.Message, Details: b.Error.Details, ProcessingLog: b.ProcessingLog}
@@ -130,8 +137,18 @@ func (l *Library) ApplyNumbering(ctx context.Context, id string, progress func(i
 	return l.Numbering(ctx, id)
 }
 
+// moveNumberingOptions groups the inputs for moveNumbering.
+type moveNumberingOptions struct {
+	Batch  *Numbering
+	Item   *NumberingItem
+	Path   string
+	Target string
+}
+
 // Persist the intent before each no-replace move, then fsync before recording completion.
-func (l *Library) moveNumbering(ctx context.Context, b *Numbering, i *NumberingItem, path, target string) error {
+func (l *Library) moveNumbering(ctx context.Context, params moveNumberingOptions) error {
+	b, i, path, target := params.Batch, params.Item, params.Path, params.Target
+
 	if i.Current == target {
 		return nil
 	}
@@ -150,16 +167,18 @@ func (l *Library) moveNumbering(ctx context.Context, b *Numbering, i *NumberingI
 	}
 	defer dir.Close()
 	snap, err := directorySnapshot(dir, i.Current)
-	if err != nil || Identity(snap) != i.Identity || snap.Size != i.Size || stamp(snap) != i.Mtime {
-		return domain.Fail(domain.KindConflict, "numbering_item_changed", "file identity or content changed", "media", b.Media, "name", i.Current)
+	if err != nil || Identity(snap) != i.Identity || snap.Size != i.Size || stamp(snap) != i.ModifiedNS {
+		return domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_item_changed", Message: "file identity or content changed", Details: map[string]any{"media": b.Media, "name": i.Current}})
 	}
 	l.indexEpoch.Add(1)
-	if _, err := l.DB.ExecContext(ctx, "UPDATE image_numbering_items SET pending_name=? WHERE batch=? AND entry=?", target, b.ID, i.Entry); err != nil {
+	if _, err := storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(ctx, "UPDATE image_numbering_items SET pending_name=? WHERE batch=? AND entry=?", target, b.ID, i.Entry)
+	}); err != nil {
 		return err
 	}
 	i.Pending = target
 	if err := rename.NoReplaceAt(int(dir.Fd()), i.Current, target); err != nil {
-		return numberingMoveFailure(b, i, path, target, err)
+		return numberingMoveFailure(numberingMoveFailureOptions{Batch: b, Item: i, Path: path, Target: target, Cause: err})
 	}
 	if err := dir.Sync(); err != nil {
 		return err
@@ -167,7 +186,9 @@ func (l *Library) moveNumbering(ctx context.Context, b *Numbering, i *NumberingI
 	if _, err := l.Path(ctx, b.Parent); err != nil {
 		return err
 	}
-	if _, err := l.DB.ExecContext(ctx, "UPDATE image_numbering_items SET current_name=?,pending_name='' WHERE batch=? AND entry=?", target, b.ID, i.Entry); err != nil {
+	if _, err := storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(ctx, "UPDATE image_numbering_items SET current_name=?,pending_name='' WHERE batch=? AND entry=?", target, b.ID, i.Entry)
+	}); err != nil {
 		return err
 	}
 	i.Current = target
@@ -190,7 +211,7 @@ func (l *Library) performNumbering(ctx context.Context, b *Numbering, path strin
 		}
 		i := &b.Items[idx]
 		if i.Old != i.New {
-			if err := l.moveNumbering(ctx, b, i, path, i.Temp); err != nil {
+			if err := l.moveNumbering(ctx, moveNumberingOptions{Batch: b, Item: i, Path: path, Target: i.Temp}); err != nil {
 				return err
 			}
 		}
@@ -201,7 +222,7 @@ func (l *Library) performNumbering(ctx context.Context, b *Numbering, path strin
 		}
 		i := &b.Items[idx]
 		if i.Old != i.New {
-			if err := l.moveNumbering(ctx, b, i, path, i.New); err != nil {
+			if err := l.moveNumbering(ctx, moveNumberingOptions{Batch: b, Item: i, Path: path, Target: i.New}); err != nil {
 				return err
 			}
 			done++
@@ -210,66 +231,79 @@ func (l *Library) performNumbering(ctx context.Context, b *Numbering, path strin
 			}
 		}
 	}
-	for _, i := range b.Items {
-		if err := ctx.Err(); err != nil {
-			return err
+	return l.db.Write(ctx, func(tx *sql.Tx) error {
+		var err error
+		// Temporarily free database name uniqueness within the same transaction.
+		for _, i := range b.Items {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if i.Old != i.New {
+				if _, err = tx.ExecContext(ctx, "UPDATE entries SET name=? WHERE id=?", i.Temp, i.Entry); err != nil {
+					return err
+				}
+			}
 		}
-		if !numberingMatch(filepath.Join(path, i.New), i) {
-			return domain.Fail(domain.KindConflict, "numbering_item_changed", "file changed before commit", "media", b.Media, "name", i.New)
-		}
-	}
-	tx, err := l.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	// Temporarily free database name uniqueness within the same transaction.
-	for _, i := range b.Items {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if i.Old != i.New {
-			if _, err = tx.ExecContext(ctx, "UPDATE entries SET name=? WHERE id=?", i.Temp, i.Entry); err != nil {
+		for _, i := range b.Items {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if i.Old == i.New {
+				continue
+			}
+			source := "manual"
+			if b.UndoOf != "" {
+				source = "restore"
+			}
+			o := Operation{Entry: i.Entry, Parent: b.Parent, Old: i.Old, New: i.New, Identity: i.Identity, Size: i.Size, ModifiedNS: i.ModifiedNS, Kind: "file", Source: source, UndoOf: i.UndoOf}
+			res, err := tx.ExecContext(ctx, `INSERT INTO operations(entry,parent,old_name,new_name,identity,size,mtime_ns,kind,source,status,undo_of,request_key,created) VALUES(?,?,?,?,?,?,?,?,?,'prepared',?,?,?)`, o.Entry, o.Parent, o.Old, o.New, o.Identity, o.Size, o.ModifiedNS, o.Kind, o.Source, o.UndoOf, "numbering:"+b.ID+fmt.Sprint(i.Entry), storage.Now())
+			if err != nil {
+				return err
+			}
+			o.ID, err = res.LastInsertId()
+			if err != nil {
+				return fmt.Errorf("read numbering operation ID: %w", err)
+			}
+			// Validated directory and leaf names share the absolute library root.
+			oldrel, _ := filepath.Rel(l.Root, filepath.Join(path, i.Old))
+			newrel, _ := filepath.Rel(l.Root, filepath.Join(path, i.New))
+			if err = l.finishTx(ctx, finishTxOptions{Tx: tx, O: o, Oldrel: oldrel, Newrel: newrel}); err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, "UPDATE image_numbering_items SET operation=? WHERE batch=? AND entry=?", o.ID, b.ID, i.Entry); err != nil {
 				return err
 			}
 		}
+		if _, err = tx.ExecContext(ctx, "UPDATE image_numberings SET status='committed',error='' WHERE id=?", b.ID); err != nil {
+			return err
+		}
+		if b.UndoOf != "" {
+			if _, err = tx.ExecContext(ctx, "UPDATE image_numberings SET status='restored' WHERE id=?", b.UndoOf); err != nil {
+				return err
+			}
+		}
+		// Storage writes may wait while external processes replace the files.
+		// Reject that outcome before committing any success record, including
+		// batches whose numbering leaves some of the original names unchanged.
+		return l.verifyNumberingCommit(ctx, b)
+	})
+}
+
+func (l *Library) verifyNumberingCommit(ctx context.Context, b *Numbering) (err error) {
+	dir, err := l.openDirectory(ctx, b.Parent)
+	if err != nil {
+		return err
 	}
-	for _, i := range b.Items {
+	defer func() { err = errors.Join(err, dir.Close()) }()
+	for _, item := range b.Items {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if i.Old == i.New {
-			continue
-		}
-		source := "manual"
-		if b.UndoOf != "" {
-			source = "restore"
-		}
-		o := Operation{Entry: i.Entry, Parent: b.Parent, Old: i.Old, New: i.New, Identity: i.Identity, Size: i.Size, Mtime: i.Mtime, Kind: "file", Source: source, UndoOf: i.UndoOf}
-		res, err := tx.ExecContext(ctx, `INSERT INTO operations(entry,parent,old_name,new_name,identity,size,mtime,kind,source,status,undo_of,request_key,created) VALUES(?,?,?,?,?,?,?,?,?,'prepared',?,?,?)`, o.Entry, o.Parent, o.Old, o.New, o.Identity, o.Size, o.Mtime, o.Kind, o.Source, o.UndoOf, "numbering:"+b.ID+fmt.Sprint(i.Entry), storage.Now())
-		if err != nil {
-			return err
-		}
-		o.ID, _ = res.LastInsertId()
-		oldrel, _ := filepath.Rel(l.Root, filepath.Join(path, i.Old))
-		newrel, _ := filepath.Rel(l.Root, filepath.Join(path, i.New))
-		if err = l.finishTx(ctx, tx, o, oldrel, newrel); err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, "UPDATE image_numbering_items SET operation=? WHERE batch=? AND entry=?", o.ID, b.ID, i.Entry); err != nil {
-			return err
+		operation := Operation{Kind: "file", Identity: item.Identity, Size: item.Size, ModifiedNS: item.ModifiedNS}
+		if err := verifyOperationFile(dir, item.New, operation); err != nil {
+			return domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_item_changed", Message: "file changed before commit", Details: map[string]any{"media": b.Media, "name": item.New}}).Wrap(err)
 		}
 	}
-	if _, err = tx.ExecContext(ctx, "UPDATE image_numberings SET status='committed',error='' WHERE id=?", b.ID); err != nil {
-		return err
-	}
-	if b.UndoOf != "" {
-		if _, err = tx.ExecContext(ctx, "UPDATE image_numberings SET status='restored' WHERE id=?", b.UndoOf); err != nil {
-			return err
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return tx.Commit()
+	_, err = l.Path(ctx, b.Parent)
+	return err
 }

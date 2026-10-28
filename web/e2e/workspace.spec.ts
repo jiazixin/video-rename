@@ -20,10 +20,10 @@ test.beforeAll(async ({ request }) => {
   }
   const profiles = (await (await request.get('/api/model-configs')).json()).items
   const response = await request.patch('/api/model-configs/1', {
+    headers: { 'If-Match': profiles.find((p: Record<string, unknown>) => p.id === 1).etag },
     data: {
       title: '默认视频命名',
       prompt_id: prompt.id,
-      version: profiles.find((p: Record<string, unknown>) => p.id === 1).version,
       provider: 'custom',
       protocol: 'openai',
       base_url: modelURL(),
@@ -898,8 +898,8 @@ test('表格内容与下拉面板中轴对齐', async ({ page }) => {
               path: longDirectory + '/' + longName,
               source: 'automatic',
               status: 'completed',
-              started: '2026-09-28T13:58:03Z',
-              finished: '2026-09-28T13:58:06Z',
+              started: '2026-09-28T13:58:03.000Z',
+              finished: '2026-09-28T13:58:06.000Z',
               duration_ms: 3000,
               cached: false,
               frames: 12,
@@ -1270,12 +1270,11 @@ test('后台标记查询断连后使用同一请求重试', async ({ page }) => 
   const keys: string[] = []
   let polls = 0
   await page.route('**/api/entries/processed', async (route) => {
-    const body = route.request().postDataJSON()
-    keys.push(body.key)
+    keys.push(defined(route.request().headers()['idempotency-key']))
     await route.fulfill({
       status: 202,
       json: {
-        key: body.key,
+        key: route.request().headers()['idempotency-key'],
         status: 'running',
         changed: 1,
         unchanged: 0,
@@ -1554,8 +1553,7 @@ test('通知设置保存密钥、测试发送和批次结束通知', async ({ pa
       data: {
         targets: [entry.id],
         model_config_id: 1,
-        recursive: false,
-        key: 'notification-browser-run'
+        recursive: false
       }
     })
   ).json()
@@ -1601,7 +1599,7 @@ test('运行详情显示目录文件清单与翻页、成功历史诊断', async
     discovered: 101,
     skipped: 0,
     failed: 0,
-    created: '2026-09-21T01:00:00Z',
+    created: '2026-09-21T01:00:00.000Z',
     prompt_body: '测试提示词',
     model_config_title: '默认视频命名',
     request_config: { model: 'test' }
@@ -1645,7 +1643,7 @@ test('运行详情显示目录文件清单与翻页、成功历史诊断', async
             category: 'success',
             action: 'automatic',
             run: 9901,
-            created: '2026-09-21T01:00:00Z',
+            created: '2026-09-21T01:00:00.000Z',
             old_path: '目录/a.mp4',
             new_path: '目录/新标题.mp4'
           }
@@ -1754,7 +1752,7 @@ test('历史批次自绘筛选和失败批次列', async ({ page }) => {
       old_path: `目录/片段${run}.mp4`,
       new_path: category === 'success' ? `目录/新名称${run}.mp4` : '',
       message: category === 'failure' ? '命名失败' : '',
-      created: '2026-09-21T08:00:00Z'
+      created: '2026-09-21T08:00:00.000Z'
     }))
     const items = all.filter((row) => !params.get('run') || String(row.run) === params.get('run'))
     return route.fulfill({ json: { items, total: items.length, page: 1, next: 0 } })
@@ -1803,7 +1801,7 @@ test('历史统计分页和多选重试成功后刷新移除', async ({ page }) 
       action: 'automatic',
       run: 7,
       old_path: `目录/片段${105 - i}.mp4`,
-      created: '2026-09-21T08:00:00Z'
+      created: '2026-09-21T08:00:00.000Z'
     })).filter((row) => !completed || category !== 'failure' || row.id < 104)
     const rest = all.slice((pageNumber - 1) * limit),
       items = rest.slice(0, limit)
@@ -1979,7 +1977,9 @@ test('列表快照淘汰后返回仍能从接口恢复第二页和定位', async
   // Visit other directories without touching the parent, evicting its list snapshot.
   for (const id of ids.slice(0, 32)) {
     await page.evaluate((id) => {
-      location.hash = `library/${id}`
+      const path = `/library/${id}`
+      history.replaceState({ ...history.state, current: path }, '', path)
+      dispatchEvent(new PopStateEvent('popstate', { state: history.state }))
     }, id)
     await expect(
       page.getByRole('navigation', { name: '目录路径' }).getByRole('button').last()
@@ -2129,9 +2129,9 @@ test('批次记录按实际开始计算耗时，排除排队时间', async ({ pa
       request_config: { model: 'fixture-model' },
       model_config_title: 'fixture profile',
       status: 'completed',
-      created: '2026-09-22T01:00:00Z',
-      started: '2026-09-22T01:00:10Z',
-      finished: '2026-09-22T02:02:03Z',
+      created: '2026-09-22T01:00:00.000Z',
+      started: '2026-09-22T01:00:10.000Z',
+      finished: '2026-09-22T02:02:03.000Z',
       done: 1,
       discovered: 1,
       skipped: 0,
@@ -2153,7 +2153,7 @@ test('批次记录按实际开始计算耗时，排除排队时间', async ({ pa
       source: 'schedule',
       plan: 1,
       status: 'queued',
-      created: '2026-09-22T01:00:00Z',
+      created: '2026-09-22T01:00:00.000Z',
       started: '',
       finished: '',
       done: 0,

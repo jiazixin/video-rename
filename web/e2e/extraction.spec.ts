@@ -204,11 +204,11 @@ test('三个独立抽帧入口、真实缓存复用及统一成功失败记录',
     expect(profileResponse.ok()).toBeTruthy()
     const profile = await profileResponse.json()
     const renameResponse = await page.request.post('/api/runs', {
+      headers: { 'Idempotency-Key': 'extraction-e2e-rename' },
       data: {
         task: 'rename',
         targets: [file.id],
-        model_config_id: profile.id,
-        key: 'extraction-e2e-rename'
+        model_config_id: profile.id
       }
     })
     expect(renameResponse.ok()).toBeTruthy()
@@ -292,8 +292,8 @@ test('抽帧历史独立分页、无批次、窄屏与清除', async ({ page }) 
     path: '目录/无批次.mp4',
     source: 'manual',
     status: 'success',
-    started: '2026-09-26T01:00:00Z',
-    finished: '2026-09-26T01:00:02Z',
+    started: '2026-09-26T01:00:00.000Z',
+    finished: '2026-09-26T01:00:02.000Z',
     duration_ms: 2000,
     cached: false,
     frames: 5,

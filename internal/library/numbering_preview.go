@@ -2,6 +2,7 @@ package library
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -62,7 +63,7 @@ func (l *Library) PreviewNumbering(ctx context.Context, req NumberingRequest) (N
 		return Numbering{}, errNotDirectory
 	}
 	if l.Busy != nil && l.Busy(ctx, parent) {
-		return Numbering{}, domain.Fail(domain.KindConflict, "descendant_busy", "a descendant has an active job")
+		return Numbering{}, domain.Fail(domain.KindConflict, domain.Record{Code: "descendant_busy", Message: "a descendant has an active job"})
 	}
 	path, err := l.Path(ctx, parent)
 	if err != nil {
@@ -77,25 +78,23 @@ func (l *Library) PreviewNumbering(ctx context.Context, req NumberingRequest) (N
 	if strings.HasSuffix(sortBy, "_desc") {
 		order = "DESC"
 	}
-	rows, err := l.DB.QueryContext(ctx, `SELECT entry,instr(lower(name),lower(?))>0 AND (`+statusFilter+`) FROM directory_items WHERE dir=? AND generation=(SELECT generation FROM directory_state WHERE dir=?) AND kind='file' ORDER BY `+value+` `+order+`,name COLLATE NATURAL_NAME `+order+`,entry `+order, query, parent, parent)
-	if err != nil {
-		return Numbering{}, err
-	}
 	type candidate struct {
 		id       int64
 		selected bool
 	}
 	var candidates []candidate
-	for rows.Next() {
-		var c candidate
-		if err = rows.Scan(&c.id, &c.selected); err != nil {
-			rows.Close()
-			return Numbering{}, err
+	err = l.db.View(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT entry,instr(lower(name),lower(?))>0 AND (`+statusFilter+`) FROM directory_items WHERE dir=? AND generation=(SELECT generation FROM directory_state WHERE dir=?) AND kind='file' ORDER BY `+value+` `+order+`,name COLLATE NATURAL_NAME `+order+`,entry `+order, query, parent, parent)
+		if err != nil {
+			return err
 		}
-		candidates = append(candidates, c)
-	}
-	err = rows.Err()
-	rows.Close()
+		candidates, err = storage.CollectRows(rows, func(rows *sql.Rows) (candidate, error) {
+			var c candidate
+			err := rows.Scan(&c.id, &c.selected)
+			return c, err
+		})
+		return err
+	})
 	if err != nil {
 		return Numbering{}, err
 	}
@@ -114,9 +113,9 @@ func (l *Library) PreviewNumbering(ctx context.Context, req NumberingRequest) (N
 			continue
 		}
 		if sameClass {
-			item := NumberingItem{Identity: e.Identity, Size: e.Size, Mtime: e.Mtime}
+			item := NumberingItem{Identity: e.Identity, Size: e.Size, ModifiedNS: e.ModifiedNS}
 			if !numberingMatch(filepath.Join(path, e.Name), item) {
-				return Numbering{}, domain.Fail(domain.KindConflict, "numbering_media_changed", "a file changed; refresh the directory", "media", m.value)
+				return Numbering{}, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_media_changed", Message: "a file changed; refresh the directory", Details: map[string]any{"media": m.value}})
 			}
 		}
 		indexed[e.Name] = true
@@ -138,7 +137,7 @@ func (l *Library) PreviewNumbering(ctx context.Context, req NumberingRequest) (N
 			continue
 		}
 		if m.match(e.Name()) || (settings.Shared && peer.match(e.Name())) {
-			return Numbering{}, domain.Fail(domain.KindConflict, "numbering_index_incomplete", "the index is incomplete; refresh the directory", "media", m.value)
+			return Numbering{}, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_index_incomplete", Message: "the index is incomplete; refresh the directory", Details: map[string]any{"media": m.value}})
 		}
 	}
 	after, err := directoryFingerprint(path)
@@ -146,12 +145,12 @@ func (l *Library) PreviewNumbering(ctx context.Context, req NumberingRequest) (N
 		return Numbering{}, err
 	}
 	if before != after {
-		return Numbering{}, domain.Fail(domain.KindConflict, "directory_changed", "directory changed; preview again")
+		return Numbering{}, domain.Fail(domain.KindConflict, domain.Record{Code: "directory_changed", Message: "directory changed; preview again"})
 	}
 	if len(selected) == 0 {
-		return Numbering{}, domain.Fail(domain.KindInvalid, "numbering_nothing_selected", "no file to number in the current filter", "media", m.value)
+		return Numbering{}, domain.Fail(domain.KindInvalid, domain.Record{Code: "numbering_nothing_selected", Message: "no file to number in the current filter", Details: map[string]any{"media": m.value}})
 	}
-	items := numberingNames(selected, outside, peers, rules, peerRules.Prefix)
+	items := numberingNames(numberingNamesOptions{Selected: selected, Outside: outside, Peers: peers, Rules: rules, PeerPrefix: peerRules.Prefix})
 	if media == "mixed" {
 		items = mixedNumberingNames(selected, outside, settings)
 	}
@@ -175,11 +174,22 @@ func numberingTargetMoves(name string, names map[string][]string, changed map[st
 	return item, ok
 }
 
+// numberingConflictOptions groups the inputs for numberingConflict.
+type numberingConflictOptions struct {
+	Path       string
+	Batch      Numbering
+	Item       NumberingItem
+	Target     os.FileInfo
+	Candidates []string
+}
+
 // Preview failures have no committed journal. Return evidence to the numbering
 // dialog so a conflict can be inspected before any file is renamed.
-func numberingConflict(path string, b Numbering, item NumberingItem, target os.FileInfo, candidates []string) error {
+func numberingConflict(params numberingConflictOptions) error {
+	path, b, item, target, candidates := params.Path, params.Batch, params.Item, params.Target, params.Candidates
+
 	var detail strings.Builder
-	fmt.Fprintf(&detail, "numbering target conflict\ndirectory: %q\noriginal name: %q\ntarget name: %q\nmedia: %s\nfiles: %d; planned renames: %d\nindexed identity: %s\nsize: %d bytes\nmtime: %s\n", path, item.Old, item.New, b.Media, len(b.Items), b.Changed, item.Identity, item.Size, item.Mtime)
+	fmt.Fprintf(&detail, "numbering target conflict\ndirectory: %q\noriginal name: %q\ntarget name: %q\nmedia: %s\nfiles: %d; planned renames: %d\nindexed identity: %s\nsize: %d bytes\nmtime_ns: %d\n", path, item.Old, item.New, b.Media, len(b.Items), b.Changed, item.Identity, item.Size, item.ModifiedNS)
 	fmt.Fprintf(&detail, "target kind: %s\ntarget size: %d bytes\n", kindOf(target), target.Size())
 	if snap, err := domain.SnapshotFromInfo(target); err == nil {
 		fmt.Fprintf(&detail, "target identity: %s\n", Identity(snap))
@@ -201,7 +211,7 @@ func numberingConflict(path string, b Numbering, item NumberingItem, target os.F
 		}
 		fmt.Fprintf(&detail, "same file as the target path: %t\n", os.SameFile(target, actual))
 		if snapshot, err := domain.SnapshotFromInfo(actual); err == nil {
-			fmt.Fprintf(&detail, "entry identity: %s; size: %d; mtime: %s\n", Identity(snapshot), snapshot.Size, stamp(snapshot))
+			fmt.Fprintf(&detail, "entry identity: %s; size: %d; mtime_ns: %d\n", Identity(snapshot), snapshot.Size, stamp(snapshot))
 		}
 		fmt.Fprintf(&detail, "occupying entry: %q (%s)\n", name, kindOf(actual))
 		participation := "not part of this numbering"
@@ -225,7 +235,7 @@ func (l *Library) saveNumberingPreview(ctx context.Context, b Numbering, path st
 			return Numbering{}, err
 		}
 		if identities[i.Identity] {
-			return Numbering{}, domain.Fail(domain.KindConflict, "numbering_hard_link", "files with hard links cannot be numbered safely", "media", b.Media)
+			return Numbering{}, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_hard_link", Message: "files with hard links cannot be numbered safely", Details: map[string]any{"media": b.Media}})
 		}
 		identities[i.Identity] = true
 		if i.Old != i.New {
@@ -250,7 +260,7 @@ func (l *Library) saveNumberingPreview(ctx context.Context, b Numbering, path st
 		i.Current = i.Old
 		i.Temp = ".video-rename-" + b.ID + fmt.Sprintf("-%d.tmp", idx)
 		if _, err := os.Lstat(filepath.Join(path, i.Temp)); !errors.Is(err, fs.ErrNotExist) {
-			return Numbering{}, domain.Fail(domain.KindConflict, "numbering_temp_conflict", "temporary name conflict; preview again")
+			return Numbering{}, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_temp_conflict", Message: "temporary name conflict; preview again"})
 		}
 		if i.Old == i.New {
 			continue
@@ -274,33 +284,28 @@ func (l *Library) saveNumberingPreview(ctx context.Context, b Numbering, path st
 		if err != nil {
 			return Numbering{}, err
 		}
-		if !moves || !target.Mode().IsRegular() || Identity(snapshot) != moving.Identity || snapshot.Size != moving.Size || stamp(snapshot) != moving.Mtime {
-			return Numbering{}, numberingConflict(path, b, *i, target, candidates)
+		if !moves || !target.Mode().IsRegular() || Identity(snapshot) != moving.Identity || snapshot.Size != moving.Size || stamp(snapshot) != moving.ModifiedNS {
+			return Numbering{}, numberingConflict(numberingConflictOptions{Path: path, Batch: b, Item: *i, Target: target, Candidates: candidates})
 		}
 	}
 	b.Total = len(b.Items)
-	tx, err := l.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return Numbering{}, err
-	}
-	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, "INSERT INTO image_numberings(id,parent,status,created,fingerprint,undo_of,media) VALUES(?,?,?,?,?,?,?)", b.ID, b.Parent, b.Status, b.Created, b.Fingerprint, b.UndoOf, b.Media); err != nil {
-		return Numbering{}, err
-	}
-	for idx, i := range b.Items {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO image_numbering_items(batch,position,entry,version,identity,size,mtime,old_name,new_name,temp_name,current_name,undo_of) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, b.ID, idx, i.Entry, i.Version, i.Identity, i.Size, i.Mtime, i.Old, i.New, i.Temp, i.Current, i.UndoOf); err != nil {
+	return storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (Numbering, error) {
+		var err error
+		if _, err = tx.ExecContext(ctx, "INSERT INTO image_numberings(id,parent,status,created,fingerprint,undo_of,media) VALUES(?,?,?,?,?,?,?)", b.ID, b.Parent, b.Status, b.Created, b.Fingerprint, b.UndoOf, b.Media); err != nil {
 			return Numbering{}, err
 		}
-	}
-	// Unconfirmed previews are disposable; completed journals remain available for restore.
-	if _, err = tx.ExecContext(ctx, `DELETE FROM image_numbering_items WHERE batch IN (SELECT id FROM image_numberings WHERE status='preview' AND created<?)`, b.Created[:10]); err != nil {
-		return Numbering{}, err
-	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM image_numberings WHERE status='preview' AND created<?`, b.Created[:10]); err != nil {
-		return Numbering{}, err
-	}
-	if err = tx.Commit(); err != nil {
-		return Numbering{}, err
-	}
-	return b, nil
+		for idx, i := range b.Items {
+			if _, err = tx.ExecContext(ctx, `INSERT INTO image_numbering_items(batch,position,entry,version,identity,size,mtime_ns,old_name,new_name,temp_name,current_name,undo_of) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, b.ID, idx, i.Entry, i.Version, i.Identity, i.Size, i.ModifiedNS, i.Old, i.New, i.Temp, i.Current, i.UndoOf); err != nil {
+				return Numbering{}, err
+			}
+		}
+		// Unconfirmed previews are disposable; completed journals remain available for restore.
+		if _, err = tx.ExecContext(ctx, `DELETE FROM image_numbering_items WHERE batch IN (SELECT id FROM image_numberings WHERE status='preview' AND created<?)`, b.Created[:10]); err != nil {
+			return Numbering{}, err
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM image_numberings WHERE status='preview' AND created<?`, b.Created[:10]); err != nil {
+			return Numbering{}, err
+		}
+		return b, nil
+	})
 }

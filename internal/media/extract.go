@@ -133,7 +133,7 @@ func (e *Extractor) Extract(ctx context.Context, job domain.VideoJob, meta domai
 		retry := plan.WindowStart + time.Duration((float64(i)+1.0/3.0)*float64(seg))
 		out := filepath.Join(tmp, fmt.Sprintf("frame-%02d.jpg", i))
 
-		frame, ferr := e.extractPoint(ctx, job, meta, planned, out, tw, th)
+		frame, ferr := e.extractPoint(ctx, pointRequest{job: job, meta: meta, at: planned, output: out, width: tw, height: th})
 		record(planned, "first attempt", ferr)
 		if ferr != nil && errors.Is(ferr, errToolVanished) {
 			return set, &domain.JobError{
@@ -143,7 +143,7 @@ func (e *Extractor) Extract(ctx context.Context, job domain.VideoJob, meta domai
 		if ferr != nil && ctx.Err() == nil {
 			// first attempt failed: retry once at 1/3 of the segment instead of its midpoint
 			out2 := filepath.Join(tmp, fmt.Sprintf("frame-%02d-r.jpg", i))
-			frame, ferr = e.extractPoint(ctx, job, meta, retry, out2, tw, th)
+			frame, ferr = e.extractPoint(ctx, pointRequest{job: job, meta: meta, at: retry, output: out2, width: tw, height: th})
 			record(retry, "retry", ferr)
 			if ferr == nil {
 				frame.Planned, frame.Actual = planned, retry
@@ -155,7 +155,7 @@ func (e *Extractor) Extract(ctx context.Context, job domain.VideoJob, meta domai
 			}
 		}
 		if ferr != nil {
-			if ctx.Err() == context.Canceled {
+			if errors.Is(ctx.Err(), context.Canceled) {
 				return set, &domain.JobError{Code: domain.CodeCancelled, Message: "extraction cancelled"}
 			}
 			if ctx.Err() != nil {
@@ -173,7 +173,7 @@ func (e *Extractor) Extract(ctx context.Context, job domain.VideoJob, meta domai
 	}
 
 	if len(set.Frames) == 0 {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return set, &domain.JobError{Code: domain.CodeExtractTimeout, Message: "extraction budget spent without a frame"}
 		}
 		if n == 0 {
@@ -185,11 +185,22 @@ func (e *Extractor) Extract(ctx context.Context, job domain.VideoJob, meta domai
 	return set, nil
 }
 
+type pointRequest struct {
+	job           domain.VideoJob
+	meta          domain.VideoMeta
+	at            time.Duration
+	output        string
+	width, height int
+}
+
 // extractPoint runs one FFmpeg extraction at a single time point and verifies the output.
-func (e *Extractor) extractPoint(ctx context.Context, job domain.VideoJob, meta domain.VideoMeta, at time.Duration, out string, tw, th int) (result domain.Frame, resultErr error) {
+func (e *Extractor) extractPoint(ctx context.Context, request pointRequest) (result domain.Frame, resultErr error) {
+	job, meta, at, out, tw, th := request.job, request.meta, request.at, request.output, request.width, request.height
 	defer func() {
 		for _, p := range []string{out, out + ".re.jpg"} {
 			if p != result.Path {
+				// Failed extraction artifacts remain inside the owned temporary
+				// directory, which the caller removes as a whole.
 				_ = os.Remove(p)
 			}
 		}

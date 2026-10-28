@@ -9,15 +9,16 @@ import (
 	"time"
 
 	"video-rename/internal/domain"
+	"video-rename/internal/timefmt"
 )
 
 // numberingErrorRecord keeps the error record and its diagnostic together in
 // the TEXT column.
 type numberingErrorRecord struct {
-	Code          string         `json:"code,omitempty"`
+	Code          string         `json:"code,omitzero"`
 	Message       string         `json:"message"`
-	Details       map[string]any `json:"details,omitempty"`
-	ProcessingLog string         `json:"processing_log,omitempty"`
+	Details       map[string]any `json:"details,omitzero"`
+	ProcessingLog string         `json:"processing_log,omitzero"`
 }
 
 func (b Numbering) numberingErrorRecord() string {
@@ -40,14 +41,28 @@ func (b *Numbering) decodeNumberingError(stored string) error {
 	if err := json.Unmarshal([]byte(stored), &record); err != nil {
 		return fmt.Errorf("numbering %s error record: %w", b.ID, err)
 	}
+	if record.Code == "" {
+		return fmt.Errorf("numbering %s error record lacks a code", b.ID)
+	}
 	b.Error = domain.Record{Code: record.Code, Message: record.Message, Details: record.Details}
 	b.ProcessingLog = record.ProcessingLog
 	return nil
 }
 
+// numberingMoveFailureOptions groups the inputs for numberingMoveFailure.
+type numberingMoveFailureOptions struct {
+	Batch  *Numbering
+	Item   *NumberingItem
+	Path   string
+	Target string
+	Cause  *domain.JobError
+}
+
 // Capture after the failed syscall and before any rollback. These are subsequent
 // observations, not an assertion about the filesystem at syscall time.
-func numberingMoveFailure(b *Numbering, item *NumberingItem, path, target string, cause *domain.JobError) error {
+func numberingMoveFailure(params numberingMoveFailureOptions) error {
+	b, item, path, target, cause := params.Batch, params.Item, params.Path, params.Target, params.Cause
+
 	phase := "final_rename"
 	if target == item.Temp {
 		phase = "temporary_rename"
@@ -56,14 +71,14 @@ func numberingMoveFailure(b *Numbering, item *NumberingItem, path, target string
 		phase = "rollback_rename"
 	}
 	var detail strings.Builder
-	fmt.Fprintf(&detail, "numbering failure\ncaptured: %s\nbatch: %s\ndirectory: %q\nphase: %s\noriginal name: %q\ncurrent name: %q\ntarget name: %q\nfinal name: %q\nsystem error: %v\npreview identity: %s; size: %d; mtime: %s\n", time.Now().UTC().Format(time.RFC3339Nano), b.ID, path, phase, item.Old, item.Current, target, item.New, cause, item.Identity, item.Size, item.Mtime)
+	fmt.Fprintf(&detail, "numbering failure\ncaptured: %s\nbatch: %s\ndirectory: %q\nphase: %s\noriginal name: %q\ncurrent name: %q\ntarget name: %q\nfinal name: %q\nsystem error: %v\npreview identity: %s; size: %d; mtime_ns: %d\n", timefmt.Format(time.Now()), b.ID, path, phase, item.Old, item.Current, target, item.New, cause, item.Identity, item.Size, item.ModifiedNS)
 	inspect := func(label, name string) {
 		info, err := os.Lstat(filepath.Join(path, name))
 		if err != nil {
 			fmt.Fprintf(&detail, "%s %q: %v\n", label, name, err)
 			return
 		}
-		fmt.Fprintf(&detail, "%s %q: kind=%s; size=%d; mtime=%s", label, name, kindOf(info), info.Size(), info.ModTime().UTC().Format(time.RFC3339Nano))
+		fmt.Fprintf(&detail, "%s %q: kind=%s; size=%d; mtime_ns=%d", label, name, kindOf(info), info.Size(), info.ModTime().UnixNano())
 		if snapshot, err := domain.SnapshotFromInfo(info); err == nil {
 			fmt.Fprintf(&detail, "; identity=%s", Identity(snapshot))
 		}

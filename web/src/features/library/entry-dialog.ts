@@ -1,5 +1,5 @@
 import { computed, ref, type Ref } from 'vue'
-import { api, apiItems, newRequestKey } from '../../app/api'
+import { api, apiItems } from '../../app/api'
 import { errorText } from '../../app/errors'
 import type { Entry, Operation } from '../../app/contracts'
 import { nameWithoutExtension, normalizedExtension } from './entry-types'
@@ -11,7 +11,7 @@ export type RunTask = 'rename' | 'extract'
 export function restoreRequest(e: Entry) {
   return api(`/operations/${e.restore_id}/restore`, {
     method: 'POST',
-    body: { key: newRequestKey() }
+    body: {}
   })
 }
 
@@ -76,10 +76,9 @@ export function useEntryDialog(options: EntryDialogOptions) {
       if (dialogMode.value === 'rename') {
         await api<unknown>(`/entries/${e.id}/rename`, {
           method: 'POST',
+          headers: { 'If-Match': e.etag },
           body: {
-            name: newName.value + extension.value,
-            version: e.version,
-            key: newRequestKey()
+            name: newName.value + extension.value
           }
         })
         notify('名称已更新，历史已保存')

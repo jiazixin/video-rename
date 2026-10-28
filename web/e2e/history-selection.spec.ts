@@ -34,7 +34,7 @@ async function openHistory(page: Page, longContent = false, modelSources = false
       tokens: 123456,
       token_estimated: true,
       message: 'title_invalid: 模型返回了多行标题，需要重试生成符合命名规则的标题。',
-      created: '2026-09-30T08:00:00Z'
+      created: '2026-09-30T08:00:00.000Z'
     }))
     if (modelSources) {
       Object.assign(defined(items[0]), { model_source: 'primary', operation: 110 })
@@ -58,7 +58,7 @@ async function openHistory(page: Page, longContent = false, modelSources = false
   await page.request.post('/api/auth/login', {
     data: { username: 'admin', password: 'test-password-123' }
   })
-  await page.goto('/#history')
+  await page.goto('/history')
   await expect(page.getByRole('heading', { name: '运行记录.' })).toBeVisible()
   await expect(page.getByText('共 251 项 · 4 项 / 当前页')).toBeVisible()
 }
@@ -322,9 +322,10 @@ test('右上角重试全部失败不带筛选或选中 ID，提交时防重复�
     calls++
     expect(route.request().postDataJSON()).toMatchObject({
       all: true,
-      model_config_id: 2,
-      key: expect.any(String)
+      model_config_id: 2
     })
+    expect(route.request().headers()['idempotency-key']).toBeTruthy()
+    expect(route.request().postDataJSON()).not.toHaveProperty('key')
     expect(route.request().postDataJSON()).not.toHaveProperty('ids')
     expect(route.request().postDataJSON()).not.toHaveProperty('q')
     await gate

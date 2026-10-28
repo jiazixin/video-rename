@@ -138,3 +138,9 @@
     ></ModalDialog
   >
 </template>
+
+<style scoped>
+  .field-heading {
+    margin-bottom: 8px !important;
+  }
+</style>

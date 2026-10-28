@@ -49,7 +49,7 @@ func loadTemp(t *testing.T, content string, name string) (Config, error) {
 func TestLoadMinimalAppliesDefaults(t *testing.T) {
 	cfg, err := readTemp(t, minimalYAML, "config.yaml")
 	if err != nil {
-		t.Fatalf("加载失败: %v", err)
+		t.Fatalf("load failed: %v", err)
 	}
 
 	if cfg.Listen != "127.0.0.1" || cfg.Port != 8790 || cfg.Storage != "../data" || cfg.TempStorage != "../.cache" || cfg.ConfigDir == "" {
@@ -63,22 +63,22 @@ func TestDefaultFrameSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.Sampling.MaxFrames != 32 || cfg.Sampling.SkipStart != 0.05 || cfg.Sampling.SkipEnd != 0.05 {
-		t.Errorf("sampling 默认值异常: %+v", cfg.Sampling)
+		t.Errorf("sampling unexpected defaults: %+v", cfg.Sampling)
 	}
 	if cfg.Sampling.ParsedStrategy != StrategyDuration {
-		t.Errorf("strategy 默认值 = %v, 期望 duration", cfg.Sampling.ParsedStrategy)
+		t.Errorf("strategy defaults = %v, want duration", cfg.Sampling.ParsedStrategy)
 	}
 	if len(cfg.Sampling.ParsedDuration) != 5 || cfg.Sampling.ParsedDuration[0].Max != 30*time.Second || cfg.Sampling.ParsedDuration[0].Frames != 8 {
-		t.Errorf("duration 默认表异常: %+v", cfg.Sampling.ParsedDuration)
+		t.Errorf("duration unexpected default rules: %+v", cfg.Sampling.ParsedDuration)
 	}
 	if cfg.Sampling.ParsedDuration[4].Max < time.Duration(1<<62) || cfg.Sampling.ParsedDuration[4].Frames != 32 {
-		t.Errorf("duration 兜底档异常: %+v", cfg.Sampling.ParsedDuration[4])
+		t.Errorf("duration unexpected fallback rule: %+v", cfg.Sampling.ParsedDuration[4])
 	}
 	if len(cfg.Sampling.ParsedSize) != 4 || cfg.Sampling.ParsedSize[2].Max != 1024*1024*1024 {
-		t.Errorf("size 默认表异常: %+v", cfg.Sampling.ParsedSize)
+		t.Errorf("size unexpected default rules: %+v", cfg.Sampling.ParsedSize)
 	}
 	if cfg.Images.MaxDimension != 768 || cfg.Images.JPEGQuality != 4 {
-		t.Errorf("images 默认值异常: %+v", cfg.Images)
+		t.Errorf("images unexpected defaults: %+v", cfg.Images)
 	}
 
 }
@@ -86,7 +86,7 @@ func TestDefaultFrameSettings(t *testing.T) {
 func TestLoadFullExample(t *testing.T) {
 	cfg, err := readTemp(t, fullYAML, "config.yaml")
 	if err != nil {
-		t.Fatalf("加载完整示例失败: %v", err)
+		t.Fatalf("load complete example failed: %v", err)
 	}
 
 	if cfg.Path != "/srv/videos" || cfg.Auth.Username != "admin" || cfg.Auth.Password != "test-password" {
@@ -97,7 +97,14 @@ func TestLoadFullExample(t *testing.T) {
 func TestUnknownFieldRejected(t *testing.T) {
 	_, err := readTemp(t, minimalYAML+"unknown_key: 1\n", "config.yaml")
 	if err == nil || !strings.Contains(err.Error(), "unknown_key") {
-		t.Fatalf("未知字段应报错, got %v", err)
+		t.Fatalf("unknown field should fail, got %v", err)
+	}
+}
+
+func TestOversizedConfigurationRejected(t *testing.T) {
+	_, err := readTemp(t, "#"+strings.Repeat("x", 1<<20), "config.yaml")
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("got %v, want configuration size limit error", err)
 	}
 }
 
@@ -109,14 +116,14 @@ server:
   nope: 1
 `, "config.yaml")
 	if err == nil {
-		t.Fatal("嵌套未知字段应报错")
+		t.Fatal("nested unknown field should fail")
 	}
 }
 
 func TestDuplicateKeyRejected(t *testing.T) {
 	_, err := readTemp(t, minimalYAML+"workers: 3\nworkers: 4\n", "config.yaml")
 	if err == nil || !strings.Contains(err.Error(), "duplicate key") {
-		t.Fatalf("重复 key 应报错, got %v", err)
+		t.Fatalf("duplicate key should fail, got %v", err)
 	}
 }
 
@@ -128,14 +135,14 @@ server:
   model: m
 `, "config.yaml")
 	if err == nil {
-		t.Fatal("嵌套重复 key 应报错")
+		t.Fatal("nested duplicate key should fail")
 	}
 }
 
 func TestInvalidStrategyRejected(t *testing.T) {
 	_, err := loadFrameSettings(t, minimalYAML+"sampling:\n  strategy: \"random\"\n")
 	if err == nil || !strings.Contains(err.Error(), "strategy") {
-		t.Fatalf("非法枚举应报错, got %v", err)
+		t.Fatalf("invalid enum should fail, got %v", err)
 	}
 }
 
@@ -147,10 +154,10 @@ func TestWorkersRemovedFromYAML(t *testing.T) {
 
 func TestTypeMismatchRejected(t *testing.T) {
 	if _, err := readTemp(t, minimalYAML+"workers: two\n", "config.yaml"); err == nil {
-		t.Error("workers 非整数应报错")
+		t.Error("workers non-integer should fail")
 	}
 	if _, err := readTemp(t, minimalYAML+"images:\n  max_dimension: large\n", "config.yaml"); err == nil {
-		t.Error("max_dimension 非整数应报错")
+		t.Error("max_dimension non-integer should fail")
 	}
 }
 
@@ -168,13 +175,13 @@ func TestRuleTableValidation(t *testing.T) {
 	}
 	for name, y := range cases {
 		if _, err := loadFrameSettings(t, y); err == nil {
-			t.Errorf("%s 应报错", name)
+			t.Errorf("%s should fail", name)
 		}
 	}
 	// unused tables must still be valid: size_rules is validated under the duration strategy
 	bad := base + "  strategy: \"duration\"\n  size_rules:\n    - {max_mib: 100, frames: 3}\n    - {max_mib: 50, frames: 5}\n    - {max_mib: null, frames: 8}\n"
 	if _, err := loadFrameSettings(t, bad); err == nil {
-		t.Error("未使用表的违规配置应报错")
+		t.Error("invalid settings in unused tables must fail")
 	}
 }
 
@@ -186,31 +193,31 @@ func TestRuleTableReplacesDefaults(t *testing.T) {
 `
 	cfg, err := loadFrameSettings(t, y)
 	if err != nil {
-		t.Fatalf("加载失败: %v", err)
+		t.Fatalf("load failed: %v", err)
 	}
 	if len(cfg.Sampling.ParsedDuration) != 2 {
-		t.Fatalf("显式填写应整体替换默认表, got %d 档", len(cfg.Sampling.ParsedDuration))
+		t.Fatalf("got %d rows, want explicit rules replacing defaults", len(cfg.Sampling.ParsedDuration))
 	}
 	if cfg.Sampling.ParsedDuration[0].Frames != 4 || cfg.Sampling.ParsedDuration[1].Frames != 6 {
-		t.Errorf("替换后的帧数异常: %+v", cfg.Sampling.ParsedDuration)
+		t.Errorf("unexpected replacement frame count: %+v", cfg.Sampling.ParsedDuration)
 	}
 	if cfg.Sampling.ParsedDuration[1].Max < time.Duration(1<<62) {
-		t.Errorf("兜底档应使用极大上限: %v", cfg.Sampling.ParsedDuration[1].Max)
+		t.Errorf("fallback rule should use the maximum bound: %v", cfg.Sampling.ParsedDuration[1].Max)
 	}
 	// keep the default size table
 	if len(cfg.Sampling.ParsedSize) != 4 {
-		t.Errorf("未填写的 size 表应保留默认: %d", len(cfg.Sampling.ParsedSize))
+		t.Errorf("omitted size rules should keep defaults: %d", len(cfg.Sampling.ParsedSize))
 	}
 }
 
 func TestSkipRatioValidation(t *testing.T) {
 	y := minimalYAML + "sampling:\n  skip_start_ratio: 0.6\n  skip_end_ratio: 0.5\n"
 	if _, err := loadFrameSettings(t, y); err == nil {
-		t.Error("跳过比例之和 ≥ 1 应报错")
+		t.Error("skip ratios totaling >= 1 should fail")
 	}
 	y = minimalYAML + "sampling:\n  skip_start_ratio: -0.1\n"
 	if _, err := loadFrameSettings(t, y); err == nil {
-		t.Error("负跳过比例应报错")
+		t.Error("negative skip ratio should fail")
 	}
 }
 
@@ -218,19 +225,19 @@ func TestImagesValidation(t *testing.T) {
 	for _, v := range []string{"64", "4096"} {
 		y := minimalYAML + "images:\n  max_dimension: " + v + "\n"
 		if _, err := loadFrameSettings(t, y); err == nil {
-			t.Errorf("max_dimension=%s 应报错", v)
+			t.Errorf("max_dimension=%s should fail", v)
 		}
 	}
 	y := minimalYAML + "images:\n  jpeg_quality: 16\n"
 	if _, err := loadFrameSettings(t, y); err == nil {
-		t.Error("jpeg_quality=16 应报错")
+		t.Error("jpeg_quality=16 should fail")
 	}
 }
 
 func TestMissingFileAndEmptyPath(t *testing.T) {
 	work := t.TempDir()
 	if _, err := Load(Source{WorkDir: work}); err == nil {
-		t.Error("空路径应报错")
+		t.Error("empty path should fail")
 	}
 	_, err := Load(Source{Path: filepath.Join(work, "nope.yaml"), Explicit: true, WorkDir: work})
 	if err == nil || !strings.HasPrefix(err.Error(), "read configuration: ") {
@@ -314,10 +321,10 @@ func TestFrameSettingsNotInDeploymentYAML(t *testing.T) {
 func TestMediaPathConfigKey(t *testing.T) {
 	cfg, err := readTemp(t, "media_path: /srv/videos\n", "config.yaml")
 	if err != nil || cfg.Path != "/srv/videos" {
-		t.Fatalf("media_path 未正确加载: cfg=%+v err=%v", cfg, err)
+		t.Fatalf("media_path was not loaded correctly: cfg=%+v err=%v", cfg, err)
 	}
 	if _, err := readTemp(t, "path: /srv/videos\n", "config.yaml"); err == nil {
-		t.Fatal("旧 path 字段应被拒绝")
+		t.Fatal("obsolete path field should be rejected")
 	}
 }
 

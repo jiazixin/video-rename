@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"video-rename/internal/config"
-	"video-rename/internal/notifications"
+	"video-rename/internal/notification"
 )
 
 func TestNotificationEndpointsRequireSessionAndSameSite(t *testing.T) {
@@ -43,7 +43,7 @@ func TestNotificationEndpointsRequireSessionAndSameSite(t *testing.T) {
 			r.AddCookie(c)
 		}
 		a.Handler().ServeHTTP(w, r)
-		var page notifications.HistoryPage
+		var page notification.HistoryPage
 		if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil || w.Code != 200 || page.Page != 1 || page.Items == nil || page.Total != 0 {
 			t.Fatal("invalid history page", w.Code, w.Body.String(), err)
 		}

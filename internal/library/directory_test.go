@@ -1,6 +1,7 @@
 package library
 
 import (
+	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"modernc.org/sqlite"
 
 	"video-rename/internal/domain"
+	"video-rename/internal/storage"
 )
 
 func init() {
@@ -56,13 +58,15 @@ func TestRenameParentReplacementDoesNotRedirectCommit(t *testing.T) {
 				trigger = "BEFORE UPDATE OF pending_name ON image_numbering_items WHEN NEW.pending_name<>''"
 			}
 			quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
-			if _, err := l.DB.Exec("CREATE TRIGGER swap_parent " + trigger + " BEGIN SELECT test_swap_directory(" + quote(parent) + "," + quote(outside) + "); END"); err != nil {
+			if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+				return tx.ExecContext(t.Context(), "CREATE TRIGGER swap_parent "+trigger+" BEGIN SELECT test_swap_directory("+quote(parent)+","+quote(outside)+"); END")
+			}); err != nil {
 				t.Fatal(err)
 			}
 			if numbering {
 				_, err = l.ApplyNumbering(t.Context(), batch.ID, nil)
 			} else {
-				_, err = l.Rename(t.Context(), e.ID, e.Version, "renamed.mp4", "parent-swap")
+				_, err = l.Rename(t.Context(), RenameRequest{ID: e.ID, Version: e.Version, Name: "renamed.mp4", Key: "parent-swap"})
 			}
 			if err == nil {
 				t.Fatal("replaced hierarchy must require review, not report success")
@@ -97,12 +101,14 @@ func TestAutoCommitAllocatesSuffixForHardLink(t *testing.T) {
 				t.Fatal(err)
 			}
 			title := strings.TrimSuffix(target, ".mp4")
-			op, err := l.AutoCommit(t.Context(), e.ID, snap, title, "hardlink", 0)
+			op, err := l.AutoCommit(t.Context(), AutoCommitOptions{ID: e.ID, Snap: snap, Title: title, Key: "hardlink", Run: 0})
 			if err != nil || op.New != title+" (2).mp4" {
 				t.Fatalf("commit: %+v, %v", op, err)
 			}
 			var count int
-			if err := l.DB.QueryRow("SELECT count(*) FROM operations").Scan(&count); err != nil || count != 1 {
+			if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM operations").Scan(&count)
+			}); err != nil || count != 1 {
 				t.Fatalf("unnecessary retries: %d, %v", count, err)
 			}
 			if _, err := os.Stat(filepath.Join(root, target)); err != nil {

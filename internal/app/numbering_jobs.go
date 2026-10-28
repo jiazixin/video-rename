@@ -11,13 +11,13 @@ import (
 
 	"video-rename/internal/domain"
 	"video-rename/internal/library"
-	"video-rename/internal/systemsettings"
+	"video-rename/internal/systemsetting"
 )
 
 const numberingLease = 20 * time.Second
 
 type numberingRequest struct {
-	Key     string   `json:"key"`
+	Key     string   `json:"-"`
 	Action  string   `json:"action"`
 	Parent  int64    `json:"parent"`
 	Batches []string `json:"batches"`
@@ -62,11 +62,12 @@ func (a *App) startNumberingJob(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
+	req.Key = requestKey(r)
 	if len(req.Key) < 8 || len(req.Key) > 128 || strings.ContainsAny(req.Key, "/\\?#") ||
 		(req.Action != "preview" && req.Action != "apply") || req.Parent < 1 ||
 		(req.Action == "apply" && ((len(req.Batches) == 0 && req.Preview == "") || len(req.Batches) > 1000 || (len(req.Batches) > 0 && req.Preview != ""))) ||
 		(req.Action == "preview" && (len(req.Batches) > 0 || req.Preview != "")) {
-		invalid(w, r, "", "invalid_numbering_request")
+		writeError(w, r, domain.InvalidField("", "invalid_numbering_request"))
 		return
 	}
 	a.numberingMu.Lock()
@@ -86,7 +87,7 @@ func (a *App) startNumberingJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !reflect.DeepEqual(job.request, req) {
-			reject(w, r, domain.KindConflict, "request_key_reused", "request key is used by a different request")
+			writeError(w, r, domain.Fail(domain.KindConflict, domain.Record{Code: "idempotency_key_reused", Message: "request key is used by a different request"}))
 			return
 		}
 		send(w, http.StatusOK, job.status)
@@ -94,19 +95,19 @@ func (a *App) startNumberingJob(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, job := range a.numberingJobs {
 		if job.finished.IsZero() {
-			reject(w, r, domain.KindConflict, "numbering_running", "another numbering job is running or stopping")
+			writeError(w, r, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_running", Message: "another numbering job is running or stopping"}))
 			return
 		}
 	}
 	if len(a.numberingJobs) >= 64 {
-		reject(w, r, domain.KindTooMany, "numbering_jobs_full", "too many recent numbering jobs")
+		writeError(w, r, domain.Fail(domain.KindTooMany, domain.Record{Code: "numbering_jobs_full", Message: "too many recent numbering jobs"}))
 		return
 	}
 	batchIDs := slices.Clone(req.Batches)
 	if req.Preview != "" {
 		source := a.numberingJobs[req.Preview]
 		if source == nil || source.status.Status != "completed" || source.request.Action != "preview" || source.request.Parent != req.Parent {
-			reject(w, r, domain.KindConflict, "preview_stale", "preview expired or belongs to another directory")
+			writeError(w, r, domain.Fail(domain.KindConflict, domain.Record{Code: "preview_stale", Message: "preview expired or belongs to another directory"}))
 			return
 		}
 		for _, b := range source.result {
@@ -115,7 +116,7 @@ func (a *App) startNumberingJob(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if len(batchIDs) == 0 {
-			reject(w, r, domain.KindInvalid, "nothing_to_number", "no files need numbering")
+			writeError(w, r, domain.Fail(domain.KindInvalid, domain.Record{Code: "nothing_to_number", Message: "no files need numbering"}))
 			return
 		}
 	}
@@ -153,7 +154,7 @@ func (a *App) runNumberingJob(ctx context.Context, job *numberingJob) {
 	var err error
 	if job.request.Action == "preview" {
 		var settings domain.NumberingSettings
-		settings, err = (systemsettings.Store{DB: a.DB}).Numbering(ctx)
+		settings, err = (systemsetting.New(a.db)).Numbering(ctx)
 		if err == nil {
 			result, err = a.Library.PreviewNumberingTreeWithProgress(ctx, job.request.Parent, settings, func(id int64, dirs, files int) {
 				update(func(s *numberingStatus) {
@@ -209,7 +210,7 @@ func (a *App) numberingJobStatus(w http.ResponseWriter, r *http.Request) {
 	defer a.numberingMu.Unlock()
 	job := a.numberingJobs[r.PathValue("key")]
 	if job == nil {
-		reject(w, r, domain.KindNotFound, "numbering_job_gone", "numbering job expired or the service restarted")
+		writeError(w, r, domain.Fail(domain.KindNotFound, domain.Record{Code: "numbering_job_gone", Message: "numbering job expired or the service restarted"}))
 		return
 	}
 	job.lease = time.Now()
@@ -222,7 +223,7 @@ func (a *App) cancelNumberingJob(w http.ResponseWriter, r *http.Request) {
 	if job == nil {
 		key := r.PathValue("key")
 		if len(key) < 8 || len(key) > 128 || strings.ContainsAny(key, "/\\?#") {
-			invalid(w, r, "key", "invalid")
+			writeError(w, r, domain.InvalidField("key", "invalid"))
 			return
 		}
 		// A close can overtake the submission request on another connection.
@@ -250,14 +251,14 @@ type numberingPreviewItem struct {
 func (a *App) numberingJobResult(w http.ResponseWriter, r *http.Request) {
 	offset := int(number(r.URL.Query().Get("offset")))
 	if offset < 0 {
-		invalid(w, r, "offset", "invalid_number")
+		writeError(w, r, domain.InvalidField("offset", "invalid_number"))
 		return
 	}
 	a.numberingMu.Lock()
 	job := a.numberingJobs[r.PathValue("key")]
 	if job == nil || job.status.Status != "completed" {
 		a.numberingMu.Unlock()
-		reject(w, r, domain.KindConflict, "preview_not_ready", "preview not completed or expired")
+		writeError(w, r, domain.Fail(domain.KindConflict, domain.Record{Code: "preview_not_ready", Message: "preview not completed or expired"}))
 		return
 	}
 	batches := slices.Clone(job.result)

@@ -2,7 +2,9 @@ package library
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -56,20 +58,19 @@ func markBatchFixture(t *testing.T, count int) (*Library, string, []int64) {
 		put(t, filepath.Join(root, fmt.Sprintf("%04d.mp4", i)))
 	}
 	refresh(t, l, 1)
-	rows, err := l.DB.Read().QueryContext(t.Context(), "SELECT id FROM entries WHERE parent=1 AND present=1 ORDER BY id")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	ids := make([]int64, 0, count)
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			t.Fatal(err)
+	var ids []int64
+	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(t.Context(), "SELECT id FROM entries WHERE parent=1 AND present=1 ORDER BY id")
+		if err != nil {
+			return err
 		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
+		ids, err = storage.CollectRows(rows, func(rows *sql.Rows) (int64, error) {
+			var id int64
+			err := rows.Scan(&id)
+			return id, err
+		})
+		return err
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if len(ids) != count {
@@ -82,7 +83,9 @@ func markBatchFixture(t *testing.T, count int) (*Library, string, []int64) {
 func assertDurableMarkProgress(t *testing.T, l *Library, result MarkResult) {
 	t.Helper()
 	var count int64
-	if err := l.DB.Read().QueryRowContext(t.Context(), "SELECT count(*) FROM marks").Scan(&count); err != nil {
+	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM marks").Scan(&count)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if count != result.Changed {
@@ -102,13 +105,15 @@ BEGIN SELECT RAISE(ABORT,'injected mark insert failure'); END`, target)
 				// A deferred foreign key lets every INSERT succeed, then rejects COMMIT.
 				trigger = fmt.Sprintf(`CREATE TRIGGER reject_mark AFTER INSERT ON marks
 WHEN NEW.identity=(SELECT identity FROM entries WHERE id=%d)
-BEGIN UPDATE marks SET operation=-1 WHERE identity=NEW.identity AND size=NEW.size AND mtime=NEW.mtime; END`, target)
+BEGIN UPDATE marks SET operation=-1 WHERE identity=NEW.identity AND size=NEW.size AND mtime_ns=NEW.mtime_ns; END`, target)
 			}
-			if _, err := l.DB.ExecContext(t.Context(), trigger); err != nil {
+			if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) { return tx.ExecContext(t.Context(), trigger) }); err != nil {
 				t.Fatal(err)
 			}
 			if failure == "commit" {
-				if _, err := l.DB.ExecContext(t.Context(), "PRAGMA defer_foreign_keys=ON"); err != nil {
+				if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+					return tx.ExecContext(t.Context(), "PRAGMA defer_foreign_keys=ON")
+				}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -120,14 +125,16 @@ BEGIN UPDATE marks SET operation=-1 WHERE identity=NEW.identity AND size=NEW.siz
 			}
 			assertDurableMarkProgress(t, l, r)
 			var firstBatchMarks int
-			if err := l.DB.Read().QueryRowContext(t.Context(), `SELECT count(*) FROM marks m
-JOIN entries e ON e.identity=m.identity AND e.size=m.size AND e.mtime=m.mtime WHERE e.id<=?`, ids[markBatchSize-1]).Scan(&firstBatchMarks); err != nil {
+			if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+				return tx.QueryRowContext(t.Context(), `SELECT count(*) FROM marks m
+JOIN entries e ON e.identity=m.identity AND e.size=m.size AND e.mtime_ns=m.mtime_ns WHERE e.id<=?`, ids[markBatchSize-1]).Scan(&firstBatchMarks)
+			}); err != nil {
 				t.Fatal(err)
 			}
 			if firstBatchMarks != 0 {
 				t.Fatalf("failed transaction retained %d marks", firstBatchMarks)
 			}
-			if _, err := l.DB.ExecContext(t.Context(), "DROP TRIGGER reject_mark"); err != nil {
+			if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) { return tx.ExecContext(t.Context(), "DROP TRIGGER reject_mark") }); err != nil {
 				t.Fatal(err)
 			}
 			r = l.SetProcessed(t.Context(), ids, true)
@@ -189,7 +196,9 @@ func TestProcessedMarksRevalidateMediaTypeBeforeCommit(t *testing.T) {
 			if err := os.Rename(filepath.Join(root, changed.Name), filepath.Join(root, unsupported)); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := l.DB.ExecContext(t.Context(), "UPDATE entries SET name=?,version=version+1 WHERE id=?", unsupported, changed.ID); err != nil {
+			if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+				return tx.ExecContext(t.Context(), "UPDATE entries SET name=?,version=version+1 WHERE id=?", unsupported, changed.ID)
+			}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -237,7 +246,9 @@ func TestProcessedMarksProgressReleasesWriterConnection(t *testing.T) {
 	r := l.SetProcessedWithProgress(t.Context(), ids, true, func(result MarkResult) {
 		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 		defer cancel()
-		if _, err := l.DB.ExecContext(ctx, "UPDATE library SET root=root WHERE id=1"); err != nil {
+		if _, err := storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(ctx, "UPDATE library SET root=root WHERE id=1")
+		}); err != nil {
 			t.Fatalf("progress callback cannot acquire writer connection: %v", err)
 		}
 		assertDurableMarkProgress(t, l, result)
@@ -255,12 +266,14 @@ func TestProcessedMarksBatchUnmarkFailureRollsBack(t *testing.T) {
 	trigger := fmt.Sprintf(`CREATE TRIGGER reject_unmark BEFORE DELETE ON marks
 WHEN OLD.identity=(SELECT identity FROM entries WHERE id=%d)
 BEGIN SELECT RAISE(ABORT,'injected unmark failure'); END`, ids[1])
-	if _, err := l.DB.ExecContext(t.Context(), trigger); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) { return tx.ExecContext(t.Context(), trigger) }); err != nil {
 		t.Fatal(err)
 	}
 	r := l.SetProcessedWithProgress(t.Context(), ids, false, func(result MarkResult) {
 		var count int64
-		if err := l.DB.Read().QueryRowContext(t.Context(), "SELECT count(*) FROM marks").Scan(&count); err != nil {
+		if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+			return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM marks").Scan(&count)
+		}); err != nil {
 			t.Fatal(err)
 		}
 		if count != 3-result.Changed {
@@ -270,7 +283,7 @@ BEGIN SELECT RAISE(ABORT,'injected unmark failure'); END`, ids[1])
 	if r.Interrupted || r.Changed != 0 || r.Unchanged != 0 || r.Failed != 3 {
 		t.Fatalf("unmark failure reported partial success: %+v", r)
 	}
-	if _, err := l.DB.ExecContext(t.Context(), "DROP TRIGGER reject_unmark"); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) { return tx.ExecContext(t.Context(), "DROP TRIGGER reject_unmark") }); err != nil {
 		t.Fatal(err)
 	}
 	if r = l.SetProcessed(t.Context(), ids, false); r.Changed != 3 || r.Unchanged != 0 || r.Failed != 0 {
@@ -313,13 +326,13 @@ func TestProcessedMarksRecursiveAndPersistent(t *testing.T) {
 	if e := entry(t, l, d.ID, "new.mp4"); e.Processed != "" {
 		t.Fatal("new file inherited mark")
 	}
-	l.DB.Close()
+	l.db.Close()
 	db, err := storage.Open(t.Context(), dbpath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	l, err = New(t.Context(), db, root)
+	l, err = New(t.Context(), db, root, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +364,7 @@ func TestMediaMarksProtectManualNamesAndNumberedFiles(t *testing.T) {
 			if r := l.SetProcessed(t.Context(), []int64{e.ID}, true); r.Changed != 1 || r.Failed != 0 {
 				t.Fatal(r)
 			}
-			op, err := l.Rename(t.Context(), e.ID, e.Version, "my-name."+ext, "manual-protected-name")
+			op, err := l.Rename(t.Context(), RenameRequest{ID: e.ID, Version: e.Version, Name: "my-name." + ext, Key: "manual-protected-name"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -390,7 +403,7 @@ func TestProcessedMarksPreserveHistoryAndValidateIdentity(t *testing.T) {
 	put(t, filepath.Join(root, "a.mp4"))
 	refresh(t, l, 1)
 	a := entry(t, l, 1, "a.mp4")
-	op, err := l.Rename(t.Context(), a.ID, a.Version, "b.mp4", "mark-history")
+	op, err := l.Rename(t.Context(), RenameRequest{ID: a.ID, Version: a.Version, Name: "b.mp4", Key: "mark-history"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,15 +440,15 @@ func TestRenameKeepsDirectoryPageAvailable(t *testing.T) {
 	put(t, filepath.Join(root, "a.mp4"))
 	put(t, filepath.Join(root, "b.mp4"))
 	refresh(t, l, 1)
-	before, err := l.ListOrdered(t.Context(), 1, 0, 100, 0, "", "", "", false, "name_asc")
+	before, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 100, Generation: 0, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	e := entry(t, l, 1, "a.mp4")
-	if _, err = l.Rename(t.Context(), e.ID, e.Version, "z.mp4", "keep-index"); err != nil {
+	if _, err = l.Rename(t.Context(), RenameRequest{ID: e.ID, Version: e.Version, Name: "z.mp4", Key: "keep-index"}); err != nil {
 		t.Fatal(err)
 	}
-	after, err := l.ListOrdered(t.Context(), 1, 0, 100, before.Generation, "", "", "", false, "name_asc")
+	after, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 100, Generation: before.Generation, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"})
 	if err != nil || len(after.Items) != 2 || after.Generation != before.Generation || after.Items[1].Name != "z.mp4" {
 		t.Fatalf("%+v %v", after, err)
 	}
@@ -477,12 +490,14 @@ func TestAutomaticSuccessDiagnosticsPersistWithHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	op, err := l.AutoCommit(t.Context(), e.ID, snap, "new-name", "success-diagnostics", 0, domain.ModelDiagnostics{Request: `{"messages":[]}`, Response: `{"choices":[],"usage":10}`})
+	op, err := l.AutoCommit(t.Context(), AutoCommitOptions{ID: e.ID, Snap: snap, Title: "new-name", Key: "success-diagnostics", Run: 0, Diagnostics: []domain.ModelDiagnostics{domain.ModelDiagnostics{Request: `{"messages":[]}`, Response: `{"choices":[],"usage":10}`}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var request, response string
-	if err = l.DB.QueryRow("SELECT raw_request,raw_response FROM events WHERE operation=?", op.ID).Scan(&request, &response); err != nil || request == "" || response == "" {
+	if err = l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT raw_request,raw_response FROM events WHERE operation=?", op.ID).Scan(&request, &response)
+	}); err != nil || request == "" || response == "" {
 		t.Fatal(request, response, err)
 	}
 }

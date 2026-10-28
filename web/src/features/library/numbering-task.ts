@@ -1,4 +1,4 @@
-import { ref, onBeforeUnmount, onDeactivated } from 'vue'
+import { ref, onScopeDispose, onDeactivated } from 'vue'
 import { api, apiOnExit, ApiError, newRequestKey } from '../../app/api'
 import type { ServerRecord } from '../../app/contracts'
 
@@ -16,6 +16,12 @@ type NumberingTask = {
   error?: ServerRecord
   processing_log: string
 }
+type NumberingInput = {
+  parent: number
+  action: 'preview' | 'apply'
+  batches?: string[]
+  preview?: string
+}
 export function useNumberingTask() {
   const progress = ref('')
   let active: { key: string; controller: AbortController } | undefined
@@ -26,12 +32,7 @@ export function useNumberingTask() {
     task.controller.abort()
     apiOnExit(`/numbering/jobs/${task.key}/cancel`)
   }
-  async function run(
-    parent: number,
-    action: 'preview' | 'apply',
-    batches?: string[],
-    preview?: string
-  ) {
+  async function run({ parent, action, batches, preview }: NumberingInput) {
     const task = { key: newRequestKey(), controller: new AbortController() }
     active = task
     const signal = task.controller.signal
@@ -39,7 +40,8 @@ export function useNumberingTask() {
     try {
       let state = await api<NumberingTask>('/numbering/jobs', {
         method: 'POST',
-        body: { key: task.key, parent, action, batches, preview },
+        body: { parent, action, batches, preview },
+        headers: { 'Idempotency-Key': task.key },
         signal
       })
       while (state.status === 'running' || state.status === 'cancelling') {
@@ -79,7 +81,7 @@ export function useNumberingTask() {
     }
   }
   window.addEventListener('pagehide', cancel)
-  onBeforeUnmount(() => {
+  onScopeDispose(() => {
     cancel()
     window.removeEventListener('pagehide', cancel)
   })

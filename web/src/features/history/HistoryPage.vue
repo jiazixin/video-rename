@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import './history.css';
   import { formatCompact } from '../../lib/format/number';
   import { errorText } from '../../app/errors';
   import PageNavigation from '../../components/PageNavigation.vue';
@@ -147,7 +148,6 @@
         paged: '1',
         limit: String(limit.value),
         category: category.value,
-        run: run.value,
         q: q.value,
         action: action.value,
         model_source: source.value,
@@ -155,11 +155,13 @@
         from: from.value ? new Date(from.value + 'T00:00:00').toISOString() : '',
         to: to.value ? new Date(to.value + 'T23:59:59.999').toISOString() : ''
       });
+      if (run.value) params.set('run', run.value);
       const [data, available] = await Promise.all([
         api<LogPage>(`/logs?${params}`),
         apiItems<number>('/logs/batches')
       ]);
       if (n === seq) {
+        error.value = '';
         rows.value = data.items;
         total.value = data.total;
         pageNumber.value = data.page;
@@ -252,9 +254,7 @@
     try {
       await api<unknown>(`/operations/${selected.value.operation}/restore`, {
         method: 'POST',
-        body: {
-          key: newRequestKey()
-        }
+        body: {}
       });
       toast.show('名称已还原');
       selected.value = undefined;
@@ -296,11 +296,11 @@
     try {
       const result = await api<LogRetryResult>('/logs/retry', {
         method: 'POST',
+        headers: { 'Idempotency-Key': retryKey },
         body: {
           category: scope.category,
           ...(scope.all ? { all: true } : { ids: scope.ids }),
-          model_config_id: retryModel.value,
-          key: retryKey
+          model_config_id: retryModel.value
         }
       });
       if (!result.accepted.length) {
@@ -341,7 +341,8 @@
           await load(true);
         }
       }
-    } catch {
+    } catch (e) {
+      error.value = errorText(e);
     } finally {
       polling = false;
     }

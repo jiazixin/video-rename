@@ -3,13 +3,15 @@
 package library
 
 import (
-	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"video-rename/internal/storage"
 )
 
 // A large synthetic index isolates query cost without creating 500,000 files.
@@ -34,10 +36,12 @@ func TestScaleDirectoryScanCleanupWithLargeIndex(t *testing.T) {
 		parents[n] = entry(t, l, 1, fmt.Sprintf("empty-%03d", n)).ID
 	}
 	start := time.Now()
-	if _, err := l.DB.ExecContext(t.Context(), `WITH RECURSIVE n(value) AS
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), `WITH RECURSIVE n(value) AS
 	 (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<?)
-	 INSERT INTO entries(parent,name,kind,identity,size,mtime,observed)
-	 SELECT ?,printf('synthetic-%06d.mp4',value),'file',printf('synthetic:%d',value),1048576,'now','now' FROM n`, files, bulk); err != nil {
+	 INSERT INTO entries(parent,name,kind,identity,size,mtime_ns,observed)
+	 SELECT ?,printf('synthetic-%06d.mp4',value),'file',printf('synthetic:%d',value),1048576,0,0 FROM n`, files, bulk)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("seeded %d synthetic files in %s", files, time.Since(start))
@@ -49,10 +53,14 @@ func TestScaleDirectoryScanCleanupWithLargeIndex(t *testing.T) {
 	 AND NOT EXISTS(SELECT 1 FROM directory_items i WHERE i.dir=entries.parent AND i.entry=entries.id) LIMIT ?)`
 	start = time.Now()
 	for _, parent := range parents {
-		if _, err := l.DB.ExecContext(t.Context(), legacyItems, parent, 0, parent, refreshPageSize); err != nil {
+		if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(t.Context(), legacyItems, parent, 0, parent, refreshPageSize)
+		}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := l.DB.ExecContext(t.Context(), legacyCandidates, parent, refreshPageSize); err != nil {
+		if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(t.Context(), legacyCandidates, parent, refreshPageSize)
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -62,60 +70,64 @@ func TestScaleDirectoryScanCleanupWithLargeIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer scanner.Close()
+	t.Cleanup(func() {
+		if err := scanner.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	capture := time.Since(start)
 	start = time.Now()
 	for _, parent := range parents {
-		l.cleanScanStaging(t.Context(), scanner.stage, parent, 0, "directory-scan:scale", true)
+		if err := l.cleanScanStaging(t.Context(), cleanScanStagingOptions{Stage: scanner.stage, ID: parent, Gen: 0, Marker: "directory-scan:scale", Published: true}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	indexedCleanup := time.Since(start)
 	t.Logf("%d-directory empty cleanup: legacy=%s, indexed=%s, once-per-round orphan capture=%s, indexed total=%s", directories, legacyCleanup, indexedCleanup, capture, indexedCleanup+capture)
-	conn, err := l.DB.Conn(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	if _, err := conn.ExecContext(t.Context(), "ATTACH DATABASE ? AS directory_scan", scanner.path); err != nil {
-		t.Fatal(err)
-	}
-	defer conn.ExecContext(context.WithoutCancel(t.Context()), "DETACH DATABASE directory_scan")
-	for _, path := range []struct {
-		name, query string
-	}{
-		{"legacy", "UPDATE entries SET present=1,observed=? WHERE parent=? AND observed=? AND present=0"},
-		{"indexed", promoteScanCandidatesSQL},
-	} {
-		start = time.Now()
-		for _, parent := range parents {
-			if _, err := conn.ExecContext(t.Context(), path.query, "now", parent, "directory-scan:scale"); err != nil {
-				t.Fatal(err)
+	if err := l.db.WriteScan(t.Context(), scanner.stage.Path(), func(tx *sql.Tx) error {
+		for _, path := range []struct {
+			name, query string
+		}{
+			{"legacy", "UPDATE entries SET present=1,observed=? WHERE parent=? AND observed=? AND present=0"},
+			{"indexed", promoteScanCandidatesSQL},
+		} {
+			start = time.Now()
+			for _, parent := range parents {
+				if _, err := tx.ExecContext(t.Context(), path.query, "now", parent, "directory-scan:scale"); err != nil {
+					t.Fatal(err)
+				}
 			}
+			t.Logf("%d empty candidate promotions (%s): %s", directories, path.name, time.Since(start))
 		}
-		t.Logf("%d empty candidate promotions (%s): %s", directories, path.name, time.Since(start))
-	}
-	rows, err := conn.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+promoteScanCandidatesSQL, "now", parents[0], "directory-scan:scale")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var plan strings.Builder
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+		rows, err := tx.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+promoteScanCandidatesSQL, "now", parents[0], "directory-scan:scale")
+		if err != nil {
 			t.Fatal(err)
 		}
-		fmt.Fprintln(&plan, detail)
-	}
-	if err := rows.Err(); err != nil {
+		var plan strings.Builder
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+				t.Fatal(err)
+			}
+			fmt.Fprintln(&plan, detail)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		if err := rows.Close(); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("candidate promotion plan:\n%s", plan.String())
+		if strings.Contains(plan.String(), "SCAN entries") || !strings.Contains(plan.String(), "SEARCH entries USING INTEGER PRIMARY KEY") {
+			t.Fatalf("candidate promotion scans the complete index: %s", plan.String())
+		}
+		var count int
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM entries").Scan(&count); err != nil || count != files+directories+2 {
+			t.Fatalf("empty cleanup changed indexed entries: count=%d err=%v", count, err)
+		}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
-	}
-	rows.Close()
-	t.Logf("candidate promotion plan:\n%s", plan.String())
-	if strings.Contains(plan.String(), "SCAN entries") || !strings.Contains(plan.String(), "SEARCH entries USING INTEGER PRIMARY KEY") {
-		t.Fatalf("candidate promotion scans the complete index: %s", plan.String())
-	}
-	var count int
-	if err := conn.QueryRowContext(t.Context(), "SELECT count(*) FROM entries").Scan(&count); err != nil || count != files+directories+2 {
-		t.Fatalf("empty cleanup changed indexed entries: count=%d err=%v", count, err)
 	}
 }

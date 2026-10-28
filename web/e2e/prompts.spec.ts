@@ -5,13 +5,14 @@ async function login(page: Page) {
   await page.getByLabel('用户名', { exact: true }).fill('admin')
   await page.getByLabel('密码', { exact: true }).fill('test-password-123')
   await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '文件目录.' })).toBeVisible()
 }
 test('固定提示词与提示词库的新增、编辑、引用保护和持久化', async ({ page }) => {
   await login(page)
   const fixed = page.getByLabel('固定提示词', { exact: true })
   let original = ''
   try {
-    await page.goto('/#settings/prompts')
+    await page.goto('/settings/prompts')
     await expect(page.getByRole('heading', { name: '固定提示词', exact: true })).toBeVisible()
     original = await fixed.inputValue()
     await expect(fixed).toHaveValue(/标题正文不少于25个中文字符/)
@@ -33,7 +34,7 @@ test('固定提示词与提示词库的新增、编辑、引用保护和持久�
     await page.getByRole('button', { name: '保存配置', exact: true }).click()
     const card = page.getByRole('article', { name: '下拉测试配置' })
     await expect(card).toContainText('命名提示词 · 下拉绑定提示词')
-    await page.goto('/#settings/prompts')
+    await page.goto('/settings/prompts')
     await page.getByRole('button', { name: '删除提示词 下拉绑定提示词', exact: true }).click()
     await page.getByRole('button', { name: '确认删除', exact: true }).click()
     await expect(page.getByRole('dialog')).toContainText('1 个模型配置使用此提示词')
@@ -49,7 +50,7 @@ test('固定提示词与提示词库的新增、编辑、引用保护和持久�
     await page.getByRole('button', { name: '删除模型配置 下拉测试配置', exact: true }).click()
     await page.getByRole('button', { name: '确认删除', exact: true }).click()
     await expect(page.getByRole('article', { name: '下拉测试配置' })).toHaveCount(0)
-    await page.goto('/#settings/prompts')
+    await page.goto('/settings/prompts')
     await page.getByRole('button', { name: '删除提示词 下拉绑定提示词', exact: true }).click()
     await page.getByRole('button', { name: '确认删除', exact: true }).click()
     await expect(page.getByRole('heading', { name: '下拉绑定提示词', exact: true })).toHaveCount(0)
@@ -73,12 +74,10 @@ test('固定提示词与提示词库的新增、编辑、引用保护和持久�
     ).toBe(true)
     await page.screenshot({ path: 'test-results/prompts-settings-mobile.png', fullPage: true })
   } finally {
-    await page.goto('/#settings/prompts').catch(() => {})
-    if (original) await fixed.fill(original).catch(() => {})
+    await page.goto('/settings/prompts')
+    if (original) await fixed.fill(original)
     const save = page.getByRole('button', { name: '保存固定提示词', exact: true })
     if (await save.isEnabled()) await save.click()
-    await expect(save)
-      .toBeDisabled()
-      .catch(() => {})
+    await expect(save).toBeDisabled()
   }
 })

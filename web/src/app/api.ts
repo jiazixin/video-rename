@@ -1,6 +1,15 @@
-import { ref } from 'vue'
+import { readonly, ref } from 'vue'
 
-export const session = ref<{ username: string } | null>(null)
+type Session = { username: string }
+const sessionState = ref<Session | null>(null)
+
+/** The authenticated account; updates go through setSession. */
+export const session = readonly(sessionState)
+
+/** Replaces the account after login, logout or session verification. */
+export function setSession(value: Session | null): void {
+  sessionState.value = value
+}
 
 // getRandomValues also works over HTTP on a LAN, where randomUUID is unavailable.
 export function newRequestKey(): string {
@@ -86,7 +95,7 @@ function clientFailure(error: unknown, signal: AbortSignal | undefined, timeout:
 }
 
 /**
- * 代码规范 §5.3: reads and keyed writes retry network failures, timeouts, 429
+ * Reads and keyed writes retry network failures, timeouts, 429
  * and 503 at most twice; a Retry-After over 10 s returns the error at once.
  */
 function retryDelayMs(error: unknown, attempt: number): number | undefined {
@@ -124,10 +133,13 @@ function sleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
 /** Sends a request to the Go server; the response is asserted to be T. */
 export async function api<T>(path: string, options: ApiOptions = {}): Promise<T> {
   const method = (options.method ?? 'GET').toUpperCase()
-  const retryable =
-    method === 'GET' ||
-    method === 'HEAD' ||
-    Object.keys(options.headers ?? {}).some((name) => name.toLowerCase() === 'idempotency-key')
+  const headers = new Headers(options.headers)
+  const keyedPost = method === 'POST' && !path.startsWith('/auth/')
+  if (keyedPost && !headers.get('Idempotency-Key')) {
+    headers.set('Idempotency-Key', newRequestKey())
+  }
+  options = { ...options, method, headers: Object.fromEntries(headers) }
+  const retryable = method === 'GET' || (keyedPost && Boolean(headers.get('Idempotency-Key')))
   for (let attempt = 0; ; attempt++) {
     try {
       return await send<T>(path, options)
@@ -148,7 +160,7 @@ async function send<T>(path: string, options: ApiOptions): Promise<T> {
       method,
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': method === 'PATCH' ? 'application/merge-patch+json' : 'application/json',
         ...headers
       },
       credentials: 'same-origin',
@@ -158,6 +170,7 @@ async function send<T>(path: string, options: ApiOptions): Promise<T> {
     throw clientFailure(error, signal, timeout)
   }
   const requestId = response.headers.get('X-Request-ID') ?? ''
+  if (response.status === 401 && !signal?.aborted && !timeout.aborted) setSession(null)
   let data: unknown
   try {
     const text = await response.text()
@@ -173,7 +186,6 @@ async function send<T>(path: string, options: ApiOptions): Promise<T> {
     })
   }
   if (!response.ok) {
-    if (response.status === 401) session.value = null
     const envelope = (typeof data === 'object' && data !== null ? data : {}) as ErrorEnvelope
     const error = envelope.error ?? {}
     throw new ApiError(
@@ -191,7 +203,7 @@ async function send<T>(path: string, options: ApiOptions): Promise<T> {
   return data as T
 }
 
-/** Reads a list response and returns its items (代码规范 §5.2). */
+/** Reads a list response and returns its items. */
 export async function apiItems<T>(path: string, options: ApiOptions = {}): Promise<T[]> {
   return (await api<{ items: T[] }>(path, options)).items
 }
@@ -211,17 +223,21 @@ export function apiOnExit(path: string, body: unknown = {}): void {
     method: 'POST',
     credentials: 'same-origin',
     keepalive: true,
+    signal: AbortSignal.timeout(requestTimeoutMs),
     headers: {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify(body)
-  }).catch(() => {})
+  }).catch(() => {
+    // Page exit cannot show a failure; abandoned work also expires on the server.
+  })
 }
 
-export async function bootstrap() {
+export async function bootstrap(signal?: AbortSignal) {
   try {
-    session.value = await api<{ username: string }>('/auth/session')
+    const account = await api<Session>('/auth/session', { signal })
+    if (!signal?.aborted) setSession(account)
   } catch {
-    session.value = null
+    if (!signal?.aborted) setSession(null)
   }
 }

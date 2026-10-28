@@ -18,7 +18,7 @@ test('通知渠道顺序、发送记录分页、刷新、条数和窄屏', async
     status: 'sent',
     attempts: 1,
     error: '',
-    updated: '2026-10-01T01:00:00Z'
+    updated: '2026-10-01T01:00:00.000Z'
   }))
   let requests = 0
   await page.route('**/api/notifications/history?*', (route) => {
@@ -96,7 +96,7 @@ test('发送记录迟到响应不会覆盖新的每页条数', async ({ page }) 
       status: 'sent',
       attempts: 1,
       error: '',
-      updated: '2026-10-01T01:00:00Z'
+      updated: '2026-10-01T01:00:00.000Z'
     }))
     await route.fulfill({ json: { items: rows, total: 123, page: 1, size } })
   })

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"database/sql"
 	"encoding/json/v2"
 	"log/slog"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"video-rename/internal/config"
+	"video-rename/internal/storage"
 )
 
 func TestRunPauseResumeAPI(t *testing.T) {
@@ -17,7 +19,9 @@ func TestRunPauseResumeAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer shutdown(t, a)
-	if _, err = a.DB.Exec("INSERT INTO runs(id,source,targets,recursive,status,created,request_key) VALUES(1,'manual','[1]',1,'queued','2026-09-29T00:00:00Z','pause-api')"); err != nil {
+	if _, err = storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "INSERT INTO runs(id,source,targets,recursive,status,created,request_key) VALUES(1,'manual','[1]',1,'queued','2026-09-29T00:00:00.000Z','pause-api')")
+	}); err != nil {
 		t.Fatal(err)
 	}
 	var cookies []*http.Cookie

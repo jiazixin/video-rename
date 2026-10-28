@@ -171,22 +171,22 @@ func parseDurationRules(rules []DurationRule) ([]ParsedDurationRule, []domain.Fi
 		last := i == len(rules)-1
 		if r.MaxDuration == nil {
 			if !last {
-				errs = append(errs, ruleField("sampling.duration_rules", i, "max_duration", "null_not_last"))
+				errs = append(errs, ruleField("sampling.duration_rules", i, domain.FieldError{Path: "max_duration", Reason: "null_not_last"}))
 			}
 			out = append(out, ParsedDurationRule{Max: time.Duration(math.MaxInt64), Frames: r.Frames})
 			continue
 		}
 		d, err := time.ParseDuration(*r.MaxDuration)
 		if err != nil {
-			errs = append(errs, ruleField("sampling.duration_rules", i, "max_duration", "invalid_duration"))
+			errs = append(errs, ruleField("sampling.duration_rules", i, domain.FieldError{Path: "max_duration", Reason: "invalid_duration"}))
 			continue
 		}
 		if d <= 0 {
-			errs = append(errs, ruleField("sampling.duration_rules", i, "max_duration", "not_positive"))
+			errs = append(errs, ruleField("sampling.duration_rules", i, domain.FieldError{Path: "max_duration", Reason: "not_positive"}))
 			continue
 		}
 		if d <= prev {
-			errs = append(errs, ruleField("sampling.duration_rules", i, "max_duration", "not_increasing"))
+			errs = append(errs, ruleField("sampling.duration_rules", i, domain.FieldError{Path: "max_duration", Reason: "not_increasing"}))
 			continue
 		}
 		prev = d
@@ -209,17 +209,17 @@ func parseSizeRules(rules []SizeRule) ([]ParsedSizeRule, []domain.FieldError) {
 		last := i == len(rules)-1
 		if r.MaxMiB == nil {
 			if !last {
-				errs = append(errs, ruleField("sampling.size_rules", i, "max_mib", "null_not_last"))
+				errs = append(errs, ruleField("sampling.size_rules", i, domain.FieldError{Path: "max_mib", Reason: "null_not_last"}))
 			}
 			out = append(out, ParsedSizeRule{Max: math.MaxInt64, Frames: r.Frames})
 			continue
 		}
 		if *r.MaxMiB <= 0 || *r.MaxMiB > math.MaxInt64/(1024*1024) {
-			errs = append(errs, ruleField("sampling.size_rules", i, "max_mib", "out_of_range"))
+			errs = append(errs, ruleField("sampling.size_rules", i, domain.FieldError{Path: "max_mib", Reason: "out_of_range"}))
 			continue
 		}
 		if prev != 0 && *r.MaxMiB <= prev {
-			errs = append(errs, ruleField("sampling.size_rules", i, "max_mib", "not_increasing"))
+			errs = append(errs, ruleField("sampling.size_rules", i, domain.FieldError{Path: "max_mib", Reason: "not_increasing"}))
 			continue
 		}
 		prev = *r.MaxMiB
@@ -239,8 +239,9 @@ func checkRuleTail[T any](name string, rules []T, nonNull func(int) bool) []doma
 }
 
 // ruleField names field of tier i in the rule table name.
-func ruleField(name string, i int, field, reason string) domain.FieldError {
-	return domain.FieldError{Path: name + "." + strconv.Itoa(i) + "." + field, Reason: reason}
+func ruleField(name string, i int, issue domain.FieldError) domain.FieldError {
+	issue.Path = name + "." + strconv.Itoa(i) + "." + issue.Path
+	return issue
 }
 
 // checkFrames checks that each tier's frames are within 1–32.
@@ -249,7 +250,7 @@ func checkFrames[T any](name string, rules []T, frames func(int) int) []domain.F
 	for i := range rules {
 		f := frames(i)
 		if f < 1 || f > 32 {
-			errs = append(errs, ruleField(name, i, "frames", "out_of_range"))
+			errs = append(errs, ruleField(name, i, domain.FieldError{Path: "frames", Reason: "out_of_range"}))
 		}
 	}
 	return errs

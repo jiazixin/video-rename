@@ -116,7 +116,8 @@ const entry = (id: number, name: string, kind = 'file') => ({
   name,
   kind,
   size: 1,
-  mtime: '2026-10-03T00:00:00Z',
+  mtime: '2026-10-03T00:00:00.000Z',
+  etag: '"v1"',
   version: 1,
   processed: '',
   restore_id: 0,
@@ -492,7 +493,7 @@ test('扫描失败和取消反馈清晰，不覆盖尚未保存的扫描间隔',
     id: 'scan-test',
     status: 'scanning',
     source: 'manual',
-    started: '2026-10-03T00:00:00Z',
+    started: '2026-10-03T00:00:00.000Z',
     current_path: 'NAS/目录'
   }
   await page.route('**/api/library/scan', (route) =>

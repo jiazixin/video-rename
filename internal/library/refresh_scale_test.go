@@ -3,6 +3,7 @@
 package library
 
 import (
+	"database/sql"
 	"fmt"
 	"io"
 	"os"
@@ -70,7 +71,7 @@ func TestScaleRefreshDelayedMetadata(t *testing.T) {
 			WHERE i.dir=1`,
 	} {
 		var count int
-		if err := l.DB.QueryRowContext(t.Context(), query).Scan(&count); err != nil {
+		if err := l.db.View(t.Context(), func(tx *sql.Tx) error { return tx.QueryRowContext(t.Context(), query).Scan(&count) }); err != nil {
 			t.Fatal(err)
 		}
 		if count != totalFiles {

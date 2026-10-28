@@ -19,7 +19,9 @@ func numberingRequestTest(t *testing.T, a *App, req numberingRequest, want int) 
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	a.startNumberingJob(w, jsonRequest("POST", "/api/numbering/jobs", strings.NewReader(string(raw))))
+	r := jsonRequest("POST", "/api/numbering/jobs", strings.NewReader(string(raw)))
+	r.Header.Set("Idempotency-Key", req.Key)
+	a.startNumberingJob(w, r)
 	if w.Code != want {
 		t.Fatalf("%d: %s", w.Code, w.Body.String())
 	}

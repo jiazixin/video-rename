@@ -50,7 +50,9 @@ video-rename 由 Go 服务、内嵌的 Vue 3 页面和 SQLite 组成，构建后
 | FFmpeg | 抽帧与自动命名需要 `ffmpeg`、`ffprobe` 在 PATH 中；只浏览和手动改名可不安装 |
 | 模型服务（可选） | 支持图片输入的 OpenAI 兼容或 Anthropic 服务；不使用自动命名时无需配置 |
 | 数据目录 | 本机磁盘；媒体目录可以是网络挂载 |
-| 从源码构建 | Go 1.27.3、Node.js ≥ 22.12、npm；从 Git 检出构建还需要 Git |
+| 从源码构建 | Go 1.27.3、Node.js ≥ 26.0、npm；从 Git 检出构建还需要 Git |
+
+复制按钮使用浏览器 Clipboard API，需要 HTTPS 或 localhost 安全上下文及相应权限；不满足条件时保留可选中的文本供手动复制。
 
 ## 快速开始
 
@@ -193,7 +195,7 @@ npm --prefix web run test:e2e
 
 ```text
 cmd/video-rename/        CLI 入口与构建版本
-internal/                Go 服务：app、storage、library、rename、jobs、media、models、notifications 等
+internal/                Go 服务：app、storage、library、rename、job、media、model、notification 等
 web/                     唯一 npm/Vite 边界；Vue 源码、Playwright E2E、embed.go
 configs/                 配置示例；本地实例 config.local.yaml 被忽略
 docs/                    使用、设计、开发与验收文档；archive/ 为历史记录
@@ -215,8 +217,10 @@ coverage/ test-results/  忽略的覆盖率与测试输出
 
 | 规则 | 实际做法 | 原因与依据 | 适用范围 | 重新评估条件 |
 | --- | --- | --- | --- | --- |
-| 代码规范 §3.1 用户文案由客户端按代码映射 | 发给模型的提示内容（默认提示词、固定提示词、截图说明、图片识别测试指令）、默认失败词句、通知标题与正文（含测试通知）、默认提示词与模型配置的种子名称及复制配置的“副本”后缀由服务端生成中文 | 提示内容与失败词句是发给模型或与模型输出比对的数据，通知发往外部渠道，种子名称是用户可编辑的数据，都没有可做映射的客户端；管理 API 与各类记录已按 [接口错误约定](docs/API.md) 只返回代码 | `internal/models`（`DefaultBody`、种子与复制、`probe.go`）、`internal/systemsettings`（`DefaultFixedPrompt`）、`internal/vision/client.go` 截图说明、`internal/naming/failure.go`、`internal/notifications` 的通知内容 | 提示内容、通知或种子数据改为多语言时 |
+| 代码规范 §3.1 用户文案由客户端按代码映射 | 发给模型的提示内容（默认提示词、固定提示词、截图说明、图片识别测试指令）、默认失败词句、通知标题与正文（含测试通知）、默认提示词与模型配置的种子名称及复制配置的“副本”后缀由服务端生成中文 | 提示内容与失败词句是发给模型或与模型输出比对的数据，通知发往外部渠道，种子名称是用户可编辑的数据，都没有可做映射的客户端；管理 API 与各类记录已按 [接口错误约定](docs/API.md) 只返回代码 | `internal/model`（`DefaultBody`、种子与复制、`probe.go`）、`internal/systemsetting`（`DefaultFixedPrompt`）、`internal/vision/client.go` 截图说明、`internal/naming/failure.go`、`internal/notification` 的通知内容 | 提示内容、通知或种子数据改为多语言时 |
 | Web代码规范 §3 至少启用 `strictTypeChecked` | `@typescript-eslint/restrict-template-expressions` 设为 `allowNumber: true`，模板字符串可直接插入数字 | 数字插值不会产生 `[object Object]` 或 `undefined` 文本，逐处改写为 `String(n)` 会降低可读性；其余类型仍报错 | `web/eslint.config.js`，全部 Web 源码与 E2E | 规则默认值或规范调整时 |
+| Go代码规范 §7 配置是值类型，运行期编辑需登记 | 部署 Config 启动时加载；模型、提示词、采样、编号、扫描及通知设置持久化在 SQLite，可经页面修改；每个任务冻结处理快照 | 运行期配置是产品功能，任务快照防止编辑改变已提交任务的语义 | 各设置存储与任务创建边界 | 配置生命周期或快照策略改变时 |
+| Go代码规范 §8 写事务期间不做文件 I/O | 文件改名和编号的成功事务提交前保留最终的路径及 stat/fstat 身份复核；目录扫描发布也核对持有的目录句柄 | 外部进程不受应用锁控制；移出最终事务会扩大“文件已被替换但数据库仍提交成功”的窗口，已有并发修改回归验证。目录遍历、文件内容读写、网络和外部进程仍在写事务外执行 | `internal/library` 的最终身份复核 | 文件系统与数据库提交机制改变时 |
 
 ## 参与贡献
 

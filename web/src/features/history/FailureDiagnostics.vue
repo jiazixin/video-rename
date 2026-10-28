@@ -141,6 +141,27 @@
   >
 </template>
 <style scoped>
+  .diagnostic-buttons button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 34px;
+    padding: 6px 12px;
+    gap: 6px;
+    border: 1px solid var(--control-line);
+    border-radius: 8px;
+    background: var(--palette-ffffff);
+    color: var(--steel);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 20px;
+  }
+  .diagnostic-buttons button:hover:not(:disabled) {
+    background: var(--control-hover);
+    border-color: var(--control-line-hover);
+    color: var(--ink);
+  }
+
   .context-summary {
     margin-top: 10px;
     padding: 8px 12px;

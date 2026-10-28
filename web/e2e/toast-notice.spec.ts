@@ -123,7 +123,7 @@ test('浮动提示保留重复消息、最新置顶，并独立关闭和到期',
             operation: 1,
             old_path: '原名.mp4',
             new_path: '新名.mp4',
-            created: '2026-10-02T00:00:00Z'
+            created: '2026-10-02T00:00:00.000Z'
           }
         ],
         total: 1,
@@ -142,7 +142,7 @@ test('浮动提示保留重复消息、最新置顶，并独立关闭和到期',
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await page.getByRole('button', { name: '运行记录', exact: true }).click()
   await page.getByRole('button', { name: '详情', exact: true }).click()
-  const time = new Date('2026-10-02T01:00:00Z')
+  const time = new Date('2026-10-02T01:00:00.000Z')
   await page.clock.install({ time })
   await page.clock.pauseAt(time)
   const notices = toasts(page)

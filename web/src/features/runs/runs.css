@@ -1,3 +1,162 @@
+.weekday-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 5px 0 20px;
+}
+.weekday-picker label {
+  flex-direction: row;
+  align-items: center;
+  font-size: 12px;
+  margin: 0;
+}
+.weekday-picker input {
+  width: 15px;
+}
+.preview-rule {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 18px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border-radius: 6px;
+}
+.preview-rule code {
+  font-size: 12px;
+}
+.preview-rule button {
+  font-size: 11px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.schedule-preview {
+  font-size: 11px;
+  line-height: 1.9;
+  color: var(--steel);
+  padding-left: 20px;
+}
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+}
+.plan-card {
+  padding: 21px;
+}
+.plan-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 15px;
+}
+.plan-icon {
+  background: var(--palette-f5f7f6);
+  color: var(--palette-789485);
+  padding: 9px;
+  border-radius: 8px;
+  display: flex;
+}
+.plan-card h3 {
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+.plan-expression {
+  font-size: 11px;
+}
+.plan-expression code {
+  margin-left: 8px;
+  color: var(--palette-6c727c);
+}
+.plan-meta {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--ash);
+}
+.plan-meta span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.plan-next {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 14px 0;
+  margin-top: 10px;
+}
+.plan-next > span {
+  font-size: 10px;
+  color: var(--palette-94999f);
+}
+.plan-next strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+.plan-card footer {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  display: flex;
+  gap: 8px;
+}
+.plan-card footer > button:first-child {
+  margin-right: auto;
+  font-size: 11px;
+  padding: 6px 10px;
+}
+.plans-empty {
+  padding: 35px 20px;
+  background: var(--palette-fcfdfc);
+}
+.plan-meta .plan-paths {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.plan-card footer > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 6px 12px;
+  gap: 6px;
+  border: 1px solid var(--control-line);
+  border-radius: 8px;
+  background: var(--palette-ffffff);
+  color: var(--steel);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.plan-card footer > button:hover:not(:disabled) {
+  background: var(--control-hover);
+  border-color: var(--control-line-hover);
+  color: var(--ink);
+}
+.plan-card footer > button > svg {
+  width: 16px;
+  height: 16px;
+}
+.plan-card footer > button.danger-button {
+  color: var(--tone-red-ink);
+  background: var(--tone-red-bg);
+  border-color: var(--tone-red-line);
+  gap: 6px;
+  line-height: 20px;
+}
+.plan-card footer > button.danger-button:hover:not(:disabled) {
+  color: var(--tone-red-ink);
+  background: var(--tone-red-bg);
+  border-color: var(--tone-red-line);
+  filter: saturate(1.35) brightness(0.97);
+}
+
 .run-section {
   padding: 24px;
   border: 1px solid var(--line);
@@ -37,7 +196,7 @@
   max-width: 100%;
 }
 
-/* 运行记录：按天分组的紧凑批次时间线 */
+/* Compact run timelines grouped by day. */
 .plan-section-heading {
   display: flex;
   align-items: center;

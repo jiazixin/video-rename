@@ -95,7 +95,7 @@ test('目录编号持续反馈进度，关闭取消，预览完成仍须确认',
     cancelled: string[] = []
   await page.route('**/api/numbering/jobs', async (route) => {
     const body = route.request().postDataJSON()
-    current = body.key
+    current = defined(route.request().headers()['idempotency-key'])
     action = body.action
     submissions.push(action)
     await route.fulfill({
@@ -225,7 +225,7 @@ test('编号历史刷新后可展开并复制执行失败现场', async ({ page,
             parent: 1,
             path: '测试目录',
             status: 'rolled_back',
-            created: '2026-09-30T12:00:00Z',
+            created: '2026-09-30T12:00:00.000Z',
             undo_of: '',
             error: '操作失败，已恢复原名：目标已存在',
             processing_log: diagnostic,

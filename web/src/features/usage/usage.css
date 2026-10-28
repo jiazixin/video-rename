@@ -1,4 +1,17 @@
-/* 用量分析：筛选不装箱,统计块之间用统一间距,面板语言与全局一致。 */
+.run-source {
+  display: block;
+  font-size: 10px;
+  color: var(--ash);
+  margin-top: 4px;
+}
+.date-time-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+}
+
+/* Usage filters stay unboxed; statistics and panels share the application spacing. */
 .usage-filters {
   margin-bottom: 26px;
 }

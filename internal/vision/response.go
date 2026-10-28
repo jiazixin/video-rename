@@ -1,6 +1,7 @@
 package vision
 
 import (
+	"encoding/json/v2"
 	"strings"
 	"unicode"
 
@@ -60,4 +61,33 @@ func stripPairedQuotes(s string) string {
 		}
 		s = string(runes[1 : len(runes)-1])
 	}
+}
+
+func parseOpenAI(raw []byte, status int, keywords []string) (string, int, *httpJobError) {
+	var cr chatResponse
+	if err := json.Unmarshal(raw, &cr); err != nil {
+		return "", status, &httpJobError{Code: domain.CodeAPIResponseInvalid, Message: "response JSON or field types are invalid", Details: map[string]any{"reason": "json"}}
+	}
+	if len(cr.Choices) == 0 {
+		e := &httpJobError{Code: domain.CodeAPIResponseInvalid, Message: "choices is empty", Details: map[string]any{"reason": "empty_choices"}}
+		if cr.Error != nil && cr.Error.Message != "" {
+			e.Message += "; server error: " + cr.Error.Message
+			e.Details["detail"] = cr.Error.Message
+		}
+		return "", status, e
+	}
+	choice := cr.Choices[0]
+	if len(choice.Message.ToolCalls) > 0 {
+		return "", status, &httpJobError{Code: domain.CodeAPIResponseInvalid, Message: "response contains tool_calls, not a text title", Details: map[string]any{"reason": "tool_calls"}}
+	}
+	if choice.FinishReason == "length" {
+		return "", status, &httpJobError{Code: domain.CodeModelOutputTruncated, Message: "model output was truncated; not used as a title"}
+	}
+	if strings.TrimSpace(choice.Message.Content) == "" {
+		return "", status, &httpJobError{Code: domain.CodeAPIResponseInvalid, Message: "message.content is empty", Details: map[string]any{"reason": "empty_answer"}}
+	}
+	if _, validationErr := ValidateTitle(choice.Message.Content, keywords); validationErr != nil {
+		return "", status, &httpJobError{JobError: *validationErr}
+	}
+	return choice.Message.Content, status, nil
 }

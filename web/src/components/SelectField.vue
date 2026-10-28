@@ -165,3 +165,161 @@
             ><Check v-if="option.value === model" :size="14" /></span></span></Transition></Teleport
   ></span>
 </template>
+
+<style scoped>
+  .select-field {
+    display: inline-flex;
+    min-width: 130px;
+    max-width: 100%;
+    vertical-align: middle;
+  }
+  .select-trigger {
+    width: 100%;
+    min-height: 38px;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 8px 11px;
+    border-radius: 7px;
+    font-size: 12px;
+    font-weight: 400;
+    text-align: left;
+    box-shadow: 0 1px 2px var(--palette-182c2005);
+  }
+  .select-trigger > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .select-trigger svg {
+    color: var(--palette-8a9290);
+    transition: transform var(--motion-hover) linear;
+  }
+  .select-trigger svg.rotated {
+    transform: rotate(180deg);
+  }
+  .select-trigger[aria-expanded='true'] {
+    border-color: var(--palette-8eb6a5);
+    box-shadow: 0 0 0 3px var(--palette-19896d0d);
+    background: var(--palette-ffffff);
+  }
+  .select-menu {
+    position: fixed;
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    padding: 5px;
+    border: 1px solid var(--palette-dce4df);
+    border-radius: 9px;
+    background: var(--palette-ffffff);
+    box-shadow:
+      0 8px 28px var(--palette-182c201a),
+      0 2px 6px var(--palette-182c2008);
+  }
+  .select-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    min-height: 36px;
+    padding: 8px 10px;
+    border-radius: 5px;
+    color: var(--steel);
+    font-size: 12px;
+    font-weight: 400;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .select-option.highlighted {
+    background: var(--palette-f1f5f3);
+    color: var(--ink);
+  }
+  .select-option[aria-selected='true'] {
+    color: var(--palette-287257);
+  }
+  .select-option svg {
+    color: var(--palette-287257);
+  }
+  .form-grid .select-field {
+    width: 100%;
+  }
+  .pagination .select-field {
+    min-width: 125px;
+  }
+  .pagination .select-trigger {
+    padding: 5px 9px;
+    min-height: 31px;
+    font-size: 11px;
+  }
+  .pagination .select-trigger {
+    position: relative;
+    min-height: 32px;
+    padding: 5px 26px;
+    justify-content: center;
+    line-height: 20px;
+    text-align: center;
+  }
+  .pagination .select-trigger > span {
+    display: block;
+    width: 100%;
+    text-align: center;
+  }
+  .pagination .select-trigger > svg {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  .pagination .select-trigger > svg.rotated {
+    transform: translateY(-50%) rotate(180deg);
+  }
+
+  .select-menu {
+    overscroll-behavior: contain;
+  }
+  .select-field .select-trigger {
+    position: relative;
+    justify-content: center;
+    text-align: center;
+    padding-inline: 28px;
+    gap: 0;
+  }
+  .select-trigger > span {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    text-align: center;
+    white-space: nowrap;
+  }
+  .select-field .select-trigger > svg {
+    position: absolute;
+    right: 9px;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  .select-field .select-trigger > svg.rotated {
+    transform: translateY(-50%) rotate(180deg);
+  }
+  .select-option {
+    position: relative;
+    justify-content: center;
+    padding-inline: 28px;
+    text-align: center;
+  }
+  .select-option > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .select-option > svg {
+    position: absolute;
+    right: 9px;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  @media (max-width: 600px) {
+    .pagination > .select-field {
+      margin-left: auto;
+      margin-right: auto;
+    }
+  }
+</style>

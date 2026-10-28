@@ -15,6 +15,7 @@ export type Entry = {
   size: number
   mtime: string
   renamed_at?: string
+  etag: string
   version: number
   processed: string
   restore_id: number
@@ -121,6 +122,7 @@ export type Plan = {
   enabled: boolean
   next: string
   last?: ServerRecord
+  etag: string
   version: number
 }
 export type ModelProfile = {
@@ -145,6 +147,7 @@ export type ModelProfile = {
   prompt_id: number
   prompt_title: string
   body: string
+  etag: string
   version: number
   created: string
   updated: string
@@ -153,6 +156,7 @@ export type PromptProfile = {
   id: number
   title: string
   body: string
+  etag: string
   version: number
   created: string
   updated: string

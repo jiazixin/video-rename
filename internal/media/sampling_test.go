@@ -38,10 +38,10 @@ func TestPlanDefaultExamples(t *testing.T) {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
 		if plan.TargetN != tc.wantN {
-			t.Errorf("%s: N = %d, 期望 %d", tc.name, plan.TargetN, tc.wantN)
+			t.Errorf("%s: N = %d, want %d", tc.name, plan.TargetN, tc.wantN)
 		}
 		if len(plan.Times) != tc.wantN {
-			t.Errorf("%s: 时间点数量 = %d, 期望 %d", tc.name, len(plan.Times), tc.wantN)
+			t.Errorf("%s: time pointcount = %d, want %d", tc.name, len(plan.Times), tc.wantN)
 		}
 	}
 }
@@ -63,7 +63,7 @@ func TestPlanExactThresholds(t *testing.T) {
 	} {
 		plan, err := s.Plan(tc.duration, 0)
 		if err != nil || plan.BaseN != tc.want || plan.TargetN != tc.want {
-			t.Errorf("时长 %v: plan=%+v, err=%v, 期望 %d 帧", tc.duration, plan, err, tc.want)
+			t.Errorf("duration %v: plan=%+v, err=%v, want %d frame", tc.duration, plan, err, tc.want)
 		}
 	}
 	sc := loadDefaultSampling(t)
@@ -72,11 +72,11 @@ func TestPlanExactThresholds(t *testing.T) {
 	// exactly 50 MiB hits ≤50 (Ns=3); 50MiB+1 hits ≤200 (Ns=5)
 	plan, _ := s.Plan(10*time.Second, 50*1024*1024)
 	if plan.BaseN != 3 {
-		t.Errorf("50MiB 边界: N0 = %d, 期望 3", plan.BaseN)
+		t.Errorf("50MiB boundary: N0 = %d, want 3", plan.BaseN)
 	}
 	plan, _ = s.Plan(10*time.Second, 50*1024*1024+1)
 	if plan.BaseN != 5 {
-		t.Errorf("50MiB+1: N0 = %d, 期望 5", plan.BaseN)
+		t.Errorf("50MiB+1: N0 = %d, want 5", plan.BaseN)
 	}
 }
 
@@ -94,7 +94,7 @@ func TestPlanMaxFramesClamp(t *testing.T) {
 			t.Fatal(err)
 		}
 		if plan.TargetN != 6 {
-			t.Errorf("max_frames=6 应截断: got %d", plan.TargetN)
+			t.Errorf("max_frames=6 should truncate: got %d", plan.TargetN)
 		}
 	}
 }
@@ -112,7 +112,7 @@ func TestPlanStrategies(t *testing.T) {
 			t.Fatal(err)
 		}
 		if plan.TargetN != want {
-			t.Errorf("策略 %s: N = %d, 期望 %d", strategy, plan.TargetN, want)
+			t.Errorf("strategy %s: N = %d, want %d", strategy, plan.TargetN, want)
 		}
 	}
 }
@@ -127,13 +127,13 @@ func TestPlanTimePointsAreMidpoints(t *testing.T) {
 	want := []time.Duration{7875, 14625, 21375, 28125, 34875, 41625, 48375, 55125, 61875, 68625, 75375, 82125} // milliseconds
 	for i, w := range want {
 		if plan.Times[i] != w*time.Millisecond {
-			t.Errorf("t[%d] = %v, 期望 %v", i, plan.Times[i], w*time.Millisecond)
+			t.Errorf("t[%d] = %v, want %v", i, plan.Times[i], w*time.Millisecond)
 		}
 	}
 	// all strictly inside the window
 	for _, tp := range plan.Times {
 		if tp <= 4500*time.Millisecond || tp >= 85500*time.Millisecond {
-			t.Errorf("时间点 %v 不在窗口 (4.5s, 85.5s) 内", tp)
+			t.Errorf("time point %v outside (4.5s, 85.5s) window", tp)
 		}
 	}
 }
@@ -148,17 +148,17 @@ func TestPlanSkipZero(t *testing.T) {
 		t.Fatal(err)
 	}
 	if plan.Times[0] <= 0 {
-		t.Error("skip=0 时首个中点应 > 0")
+		t.Error("first midpoint should be > 0 when skip=0")
 	}
 }
 
 func TestPlanRejectsInvalidDuration(t *testing.T) {
 	s := NewSampler(loadDefaultSampling(t))
 	if _, err := s.Plan(0, 100); err == nil {
-		t.Error("0 时长应报错")
+		t.Error("0 durationshould fail")
 	}
 	if _, err := s.Plan(-time.Second, 100); err == nil {
-		t.Error("负时长应报错")
+		t.Error("negative duration should fail")
 	}
 }
 
@@ -173,10 +173,10 @@ func TestPlanCustomRules(t *testing.T) {
 	s := NewSampler(settings.Sampling)
 	plan, _ := s.Plan(30*time.Second, 0)
 	if plan.TargetN != 4 {
-		t.Errorf("自定义档 ≤1m: N = %d, 期望 4", plan.TargetN)
+		t.Errorf("custom rule <=1m: N = %d, want 4", plan.TargetN)
 	}
 	plan, _ = s.Plan(5*time.Minute, 0)
 	if plan.TargetN != 6 {
-		t.Errorf("自定义兜底档: N = %d, 期望 6", plan.TargetN)
+		t.Errorf("custom fallback rule: N = %d, want 6", plan.TargetN)
 	}
 }

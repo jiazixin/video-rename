@@ -57,7 +57,7 @@ func TestImageNumberingAPI(t *testing.T) {
 		t.Fatal("cross-site write accepted", w.Code)
 	}
 	w = request("POST", "/api/directories/1/numberings/preview", `{"media":"image","query":"","sort":"name_desc"}`, true)
-	if w.Code != 200 {
+	if w.Code != 201 {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	var b library.Numbering
@@ -83,7 +83,7 @@ func TestImageNumberingAPI(t *testing.T) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	w = request("POST", "/api/numberings/"+b.ID+"/restore-preview", `{}`, true)
-	if w.Code != 200 {
+	if w.Code != 201 {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	if err = json.Unmarshal(w.Body.Bytes(), &b); err != nil {
@@ -179,7 +179,7 @@ func TestAudioNumberingAPI(t *testing.T) {
 		t.Fatal("invalid media accepted", w.Code)
 	}
 	w := request("POST", "/api/directories/1/numberings/preview", `{"media":"audio","query":"","sort":"name_asc"}`)
-	if w.Code != 200 {
+	if w.Code != 201 {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	var b library.Numbering

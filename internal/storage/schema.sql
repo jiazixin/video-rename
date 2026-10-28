@@ -13,7 +13,7 @@ CREATE TABLE entries (
  kind TEXT NOT NULL,
  identity TEXT NOT NULL,
  size INTEGER NOT NULL,
- mtime TEXT NOT NULL,
+ mtime_ns INTEGER NOT NULL,
  present INTEGER NOT NULL DEFAULT 1,
  version INTEGER NOT NULL DEFAULT 1,
  observed TEXT NOT NULL
@@ -33,7 +33,7 @@ CREATE TABLE directory_items (
  name TEXT NOT NULL,
  kind TEXT NOT NULL,
  size INTEGER NOT NULL,
- mtime TEXT NOT NULL,
+ mtime_ns INTEGER NOT NULL,
  PRIMARY KEY(dir,generation,entry)
 );
 
@@ -45,7 +45,7 @@ CREATE TABLE operations (
  new_name TEXT NOT NULL,
  identity TEXT NOT NULL,
  size INTEGER NOT NULL,
- mtime TEXT NOT NULL,
+ mtime_ns INTEGER NOT NULL,
  kind TEXT NOT NULL,
  source TEXT NOT NULL,
  status TEXT NOT NULL,
@@ -115,7 +115,7 @@ CREATE TABLE run_items (
  entry INTEGER NOT NULL REFERENCES entries(id),
  identity TEXT NOT NULL,
  size INTEGER NOT NULL,
- mtime TEXT NOT NULL,
+ mtime_ns INTEGER NOT NULL,
  status TEXT NOT NULL DEFAULT 'queued',
  message TEXT NOT NULL DEFAULT '',
  original_path TEXT NOT NULL DEFAULT '',
@@ -177,10 +177,10 @@ CREATE TABLE model_configs (
 CREATE TABLE marks (
  identity TEXT NOT NULL,
  size INTEGER NOT NULL,
- mtime TEXT NOT NULL,
+ mtime_ns INTEGER NOT NULL,
  source TEXT NOT NULL,
  operation INTEGER REFERENCES operations(id),
- PRIMARY KEY(identity,size,mtime)
+ PRIMARY KEY(identity,size,mtime_ns)
 );
 
 CREATE TABLE notification_channels (
@@ -234,7 +234,7 @@ CREATE TABLE image_numbering_items (
  version INTEGER NOT NULL,
  identity TEXT NOT NULL,
  size INTEGER NOT NULL,
- mtime TEXT NOT NULL,
+ mtime_ns INTEGER NOT NULL,
  old_name TEXT NOT NULL,
  new_name TEXT NOT NULL,
  temp_name TEXT NOT NULL,
@@ -365,7 +365,7 @@ CREATE INDEX extraction_run ON extraction_records(run,id DESC);
 
 INSERT INTO notification_preferences VALUES(1,'UTC');
 
-PRAGMA user_version=20261027;
+PRAGMA user_version=20261028;
 
 CREATE INDEX run_analysis_start ON runs(analysis_start_ms,id);
 
@@ -442,13 +442,13 @@ CREATE TRIGGER directory_entries_delete AFTER DELETE ON entries WHEN OLD.present
  INSERT INTO directory_revision(dir,revision) SELECT OLD.parent,1 WHERE OLD.parent>0 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
 END;
 
-CREATE TRIGGER directory_entries_update AFTER UPDATE OF parent,name,kind,identity,size,mtime,present ON entries WHEN (OLD.present=1 OR NEW.present=1) AND (OLD.parent IS NOT NEW.parent OR OLD.name IS NOT NEW.name OR OLD.kind IS NOT NEW.kind OR OLD.identity IS NOT NEW.identity OR OLD.size IS NOT NEW.size OR OLD.mtime IS NOT NEW.mtime OR OLD.present IS NOT NEW.present) BEGIN
+CREATE TRIGGER directory_entries_update AFTER UPDATE OF parent,name,kind,identity,size,mtime_ns,present ON entries WHEN (OLD.present=1 OR NEW.present=1) AND (OLD.parent IS NOT NEW.parent OR OLD.name IS NOT NEW.name OR OLD.kind IS NOT NEW.kind OR OLD.identity IS NOT NEW.identity OR OLD.size IS NOT NEW.size OR OLD.mtime_ns IS NOT NEW.mtime_ns OR OLD.present IS NOT NEW.present) BEGIN
  INSERT INTO directory_revision(dir,revision) SELECT OLD.parent,1 WHERE OLD.parent>0 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
  INSERT INTO directory_revision(dir,revision) SELECT NEW.parent,1 WHERE NEW.parent>0 AND NEW.parent<>OLD.parent ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
 END;
 
 CREATE TRIGGER directory_marks_insert AFTER INSERT ON marks BEGIN
- INSERT INTO directory_revision(dir,revision) SELECT DISTINCT parent,1 FROM entries WHERE identity=NEW.identity AND size=NEW.size AND mtime=NEW.mtime AND present=1 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+ INSERT INTO directory_revision(dir,revision) SELECT DISTINCT parent,1 FROM entries WHERE identity=NEW.identity AND size=NEW.size AND mtime_ns=NEW.mtime_ns AND present=1 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
 END;
 
 CREATE TRIGGER directory_run_items_insert AFTER INSERT ON run_items WHEN NEW.status IN ('queued','running') BEGIN
@@ -460,7 +460,7 @@ CREATE TRIGGER directory_directory_items_insert AFTER INSERT ON directory_items 
 END;
 
 CREATE TRIGGER directory_marks_delete AFTER DELETE ON marks BEGIN
- INSERT INTO directory_revision(dir,revision) SELECT DISTINCT parent,1 FROM entries WHERE identity=OLD.identity AND size=OLD.size AND mtime=OLD.mtime AND present=1 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+ INSERT INTO directory_revision(dir,revision) SELECT DISTINCT parent,1 FROM entries WHERE identity=OLD.identity AND size=OLD.size AND mtime_ns=OLD.mtime_ns AND present=1 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
 END;
 
 CREATE TRIGGER directory_run_items_delete AFTER DELETE ON run_items WHEN OLD.status IN ('queued','running') BEGIN
@@ -472,8 +472,8 @@ CREATE TRIGGER directory_directory_items_delete AFTER DELETE ON directory_items 
 END;
 
 CREATE TRIGGER directory_marks_update AFTER UPDATE ON marks BEGIN
- INSERT INTO directory_revision(dir,revision) SELECT DISTINCT parent,1 FROM entries WHERE identity=OLD.identity AND size=OLD.size AND mtime=OLD.mtime AND present=1 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
- INSERT INTO directory_revision(dir,revision) SELECT DISTINCT parent,1 FROM entries WHERE identity=NEW.identity AND size=NEW.size AND mtime=NEW.mtime AND present=1 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+ INSERT INTO directory_revision(dir,revision) SELECT DISTINCT parent,1 FROM entries WHERE identity=OLD.identity AND size=OLD.size AND mtime_ns=OLD.mtime_ns AND present=1 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
+ INSERT INTO directory_revision(dir,revision) SELECT DISTINCT parent,1 FROM entries WHERE identity=NEW.identity AND size=NEW.size AND mtime_ns=NEW.mtime_ns AND present=1 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
 END;
 
 CREATE TRIGGER directory_run_items_update AFTER UPDATE ON run_items WHEN (OLD.status IN ('queued','running') OR NEW.status IN ('queued','running')) AND (OLD.entry IS NOT NEW.entry OR OLD.run IS NOT NEW.run OR OLD.status IS NOT NEW.status) BEGIN
@@ -500,3 +500,17 @@ END;
 CREATE TRIGGER directory_runs_delete BEFORE DELETE ON runs BEGIN
  INSERT INTO directory_revision(dir,revision) SELECT DISTINCT e.parent,1 FROM run_items i JOIN entries e ON e.id=i.entry WHERE i.run=OLD.id AND i.status IN ('queued','running') AND e.present=1 ON CONFLICT(dir) DO UPDATE SET revision=revision+1;
 END;
+
+-- First HTTP result per idempotency key. Pending records are retained after a
+-- crash so an uncertain file mutation cannot be repeated automatically.
+CREATE TABLE request_results (
+ key TEXT PRIMARY KEY,
+ fingerprint TEXT NOT NULL,
+ status INTEGER NOT NULL,
+ headers TEXT NOT NULL,
+ body BLOB NOT NULL,
+ expires_ms INTEGER NOT NULL
+);
+CREATE INDEX request_results_expiry ON request_results(expires_ms) WHERE status<>0;
+
+CREATE TABLE authentication (id INTEGER PRIMARY KEY CHECK(id=1), salt TEXT NOT NULL);

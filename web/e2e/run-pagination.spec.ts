@@ -11,7 +11,7 @@ test('运行记录分类分页、条数、刷新和窄屏', async ({ page }) => 
     done: 1,
     skipped: 0,
     failed: 0,
-    created: '2026-09-26T00:00:00Z'
+    created: '2026-09-26T00:00:00.000Z'
   }))
   await mockRunPages(page, [
     ...runs,

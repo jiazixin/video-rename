@@ -1,6 +1,8 @@
 package scheduler
 
 import (
+	"context"
+	"database/sql"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -9,17 +11,43 @@ import (
 	"time"
 
 	"video-rename/internal/config"
-	"video-rename/internal/jobs"
+	"video-rename/internal/job"
 	"video-rename/internal/library"
-	"video-rename/internal/models"
-	"video-rename/internal/prompts"
+	"video-rename/internal/model"
+	promptstore "video-rename/internal/prompt"
 	"video-rename/internal/storage"
-	"video-rename/internal/systemsettings"
+	"video-rename/internal/systemsetting"
 )
+
+func TestRunReportsUnrecordableFailure(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "media")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(t.Context(), filepath.Join(base, "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := library.New(t.Context(), db, root, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(l.Close)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s := New(db, &job.Manager{Library: l})
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	if err := s.Run(ctx); err == nil || !strings.Contains(err.Error(), "record scheduler failure") {
+		t.Fatalf("got %v, want an observable scheduler recording failure", err)
+	}
+}
 
 func TestRulePreview(t *testing.T) {
 	now := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
-	for _, c := range []struct{ expr, zone, want string }{{"15 * * * *", "Asia/Shanghai", "2026-09-20T08:15:00+08:00"}, {"30 2 * * *", "Asia/Shanghai", "2026-09-21T02:30:00+08:00"}, {"0 3 * * 1", "Asia/Shanghai", "2026-09-21T03:00:00+08:00"}} {
+	for _, c := range []struct{ expr, zone, want string }{{"15 * * * *", "Asia/Shanghai", "2026-09-20T00:15:00.000Z"}, {"30 2 * * *", "Asia/Shanghai", "2026-09-20T18:30:00.000Z"}, {"0 3 * * 1", "Asia/Shanghai", "2026-09-20T19:00:00.000Z"}} {
 		v, e := Preview(c.expr, c.zone, now)
 		if e != nil || len(v) != 5 || v[0] != c.want {
 			t.Fatalf("%+v: %v %v", c, v, e)
@@ -41,8 +69,16 @@ func TestDSTPreviewNoDuplicateWallTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	seen := map[string]bool{}
+	location, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, s := range v {
-		wall := s[:16]
+		instant, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wall := instant.In(location).Format("2006-01-02 15:04")
 		if seen[wall] {
 			t.Fatal("duplicate DST wall time", v)
 		}
@@ -53,31 +89,43 @@ func TestDSTPreviewNoDuplicateWallTime(t *testing.T) {
 func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 	base := t.TempDir()
 	root := filepath.Join(base, "media")
-	os.Mkdir(root, 0o700)
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Error(err)
+	}
 	for _, name := range []string{"ffmpeg", "ffprobe"} {
-		os.WriteFile(filepath.Join(base, name), []byte("#!/bin/sh\nexit 0\n"), 0o700)
+		if err := os.WriteFile(filepath.Join(base, name), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+			t.Error(err)
+		}
 	}
 	t.Setenv("PATH", base)
 	db, err := storage.Open(t.Context(), filepath.Join(base, "db.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	l, err := library.New(t.Context(), db, root)
+	defer func(fn func() error) {
+		if err := fn(); err != nil {
+			t.Error(err)
+		}
+	}(db.Close)
+	l, err := library.New(t.Context(), db, root, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := jobs.New(t.Context(), db, l, &config.Config{}, slog.New(slog.DiscardHandler))
+	m, err := job.New(t.Context(), job.Options{Store: db, Library: l, Config: &config.Config{}, Logger: slog.New(slog.DiscardHandler)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer m.Cache.Close()
-	s := &Scheduler{DB: db, Jobs: m}
-	libraryPrompt, err := (prompts.Store{DB: db}).Save(t.Context(), prompts.Profile{Title: "计划提示词", Body: "计划专属要求"})
+	defer func(fn func() error) {
+		if err := fn(); err != nil {
+			t.Error(err)
+		}
+	}(m.Cache.Close)
+	s := &Scheduler{db: db, Jobs: m}
+	libraryPrompt, err := (promptstore.New(db)).Save(t.Context(), promptstore.Profile{Title: "计划提示词", Body: "计划专属要求"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	prompt, err := (models.Store{DB: db}).Save(t.Context(), models.Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: "计划配置", PromptID: libraryPrompt.ID})
+	prompt, err := (model.New(db)).Save(t.Context(), model.Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: "计划配置", PromptID: libraryPrompt.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +141,10 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 	if _, err := s.Save(t.Context(), tooLong); err == nil {
 		t.Fatal("accepted plan name longer than 80 characters")
 	}
-	at, _ := time.Parse(time.RFC3339, p.Next)
+	at, err := time.Parse(time.RFC3339, p.Next)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err = s.Tick(t.Context(), at); err != nil {
 		t.Fatal(err)
 	}
@@ -101,10 +152,14 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 		t.Fatal(err)
 	}
 	var n int
-	db.QueryRow("SELECT count(*) FROM runs").Scan(&n)
+	if err := db.View(t.Context(), func(tx *sql.Tx) error { return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM runs").Scan(&n) }); err != nil {
+		t.Error(err)
+	}
 	var savedModelConfigID int64
 	var savedBody string
-	if err = db.QueryRow("SELECT model_config_id,prompt_body FROM runs LIMIT 1").Scan(&savedModelConfigID, &savedBody); err != nil || savedModelConfigID != prompt.ID || savedBody != libraryPrompt.Body+"\n\n"+systemsettings.DefaultFixedPrompt {
+	if err = db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT model_config_id,prompt_body FROM runs LIMIT 1").Scan(&savedModelConfigID, &savedBody)
+	}); err != nil || savedModelConfigID != prompt.ID || savedBody != libraryPrompt.Body+"\n\n"+systemsetting.DefaultFixedPrompt {
 		t.Fatal(savedModelConfigID, savedBody, err)
 	}
 	if n != 1 {
@@ -113,18 +168,25 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 	if err = s.Tick(t.Context(), at.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	db.QueryRow("SELECT count(*) FROM runs").Scan(&n)
+	if err := db.View(t.Context(), func(tx *sql.Tx) error { return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM runs").Scan(&n) }); err != nil {
+		t.Error(err)
+	}
 	if n != 1 {
 		t.Fatalf("overlapping trigger %d", n)
 	}
-	p, _ = s.Get(t.Context(), p.ID)
+	p, err = s.Get(t.Context(), p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if p.Last.Code != "schedule_skipped_active" {
 		t.Fatal(p.Last)
 	}
 	if err = s.ResetNext(t.Context(), at.Add(24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	db.QueryRow("SELECT count(*) FROM runs").Scan(&n)
+	if err := db.View(t.Context(), func(tx *sql.Tx) error { return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM runs").Scan(&n) }); err != nil {
+		t.Error(err)
+	}
 	if n != 1 {
 		t.Fatal("restart caught up missed runs")
 	}
@@ -137,27 +199,43 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 	}
 	// Switching a persisted plan to extraction must bypass model validation,
 	// survive reload, and pass the task type through the automatic trigger.
-	p, _ = s.Get(t.Context(), p.ID)
+	p, err = s.Get(t.Context(), p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	p.Task, p.ModelConfigID, p.Enabled = "extract", 999999, true
 	p, err = s.Save(t.Context(), p)
 	if err != nil || p.Task != "extract" || p.ModelConfigID != 0 {
 		t.Fatalf("extract plan: %+v %v", p, err)
 	}
-	if _, err = db.Exec("UPDATE runs SET status='cancelled'"); err != nil {
+	if _, err = storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "UPDATE runs SET status='cancelled'")
+	}); err != nil {
 		t.Fatal(err)
 	}
-	at, _ = time.Parse(time.RFC3339, p.Next)
+	at, err = time.Parse(time.RFC3339, p.Next)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err = s.Tick(t.Context(), at.Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	// The prior wall-clock tick can already be deduplicated; trigger the next one.
-	p, _ = s.Get(t.Context(), p.ID)
-	at, _ = time.Parse(time.RFC3339, p.Next)
+	p, err = s.Get(t.Context(), p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at, err = time.Parse(time.RFC3339, p.Next)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err = s.Tick(t.Context(), at); err != nil {
 		t.Fatal(err)
 	}
 	var task string
-	if err = db.QueryRow("SELECT task,model_config_id,prompt_body FROM runs ORDER BY id DESC LIMIT 1").Scan(&task, &savedModelConfigID, &savedBody); err != nil || task != "extract" || savedModelConfigID != 0 || savedBody != "" {
+	if err = db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT task,model_config_id,prompt_body FROM runs ORDER BY id DESC LIMIT 1").Scan(&task, &savedModelConfigID, &savedBody)
+	}); err != nil || task != "extract" || savedModelConfigID != 0 || savedBody != "" {
 		t.Fatal(task, savedModelConfigID, savedBody, err)
 	}
 	if err = l.Refresh(t.Context(), 1); err != nil {

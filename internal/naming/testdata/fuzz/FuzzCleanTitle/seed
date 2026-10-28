@@ -1,0 +1,2 @@
+go test fuzz v1
+string("../unsafe/title\\with control\u0000.mp4")

@@ -6,9 +6,11 @@ export function defined<T>(value: T | null | undefined, what = 'value'): T {
   return value
 }
 
-/** The library directory ID in a page URL such as http://host/#/library/5. */
+/** The library directory ID in a page URL such as http://host/library/5. */
 export function libraryDirectory(url: string): number {
-  return Number(defined(/#\/library\/(\d+)/.exec(url)?.[1], 'library directory in URL'))
+  return Number(
+    defined(/^\/library\/(\d+)/.exec(new URL(url).pathname)?.[1], 'library directory in URL')
+  )
 }
 
 function pageOf(scope: Page | Locator): Page {

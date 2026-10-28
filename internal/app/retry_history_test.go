@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http/httptest"
@@ -11,13 +13,16 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"video-rename/internal/config"
 	"video-rename/internal/domain"
-	"video-rename/internal/jobs"
-	"video-rename/internal/models"
-	"video-rename/internal/systemsettings"
+	"video-rename/internal/job"
+	"video-rename/internal/library"
+	modelstore "video-rename/internal/model"
+	"video-rename/internal/storage"
+	"video-rename/internal/systemsetting"
 )
 
 func TestRetryHistoryRejectsUnsupportedAndKeepsFailures(t *testing.T) {
@@ -26,7 +31,9 @@ func TestRetryHistoryRejectsUnsupportedAndKeepsFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer shutdown(t, a)
-	if _, err = a.DB.Exec("INSERT INTO events(id,category,action,entry,message,created) VALUES(1,'failure','scan',1,'failed','now'),(2,'failure','automatic',999,'failed','now')"); err != nil {
+	if _, err = storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "INSERT INTO events(id,category,action,entry,message,created) VALUES(1,'failure','scan',1,'failed','2026-10-01T00:00:00.000Z'),(2,'failure','automatic',999,'failed','2026-10-01T00:00:00.000Z')")
+	}); err != nil {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
@@ -42,7 +49,9 @@ func TestRetryHistoryRejectsUnsupportedAndKeepsFailures(t *testing.T) {
 		t.Fatal(w.Body.String())
 	}
 	var n int
-	if err = a.DB.QueryRow("SELECT count(*) FROM events WHERE category='failure'").Scan(&n); err != nil || n != 2 {
+	if err = a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM events WHERE category='failure'").Scan(&n)
+	}); err != nil || n != 2 {
 		t.Fatal(n, err)
 	}
 	w = httptest.NewRecorder()
@@ -61,23 +70,9 @@ func TestRetryHistoryBatchesAndRemovesOnlyAfterSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer shutdown(t, a)
-	tools := t.TempDir()
-	for _, name := range []string{"ffmpeg", "ffprobe"} {
-		if err = os.WriteFile(filepath.Join(tools, name), []byte(`#!/bin/sh
-exit 0
-`), 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Setenv("PATH", tools)
-	profile, err := (models.Store{DB: a.DB}).Get(t.Context(), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	profile.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test", Timeout: "2s", MaxTokens: 128}
-	if _, err = (models.Store{DB: a.DB}).Save(t.Context(), profile); err != nil {
-		t.Fatal(err)
-	}
+	installPipelineFixture(t, a, pipelineFixture{model: "test", reply: func(context.Context, string) (string, error) {
+		return "new-title", nil
+	}})
 	for _, name := range []string{"a.mp4", "b.mp4"} {
 		if err = os.WriteFile(filepath.Join(root, name), []byte("video"), 0o600); err != nil {
 			t.Fatal(err)
@@ -86,10 +81,14 @@ exit 0
 	if err = a.Library.Refresh(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = a.DB.Exec("INSERT INTO events(category,action,entry,created) SELECT 'failure','automatic',id,'now' FROM entries WHERE kind='file'"); err != nil {
+	if _, err = storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "INSERT INTO events(category,action,entry,created) SELECT 'failure','automatic',id,'2026-10-01T00:00:00.000Z' FROM entries WHERE kind='file'")
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = a.DB.Exec("INSERT INTO events(category,action,entry,created) SELECT category,action,entry,created FROM events LIMIT 1"); err != nil {
+	if _, err = storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "INSERT INTO events(category,action,entry,created) SELECT category,action,entry,created FROM events LIMIT 1")
+	}); err != nil {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
@@ -106,22 +105,25 @@ exit 0
 		t.Fatal(w.Body.String())
 	}
 	var count int
-	if err = a.DB.QueryRow("SELECT count(*) FROM events WHERE category='failure'").Scan(&count); err != nil || count != 3 {
+	if err = a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM events WHERE category='failure'").Scan(&count)
+	}); err != nil || count != 3 {
 		t.Fatal(count, err)
 	}
-	settings := systemsettings.Default()
+	settings := systemsetting.Default()
 	settings.StabilitySeconds = 0
-	if err = (systemsettings.Store{DB: a.DB}).Save(t.Context(), settings); err != nil {
+	if err = (systemsetting.New(a.db)).Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
-	a.Jobs.Analyze = func(context.Context, *config.TaskConfig, domain.VideoJob, string, string) (string, error) {
-		return "new-title", nil
-	}
 	a.Jobs.Execute(t.Context(), result.Runs[0])
-	if err = a.DB.QueryRow("SELECT count(*) FROM events WHERE category='failure'").Scan(&count); err != nil || count != 0 {
+	if err = a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM events WHERE category='failure'").Scan(&count)
+	}); err != nil || count != 0 {
 		t.Fatal(count, err)
 	}
-	if err = a.DB.QueryRow("SELECT count(*) FROM events WHERE category='success'").Scan(&count); err != nil || count != 2 {
+	if err = a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM events WHERE category='success'").Scan(&count)
+	}); err != nil || count != 2 {
 		t.Fatal(count, err)
 	}
 }
@@ -133,22 +135,24 @@ func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer shutdown(t, a)
-	profile, err := (models.Store{DB: a.DB}).Get(t.Context(), 1)
+	profile, err := (modelstore.New(a.db)).Get(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	profile.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test", Timeout: "2s", MaxTokens: 128}
-	if _, err = (models.Store{DB: a.DB}).Save(t.Context(), profile); err != nil {
+	if _, err = (modelstore.New(a.db)).Save(t.Context(), profile); err != nil {
 		t.Fatal(err)
 	}
 	profile.ID = 0
 	profile.Title = "重试备用模型"
 	profile.Model = "alternative"
-	alternative, err := (models.Store{DB: a.DB}).Save(t.Context(), profile)
+	alternative, err := (modelstore.New(a.db)).Save(t.Context(), profile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = a.DB.Exec("INSERT INTO runs(source,targets,recursive,status,created,request_key,model_config_id) VALUES('manual','[]',0,'failed','now','original-failed-run',1)"); err != nil {
+	if _, err = storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "INSERT INTO runs(source,targets,recursive,status,created,request_key,model_config_id) VALUES('manual','[]',0,'failed','2026-10-01T00:00:00.000Z','original-failed-run',1)")
+	}); err != nil {
 		t.Fatal(err)
 	}
 	for i := range 205 {
@@ -160,15 +164,17 @@ func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, query := range []string{
-		"INSERT INTO events(category,action,entry,created) SELECT 'failure','automatic',id,'now' FROM entries WHERE kind='file'",
+		"INSERT INTO events(category,action,entry,created) SELECT 'failure','automatic',id,'2026-10-01T00:00:00.000Z' FROM entries WHERE kind='file'",
 		"INSERT INTO events(category,action,entry,created) SELECT category,action,entry,created FROM events LIMIT 1",
-		"INSERT INTO events(category,action,entry,created) VALUES('failure','manual',0,'now'),('success','automatic',0,'now'),('failure','automatic',99999,'now')",
+		"INSERT INTO events(category,action,entry,created) VALUES('failure','manual',0,'2026-10-01T00:00:00.000Z'),('success','automatic',0,'2026-10-01T00:00:00.000Z'),('failure','automatic',99999,'2026-10-01T00:00:00.000Z')",
 	} {
-		if _, err = a.DB.Exec(query); err != nil {
+		if _, err = storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) { return tx.ExecContext(t.Context(), query) }); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err = a.DB.Exec("UPDATE events SET run=1 WHERE action='automatic' AND category='failure'"); err != nil {
+	if _, err = storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "UPDATE events SET run=1 WHERE action='automatic' AND category='failure'")
+	}); err != nil {
 		t.Fatal(err)
 	}
 	invalid := httptest.NewRecorder()
@@ -198,7 +204,7 @@ func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 	if err = json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if w.Code != 200 || len(result.Accepted) != 206 || len(result.Runs) != 1 || len(result.Errors) != 1 || result.Skipped != 1 {
+	if w.Code != 202 || len(result.Accepted) != 206 || len(result.Runs) != 1 || len(result.Errors) != 1 || result.Skipped != 1 {
 		t.Fatal(w.Body.String())
 	}
 	seen := map[int64]bool{}
@@ -221,7 +227,9 @@ func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 		t.Fatal(len(seen))
 	}
 	var count int
-	if err = a.DB.QueryRow("SELECT count(*) FROM events WHERE category='failure'").Scan(&count); err != nil || count != 208 {
+	if err = a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM events WHERE category='failure'").Scan(&count)
+	}); err != nil || count != 208 {
 		t.Fatal(count, err)
 	}
 	// Repeating the same request before completion reuses the queued runs.
@@ -231,11 +239,13 @@ func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 	if err = json.Unmarshal(repeated.Body.Bytes(), &repeatedResult); err != nil {
 		t.Fatal(err)
 	}
-	if repeated.Code != 200 || !slices.Equal(repeatedResult.Runs, result.Runs) || !slices.Equal(repeatedResult.Accepted, result.Accepted) || !reflect.DeepEqual(repeatedResult.Errors, result.Errors) || repeatedResult.Skipped != result.Skipped {
+	if repeated.Code != 202 || !slices.Equal(repeatedResult.Runs, result.Runs) || !slices.Equal(repeatedResult.Accepted, result.Accepted) || !reflect.DeepEqual(repeatedResult.Errors, result.Errors) || repeatedResult.Skipped != result.Skipped {
 		t.Fatal(repeated.Body.String())
 	}
 	// A selection larger than 200 records also produces one batch.
-	if _, err = a.DB.Exec("UPDATE runs SET status='cancelled' WHERE id=?", result.Runs[0]); err != nil {
+	if _, err = storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "UPDATE runs SET status='cancelled' WHERE id=?", result.Runs[0])
+	}); err != nil {
 		t.Fatal(err)
 	}
 	payload, err := json.Marshal(map[string]any{"ids": result.Accepted, "model_config_id": alternative.ID, "key": "selected-large-retry"})
@@ -255,7 +265,9 @@ func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 		t.Fatal(run, err)
 	}
 	// A single record can select another configuration, independent of its old run.
-	if _, err = a.DB.Exec("UPDATE runs SET status='cancelled' WHERE id=?", run.ID); err != nil {
+	if _, err = storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "UPDATE runs SET status='cancelled' WHERE id=?", run.ID)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	single := httptest.NewRecorder()
@@ -307,12 +319,12 @@ func TestRetryHistoryMissingFilesDoNotBlockValidTargets(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer shutdown(t, a)
-			profile, err := (models.Store{DB: a.DB}).Get(t.Context(), 1)
+			profile, err := (modelstore.New(a.db)).Get(t.Context(), 1)
 			if err != nil {
 				t.Fatal(err)
 			}
 			profile.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test", Timeout: "2s", MaxTokens: 128}
-			if _, err = (models.Store{DB: a.DB}).Save(t.Context(), profile); err != nil {
+			if _, err = (modelstore.New(a.db)).Save(t.Context(), profile); err != nil {
 				t.Fatal(err)
 			}
 			if err = os.Mkdir(filepath.Join(root, "parent"), 0o700); err != nil {
@@ -327,21 +339,29 @@ func TestRetryHistoryMissingFilesDoNotBlockValidTargets(t *testing.T) {
 				t.Fatal(err)
 			}
 			var parent int64
-			if err = a.DB.QueryRow("SELECT id FROM entries WHERE name='parent'").Scan(&parent); err != nil {
+			if err = a.db.View(t.Context(), func(tx *sql.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name='parent'").Scan(&parent)
+			}); err != nil {
 				t.Fatal(err)
 			}
 			if err = a.Library.Refresh(t.Context(), parent); err != nil {
 				t.Fatal(err)
 			}
 			for i, name := range []string{"valid.mp4", "unindexed.mp4", "deleted.mp4", "nested.mp4", "valid.mp4"} {
-				if _, err = a.DB.Exec("INSERT INTO events(id,category,action,entry,old_path,created) SELECT ?,'failure','automatic',id,name,'now' FROM entries WHERE name=?", i+1, name); err != nil {
+				if _, err = storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+					return tx.ExecContext(t.Context(), "INSERT INTO events(id,category,action,entry,old_path,created) SELECT ?,'failure','automatic',id,name,'2026-10-01T00:00:00.000Z' FROM entries WHERE name=?", i+1, name)
+				}); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if _, err = a.DB.Exec("INSERT INTO events(id,category,action,entry,created) VALUES(6,'failure','automatic',99999,'now'),(7,'failure','manual',0,'now')"); err != nil {
+			if _, err = storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+				return tx.ExecContext(t.Context(), "INSERT INTO events(id,category,action,entry,created) VALUES(6,'failure','automatic',99999,'2026-10-01T00:00:00.000Z'),(7,'failure','manual',0,'2026-10-01T00:00:00.000Z')")
+			}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err = a.DB.Exec("UPDATE entries SET present=0 WHERE name IN ('unindexed.mp4','parent')"); err != nil {
+			if _, err = storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+				return tx.ExecContext(t.Context(), "UPDATE entries SET present=0 WHERE name IN ('unindexed.mp4','parent')")
+			}); err != nil {
 				t.Fatal(err)
 			}
 			if err = os.Remove(filepath.Join(root, "deleted.mp4")); err != nil {
@@ -368,7 +388,7 @@ func TestRetryHistoryMissingFilesDoNotBlockValidTargets(t *testing.T) {
 			if err = json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 				t.Fatal(err)
 			}
-			if w.Code != 200 || len(result.Accepted) != 2 || !slices.Contains(result.Accepted, 1) || !slices.Contains(result.Accepted, 5) || len(result.Runs) != 1 {
+			if w.Code != 202 || len(result.Accepted) != 2 || !slices.Contains(result.Accepted, 1) || !slices.Contains(result.Accepted, 5) || len(result.Runs) != 1 {
 				t.Fatal(w.Body.String())
 			}
 			wantErrors, wantSkipped := 5, 0
@@ -386,14 +406,16 @@ func TestRetryHistoryMissingFilesDoNotBlockValidTargets(t *testing.T) {
 				t.Fatal(run, err)
 			}
 			var count int
-			if err = a.DB.QueryRow("SELECT count(*) FROM events WHERE category='failure'").Scan(&count); err != nil || count != 7 {
+			if err = a.db.View(t.Context(), func(tx *sql.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM events WHERE category='failure'").Scan(&count)
+			}); err != nil || count != 7 {
 				t.Fatal(count, err)
 			}
 		})
 	}
 }
 
-func setupSuccessfulHistoryRetry(t *testing.T) (*App, int64, int64, int64) {
+func setupSuccessfulHistoryRetry(t *testing.T, reply func(context.Context, string) (string, error)) (*App, int64, int64, int64) {
 	t.Helper()
 	root := t.TempDir()
 	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
@@ -401,25 +423,10 @@ func setupSuccessfulHistoryRetry(t *testing.T) (*App, int64, int64, int64) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { shutdown(t, a) })
-	tools := t.TempDir()
-	for _, name := range []string{"ffmpeg", "ffprobe"} {
-		if err := os.WriteFile(filepath.Join(tools, name), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Setenv("PATH", tools)
-	store := models.Store{DB: a.DB}
-	profile, err := store.Get(t.Context(), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	profile.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "retry-model", Timeout: "2s", MaxTokens: 128}
-	if _, err := store.Save(t.Context(), profile); err != nil {
-		t.Fatal(err)
-	}
-	settings := systemsettings.Default()
+	installPipelineFixture(t, a, pipelineFixture{model: "retry-model", reply: reply})
+	settings := systemsetting.Default()
 	settings.StabilitySeconds, settings.RetryEnabled = 0, false
-	if err := (systemsettings.Store{DB: a.DB}).Save(t.Context(), settings); err != nil {
+	if err := (systemsetting.New(a.db)).Save(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "original.mp4")
@@ -430,19 +437,23 @@ func setupSuccessfulHistoryRetry(t *testing.T) (*App, int64, int64, int64) {
 		t.Fatal(err)
 	}
 	var entry int64
-	if err := a.DB.QueryRow("SELECT id FROM entries WHERE name='original.mp4'").Scan(&entry); err != nil {
+	if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE name='original.mp4'").Scan(&entry)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	snap, err := domain.StatSnapshot(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	op, err := a.Library.AutoCommit(t.Context(), entry, snap, "first-title", "initial-auto-name", 0)
+	op, err := a.Library.AutoCommit(t.Context(), library.AutoCommitOptions{ID: entry, Snap: snap, Title: "first-title", Key: "initial-auto-name", Run: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var event int64
-	if err := a.DB.QueryRow("SELECT id FROM events WHERE operation=?", op.ID).Scan(&event); err != nil {
+	if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM events WHERE operation=?", op.ID).Scan(&event)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	return a, entry, event, op.ID
@@ -451,7 +462,33 @@ func setupSuccessfulHistoryRetry(t *testing.T) (*App, int64, int64, int64) {
 func TestRetrySuccessHistoryPreservesProtection(t *testing.T) {
 	for _, outcome := range []string{"success", "failure", "cancel", "marked-during-inference"} {
 		t.Run(outcome, func(t *testing.T) {
-			a, entry, event, operation := setupSuccessfulHistoryRetry(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var calls atomic.Int64
+			var a *App
+			reply := func(_ context.Context, model string) (string, error) {
+				calls.Add(1)
+				if model != "retry-model" {
+					t.Errorf("wrong retry model: %s", model)
+				}
+				switch outcome {
+				case "failure":
+					return "", errors.New("invalid title")
+				case "cancel":
+					cancel()
+					return "", ctx.Err()
+				case "marked-during-inference":
+					// Simulate protection changing after the initial worker check.
+					if _, err := storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+						return tx.ExecContext(t.Context(), "UPDATE marks SET source='marked',operation=NULL")
+					}); err != nil {
+						t.Error(err)
+					}
+				}
+				return "second-title", nil
+			}
+			app, entry, event, operation := setupSuccessfulHistoryRetry(t, reply)
+			a = app
 			body := fmt.Sprintf(`{"category":"success","ids":[%d,%d],"model_config_id":1,"key":"success-history-retry"}`, event, event)
 			w := httptest.NewRecorder()
 			a.retryHistory(w, jsonRequest("POST", "/api/logs/retry", strings.NewReader(body)))
@@ -478,39 +515,19 @@ func TestRetrySuccessHistoryPreservesProtection(t *testing.T) {
 				t.Fatal(repeated.Body.String(), err)
 			}
 			var frozen string
-			if err := a.DB.QueryRow("SELECT retry_snapshot FROM runs WHERE id=?", result.Runs[0]).Scan(&frozen); err != nil {
+			if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT retry_snapshot FROM runs WHERE id=?", result.Runs[0]).Scan(&frozen)
+			}); err != nil {
 				t.Fatal(err)
 			}
 			var policy struct{ RetryOperations map[int64]int64 }
 			if err := json.Unmarshal([]byte(frozen), &policy); err != nil || policy.RetryOperations[entry] != operation {
 				t.Fatal(frozen, err)
 			}
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			calls := 0
-			a.Jobs.Analyze = func(_ context.Context, cfg *config.TaskConfig, _ domain.VideoJob, _, _ string) (string, error) {
-				calls++
-				if cfg.Server.Model != "retry-model" {
-					t.Errorf("wrong retry model: %s", cfg.Server.Model)
-				}
-				switch outcome {
-				case "failure":
-					return "", &domain.JobError{Code: domain.CodeTitleInvalid, Message: "invalid title"}
-				case "cancel":
-					cancel()
-					return "", ctx.Err()
-				case "marked-during-inference":
-					// Simulate protection changing after the initial worker check.
-					if _, err := a.DB.Exec("UPDATE marks SET source='marked',operation=NULL"); err != nil {
-						t.Error(err)
-					}
-				}
-				return "second-title", nil
-			}
 			a.Jobs.Execute(ctx, result.Runs[0])
 			run, err := a.Jobs.Get(t.Context(), result.Runs[0])
-			if err != nil || calls != 1 || (run.Done == 1) != (outcome == "success") {
-				t.Fatal(run, calls, err)
+			if err != nil || calls.Load() != 1 || (run.Done == 1) != (outcome == "success") {
+				t.Fatal(run, calls.Load(), err)
 			}
 			e, err = a.Library.Get(t.Context(), entry)
 			if err != nil || e.Processed == "" {
@@ -527,17 +544,19 @@ func TestRetrySuccessHistoryPreservesProtection(t *testing.T) {
 				t.Fatal("unsuccessful retry changed the file", e)
 			}
 			var originals int
-			if err := a.DB.QueryRow("SELECT count(*) FROM events WHERE id=?", event).Scan(&originals); err != nil || originals != 1 {
+			if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM events WHERE id=?", event).Scan(&originals)
+			}); err != nil || originals != 1 {
 				t.Fatal("original success record was removed", originals, err)
 			}
-			ordinary, err := a.Jobs.Create(t.Context(), jobs.Request{Targets: []int64{entry}, ModelConfigID: 1, Key: "ordinary-after-retry"}, "manual", 0)
+			ordinary, err := a.Jobs.Create(t.Context(), job.Request{Targets: []int64{entry}, ModelConfigID: 1, Key: "ordinary-after-retry"}, "manual", 0)
 			if err != nil {
 				t.Fatal(err)
 			}
 			a.Jobs.Execute(t.Context(), ordinary)
 			run, err = a.Jobs.Get(t.Context(), ordinary)
-			if err != nil || run.Skipped != 1 || calls != 1 {
-				t.Fatal("ordinary batch bypassed protection", run, calls, err)
+			if err != nil || run.Skipped != 1 || calls.Load() != 1 {
+				t.Fatal("ordinary batch bypassed protection", run, calls.Load(), err)
 			}
 		})
 	}
@@ -546,7 +565,7 @@ func TestRetrySuccessHistoryPreservesProtection(t *testing.T) {
 func TestRetrySuccessHistoryRejectsStaleAndProtectedRecords(t *testing.T) {
 	for _, change := range []string{"marked", "manual", "restored", "content-changed"} {
 		t.Run(change, func(t *testing.T) {
-			a, entry, event, operation := setupSuccessfulHistoryRetry(t)
+			a, entry, event, operation := setupSuccessfulHistoryRetry(t, nil)
 			e, err := a.Library.Get(t.Context(), entry)
 			if err != nil {
 				t.Fatal(err)
@@ -560,7 +579,7 @@ func TestRetrySuccessHistoryRejectsStaleAndProtectedRecords(t *testing.T) {
 					t.Fatal(result)
 				}
 			case "manual":
-				if _, err := a.Library.Rename(t.Context(), entry, e.Version, "manual-title.mp4", "manual-after-success"); err != nil {
+				if _, err := a.Library.Rename(t.Context(), library.RenameRequest{ID: entry, Version: e.Version, Name: "manual-title.mp4", Key: "manual-after-success"}); err != nil {
 					t.Fatal(err)
 				}
 			case "restored":
@@ -593,12 +612,12 @@ func TestRetrySuccessPermissionCannotApplyToGenericRuns(t *testing.T) {
 	for _, field := range []string{"RetryOperations", "retry_operations"} {
 		w := httptest.NewRecorder()
 		body := fmt.Sprintf(`{"targets":[1],"key":"generic-run-request","%s":{"1":1}}`, field)
-		var input jobs.Request
+		var input job.Request
 		if decode(w, jsonRequest("POST", "/api/runs", strings.NewReader(body)), &input) || w.Code != 400 {
 			t.Fatal("generic run JSON accepted retry permission", w.Code, input)
 		}
 	}
-	a, entry, _, operation := setupSuccessfulHistoryRetry(t)
+	a, entry, _, operation := setupSuccessfulHistoryRetry(t, nil)
 	for _, tc := range []struct {
 		target    int64
 		recursive bool
@@ -610,7 +629,7 @@ func TestRetrySuccessPermissionCannotApplyToGenericRuns(t *testing.T) {
 		{entry, false, "manual", 1},
 		{1, false, "manual", 0},
 	} {
-		_, err := a.Jobs.Create(t.Context(), jobs.Request{Targets: []int64{tc.target}, Recursive: tc.recursive, Key: "restricted-retry-scope", RetryOperations: map[int64]int64{tc.target: operation}}, tc.source, tc.plan)
+		_, err := a.Jobs.Create(t.Context(), job.Request{Targets: []int64{tc.target}, Recursive: tc.recursive, Key: "restricted-retry-scope", RetryOperations: map[int64]int64{tc.target: operation}}, tc.source, tc.plan)
 		if err == nil {
 			t.Fatalf("retry permission escaped selected-file scope: %+v", tc)
 		}

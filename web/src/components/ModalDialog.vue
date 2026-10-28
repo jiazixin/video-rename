@@ -1,25 +1,6 @@
-<script lang="ts">
-  let locks = 0;
-  let oldOverflow = '';
-  let oldPadding = '';
-  function lockScroll() {
-    if (locks++ === 0) {
-      oldOverflow = document.body.style.overflow;
-      oldPadding = document.body.style.paddingRight;
-      const gap = window.innerWidth - document.documentElement.clientWidth;
-      document.body.style.overflow = 'hidden';
-      if (gap) document.body.style.paddingRight = `${gap}px`;
-    }
-  }
-  function unlockScroll() {
-    if (--locks === 0) {
-      document.body.style.overflow = oldOverflow;
-      document.body.style.paddingRight = oldPadding;
-    }
-  }
-</script>
 <script setup lang="ts">
-  import { onMounted, onUnmounted, ref } from 'vue';
+  import { nextTick, onMounted, onUnmounted, ref } from 'vue';
+  import { lockScroll, unlockScroll } from './modal-scroll';
   import { X } from '@lucide/vue';
   defineOptions({ inheritAttrs: false });
   const { title, wide, theater, contained } = defineProps<{
@@ -32,6 +13,10 @@
   const panel = ref<HTMLElement>();
   const previous = document.activeElement as HTMLElement | null;
   function keys(e: KeyboardEvent) {
+    const topDialog = Array.from(
+      document.querySelectorAll('[role="dialog"][aria-modal="true"]')
+    ).at(-1);
+    if (topDialog !== panel.value) return;
     if (e.key === 'Escape') {
       emit('close');
       return;
@@ -58,8 +43,11 @@
     lockScroll();
     // Media viewers take focus on the panel itself: landing on the first tool button would
     // light its focus ring at the first key press and let Space trigger it.
-    if (theater) panel.value?.focus();
-    else panel.value?.querySelector<HTMLElement>('input,button')?.focus();
+    void nextTick(() => {
+      if (!panel.value?.isConnected) return;
+      if (theater) panel.value.focus();
+      else panel.value.querySelector<HTMLElement>('input,button')?.focus();
+    });
     document.addEventListener('keydown', keys);
   });
   onUnmounted(() => {
@@ -92,6 +80,81 @@
 </template>
 
 <style scoped>
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: var(--palette-10191f55);
+    backdrop-filter: blur(3px);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .modal {
+    width: 480px;
+    max-width: 100%;
+    max-height: 90vh;
+    background: var(--palette-ffffff);
+    border: 1px solid var(--line);
+    border-radius: 15px;
+    box-shadow: 0 20px 100px var(--palette-0002);
+    display: flex;
+    flex-direction: column;
+  }
+  .modal.wide {
+    width: 650px;
+  }
+  .modal > header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 19px 24px;
+    border-bottom: 1px solid var(--line);
+  }
+  .modal > header h2 {
+    font-size: 16px;
+  }
+  .modal-content {
+    padding: 24px;
+    overflow: auto;
+  }
+  .modal-content :deep(p) {
+    font-size: 13px;
+  }
+  .modal-content :deep(label) {
+    margin-bottom: 16px;
+  }
+  @media (max-width: 800px) {
+    .modal-backdrop {
+      padding: 14px;
+    }
+  }
+  @media (max-width: 800px) {
+    .modal-content {
+      padding: 20px;
+    }
+  }
+  @media (max-width: 800px) {
+    .modal > header {
+      padding: 15px 20px;
+    }
+  }
+  @media (max-width: 800px) {
+    .modal {
+      max-height: 94vh;
+    }
+  }
+
+  .modal-backdrop,
+  .modal-content {
+    overscroll-behavior: contain;
+  }
+  .modal > header h2 {
+    overflow-wrap: anywhere;
+    min-width: 0;
+  }
+
   .modal-heading {
     min-width: 0;
   }

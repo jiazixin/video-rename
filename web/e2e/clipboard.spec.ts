@@ -20,7 +20,7 @@ const historyItem = {
   action: 'manual',
   old_path: '复制测试/原名.mp4',
   new_path: '复制测试/新名.mp4',
-  created: '2026-10-02T00:00:00Z'
+  created: '2026-10-02T00:00:00.000Z'
 }
 const extractionItem = {
   id: 9302,
@@ -29,8 +29,8 @@ const extractionItem = {
   path: '复制测试/broken.mp4',
   source: 'manual',
   status: 'failure',
-  started: '2026-10-02T00:00:00Z',
-  finished: '2026-10-02T00:00:01Z',
+  started: '2026-10-02T00:00:00.000Z',
+  finished: '2026-10-02T00:00:01.000Z',
   duration_ms: 1000,
   cached: false,
   frames: 0,
@@ -86,23 +86,9 @@ async function installClipboard(page: Page, mode: 'modern' | 'reject' | 'http' |
   await page.addInitScript((mode) => {
     const state = {
       modern: [] as string[],
-      fallback: [] as string[],
-      fallbackAllowed: true,
       reject: undefined as (() => void) | undefined
     }
     window.clipboardTest = state
-    // The app falls back to execCommand on insecure origins; observe that path.
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- the fallback under test
-    const nativeCopy = document.execCommand.bind(document)
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- the fallback under test
-    document.execCommand = (command, ...args) => {
-      if (command === 'copy') {
-        state.fallback.push(window.getSelection()?.toString() ?? '')
-        if (!state.fallbackAllowed) return false
-      }
-      // eslint-disable-next-line @typescript-eslint/no-deprecated -- the fallback under test
-      return nativeCopy(command, ...args)
-    }
     if (mode !== 'http') {
       Object.defineProperty(navigator, 'clipboard', {
         configurable: true,
@@ -163,8 +149,6 @@ async function copyAllEntrances(page: Page) {
   await expect(
     numbering.getByRole('group').filter({ hasText: '查看诊断详情' }).getByRole('status')
   ).toHaveText('已复制诊断')
-  // The copy fallback is a bare off-screen textarea; no role tells it apart.
-  await expect(page.locator('textarea')).toHaveCount(0)
 }
 
 const expectedCopies = [
@@ -174,59 +158,46 @@ const expectedCopies = [
   `${numberingMessage}\n${numberingText}`
 ]
 
-const clipboardModes = {
-  modern: '现代剪贴板',
-  http: 'HTTP 局域网无剪贴板 API',
-  reject: '现代 API 拒绝后的降级'
-} as const
+test('现代剪贴板复制全部四种入口', async ({ page }) => {
+  await mockPages(page)
+  await installClipboard(page, 'modern')
+  await login(page)
+  await copyAllEntrances(page)
+  expect(await page.evaluate(() => window.clipboardTest.modern)).toEqual(expectedCopies)
+})
 
-for (const mode of ['modern', 'http', 'reject'] as const) {
-  test(`${clipboardModes[mode]}复制全部四种入口`, async ({ page }) => {
+for (const mode of ['http', 'reject'] as const) {
+  test(`${mode === 'http' ? '不安全 HTTP' : '权限拒绝'}保留诊断原文并提示手动复制`, async ({
+    page
+  }) => {
     await mockPages(page)
     await installClipboard(page, mode)
     await login(page, mode === 'http' ? 'http://clipboard-http.test:18790/' : '/')
-    if (mode === 'http')
-      expect(
-        await page.evaluate(() => ({
-          secure: window.isSecureContext,
-          clipboard: typeof navigator.clipboard
-        }))
-      ).toEqual({ secure: false, clipboard: 'undefined' })
-    await copyAllEntrances(page)
-    const state = await page.evaluate(() => window.clipboardTest)
-    expect(state.modern).toEqual(mode === 'http' ? [] : expectedCopies)
-    expect(state.fallback).toEqual(mode === 'modern' ? [] : expectedCopies)
+    const diagnostic = await openResponse(page)
+    await diagnostic.getByRole('button', { name: '复制', exact: true }).click()
+    await expect(diagnostic.getByRole('alert')).toHaveText('复制失败，请手动选取文本')
+    await expect(diagnostic.getByText(responseText, { exact: true })).toBeVisible()
+    await expect(diagnostic.getByRole('button', { name: '已复制', exact: true })).toHaveCount(0)
+    expect(await page.evaluate(() => window.clipboardTest.modern)).toEqual(
+      mode === 'http' ? [] : [responseText]
+    )
+    if (mode === 'reject') {
+      await page.evaluate(() => {
+        navigator.clipboard.writeText = () => Promise.resolve()
+      })
+      await diagnostic.getByRole('button', { name: '复制', exact: true }).click()
+      await expect(diagnostic.getByRole('button', { name: '已复制', exact: true })).toBeVisible()
+      await expect(diagnostic.getByRole('alert')).toHaveCount(0)
+    }
   })
 }
 
-test('两个复制途径均失败保留诊断原文，清理选区并支持重试', async ({ page }) => {
-  await mockPages(page)
-  await installClipboard(page, 'reject')
-  await login(page)
-  const diagnostic = await openResponse(page)
-  await page.evaluate(() => {
-    window.clipboardTest.fallbackAllowed = false
-  })
-  await diagnostic.getByRole('button', { name: '复制', exact: true }).click()
-  await expect(diagnostic.getByRole('alert')).toHaveText('复制失败，请手动选取文本')
-  await expect(diagnostic.getByText(responseText, { exact: true })).toBeVisible()
-  await expect(diagnostic.getByRole('button', { name: '已复制', exact: true })).toHaveCount(0)
-  // The copy fallback is a bare off-screen textarea; no role tells it apart.
-  await expect(page.locator('textarea')).toHaveCount(0)
-  await page.evaluate(() => {
-    window.clipboardTest.fallbackAllowed = true
-  })
-  await diagnostic.getByRole('button', { name: '复制', exact: true }).click()
-  await expect(diagnostic.getByRole('button', { name: '已复制', exact: true })).toBeVisible()
-  await expect(diagnostic.getByRole('alert')).toHaveCount(0)
-})
-
-test('降级复制恢复焦点、输入选区、文本选区与滚动位置', async ({ page }) => {
+test('手动复制提示保留焦点、输入选区、文本选区与滚动位置', async ({ page }) => {
   await mockPages(page)
   await installClipboard(page, 'http')
   await login(page, 'http://clipboard-http.test:18790/')
   const diagnostic = await openResponse(page)
-  // The label switches to 已复制 after a copy; it stays the same button.
+  // The success label changes on the same button.
   const button = diagnostic.getByRole('button', { name: /^(已)?复制$/ })
   await button.focus()
   const selectedText = await diagnostic
@@ -247,8 +218,6 @@ test('降级复制恢复焦点、输入选区、文本选区与滚动位置', as
   })
   await expect(button).toBeFocused()
   expect(await page.evaluate(() => window.getSelection()?.toString())).toBe(selectedText)
-  // The copy fallback is a bare off-screen textarea; no role tells it apart.
-  await expect(page.locator('textarea')).toHaveCount(0)
 
   await page.evaluate(() => {
     const input = document.createElement('input')
@@ -282,16 +251,14 @@ test('降级复制恢复焦点、输入选区、文本选区与滚动位置', as
       }
     })
   ).toEqual({ start: 2, end: 8, direction: 'backward', ...before })
-  // The copy fallback is a bare off-screen textarea; no role tells it apart.
-  await expect(page.locator('textarea')).toHaveCount(0)
 })
 
-test('等待现代复制时阻止重复，迟到拒绝后降级保留当前焦点', async ({ page }) => {
+test('等待复制时阻止重复，迟到拒绝保留当前焦点并显示失败', async ({ page }) => {
   await mockPages(page)
   await installClipboard(page, 'deferred')
   await login(page)
   const diagnostic = await openResponse(page)
-  // The label switches to 已复制 after a copy; it stays the same button.
+  // The success label changes on the same button.
   const button = diagnostic.getByRole('button', { name: /^(已)?复制$/ })
   await button.click()
   await expect(button).toBeDisabled()
@@ -299,19 +266,12 @@ test('等待现代复制时阻止重复，迟到拒绝后降级保留当前焦�
   await page.evaluate(() => {
     window.clipboardTest.reject?.()
   })
-  await expect(diagnostic.getByRole('button', { name: '已复制', exact: true })).toBeVisible()
+  await expect(diagnostic.getByRole('alert')).toHaveText('复制失败，请手动选取文本')
   await expect(page.getByLabel('搜索运行记录')).toBeFocused()
-  expect(
-    await page.evaluate(() => ({
-      modern: window.clipboardTest.modern.length,
-      fallback: window.clipboardTest.fallback.length
-    }))
-  ).toEqual({ modern: 1, fallback: 1 })
-  // The copy fallback is a bare off-screen textarea; no role tells it apart.
-  await expect(page.locator('textarea')).toHaveCount(0)
+  expect(await page.evaluate(() => window.clipboardTest.modern)).toEqual([responseText])
 })
 
-test('不同入口同时复制不会让迟到的降级覆盖新请求', async ({ page }) => {
+test('不同入口同时复制时阻止重复，前次失败后可以重试', async ({ page }) => {
   await mockPages(page)
   await installClipboard(page, 'deferred')
   await login(page)
@@ -326,7 +286,7 @@ test('不同入口同时复制不会让迟到的降级覆盖新请求', async ({
   await page.evaluate(() => {
     window.clipboardTest.reject?.()
   })
-  await expect(diagnostic.getByRole('button', { name: '已复制', exact: true })).toBeVisible()
+  await expect(diagnostic.getByRole('alert')).toHaveText('复制失败，请手动选取文本')
   await page.evaluate(() => {
     navigator.clipboard.writeText = (text) => {
       window.clipboardTest.modern.push(text)
@@ -340,6 +300,4 @@ test('不同入口同时复制不会让迟到的降级覆盖新请求', async ({
     responseText,
     JSON.stringify(historyItem, null, 2)
   ])
-  // The copy fallback is a bare off-screen textarea; no role tells it apart.
-  await expect(page.locator('textarea')).toHaveCount(0)
 })

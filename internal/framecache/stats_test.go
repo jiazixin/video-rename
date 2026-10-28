@@ -13,14 +13,15 @@ import (
 	"time"
 
 	"video-rename/internal/domain"
-	"video-rename/internal/systemsettings"
+	"video-rename/internal/systemsetting"
+	"video-rename/internal/timefmt"
 )
 
 func statsTestCache(t *testing.T, base string) *Cache {
 	t.Helper()
-	policy := systemsettings.Default().Policy
+	policy := systemsetting.Default().Policy
 	policy.SuccessCacheMode, policy.IdleCacheHours = "keep", 0
-	c, err := New(base, 1000000, slog.New(slog.DiscardHandler), policy)
+	c, err := New(t.Context(), Options{Base: base, LimitBytes: 1000000, Logger: slog.New(slog.DiscardHandler), Policy: new(policy)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +282,7 @@ func TestStatsDeletionProtectsActiveLeases(t *testing.T) {
 	defer active.Release(false)
 	idle := statsTestAcquire(t, c, strings.Repeat("b", 64))
 	idle.Release(false)
-	result, err := c.Clear()
+	result, err := c.Clear(t.Context())
 	if err != nil || result.Deleted != 1 || result.Retained != 1 || result.FreedBytes <= 0 {
 		t.Fatal(result, err)
 	}
@@ -294,9 +295,9 @@ func TestStatsDeletionProtectsActiveLeases(t *testing.T) {
 	if _, err := os.Stat(idle.Set.Frames[0].Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("Clear retained idle frames", err)
 	}
-	policy := systemsettings.Default().Policy
+	policy := systemsetting.Default().Policy
 	policy.SuccessCacheMode = "immediate"
-	if err := c.Configure(1, policy); err != nil {
+	if err := c.Configure(t.Context(), 1, policy); err != nil {
 		t.Fatal(err)
 	}
 	if got := assertStatsAccounted(t, c); got.Entries != 1 {
@@ -320,15 +321,15 @@ func TestStatsPartialPruneFailure(t *testing.T) {
 	active := statsTestAcquire(t, c, strings.Repeat("c", 64))
 	defer active.Release(false)
 	c.mu.Lock()
-	c.entries[first.key].LastUsed = time.Now().Add(-2 * time.Hour)
-	c.entries[blocked.key].LastUsed = time.Now().Add(-time.Hour)
+	c.entries[first.key].LastUsed = timefmt.Time(time.Now().Add(-2 * time.Hour))
+	c.entries[blocked.key].LastUsed = timefmt.Time(time.Now().Add(-time.Hour))
 	c.mu.Unlock()
 	blockedDir := filepath.Join(c.root, blocked.key)
 	if err := os.Chmod(blockedDir, 0o500); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(blockedDir, 0o700) })
-	if err := c.Configure(1, c.policy); err == nil {
+	if err := c.Configure(t.Context(), 1, c.policy); err == nil {
 		t.Fatal("pruning a non-writable cache directory did not fail")
 	}
 	if got := assertStatsAccounted(t, c); got.Entries != 2 || got.Used <= 0 {
@@ -343,7 +344,7 @@ func TestStatsPartialPruneFailure(t *testing.T) {
 	if err := os.Chmod(blockedDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	result, err := c.Clear()
+	result, err := c.Clear(t.Context())
 	if err != nil || result.Deleted != 1 || result.Retained != 1 {
 		t.Fatal(result, err)
 	}
@@ -351,7 +352,7 @@ func TestStatsPartialPruneFailure(t *testing.T) {
 		t.Fatalf("after retry=%+v", got)
 	}
 	active.Release(false)
-	if _, err := c.Clear(); err != nil {
+	if _, err := c.Clear(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if got := assertStatsAccounted(t, c); got.Entries != 0 || got.Used != 0 {
@@ -362,9 +363,9 @@ func TestStatsPartialPruneFailure(t *testing.T) {
 // Isolate the bookkeeping cost of keeping a large cache. These in-memory
 // records are never validated, persisted or removed, and need no media files.
 func BenchmarkCacheSweepRetained(b *testing.B) {
-	policy := systemsettings.Default().Policy
+	policy := systemsetting.Default().Policy
 	policy.SuccessCacheMode, policy.IdleCacheHours = "keep", 0
-	c, err := New(b.TempDir(), 1<<60, slog.New(slog.DiscardHandler), policy)
+	c, err := New(b.Context(), Options{Base: b.TempDir(), LimitBytes: 1 << 60, Logger: slog.New(slog.DiscardHandler), Policy: new(policy)})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -372,11 +373,11 @@ func BenchmarkCacheSweepRetained(b *testing.B) {
 	now := time.Now()
 	for i := range 11000 {
 		key := fmt.Sprintf("%064x", i)
-		c.entries[key] = &record{Key: key, Bytes: 65536, LastUsed: now.Add(time.Duration(i) * time.Second)}
+		c.entries[key] = &record{Key: key, Bytes: 65536, LastUsed: timefmt.Time(now.Add(time.Duration(i) * time.Second))}
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		if err := c.Sweep(now); err != nil {
+		if err := c.Sweep(b.Context(), now); err != nil {
 			b.Fatal(err)
 		}
 	}

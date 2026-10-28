@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"video-rename/internal/domain"
-	"video-rename/internal/models"
-	"video-rename/internal/systemsettings"
+	modelstore "video-rename/internal/model"
+	"video-rename/internal/systemsetting"
 )
 
 // systemStatus reports whether runs can start. Problem explains why not.
@@ -25,7 +25,7 @@ func (a *App) systemSettingsRoutes(mux *router) {
 		}
 		model := ""
 		configured := false
-		store := models.Store{DB: a.DB}
+		store := modelstore.New(a.db)
 		profiles, modelErr := store.List(r.Context())
 		if modelErr != nil {
 			writeError(w, r, modelErr)
@@ -44,7 +44,7 @@ func (a *App) systemSettingsRoutes(mux *router) {
 		}
 		send(w, http.StatusOK, systemStatus{RootID: 1, Model: model, Ready: err == nil && configured, Problem: problem})
 	})
-	store := systemsettings.Store{DB: a.DB}
+	store := systemsetting.New(a.db)
 	mux.HandleFunc("GET /api/system/settings", func(w http.ResponseWriter, r *http.Request) {
 		s, err := store.Get(r.Context())
 		if err != nil {
@@ -54,7 +54,7 @@ func (a *App) systemSettingsRoutes(mux *router) {
 		send(w, http.StatusOK, map[string]any{"settings": s, "cache": a.Jobs.Cache.Stats(), "retention_days": float64(s.IdleCacheHours) / 24})
 	})
 	mux.HandleFunc("PUT /api/system/settings", func(w http.ResponseWriter, r *http.Request) {
-		s := systemsettings.Default()
+		s := systemsetting.Default()
 		s.ExtractWorkers, s.CacheGB = 0, 0
 		if !decode(w, r, &s) {
 			return
@@ -62,9 +62,9 @@ func (a *App) systemSettingsRoutes(mux *router) {
 		a.settingsMu.Lock()
 		defer a.settingsMu.Unlock()
 		if s.FallbackModelID > 0 {
-			p, err := (models.Store{DB: a.DB}).Get(r.Context(), s.FallbackModelID)
+			p, err := (modelstore.New(a.db)).Get(r.Context(), s.FallbackModelID)
 			if err != nil || !p.Ready {
-				invalid(w, r, "fallback_model_id", "model_not_ready")
+				writeError(w, r, domain.InvalidField("fallback_model_id", "model_not_ready"))
 				return
 			}
 		}
@@ -72,7 +72,7 @@ func (a *App) systemSettingsRoutes(mux *router) {
 			writeError(w, r, err)
 			return
 		}
-		if err := a.Jobs.Cache.Configure(s.Bytes(), s.Policy); err != nil {
+		if err := a.Jobs.Cache.Configure(r.Context(), s.Bytes(), s.Policy); err != nil {
 			writeError(w, r, err)
 			return
 		}
@@ -86,12 +86,12 @@ func (a *App) systemSettingsRoutes(mux *router) {
 			return
 		}
 		if !body.Confirm {
-			invalid(w, r, "confirm", "confirmation_required")
+			writeError(w, r, domain.InvalidField("confirm", "confirmation_required"))
 			return
 		}
-		result, err := a.Jobs.Cache.Clear()
+		result, err := a.Jobs.Cache.Clear(r.Context())
 		if err != nil {
-			writeError(w, r, domain.Fail(domain.KindInternal, "cache_clear_incomplete", "cache clear stopped", "deleted", result.Deleted).Wrap(err))
+			writeError(w, r, domain.Fail(domain.KindInternal, domain.Record{Code: "cache_clear_incomplete", Message: "cache clear stopped", Details: map[string]any{"deleted": result.Deleted}}).Wrap(err))
 			return
 		}
 		send(w, http.StatusOK, result)

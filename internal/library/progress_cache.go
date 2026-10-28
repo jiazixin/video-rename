@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"errors"
 
 	"video-rename/internal/domain"
 )
@@ -58,7 +59,7 @@ func (l *Library) cachedDirectoryProcessing(ctx context.Context, tx *sql.Tx, ids
 	if err == nil {
 		err = rows.Err()
 	}
-	rows.Close()
+	err = errors.Join(err, rows.Close())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -71,7 +72,7 @@ func (l *Library) cachedDirectoryProcessing(ctx context.Context, tx *sql.Tx, ids
  SUM(COALESCE(m.source IN ('marked','manual','automatic'),0)),
  SUM(EXISTS(SELECT 1 FROM run_items i JOIN runs r ON r.id=i.run WHERE i.entry=e.id AND i.status IN ('queued','running') AND r.status IN `+domain.ActiveRunStatusesSQL+`))
  FROM json_each(?) d JOIN entries e ON e.parent=d.value
- LEFT JOIN marks m ON m.identity=e.identity AND m.size=e.size AND m.mtime=e.mtime
+ LEFT JOIN marks m ON m.identity=e.identity AND m.size=e.size AND m.mtime_ns=e.mtime_ns
  WHERE e.present=1 AND e.kind='file' AND video_rename_media_kind(e.name)=1 GROUP BY e.parent`, string(raw))
 		if err != nil {
 			return nil, nil, err
@@ -89,7 +90,7 @@ func (l *Library) cachedDirectoryProcessing(ctx context.Context, tx *sql.Tx, ids
 		if err == nil {
 			err = rows.Err()
 		}
-		rows.Close()
+		err = errors.Join(err, rows.Close())
 		if err != nil {
 			return nil, nil, err
 		}
@@ -117,7 +118,7 @@ func (l *Library) cachedDirectoryProcessing(ctx context.Context, tx *sql.Tx, ids
 		if err == nil {
 			err = rows.Err()
 		}
-		rows.Close()
+		err = errors.Join(err, rows.Close())
 		if err != nil {
 			return nil, nil, err
 		}

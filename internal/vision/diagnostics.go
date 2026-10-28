@@ -54,12 +54,14 @@ func diagnosticJSON(raw []byte, key string, request bool) string {
 		if obj, ok := value.(map[string]any); ok && request {
 			obj["_local_context"] = estimate
 		}
+		// Decoded JSON plus the primitive redactions above cannot contain
+		// unsupported values or cycles.
 		raw, _ = json.Marshal(value, jsontext.WithIndent("  "))
 	}
 	text := strings.ToValidUTF8(string(raw), "�")
 	if key != "" {
 		text = strings.ReplaceAll(text, key, "[REDACTED]")
-		encoded, _ := json.Marshal(key)
+		encoded, _ := json.Marshal(key) // Encoding a valid credential string cannot fail.
 		text = strings.ReplaceAll(text, string(encoded[1:len(encoded)-1]), "[REDACTED]")
 	}
 	const limit = 128 * 1024

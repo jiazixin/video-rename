@@ -5,7 +5,7 @@ import { onBeforeRouteLeave } from 'vue-router'
 export type ToastItem = { id: number; message: string }
 
 /** How long a notice stays before it closes itself, in milliseconds. */
-export const toastDurationMs = 5000
+const toastDurationMs = 5000
 
 const items = ref<ToastItem[]>([])
 const timers = new Map<number, ReturnType<typeof setTimeout>>()

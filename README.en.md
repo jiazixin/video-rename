@@ -50,7 +50,9 @@ video-rename combines a Go server, an embedded Vue 3 interface, and SQLite in a 
 | FFmpeg | `ffmpeg` and `ffprobe` on PATH for frame extraction and automatic naming; not needed for browsing and manual renaming |
 | Model service (optional) | An image-capable OpenAI-compatible or Anthropic service; not needed without automatic naming |
 | Data directory | Local disk; media may reside on a network mount |
-| Building from source | Go 1.27.3, Node.js ≥ 22.12, npm; Git when building from a Git checkout |
+| Building from source | Go 1.27.3, Node.js ≥ 26.0, npm; Git when building from a Git checkout |
+
+Copy buttons use the browser Clipboard API, which requires HTTPS or localhost and the relevant permission. When unavailable, the text remains selectable for manual copying.
 
 ## Quick start
 
@@ -195,7 +197,7 @@ Detailed documentation is in Chinese.
 
 ```text
 cmd/video-rename/        CLI entry point and build version
-internal/                Go server: app, storage, library, rename, jobs, media, models, notifications, ...
+internal/                Go server: app, storage, library, rename, job, media, model, notification, ...
 web/                     The only npm/Vite boundary: Vue sources, Playwright E2E, embed.go
 configs/                 Configuration example; the local config.local.yaml is ignored
 docs/                    Usage, design, development and acceptance docs; archive/ is historical
@@ -217,8 +219,10 @@ The directory baseline is maintained only in [目录规范.md](目录规范.md),
 
 | Rule | Actual practice | Reason | Scope | Re-evaluate when |
 | --- | --- | --- | --- | --- |
-| 代码规范 §3.1 user text is mapped from codes by the client | The server generates Chinese for content sent to the model (default prompt, fixed prompt, frame captions, image-recognition test instruction), the default failure keywords, notification titles and bodies (including the test notification), and the seed names of the default prompt and model configuration plus the "副本" suffix of copied configurations | Prompt content and failure keywords are data sent to the model or matched against its output, notifications go to external channels, and seed names are user-editable data; none has a client that could map codes. The admin API and all records return only codes per the [error contract](docs/API.md) | `internal/models` (`DefaultBody`, seeding and copy, `probe.go`), `internal/systemsettings` (`DefaultFixedPrompt`), the frame captions in `internal/vision/client.go`, `internal/naming/failure.go`, notification content in `internal/notifications` | Prompt content, notifications or seed data become multilingual |
+| 代码规范 §3.1 user text is mapped from codes by the client | The server generates Chinese for content sent to the model (default prompt, fixed prompt, frame captions, image-recognition test instruction), the default failure keywords, notification titles and bodies (including the test notification), and the seed names of the default prompt and model configuration plus the "副本" suffix of copied configurations | Prompt content and failure keywords are data sent to the model or matched against its output, notifications go to external channels, and seed names are user-editable data; none has a client that could map codes. The admin API and all records return only codes per the [error contract](docs/API.md) | `internal/model` (`DefaultBody`, seeding and copy, `probe.go`), `internal/systemsetting` (`DefaultFixedPrompt`), the frame captions in `internal/vision/client.go`, `internal/naming/failure.go`, notification content in `internal/notification` | Prompt content, notifications or seed data become multilingual |
 | Web代码规范 §3 enable at least `strictTypeChecked` | `@typescript-eslint/restrict-template-expressions` uses `allowNumber: true`, so template literals may interpolate numbers directly | Interpolating a number cannot produce `[object Object]` or `undefined` text, and rewriting each site as `String(n)` hurts readability; all other types still fail | `web/eslint.config.js`, all web sources and E2E tests | The rule default or the standard changes |
+| Go代码规范 §7 configuration is a value type; runtime editing requires an exception | Deployment Config loads at startup; model, prompt, sampling, numbering, scan and notification settings are stored in SQLite and edited through the UI. Each task freezes its processing settings | Runtime editing is a product feature; snapshots keep edits from changing already submitted tasks | Settings stores and task creation | Configuration lifecycle or snapshot policy changes |
+| Go代码规范 §8 no file I/O during write transactions | Rename and numbering commits retain a final path and stat/fstat identity check; scan publication also checks the held directory handle | External processes do not honor application locks. Moving these checks outside the final transaction widens the window for committing success after replacement; concurrent mutation regressions cover it. Directory traversal, file content I/O, network requests and processes remain outside write transactions | Final identity checks in `internal/library` | Filesystem and database commit coordination changes |
 
 ## Contributing
 

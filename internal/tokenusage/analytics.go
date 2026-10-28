@@ -5,12 +5,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"maps"
 	"slices"
 	"time"
 
 	"video-rename/internal/storage"
 	"video-rename/internal/timebucket"
+	"video-rename/internal/timefmt"
 )
 
 // AnalyticsQuery scopes a usage report. From and To are epoch milliseconds in
@@ -169,7 +171,18 @@ func modelKey(provider, protocol, model string) string {
 	return provider + "|" + protocol + "|" + model
 }
 
-func parseMeta(source string, plan int64, summary string, profileID int64, profileTitle string) runMeta {
+// parseMetaOptions groups the inputs for parseMeta.
+type parseMetaOptions struct {
+	Source       string
+	Plan         int64
+	Summary      string
+	ProfileID    int64
+	ProfileTitle string
+}
+
+func parseMeta(params parseMetaOptions) runMeta {
+	source, plan, summary, profileID, profileTitle := params.Source, params.Plan, params.Summary, params.ProfileID, params.ProfileTitle
+
 	var parsed struct {
 		Model    string `json:"model"`
 		Provider string `json:"provider"`
@@ -190,231 +203,225 @@ func parseMeta(source string, plan int64, summary string, profileID int64, profi
 // counted model exchange, so grouped aggregation happens in Go instead of six
 // SQL passes that could drift apart.
 func Analytics(ctx context.Context, db *storage.Store, q AnalyticsQuery) (*Report, error) {
-	if q.Location == nil {
-		q.Location = time.UTC
-	}
-	if q.Page < 1 {
-		q.Page = 1
-	}
-	if q.Size < 1 || q.Size > 100 {
-		if q.Size < 1 {
-			q.Size = 20
-		} else {
-			q.Size = 100
+	return storage.ReadValue(ctx, db, func(tx *sql.Tx) (*Report, error) {
+		if q.Location == nil {
+			q.Location = time.UTC
 		}
-	}
-	tx, err := db.Read().BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	revision, err := storage.ReportRevision(ctx, tx, "usage")
-	if err != nil {
-		return nil, err
-	}
-	cacheQuery := q
-	cacheQuery.Page, cacheQuery.Size, cacheQuery.Location = 0, 0, nil
-	keyRaw, err := json.Marshal(struct {
-		Query    AnalyticsQuery
-		Timezone string
-	}{cacheQuery, q.Location.String()})
-	if err != nil {
-		return nil, err
-	}
-	cacheKey := "usage:" + string(keyRaw)
-	var cached Report
-	if db.CachedReport(cacheKey, revision, &cached) {
-		if err = tx.Commit(); err != nil {
+		if q.Page < 1 {
+			q.Page = 1
+		}
+		if q.Size < 1 || q.Size > 100 {
+			if q.Size < 1 {
+				q.Size = 20
+			} else {
+				q.Size = 100
+			}
+		}
+		var err error
+		revision, err := storage.ReportRevision(ctx, tx, "usage")
+		if err != nil {
 			return nil, err
 		}
-		return pageReport(ctx, &cached, q.Page, q.Size)
-	}
-	where := "r.recorded_at>=? AND r.recorded_at<?"
-	args := []any{q.From, q.To}
-	if q.Run > 0 {
-		where += " AND r.run=?"
-		args = append(args, q.Run)
-	}
-	if q.Profile > 0 {
-		where += " AND COALESCE(r.model_config_id,u.model_config_id)=?"
-		args = append(args, q.Profile)
-	}
-	if q.Source != "" {
-		where += " AND (CASE WHEN u.source='schedule' OR u.plan>0 THEN 'scheduled' ELSE 'manual' END)=?"
-		args = append(args, q.Source)
-	}
-	if q.Model != "" {
-		where += " AND video_rename_model_key(COALESCE(r.config_summary,u.config_summary))=?"
-		args = append(args, q.Model)
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT r.run,r.recorded_at,r.tokens,r.records,r.estimated_records,u.source,u.plan,COALESCE(r.config_summary,u.config_summary),COALESCE(r.model_config_id,u.model_config_id),COALESCE(r.model_config_title,u.model_config_title),u.status,u.created,u.started,u.finished,u.config_summary,u.model_config_id,u.model_config_title
+		cacheQuery := q
+		cacheQuery.Page, cacheQuery.Size, cacheQuery.Location = 0, 0, nil
+		keyRaw, err := json.Marshal(struct {
+			Query    AnalyticsQuery
+			Timezone string
+		}{cacheQuery, q.Location.String()})
+		if err != nil {
+			return nil, err
+		}
+		cacheKey := "usage:" + string(keyRaw)
+		var cached Report
+		if db.CachedReport(cacheKey, revision, &cached) {
+
+			return pageReport(ctx, &cached, q.Page, q.Size)
+		}
+		where := "r.recorded_at>=? AND r.recorded_at<?"
+		args := []any{q.From, q.To}
+		if q.Run > 0 {
+			where += " AND r.run=?"
+			args = append(args, q.Run)
+		}
+		if q.Profile > 0 {
+			where += " AND COALESCE(r.model_config_id,u.model_config_id)=?"
+			args = append(args, q.Profile)
+		}
+		if q.Source != "" {
+			where += " AND (CASE WHEN u.source='schedule' OR u.plan>0 THEN 'scheduled' ELSE 'manual' END)=?"
+			args = append(args, q.Source)
+		}
+		if q.Model != "" {
+			where += " AND video_rename_model_key(COALESCE(r.config_summary,u.config_summary))=?"
+			args = append(args, q.Model)
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT r.run,r.recorded_at,r.tokens,r.records,r.estimated_records,u.source,u.plan,COALESCE(r.config_summary,u.config_summary),COALESCE(r.model_config_id,u.model_config_id),COALESCE(r.model_config_title,u.model_config_title),u.status,u.created,u.started,u.finished,u.config_summary,u.model_config_id,u.model_config_title
 FROM token_usage_records r JOIN runs u ON u.id=r.run
 WHERE `+where+` ORDER BY r.recorded_at,r.id`, args...)
-	if err != nil {
-		return nil, err
-	}
-	buckets := timebucket.For(q.To-q.From, q.Location)
-	trend := map[int64]*TrendBucket{}
-	models := map[string]*ModelGroup{}
-	profiles := map[int64]*ProfileGroup{}
-	sources := map[string]*SourceGroup{}
-	batches := map[int64]*batchAcc{}
-	from := q.From
-	first := true
-	var totals ReportTotals
-	modelBatches := map[string]map[int64]bool{}
-	profileBatches := map[int64]map[int64]bool{}
-	for rows.Next() {
-		var run, recordedAt, tokens, records, estimated, plan, profileID int64
-		var source, summary, profileTitle, status, created, started, finished, batchSummary, batchTitle string
-		var batchProfile int64
-		if err = rows.Scan(&run, &recordedAt, &tokens, &records, &estimated, &source, &plan, &summary, &profileID, &profileTitle, &status, &created, &started, &finished, &batchSummary, &batchProfile, &batchTitle); err != nil {
-			rows.Close()
+		if err != nil {
 			return nil, err
 		}
-		meta := parseMeta(source, plan, summary, profileID, profileTitle)
-		counted := records
-		totals.Tokens += tokens
-		totals.Records += counted
-		totals.EstimatedRecords += estimated
-		if first && q.From == 0 {
-			buckets = timebucket.For(q.To-recordedAt, q.Location)
-			from = buckets.Start(recordedAt)
+		buckets := timebucket.For(q.To-q.From, q.Location)
+		trend := map[int64]*TrendBucket{}
+		models := map[string]*ModelGroup{}
+		profiles := map[int64]*ProfileGroup{}
+		sources := map[string]*SourceGroup{}
+		batches := map[int64]*batchAcc{}
+		from := q.From
+		first := true
+		var totals ReportTotals
+		modelBatches := map[string]map[int64]bool{}
+		profileBatches := map[int64]map[int64]bool{}
+		for rows.Next() {
+			var run, recordedAt, tokens, records, estimated, plan, profileID int64
+			var source, summary, profileTitle, status, created, started, finished, batchSummary, batchTitle string
+			var batchProfile int64
+			if err = rows.Scan(&run, &recordedAt, &tokens, &records, &estimated, &source, &plan, &summary, &profileID, &profileTitle, &status, &created, &started, &finished, &batchSummary, &batchProfile, &batchTitle); err != nil {
+				return nil, errors.Join(err, rows.Close())
+			}
+			meta := parseMeta(parseMetaOptions{Source: source, Plan: plan, Summary: summary, ProfileID: profileID, ProfileTitle: profileTitle})
+			counted := records
+			totals.Tokens += tokens
+			totals.Records += counted
+			totals.EstimatedRecords += estimated
+			if first && q.From == 0 {
+				buckets = timebucket.For(q.To-recordedAt, q.Location)
+				from = buckets.Start(recordedAt)
+			}
+			first = false
+			key := buckets.Start(recordedAt)
+			bucket := trend[key]
+			if bucket == nil {
+				bucket = &TrendBucket{}
+				trend[key] = bucket
+			}
+			bucket.Tokens += tokens
+			bucket.Records += counted
+			bucket.EstimatedRecords += estimated
+			model := models[meta.key]
+			if model == nil {
+				model = &ModelGroup{Key: meta.key, Model: meta.model, Provider: meta.provider, Protocol: meta.protocol}
+				models[meta.key] = model
+			}
+			profile := profiles[meta.profileID]
+			if profile == nil {
+				profile = &ProfileGroup{ID: meta.profileID, Title: meta.profileTitle}
+				profiles[meta.profileID] = profile
+			}
+			origin := sources[meta.source]
+			if origin == nil {
+				origin = &SourceGroup{Key: meta.source}
+				sources[meta.source] = origin
+			}
+			batch := batches[run]
+			if batch == nil {
+				batch = &batchAcc{id: run, meta: parseMeta(parseMetaOptions{Source: source, Plan: plan, Summary: batchSummary, ProfileID: batchProfile, ProfileTitle: batchTitle}), status: status, created: created, started: started, finished: finished}
+				batches[run] = batch
+				totals.Batches++
+				origin.Batches++
+			}
+			if modelBatches[meta.key] == nil {
+				modelBatches[meta.key] = map[int64]bool{}
+			}
+			if !modelBatches[meta.key][run] {
+				model.Batches++
+				modelBatches[meta.key][run] = true
+			}
+			if profileBatches[meta.profileID] == nil {
+				profileBatches[meta.profileID] = map[int64]bool{}
+			}
+			if !profileBatches[meta.profileID][run] {
+				profile.Batches++
+				profileBatches[meta.profileID][run] = true
+			}
+			model.Tokens += tokens
+			model.Records += counted
+			model.EstimatedRecords += estimated
+			profile.Tokens += tokens
+			profile.Records += counted
+			profile.EstimatedRecords += estimated
+			origin.Tokens += tokens
+			origin.Records += counted
+			origin.EstimatedRecords += estimated
+			batch.tokens += tokens
+			batch.records += counted
+			batch.estimated += estimated
+			if recordedAt > batch.last {
+				batch.last = recordedAt
+			}
 		}
-		first = false
-		key := buckets.Start(recordedAt)
-		bucket := trend[key]
-		if bucket == nil {
-			bucket = &TrendBucket{}
-			trend[key] = bucket
+		if err = rows.Err(); err != nil {
+			return nil, errors.Join(err, rows.Close())
 		}
-		bucket.Tokens += tokens
-		bucket.Records += counted
-		bucket.EstimatedRecords += estimated
-		model := models[meta.key]
-		if model == nil {
-			model = &ModelGroup{Key: meta.key, Model: meta.model, Provider: meta.provider, Protocol: meta.protocol}
-			models[meta.key] = model
+		if err = rows.Close(); err != nil {
+			return nil, err
 		}
-		profile := profiles[meta.profileID]
-		if profile == nil {
-			profile = &ProfileGroup{ID: meta.profileID, Title: meta.profileTitle}
-			profiles[meta.profileID] = profile
+		options, err := reportOptions(ctx, db, tx)
+		if err != nil {
+			return nil, err
 		}
-		origin := sources[meta.source]
-		if origin == nil {
-			origin = &SourceGroup{Key: meta.source}
-			sources[meta.source] = origin
+		report := &Report{
+			Range: ReportRange{
+				From:     timefmt.Format(time.UnixMilli(from)),
+				To:       timefmt.Format(time.UnixMilli(q.To)),
+				Timezone: q.Location.String(),
+				Interval: buckets.Name,
+			},
+			Totals:     totals,
+			Trend:      trendSeries(trendSeriesOptions{Buckets: buckets, From: from, To: q.To, Trend: trend}),
+			Models:     sortedModels(models),
+			Profiles:   sortedProfiles(profiles),
+			Sources:    sortedSources(sources),
+			TopBatches: []Batch{},
+			Batches:    PagedBatches{Items: []Batch{}, Page: q.Page, Size: q.Size},
+			Options:    options,
 		}
-		batch := batches[run]
-		if batch == nil {
-			batch = &batchAcc{id: run, meta: parseMeta(source, plan, batchSummary, batchProfile, batchTitle), status: status, created: created, started: started, finished: finished}
-			batches[run] = batch
-			totals.Batches++
-			origin.Batches++
+		ordered := sortedBatches(batches, q.Sort)
+		report.Batches.Total = len(ordered)
+		displayed := map[int64]bool{}
+		for i, acc := range sortedBatches(batches, "tokens") {
+			if i == 10 {
+				break
+			}
+			report.TopBatches = append(report.TopBatches, newBatch(acc))
+			displayed[acc.id] = true
 		}
-		if modelBatches[meta.key] == nil {
-			modelBatches[meta.key] = map[int64]bool{}
+		for i := range ordered {
+			if !displayed[ordered[i].id] {
+				displayed[ordered[i].id] = true
+			}
+			report.Batches.Items = append(report.Batches.Items, newBatch(ordered[i]))
 		}
-		if !modelBatches[meta.key][run] {
-			model.Batches++
-			modelBatches[meta.key][run] = true
+		lifetimes, err := lifetimeUsage(ctx, tx, displayed)
+		if err != nil {
+			return nil, err
 		}
-		if profileBatches[meta.profileID] == nil {
-			profileBatches[meta.profileID] = map[int64]bool{}
+		for i := range report.TopBatches {
+			report.TopBatches[i].LifetimeTokens = lifetimes[report.TopBatches[i].ID][0]
+			report.TopBatches[i].LifetimeRecords = lifetimes[report.TopBatches[i].ID][1]
 		}
-		if !profileBatches[meta.profileID][run] {
-			profile.Batches++
-			profileBatches[meta.profileID][run] = true
+		for i := range report.Batches.Items {
+			report.Batches.Items[i].LifetimeTokens = lifetimes[report.Batches.Items[i].ID][0]
+			report.Batches.Items[i].LifetimeRecords = lifetimes[report.Batches.Items[i].ID][1]
 		}
-		model.Tokens += tokens
-		model.Records += counted
-		model.EstimatedRecords += estimated
-		profile.Tokens += tokens
-		profile.Records += counted
-		profile.EstimatedRecords += estimated
-		origin.Tokens += tokens
-		origin.Records += counted
-		origin.EstimatedRecords += estimated
-		batch.tokens += tokens
-		batch.records += counted
-		batch.estimated += estimated
-		if recordedAt > batch.last {
-			batch.last = recordedAt
+
+		if err = ctx.Err(); err != nil {
+			return nil, err
 		}
-	}
-	if err = rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	rows.Close()
-	options, err := reportOptions(ctx, db, tx)
-	if err != nil {
-		return nil, err
-	}
-	report := &Report{
-		Range: ReportRange{
-			From:     time.UnixMilli(from).In(q.Location).Format(time.RFC3339),
-			To:       time.UnixMilli(q.To).In(q.Location).Format(time.RFC3339),
-			Timezone: q.Location.String(),
-			Interval: buckets.Name,
-		},
-		Totals:     totals,
-		Trend:      trendSeries(buckets, from, q.To, trend),
-		Models:     sortedModels(models),
-		Profiles:   sortedProfiles(profiles),
-		Sources:    sortedSources(sources),
-		TopBatches: []Batch{},
-		Batches:    PagedBatches{Items: []Batch{}, Page: q.Page, Size: q.Size},
-		Options:    options,
-	}
-	ordered := sortedBatches(batches, q.Sort)
-	report.Batches.Total = len(ordered)
-	displayed := map[int64]bool{}
-	for i, acc := range sortedBatches(batches, "tokens") {
-		if i == 10 {
-			break
-		}
-		report.TopBatches = append(report.TopBatches, newBatch(acc))
-		displayed[acc.id] = true
-	}
-	for i := range ordered {
-		if !displayed[ordered[i].id] {
-			displayed[ordered[i].id] = true
-		}
-		report.Batches.Items = append(report.Batches.Items, newBatch(ordered[i]))
-	}
-	lifetimes, err := lifetimeUsage(ctx, tx, displayed)
-	if err != nil {
-		return nil, err
-	}
-	for i := range report.TopBatches {
-		report.TopBatches[i].LifetimeTokens = lifetimes[report.TopBatches[i].ID][0]
-		report.TopBatches[i].LifetimeRecords = lifetimes[report.TopBatches[i].ID][1]
-	}
-	for i := range report.Batches.Items {
-		report.Batches.Items[i].LifetimeTokens = lifetimes[report.Batches.Items[i].ID][0]
-		report.Batches.Items[i].LifetimeRecords = lifetimes[report.Batches.Items[i].ID][1]
-	}
-	if err = tx.Commit(); err != nil {
-		return nil, err
-	}
-	if err = ctx.Err(); err != nil {
-		return nil, err
-	}
-	db.CacheReport(cacheKey, revision, report)
-	return pageReport(ctx, report, q.Page, q.Size)
+		db.CacheReport(cacheKey, revision, report)
+		return pageReport(ctx, report, q.Page, q.Size)
+	})
 }
 
 func newBatch(acc *batchAcc) Batch {
-	return Batch{ID: acc.id, Model: acc.meta.model, Provider: acc.meta.provider, Protocol: acc.meta.protocol, ProfileID: acc.meta.profileID, ProfileTitle: acc.meta.profileTitle, Source: acc.meta.source, Status: acc.status, Created: acc.created, Started: acc.started, Finished: acc.finished, Tokens: acc.tokens, Records: acc.records, EstimatedRecords: acc.estimated, LastRecordedAt: time.UnixMilli(acc.last).UTC().Format(time.RFC3339)}
+	return Batch{ID: acc.id, Model: acc.meta.model, Provider: acc.meta.provider, Protocol: acc.meta.protocol, ProfileID: acc.meta.profileID, ProfileTitle: acc.meta.profileTitle, Source: acc.meta.source, Status: acc.status, Created: acc.created, Started: acc.started, Finished: acc.finished, Tokens: acc.tokens, Records: acc.records, EstimatedRecords: acc.estimated, LastRecordedAt: timefmt.Format(time.UnixMilli(acc.last))}
 }
 
 // lifetimeUsage reads the run aggregates for the displayed batches. They cover
 // all recorded history, so a batch filtered to part of a range still shows its
 // full lifetime next to the in-range numbers.
-func lifetimeUsage(ctx context.Context, tx *sql.Tx, ids map[int64]bool) (map[int64][2]int64, error) {
-	out := map[int64][2]int64{}
+func lifetimeUsage(ctx context.Context, tx *sql.Tx, ids map[int64]bool) (out map[int64][2]int64, err error) {
+	out = map[int64][2]int64{}
 	if len(ids) == 0 {
 		return out, nil
 	}
@@ -427,7 +434,7 @@ func lifetimeUsage(ctx context.Context, tx *sql.Tx, ids map[int64]bool) (map[int
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { err = errors.Join(err, rows.Close()) }()
 	for rows.Next() {
 		var run, tokens, records int64
 		if err = rows.Scan(&run, &tokens, &records); err != nil {
@@ -440,7 +447,7 @@ func lifetimeUsage(ctx context.Context, tx *sql.Tx, ids map[int64]bool) (map[int
 
 // reportOptions lists the models and profiles that ever recorded usage, so the
 // page can offer filters even when the current range shows no rows for them.
-func reportOptions(ctx context.Context, db *storage.Store, tx *sql.Tx) (ReportOptions, error) {
+func reportOptions(ctx context.Context, db *storage.Store, tx *sql.Tx) (options ReportOptions, err error) {
 	revision, err := storage.ReportRevision(ctx, tx, "usage_options")
 	if err != nil {
 		return ReportOptions{}, err
@@ -457,7 +464,7 @@ GROUP BY 1,2,3,4,5,6 ORDER BY MAX(r.recorded_at) DESC,MAX(r.id) DESC`)
 	if err != nil {
 		return ReportOptions{}, err
 	}
-	defer rows.Close()
+	defer func() { err = errors.Join(err, rows.Close()) }()
 	models := map[string]OptionModel{}
 	profiles := map[int64]*OptionProfile{}
 	for rows.Next() {
@@ -467,7 +474,7 @@ GROUP BY 1,2,3,4,5,6 ORDER BY MAX(r.recorded_at) DESC,MAX(r.id) DESC`)
 		if err = rows.Scan(&source, &plan, &summary, &profileID, &title, &deleted); err != nil {
 			return ReportOptions{}, err
 		}
-		meta := parseMeta(source, plan, summary, profileID, title)
+		meta := parseMeta(parseMetaOptions{Source: source, Plan: plan, Summary: summary, ProfileID: profileID, ProfileTitle: title})
 		if _, ok := models[meta.key]; !ok {
 			models[meta.key] = OptionModel{Key: meta.key, Model: meta.model, Provider: meta.provider, Protocol: meta.protocol}
 		}
@@ -482,7 +489,7 @@ GROUP BY 1,2,3,4,5,6 ORDER BY MAX(r.recorded_at) DESC,MAX(r.id) DESC`)
 			profile.ModelKeys = append(profile.ModelKeys, meta.key)
 		}
 	}
-	if err = rows.Err(); err != nil {
+	if err = errors.Join(rows.Err(), rows.Close()); err != nil {
 		return ReportOptions{}, err
 	}
 	out := ReportOptions{Models: slices.Collect(maps.Values(models)), Profiles: []OptionProfile{}}
@@ -560,9 +567,19 @@ func sortedBatches(batches map[int64]*batchAcc, sortKey string) []*batchAcc {
 	return out
 }
 
+// trendSeriesOptions groups the inputs for trendSeries.
+type trendSeriesOptions struct {
+	Buckets timebucket.Bucketing
+	From    int64
+	To      int64
+	Trend   map[int64]*TrendBucket
+}
+
 // trendSeries renders the trend across the effective range, keeping zero
 // buckets for quiet stretches instead of collapsing them.
-func trendSeries(buckets timebucket.Bucketing, from, to int64, trend map[int64]*TrendBucket) []TrendBucket {
+func trendSeries(params trendSeriesOptions) []TrendBucket {
+	buckets, from, to, trend := params.Buckets, params.From, params.To, params.Trend
+
 	out := []TrendBucket{}
 	for start, end := range buckets.Spans(from, to) {
 		bucket := TrendBucket{From: buckets.Format(start), To: buckets.Format(end)}

@@ -23,6 +23,7 @@ import (
 
 	"video-rename/internal/config"
 	"video-rename/internal/domain"
+	"video-rename/internal/secret"
 )
 
 // Client talks to llama-server. The zero value is unusable; construct it with New.
@@ -33,7 +34,7 @@ type Client struct {
 	omitTemperature bool
 	endpoint        string
 	model           string
-	apiKey          string
+	apiKey          secret.Value
 	temperature     float64
 	maxTokens       int
 	failureKeywords []string
@@ -87,7 +88,7 @@ func New(cfg *config.TaskConfig) *Client {
 func (c *Client) Close() { c.http.CloseIdleConnections() }
 
 func rejectRedirect(req *http.Request, via []*http.Request) error {
-	return fmt.Errorf("redirects are disabled: %s", req.URL)
+	return http.ErrUseLastResponse
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {
@@ -115,8 +116,8 @@ func (c *Client) Title(ctx context.Context, prompt string, frames []domain.Frame
 	// every error returned to the pipeline or console is redacted before it leaves the client.
 	defer func() {
 		if jobErr != nil {
-			jobErr.Message = safeDiagnostic(jobErr.Message, c.summaryLimit, c.apiKey, prompt)
-			jobErr.StderrTail = safeDiagnostic(jobErr.StderrTail, c.summaryLimit, c.apiKey, prompt)
+			jobErr.Message = safeDiagnostic(jobErr.Message, c.summaryLimit, c.apiKey.Reveal(), prompt)
+			jobErr.StderrTail = safeDiagnostic(jobErr.StderrTail, c.summaryLimit, c.apiKey.Reveal(), prompt)
 		}
 	}()
 	if len(frames) == 0 {
@@ -135,7 +136,7 @@ func (c *Client) Title(ctx context.Context, prompt string, frames []domain.Frame
 			title, verr := ValidateTitle(content, c.failureKeywords)
 			if verr != nil {
 				verr.HTTPStatus = 0
-				verr.RawRequest = diagnosticRequest(body, c.apiKey)
+				verr.RawRequest = diagnosticRequest(body, c.apiKey.Reveal())
 				verr.RawResponse = exchange.Response
 				return domain.TitleResult{Attempts: attempt, FramesSent: sent}, verr
 			}
@@ -207,7 +208,11 @@ func (c *Client) buildBody(prompt string, frames []domain.Frame) ([]byte, int, *
 					return nil, 0, &domain.JobError{Code: domain.CodeAPIResponseInvalid, Message: controlErr.Error()}
 				}
 				for k, v := range controls {
-					fields[k], _ = json.Marshal(v)
+					encoded, marshalErr := json.Marshal(v)
+					if marshalErr != nil {
+						return nil, 0, &domain.JobError{Code: domain.CodeAPIResponseInvalid, Message: marshalErr.Error()}
+					}
+					fields[k] = encoded
 				}
 				body, err = json.Marshal(fields)
 			}
@@ -293,8 +298,8 @@ type chatMessage struct {
 
 type contentPart struct {
 	Type     string    `json:"type"`
-	Text     string    `json:"text,omitempty"`
-	ImageURL *imageURL `json:"image_url,omitempty"`
+	Text     string    `json:"text,omitzero"`
+	ImageURL *imageURL `json:"image_url,omitzero"`
 }
 
 type imageURL struct {
@@ -323,12 +328,12 @@ func (c *Client) doOnce(ctx context.Context, body []byte, capture ...*domain.Mod
 	var raw []byte
 	defer func() {
 		if jobErr == nil && len(capture) > 0 {
-			capture[0].Request = diagnosticRequest(body, c.apiKey)
-			capture[0].Response = diagnosticBody(raw, c.apiKey)
+			capture[0].Request = diagnosticRequest(body, c.apiKey.Reveal())
+			capture[0].Response = diagnosticBody(raw, c.apiKey.Reveal())
 		}
 		if jobErr != nil {
-			jobErr.RawRequest = diagnosticRequest(body, c.apiKey)
-			jobErr.RawResponse = diagnosticBody(raw, c.apiKey)
+			jobErr.RawRequest = diagnosticRequest(body, c.apiKey.Reveal())
+			jobErr.RawResponse = diagnosticBody(raw, c.apiKey.Reveal())
 		}
 	}()
 
@@ -340,10 +345,10 @@ func (c *Client) doOnce(ctx context.Context, body []byte, capture ...*domain.Mod
 	if c.protocol == "anthropic" {
 		req.Header.Set("anthropic-version", "2023-06-01")
 		if c.apiKey != "" {
-			req.Header.Set("x-api-key", c.apiKey)
+			req.Header.Set("x-api-key", c.apiKey.Reveal())
 		}
 	} else if c.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		req.Header.Set("Authorization", "Bearer "+c.apiKey.Reveal())
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -355,7 +360,7 @@ func (c *Client) doOnce(ctx context.Context, body []byte, capture ...*domain.Mod
 	var rerr error
 	raw, rerr = io.ReadAll(limited)
 	if rerr != nil {
-		if ctx.Err() != nil || (resp.StatusCode >= 200 && resp.StatusCode <= 299) {
+		if ctx.Err() != nil || (resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices) {
 			return "", resp.StatusCode, transportError(ctx, rerr, resp.StatusCode)
 		}
 		// known authentication or request errors stay non-retryable even if the response body is cut off.
@@ -368,7 +373,7 @@ func (c *Client) doOnce(ctx context.Context, body []byte, capture ...*domain.Mod
 		return "", resp.StatusCode, &httpJobError{Code: domain.CodeAPIResponseTooLarge, Message: fmt.Sprintf("response body exceeds %d bytes", c.responseLimit), Details: map[string]any{"limit": c.responseLimit}}
 	}
 
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return c.errorForStatus(resp, raw)
 	}
 
@@ -382,32 +387,7 @@ func (c *Client) doOnce(ctx context.Context, body []byte, capture ...*domain.Mod
 		}
 		return text, code, nil
 	}
-	var cr chatResponse
-	if err := json.Unmarshal(raw, &cr); err != nil {
-		return "", resp.StatusCode, &httpJobError{Code: domain.CodeAPIResponseInvalid, Message: "response JSON or field types are invalid", Details: map[string]any{"reason": "json"}}
-	}
-	if len(cr.Choices) == 0 {
-		e := &httpJobError{Code: domain.CodeAPIResponseInvalid, Message: "choices is empty", Details: map[string]any{"reason": "empty_choices"}}
-		if cr.Error != nil && cr.Error.Message != "" {
-			e.Message += "; server error: " + cr.Error.Message
-			e.Details["detail"] = cr.Error.Message
-		}
-		return "", resp.StatusCode, e
-	}
-	choice := cr.Choices[0]
-	if len(choice.Message.ToolCalls) > 0 {
-		return "", resp.StatusCode, &httpJobError{Code: domain.CodeAPIResponseInvalid, Message: "response contains tool_calls, not a text title", Details: map[string]any{"reason": "tool_calls"}}
-	}
-	if choice.FinishReason == "length" {
-		return "", resp.StatusCode, &httpJobError{Code: domain.CodeModelOutputTruncated, Message: "model output was truncated; not used as a title"}
-	}
-	if strings.TrimSpace(choice.Message.Content) == "" {
-		return "", resp.StatusCode, &httpJobError{Code: domain.CodeAPIResponseInvalid, Message: "message.content is empty", Details: map[string]any{"reason": "empty_answer"}}
-	}
-	if _, validationErr := ValidateTitle(choice.Message.Content, c.failureKeywords); validationErr != nil {
-		return "", resp.StatusCode, &httpJobError{JobError: *validationErr}
-	}
-	return choice.Message.Content, resp.StatusCode, nil
+	return parseOpenAI(raw, resp.StatusCode, c.failureKeywords)
 }
 
 // errorForStatus maps a non-2xx response to a retryable or non-retryable error.
@@ -419,9 +399,9 @@ func (c *Client) errorForStatus(resp *http.Response, raw []byte) (string, int, *
 		StderrTail: summary,
 	}
 	switch resp.StatusCode {
-	case 408, 429, 500, 502, 503, 504:
+	case http.StatusRequestTimeout, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		e.Code = domain.CodeAPIRateLimited // 429; others are rewritten on final failure
-		if resp.StatusCode != 429 {
+		if resp.StatusCode != http.StatusTooManyRequests {
 			e.Code = domain.CodeAPIHTTPError
 		}
 		e.Message = fmt.Sprintf("HTTP %d (retryable)", resp.StatusCode)

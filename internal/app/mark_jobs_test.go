@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"fmt"
 	"log/slog"
@@ -41,7 +42,9 @@ func markTestApp(t *testing.T, files int) (*App, []int64) {
 	}
 	ids := make([]int64, 2)
 	for d := range 2 {
-		if err := a.DB.QueryRow("SELECT id FROM entries WHERE parent=1 AND name=?", fmt.Sprintf("dir-%d", d)).Scan(&ids[d]); err != nil {
+		if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+			return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE parent=1 AND name=?", fmt.Sprintf("dir-%d", d)).Scan(&ids[d])
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -134,7 +137,9 @@ func TestBackgroundMarksSurviveRequestCancellation(t *testing.T) {
 		t.Fatal(result)
 	}
 	var count int
-	if err := a.DB.QueryRow("SELECT count(*) FROM marks").Scan(&count); err != nil || count != 0 {
+	if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM marks").Scan(&count)
+	}); err != nil || count != 0 {
 		t.Fatal(count, err)
 	}
 }
@@ -221,7 +226,9 @@ func TestBackgroundMarksContinueBeyondResultCacheCapacity(t *testing.T) {
 		t.Fatalf("retired result status=%d: %s", w.Code, w.Body.String())
 	}
 	var count int
-	if err := a.DB.QueryRow("SELECT count(*) FROM marks").Scan(&count); err != nil || count != 0 {
+	if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM marks").Scan(&count)
+	}); err != nil || count != 0 {
 		t.Fatalf("old result changed durable state: count=%d err=%v", count, err)
 	}
 }
@@ -303,7 +310,9 @@ func TestBackgroundMarkResultExpiresWithoutRemovingMarks(t *testing.T) {
 		t.Fatal("expired result still retained")
 	}
 	var count int
-	if err := a.DB.QueryRow("SELECT count(*) FROM marks").Scan(&count); err != nil || count != 2 {
+	if err := a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM marks").Scan(&count)
+	}); err != nil || count != 2 {
 		t.Fatalf("expired result removed marks: count=%d err=%v", count, err)
 	}
 	markRequest(t, a, t.Context(), "after-expired-result", ids, false, 202)

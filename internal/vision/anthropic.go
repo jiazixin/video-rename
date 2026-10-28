@@ -9,8 +9,8 @@ import (
 
 type anthropicPart struct {
 	Type   string           `json:"type"`
-	Text   string           `json:"text,omitempty"`
-	Source *anthropicSource `json:"source,omitempty"`
+	Text   string           `json:"text,omitzero"`
+	Source *anthropicSource `json:"source,omitzero"`
 }
 type anthropicSource struct {
 	Type      string `json:"type"`

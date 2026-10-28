@@ -1,8 +1,9 @@
-//go:build scale_large
+//go:build scale && integration
 
 package library
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -142,7 +143,7 @@ func TestScaleLargeDirectoryScan(t *testing.T) {
 		{"invisible candidates", "SELECT count(*) FROM entries WHERE present=0 OR observed LIKE 'directory-scan:%'", 0},
 	} {
 		var count int
-		if err := l.DB.QueryRowContext(t.Context(), check.query).Scan(&count); err != nil {
+		if err := l.db.View(t.Context(), func(tx *sql.Tx) error { return tx.QueryRowContext(t.Context(), check.query).Scan(&count) }); err != nil {
 			t.Fatal(err)
 		}
 		if count != check.want {
@@ -154,21 +155,32 @@ func TestScaleLargeDirectoryScan(t *testing.T) {
 		t.Fatalf("scan stages were not removed: %v %v", stages, err)
 	}
 	var integrity string
-	if err := l.DB.QueryRowContext(t.Context(), "PRAGMA integrity_check").Scan(&integrity); err != nil {
+	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "PRAGMA integrity_check").Scan(&integrity)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if integrity != "ok" {
 		t.Fatalf("database integrity check: %s", integrity)
 	}
-	rows, err := l.DB.QueryContext(t.Context(), "PRAGMA foreign_key_check")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	if rows.Next() {
-		t.Fatal("database foreign key check found a violation")
-	}
-	if err := rows.Err(); err != nil {
+	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(t.Context(), "PRAGMA foreign_key_check")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := rows.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
+		if rows.Next() {
+			t.Fatal("database foreign key check found a violation")
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	t.Log("exact recursive counts, unchanged generations, candidate cleanup, database integrity, and foreign keys verified")

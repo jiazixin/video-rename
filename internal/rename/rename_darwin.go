@@ -1,8 +1,3 @@
-//go:build darwin
-
-// Package rename provides platform-specific atomic no-replace renames.
-// macOS uses renamex_np with RENAME_EXCL; when unsupported it reports rename_unsupported
-// and keeps the original file, never falling back to an overwriting operation or a cross-directory copy and delete.
 package rename
 
 import (

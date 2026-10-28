@@ -92,7 +92,7 @@ func TestNumberingRejectsMarkAddedAfterPreview(t *testing.T) {
 	if r := l.SetProcessed(t.Context(), []int64{e.ID}, true); r.Changed != 1 || r.Failed != 0 {
 		t.Fatal(r)
 	}
-	if _, err := l.ApplyNumbering(t.Context(), b.ID, nil); err == nil || !errors.Is(err, domain.Fail(domain.KindConflict, "numbering_item_marked", "")) {
+	if _, err := l.ApplyNumbering(t.Context(), b.ID, nil); err == nil || !errors.Is(err, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_item_marked", Message: ""})) {
 		t.Fatalf("old preview ignored new protection: %v", err)
 	}
 	for _, name := range []string{"photo.JPG", "song.MP3"} {

@@ -8,7 +8,8 @@ const entry = (id: number): Entry => ({
   name: `retry-${id}.png`,
   kind: 'file',
   size: 1,
-  mtime: '2026-10-01T00:00:00Z',
+  mtime: '2026-10-01T00:00:00.000Z',
+  etag: '"v1"',
   version: 1,
   processed: '',
   restore_id: 0,
@@ -63,12 +64,12 @@ async function openSingle(page: Page) {
 }
 
 for (const failure of ['断连', '502 JSON', '502 HTML', '409 HTML']) {
-  test(`首次提交${failure}后只查询原任务，不重新执行`, async ({ page }) => {
+  test(`首次提交${failure}后查询原任务，传输重试保持同一键`, async ({ page }) => {
     await setup(page)
     const posts: string[] = [],
       queries: string[] = []
     await page.route('**/api/entries/processed', async (route) => {
-      posts.push(route.request().postDataJSON().key)
+      posts.push(defined(route.request().headers()['idempotency-key']))
       if (failure === '断连') await route.abort('connectionreset')
       else if (failure === '502 JSON')
         await route.fulfill({
@@ -103,8 +104,9 @@ for (const failure of ['断连', '502 JSON', '502 HTML', '409 HTML']) {
     await expect(confirm(page)).toBeEnabled()
     await confirm(page).click()
     await expect(dialog(page)).toHaveCount(0)
-    expect(posts).toHaveLength(1)
-    expect(queries).toEqual(posts)
+    expect(posts).toHaveLength(failure === '断连' ? 3 : 1)
+    expect(new Set(posts).size).toBe(1)
+    expect(queries).toEqual([posts[0]])
     await expect(page.getByRole('status').filter({ hasText: '已标记 1 个文件' })).toBeVisible()
   })
 }
@@ -114,7 +116,7 @@ test('明确409拒绝后使用新请求键提交，不声称后台仍在执行',
   const posts: string[] = []
   let queries = 0
   await page.route('**/api/entries/processed', async (route) => {
-    const requestKey = route.request().postDataJSON().key
+    const requestKey = defined(route.request().headers()['idempotency-key'])
     posts.push(requestKey)
     if (posts.length === 1)
       await route.fulfill({
@@ -158,9 +160,10 @@ test('旧结果404后禁用原弹窗提交，关闭重新选择才创建新操�
   const posts: string[] = [],
     queries: string[] = []
   await page.route('**/api/entries/processed', async (route) => {
-    const requestKey = route.request().postDataJSON().key
+    const requestKey = defined(route.request().headers()['idempotency-key'])
     posts.push(requestKey)
-    if (posts.length === 1) await route.abort('connectionreset')
+    // Every transport retry of this logical request loses its response.
+    if (requestKey === posts[0]) await route.abort('connectionreset')
     else await route.fulfill({ json: result(requestKey) })
   })
   await page.route('**/api/entries/processed/status/*', async (route) => {
@@ -199,15 +202,16 @@ test('旧结果404后禁用原弹窗提交，关闭重新选择才创建新操�
         })
       )
   )
-  expect(posts).toHaveLength(1)
-  expect(queries).toEqual(posts)
+  expect(posts).toHaveLength(3)
+  expect(new Set(posts).size).toBe(1)
+  expect(queries).toEqual([posts[0]])
   // The footer button follows the header's icon button of the same name.
   await dialog(page).getByRole('button', { name: '关闭', exact: true }).last().click()
   await openSingle(page)
   await confirm(page).click()
   await expect(dialog(page)).toHaveCount(0)
-  expect(posts).toHaveLength(2)
-  expect(posts[0]).not.toBe(posts[1])
+  expect(posts).toHaveLength(4)
+  expect(posts[0]).not.toBe(posts[3])
 })
 
 for (const failure of ['断连', '409拒绝']) {
@@ -225,8 +229,8 @@ for (const failure of ['断连', '409拒绝']) {
       queries: string[] = []
     await page.route('**/api/entries/processed', async (route) => {
       const body = route.request().postDataJSON()
-      posts.push(body)
-      if (posts.length === 2) {
+      posts.push({ ...body, key: defined(route.request().headers()['idempotency-key']) })
+      if (posts.length === 2 || (failure === '断连' && posts.at(-1)?.key === posts[1]?.key)) {
         if (failure === '断连') await route.abort('connectionreset')
         else
           await route.fulfill({
@@ -239,7 +243,10 @@ for (const failure of ['断连', '409拒绝']) {
               }
             }
           })
-      } else await route.fulfill({ json: result(body.key, body.targets.length) })
+      } else
+        await route.fulfill({
+          json: result(defined(route.request().headers()['idempotency-key']), body.targets.length)
+        })
     })
     await page.route('**/api/entries/processed/status/*', async (route) => {
       const requestKey = decodeURIComponent(
@@ -262,8 +269,14 @@ for (const failure of ['断连', '409拒绝']) {
     expect(defined(posts[0]).targets).toEqual(entries.slice(0, 100).map((item) => item.id))
     expect(defined(posts[1]).targets).toEqual([defined(entries[100]).id])
     if (failure === '断连') {
-      expect(posts).toHaveLength(2)
-      expect(queries).toEqual(posts.map((post) => post.key))
+      expect(posts).toHaveLength(4)
+      expect(posts.slice(1).every((post) => post.key === posts[1]?.key)).toBe(true)
+      expect(
+        posts
+          .slice(1)
+          .every((post) => post.targets.length === 1 && post.targets[0] === entries[100]?.id)
+      ).toBe(true)
+      expect(queries).toEqual([defined(posts[0]).key, defined(posts[1]).key])
     } else {
       expect(posts).toHaveLength(3)
       expect(queries).toEqual([defined(posts[0]).key])
@@ -283,7 +296,7 @@ for (const interrupted of [false, true]) {
       posts++
       await route.fulfill({
         json: {
-          ...result(route.request().postDataJSON().key, 0),
+          ...result(defined(route.request().headers()['idempotency-key']), 0),
           interrupted,
           failed: interrupted ? 0 : 1,
           failures: interrupted ? [] : [{ name: 'retry-1000.png', message: '文件正在处理' }]

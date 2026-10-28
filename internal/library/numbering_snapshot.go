@@ -19,11 +19,11 @@ type numberingDirectorySnapshot struct {
 	Entries []numberingEntrySnapshot `json:"entries"`
 }
 type numberingEntrySnapshot struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Identity string `json:"identity"`
-	Size     int64  `json:"size"`
-	Mtime    string `json:"mtime"`
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	Identity   string `json:"identity"`
+	Size       int64  `json:"size"`
+	ModifiedNS int64  `json:"mtime_ns"`
 }
 
 func directoryFingerprint(path string) (string, error) {
@@ -31,7 +31,7 @@ func directoryFingerprint(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	snapshot := numberingDirectorySnapshot{Version: 3, Entries: make([]numberingEntrySnapshot, 0, len(entries))}
+	snapshot := numberingDirectorySnapshot{Version: 4, Entries: make([]numberingEntrySnapshot, 0, len(entries))}
 	hash := sha256.New()
 	for _, e := range entries {
 		info, err := e.Info()
@@ -46,9 +46,9 @@ func directoryFingerprint(path string) (string, error) {
 		// Descendant contents and permission bits are not part of this rename plan.
 		if !info.IsDir() {
 			entry.Size = info.Size()
-			entry.Mtime = stamp(snap)
+			entry.ModifiedNS = stamp(snap)
 		}
-		fmt.Fprintf(hash, "%q:%q:%q:%d:%q\n", entry.Name, entry.Type, entry.Identity, entry.Size, entry.Mtime)
+		fmt.Fprintf(hash, "%q:%q:%q:%d:%d\n", entry.Name, entry.Type, entry.Identity, entry.Size, entry.ModifiedNS)
 		snapshot.Entries = append(snapshot.Entries, entry)
 	}
 	snapshot.Hash = hex.EncodeToString(hash.Sum(nil))
@@ -58,7 +58,7 @@ func directoryFingerprint(path string) (string, error) {
 func decodeNumberingSnapshot(raw string) (numberingDirectorySnapshot, bool) {
 	var snapshot numberingDirectorySnapshot
 	err := json.Unmarshal([]byte(raw), &snapshot)
-	return snapshot, err == nil && snapshot.Version == 3 && snapshot.Hash != ""
+	return snapshot, err == nil && snapshot.Version == 4 && snapshot.Hash != ""
 }
 func numberingFingerprintLabel(raw string) string {
 	if snapshot, ok := decodeNumberingSnapshot(raw); ok {
@@ -97,12 +97,12 @@ func describeNumberingSnapshotDiff(detail *strings.Builder, before, after string
 		}
 		delete(byName, a.Name)
 		if a != b {
-			report("entry %q: kind %s -> %s; identity (dev:inode) %s -> %s; size %d -> %d; mtime %s -> %s\n", a.Name, a.Type, b.Type, a.Identity, b.Identity, a.Size, b.Size, a.Mtime, b.Mtime)
+			report("entry %q: kind %s -> %s; identity (dev:inode) %s -> %s; size %d -> %d; mtime_ns %d -> %d\n", a.Name, a.Type, b.Type, a.Identity, b.Identity, a.Size, b.Size, a.ModifiedNS, b.ModifiedNS)
 		}
 	}
 	for _, b := range current.Entries {
 		if _, exists := byName[b.Name]; exists {
-			report("new entry %q: kind=%s; identity=%s; size=%d; mtime=%s\n", b.Name, b.Type, b.Identity, b.Size, b.Mtime)
+			report("new entry %q: kind=%s; identity=%s; size=%d; mtime_ns=%d\n", b.Name, b.Type, b.Identity, b.Size, b.ModifiedNS)
 		}
 	}
 	fmt.Fprintf(detail, "%d entries differ (at most 20 shown); values are those read by the preview and by this check.\n", count)

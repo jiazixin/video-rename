@@ -27,7 +27,7 @@ test('运行记录和抽帧记录直接请求指定页，筛选重置页码', as
             action: 'manual',
             old_path: `第${logPage}页.mp4`,
             new_path: '新名称.mp4',
-            created: '2026-09-29T00:00:00Z'
+            created: '2026-09-29T00:00:00.000Z'
           }
         ],
         total: q.get('q') ? 1 : 501,
@@ -51,8 +51,8 @@ test('运行记录和抽帧记录直接请求指定页，筛选重置页码', as
           path: `${status}第${index}页.mp4`,
           source: 'manual',
           status,
-          started: '2026-09-29T00:00:00Z',
-          finished: '2026-09-29T00:00:01Z',
+          started: '2026-09-29T00:00:00.000Z',
+          finished: '2026-09-29T00:00:01.000Z',
           duration_ms: 1000,
           frames: 1
         }
@@ -100,7 +100,7 @@ test('批次与详情直接跳页，目录选择器跳页不提交外层表单',
     done: 205,
     skipped: 0,
     failed: 0,
-    created: '2026-09-29T00:00:00Z'
+    created: '2026-09-29T00:00:00.000Z'
   }
   await mockRunPages(
     page,

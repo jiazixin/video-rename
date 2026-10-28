@@ -4,15 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"video-rename/internal/config"
 	"video-rename/internal/domain"
+	"video-rename/internal/secret"
 	"video-rename/internal/storage"
 )
 
@@ -21,8 +24,12 @@ func TestSessionValidationWhileWriterBusy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	a := New(db, config.AuthConfig{Username: "admin", Password: "test-password"})
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	a := newAuth(t, db, config.AuthConfig{Username: "admin", Password: "test-password"})
 	freshExpiry := time.Now().Add(sessionLifetime).Unix()
 	for _, session := range []struct {
 		token, fingerprint string
@@ -32,19 +39,17 @@ func TestSessionValidationWhileWriterBusy(t *testing.T) {
 		{"expired", a.fingerprint, time.Now().Add(-time.Hour).Unix()},
 		{"changed-password", "other-fingerprint", freshExpiry},
 	} {
-		if _, err := db.Exec("INSERT INTO sessions VALUES(?,?,?)", hash(session.token), session.expiry, session.fingerprint); err != nil {
+		if _, err := storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(t.Context(), "INSERT INTO sessions VALUES(?,?,?)", hash(session.token), session.expiry, session.fingerprint)
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	tx, err := db.BeginTx(t.Context(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec("DELETE FROM sessions WHERE token=?", hash("valid")); err != nil {
-		t.Fatal(err)
-	}
-	handler := testHandler(a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	finish := holdAuthWrite(t, db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(t.Context(), "DELETE FROM sessions WHERE token=?", hash("valid"))
+		return err
+	})
+	handler := testHandler(t, a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
 	for _, tc := range []struct {
 		name, path, method, token, fetchSite string
 		status                               int
@@ -92,9 +97,7 @@ func TestSessionValidationWhileWriterBusy(t *testing.T) {
 			return
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
+	finish(true)
 	request := httptest.NewRequest("GET", "http://example.test/api/data", nil)
 	request.AddCookie(&http.Cookie{Name: "vr_session", Value: "valid"})
 	response := httptest.NewRecorder()
@@ -109,31 +112,25 @@ func TestSessionValidationReadWaitHonorsCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	a := New(db, config.AuthConfig{Username: "admin", Password: "test-password"})
-	if _, err := db.Exec("INSERT INTO sessions VALUES(?,?,?)", hash("valid"), time.Now().Add(sessionLifetime).Unix(), a.fingerprint); err != nil {
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	a := newAuth(t, db, config.AuthConfig{Username: "admin", Password: "test-password"})
+	if _, err := storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "INSERT INTO sessions VALUES(?,?,?)", hash("valid"), time.Now().Add(sessionLifetime).Unix(), a.fingerprint)
+	}); err != nil {
 		t.Fatal(err)
 	}
-	var held []*sql.Conn
-	defer func() {
-		for _, conn := range held {
-			conn.Close()
-		}
-	}()
-	for range db.Read().Stats().MaxOpenConnections {
-		conn, err := db.Read().Conn(t.Context())
-		if err != nil {
-			t.Fatal(err)
-		}
-		held = append(held, conn)
-	}
+	holdAuthReads(t, db)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	request := httptest.NewRequest("GET", "http://example.test/api/auth/session", nil).WithContext(ctx)
 	request.AddCookie(&http.Cookie{Name: "vr_session", Value: "valid"})
-	handler := testHandler(a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	handler := testHandler(t, a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
 	done := make(chan *httptest.ResponseRecorder, 1)
-	before := db.Read().Stats().WaitCount
+	before := db.PoolStats().Reads.WaitCount
 	go func() {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
@@ -143,7 +140,7 @@ func TestSessionValidationReadWaitHonorsCancellation(t *testing.T) {
 	defer poll.Stop()
 	wait := time.NewTimer(time.Second)
 	defer wait.Stop()
-	for db.Read().Stats().WaitCount == before {
+	for db.PoolStats().Reads.WaitCount == before {
 		select {
 		case response := <-done:
 			t.Fatalf("request returned before the read pool was available: %d", response.Code)
@@ -176,22 +173,24 @@ func TestSessionRenewalWhileWriterBusy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer db.Close()
-			a := New(db, config.AuthConfig{Username: "admin", Password: "test-password"})
+			t.Cleanup(func() {
+				if err := db.Close(); err != nil {
+					t.Error(err)
+				}
+			})
+			a := newAuth(t, db, config.AuthConfig{Username: "admin", Password: "test-password"})
 			token := secureSessionPrefix + "valid"
 			expiry := time.Now().Add(time.Hour).Unix()
-			if _, err := db.Exec("INSERT INTO sessions VALUES(?,?,?)", hash(token), expiry, a.fingerprint); err != nil {
+			if _, err := storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
+				return tx.ExecContext(t.Context(), "INSERT INTO sessions VALUES(?,?,?)", hash(token), expiry, a.fingerprint)
+			}); err != nil {
 				t.Fatal(err)
 			}
-			tx, err := db.BeginTx(t.Context(), nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer tx.Rollback()
-			if _, err := tx.Exec("UPDATE sessions SET expires=0 WHERE token=?", hash(token)); err != nil {
-				t.Fatal(err)
-			}
-			handler := testHandler(a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+			finish := holdAuthWrite(t, db, func(tx *sql.Tx) error {
+				_, err := tx.ExecContext(t.Context(), "UPDATE sessions SET expires=0 WHERE token=?", hash(token))
+				return err
+			})
+			handler := testHandler(t, a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
 			request := func(ctx context.Context) *http.Request {
 				r := httptest.NewRequest("GET", "http://example.test/api/auth/session", nil).WithContext(ctx)
 				r.AddCookie(&http.Cookie{Name: "vr_session", Value: token})
@@ -202,7 +201,7 @@ func TestSessionRenewalWhileWriterBusy(t *testing.T) {
 			pending := true
 			defer func() {
 				cancel()
-				_ = tx.Rollback()
+				finish(false)
 				if pending {
 					select {
 					case <-done:
@@ -211,7 +210,7 @@ func TestSessionRenewalWhileWriterBusy(t *testing.T) {
 					}
 				}
 			}()
-			before := db.Stats().WaitCount
+			before := db.PoolStats().Writes.WaitCount
 			go func() {
 				w := httptest.NewRecorder()
 				handler.ServeHTTP(w, request(ctx))
@@ -224,7 +223,7 @@ func TestSessionRenewalWhileWriterBusy(t *testing.T) {
 				deadline := time.NewTimer(time.Second)
 				defer deadline.Stop()
 				poll := time.Tick(time.Millisecond)
-				for db.Stats().WaitCount == before {
+				for db.PoolStats().Writes.WaitCount == before {
 					select {
 					case w := <-done:
 						pending = false
@@ -252,19 +251,21 @@ func TestSessionRenewalWhileWriterBusy(t *testing.T) {
 				t.Fatalf("busy renewal did not preserve committed session: %+v err=%v", session, err)
 			}
 			var storedExpiry int64
-			if err := db.Read().QueryRowContext(t.Context(), "SELECT expires FROM sessions WHERE token=?", hash(token)).Scan(&storedExpiry); err != nil || storedExpiry != expiry {
+			if err := db.View(t.Context(), func(tx *sql.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT expires FROM sessions WHERE token=?", hash(token)).Scan(&storedExpiry)
+			}); err != nil || storedExpiry != expiry {
 				t.Fatalf("failed renewal changed expiry: got=%d want=%d err=%v", storedExpiry, expiry, err)
 			}
-			if err := tx.Rollback(); err != nil {
-				t.Fatal(err)
-			}
+			finish(false)
 			response = httptest.NewRecorder()
 			handler.ServeHTTP(response, request(t.Context()))
 			cookies := response.Result().Cookies()
 			if response.Code != http.StatusOK || len(cookies) != 1 || cookies[0].Value != token || !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode || cookies[0].MaxAge != int(sessionLifetime/time.Second) {
 				t.Fatalf("retry did not renew the secure session: status=%d cookies=%v", response.Code, cookies)
 			}
-			if err := db.Read().QueryRowContext(t.Context(), "SELECT expires FROM sessions WHERE token=?", hash(token)).Scan(&storedExpiry); err != nil || storedExpiry < time.Now().Add(11*time.Hour).Unix() {
+			if err := db.View(t.Context(), func(tx *sql.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT expires FROM sessions WHERE token=?", hash(token)).Scan(&storedExpiry)
+			}); err != nil || storedExpiry < time.Now().Add(11*time.Hour).Unix() {
 				t.Fatalf("retry did not extend expiry: got=%d err=%v", storedExpiry, err)
 			}
 		})
@@ -276,9 +277,13 @@ func TestSessionCrossOriginAndLogout(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer db.Close()
-	a := New(db, config.AuthConfig{Username: "admin", Password: "test-password-123"})
-	h := testHandler(a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	a := newAuth(t, db, config.AuthConfig{Username: "admin", Password: "test-password-123"})
+	h := testHandler(t, a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
 	call := func(path, method, body string, c *http.Cookie, fetchSite, origin string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, "http://example.test"+path, strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
@@ -328,9 +333,13 @@ func TestSessionSlidingRenewal(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer db.Close()
-	a := New(db, config.AuthConfig{Username: "admin", Password: "test-password-123"})
-	h := testHandler(a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	a := newAuth(t, db, config.AuthConfig{Username: "admin", Password: "test-password-123"})
+	h := testHandler(t, a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
 	login := func() *http.Cookie {
 		r := httptest.NewRequest("POST", "http://example.test/api/auth/login", strings.NewReader(`{"username":"admin","password":"test-password-123"}`))
 		r.Header.Set("Content-Type", "application/json")
@@ -350,7 +359,9 @@ func TestSessionSlidingRenewal(t *testing.T) {
 	}
 	expires := func() int64 {
 		var expiry int64
-		if e := db.QueryRow("SELECT max(expires) FROM sessions").Scan(&expiry); e != nil {
+		if e := db.View(t.Context(), func(tx *sql.Tx) error {
+			return tx.QueryRowContext(t.Context(), "SELECT max(expires) FROM sessions").Scan(&expiry)
+		}); e != nil {
 			t.Fatal(e)
 		}
 		return expiry
@@ -370,7 +381,9 @@ func TestSessionSlidingRenewal(t *testing.T) {
 		}
 	}
 	// Past half-life the next request slides expiry forward and refreshes the cookie.
-	if _, e := db.Exec("UPDATE sessions SET expires=?", time.Now().Add(time.Hour).Unix()); e != nil {
+	if _, e := storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "UPDATE sessions SET expires=?", time.Now().Add(time.Hour).Unix())
+	}); e != nil {
 		t.Fatal(e)
 	}
 	w := get(cookie)
@@ -393,7 +406,9 @@ func TestSessionSlidingRenewal(t *testing.T) {
 		t.Fatal("renewal must re-issue cookie")
 	}
 	// Transient storage failures must not masquerade as logged-out (401).
-	db.Close()
+	if err := db.Close(); err != nil {
+		t.Error(err)
+	}
 	if w := get(cookie); w.Code != 500 {
 		t.Fatalf("storage failure should be 500, got %d", w.Code)
 	}
@@ -404,9 +419,13 @@ func TestLoginRateLimitCountsFailuresOnly(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer db.Close()
-	a := New(db, config.AuthConfig{Username: "admin", Password: "test-password-123"})
-	h := testHandler(a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	a := newAuth(t, db, config.AuthConfig{Username: "admin", Password: "test-password-123"})
+	h := testHandler(t, a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	login := func(user, pass string) int {
 		r := httptest.NewRequest("POST", "http://example.test/api/auth/login", strings.NewReader(`{"username":"`+user+`","password":"`+pass+`"}`))
 		r.Header.Set("Content-Type", "application/json")
@@ -417,17 +436,17 @@ func TestLoginRateLimitCountsFailuresOnly(t *testing.T) {
 	// successful logins do not count toward the rate limit: a valid user may log in repeatedly.
 	for i := range 12 {
 		if code := login("admin", "test-password-123"); code != 200 {
-			t.Fatalf("成功登录 #%d 不应被限流, got %d", i+1, code)
+			t.Fatalf("successful login #%d was rate limited: %d", i+1, code)
 		}
 	}
 	// only consecutive failures count: 10 failures trigger the limit.
 	for i := range 10 {
 		if code := login("admin", "wrong-password"); code != 401 {
-			t.Fatalf("失败登录 #%d 应为 401, got %d", i+1, code)
+			t.Fatalf("failed login #%d returned %d, want 401", i+1, code)
 		}
 	}
 	if code := login("admin", "test-password-123"); code != 429 {
-		t.Fatalf("达到失败上限后应为 429, got %d", code)
+		t.Fatalf("failure limit returned %d, want 429", code)
 	}
 }
 
@@ -445,9 +464,13 @@ func TestCookieSecuritySurvivesProxyRenewal(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer db.Close()
-			a := New(db, config.AuthConfig{Username: "admin", Password: "test-password"})
-			handler := testHandler(a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+			t.Cleanup(func() {
+				if err := db.Close(); err != nil {
+					t.Error(err)
+				}
+			})
+			a := newAuth(t, db, config.AuthConfig{Username: "admin", Password: "test-password"})
+			handler := testHandler(t, a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
 			login := httptest.NewRequest("POST", tc.url+"/api/auth/login", strings.NewReader(`{"username":"admin","password":"test-password"}`))
 			login.Header.Set("Content-Type", "application/json")
 			login.Header.Set("Origin", tc.origin)
@@ -462,7 +485,9 @@ func TestCookieSecuritySurvivesProxyRenewal(t *testing.T) {
 			if err := json.Unmarshal(response.Body.Bytes(), &session); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := db.Exec("UPDATE sessions SET expires=?", time.Now().Add(time.Hour).Unix()); err != nil {
+			if _, err := storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
+				return tx.ExecContext(t.Context(), "UPDATE sessions SET expires=?", time.Now().Add(time.Hour).Unix())
+			}); err != nil {
 				t.Fatal(err)
 			}
 			// The TLS proxy forwards this GET as HTTP, without an Origin header.
@@ -508,7 +533,14 @@ func TestCookieSecuritySurvivesProxyRenewal(t *testing.T) {
 // testHandler composes the session checks the way the app's router does:
 // cross-site writes are rejected, /api/auth/login, session and logout are
 // answered here, and other requests reach next only with a valid session.
-func testHandler(a *Auth, next http.Handler) http.Handler {
+func testHandler(t *testing.T, a *Auth, next http.Handler) http.Handler {
+	t.Helper()
+	writeJSON := func(w http.ResponseWriter, value any) {
+		t.Helper()
+		if err := json.MarshalWrite(w, value); err != nil {
+			t.Error(err)
+		}
+	}
 	writeErr := func(w http.ResponseWriter, err error) {
 		status, code := http.StatusInternalServerError, "internal"
 		if e, ok := domain.AsError(err); ok {
@@ -522,7 +554,7 @@ func testHandler(a *Auth, next http.Handler) http.Handler {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
-		_ = json.MarshalWrite(w, map[string]any{"error": map[string]string{"code": code}})
+		writeJSON(w, map[string]any{"error": map[string]string{"code": code}})
 	}
 	protection := http.NewCrossOriginProtection()
 	return protection.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -535,11 +567,11 @@ func testHandler(a *Auth, next http.Handler) http.Handler {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
-			if err := a.Login(w, r, input.Username, input.Password); err != nil {
+			if err := a.Login(w, r, Credentials{Username: input.Username, Password: secret.Value(input.Password)}); err != nil {
 				writeErr(w, err)
 				return
 			}
-			_ = json.MarshalWrite(w, map[string]string{"username": a.Username()})
+			writeJSON(w, map[string]string{"username": a.Username()})
 			return
 		}
 		if err := a.Authenticate(w, r); err != nil {
@@ -548,7 +580,7 @@ func testHandler(a *Auth, next http.Handler) http.Handler {
 		}
 		switch r.URL.Path {
 		case "/api/auth/session":
-			_ = json.MarshalWrite(w, map[string]string{"username": a.Username()})
+			writeJSON(w, map[string]string{"username": a.Username()})
 		case "/api/auth/logout":
 			if err := a.Logout(w, r); err != nil {
 				writeErr(w, err)
@@ -559,4 +591,72 @@ func testHandler(a *Auth, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		}
 	}))
+}
+
+func newAuth(t *testing.T, db *storage.Store, cfg config.AuthConfig) *Auth {
+	t.Helper()
+	a, err := New(t.Context(), db, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+func holdAuthWrite(t *testing.T, db *storage.Store, fn func(*sql.Tx) error) func(bool) {
+	t.Helper()
+	entered := make(chan error, 1)
+	release := make(chan bool, 1)
+	done := make(chan error, 1)
+	rollback := errors.New("test rollback")
+	go func() {
+		done <- db.Write(t.Context(), func(tx *sql.Tx) error {
+			err := fn(tx)
+			entered <- err
+			if err != nil {
+				return err
+			}
+			if <-release {
+				return nil
+			}
+			return rollback
+		})
+	}()
+	if err := <-entered; err != nil {
+		t.Fatal(err)
+	}
+	var once sync.Once
+	finish := func(commit bool) {
+		once.Do(func() {
+			release <- commit
+			if err := <-done; err != nil && !errors.Is(err, rollback) {
+				t.Error(err)
+			}
+		})
+	}
+	t.Cleanup(func() { finish(false) })
+	return finish
+}
+
+func holdAuthReads(t *testing.T, db *storage.Store) {
+	t.Helper()
+	count := db.PoolStats().Reads.MaxOpenConnections
+	entered := make(chan struct{}, count)
+	release := make(chan struct{})
+	done := make(chan error, count)
+	for range count {
+		go func() {
+			done <- db.View(t.Context(), func(*sql.Tx) error { entered <- struct{}{}; <-release; return nil })
+		}()
+	}
+	for range count {
+		<-entered
+	}
+	t.Cleanup(func() {
+		close(release)
+		for range count {
+			if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
+				t.Error(err)
+			}
+		}
+	})
 }

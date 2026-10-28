@@ -46,74 +46,71 @@ func historyScaleFixture(tb testing.TB) (*App, []historyScaleRecord) {
 			tb.Error(err)
 		}
 	})
-	tx, err := db.BeginTx(tb.Context(), nil)
-	if err != nil {
-		tb.Fatal(err)
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(tb.Context(), `INSERT INTO runs(id,source,targets,recursive,status,created,request_key,model_config_title,config_summary)
-		VALUES(1,'manual','[]',0,'completed','2026-10-04T00:00:00Z','history-scale','primary configuration','{"model":"primary-model"}')`); err != nil {
-		tb.Fatal(err)
-	}
-	prepare := func(query string) *sql.Stmt {
-		tb.Helper()
-		stmt, err := tx.PrepareContext(tb.Context(), query)
-		if err != nil {
-			tb.Fatal(err)
-		}
-		return stmt
-	}
-	entry := prepare(`INSERT INTO entries(id,name,kind,identity,size,mtime,observed)
-		VALUES(?,?,'file',?,0,'2026-10-04T00:00:00Z','2026-10-04T00:00:00Z')`)
-	defer entry.Close()
-	item := prepare(`INSERT INTO run_items(id,run,entry,identity,size,mtime,status,original_path)
-		VALUES(?,1,?,?,0,'2026-10-04T00:00:00Z','success',?)`)
-	defer item.Close()
-	attempt := prepare(`INSERT INTO model_attempts(item,attempt,model_config_id,model_config_title,model,fallback,started,duration_ms,status,message)
-		VALUES(?,?,?,?,?,?,'2026-10-04T00:00:00Z',10,?,'')`)
-	defer attempt.Close()
-	usage := prepare(`INSERT INTO token_usage_records(run,item,attempt,model_config_id,model_config_title,recorded_at,tokens,records,estimated_records)
-		VALUES(1,?,?,?,?,1791072000000,?,1,?)`)
-	defer usage.Close()
-	event := prepare(`INSERT INTO events(id,category,action,entry,run,old_path,new_path,created)
-		VALUES(?,'success','automatic',?,1,?,?,'2026-10-04T00:00:00Z')`)
-	defer event.Close()
-	exec := func(stmt *sql.Stmt, args ...any) {
-		tb.Helper()
-		if _, err := stmt.ExecContext(tb.Context(), args...); err != nil {
-			tb.Fatal(err)
-		}
-	}
 	expected := make([]historyScaleRecord, historyScaleRecords)
-	for i := range historyScaleRecords {
-		id := int64(i + 1)
-		name, identity := fmt.Sprintf("clip-%05d.mp4", id), fmt.Sprintf("file-%d", id)
-		fallback := (i+1)*600/historyScaleRecords != i*600/historyScaleRecords
-		estimated := i%7 == 0
-		primaryTokens := int64(100 + i%23)
-		exec(entry, id, name, identity)
-		exec(item, id, id, identity, name)
-		status := "success"
-		if fallback {
-			status = "failed"
+	if err := db.Write(tb.Context(), func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(tb.Context(), `INSERT INTO runs(id,source,targets,recursive,status,created,request_key,model_config_title,config_summary)
+		VALUES(1,'manual','[]',0,'completed','2026-10-04T00:00:00.000Z','history-scale','primary configuration','{"model":"primary-model"}')`); err != nil {
+			tb.Fatal(err)
 		}
-		exec(attempt, id, 1, 1, "primary configuration", "primary-model", false, status)
-		exec(usage, id, 1, 1, "primary configuration", primaryTokens, estimated)
-		row := historyScaleRecord{ID: id, Source: "primary", Model: "primary-model", Title: "primary configuration", Tokens: primaryTokens, TokenEstimated: estimated}
-		if fallback {
-			fallbackTokens := int64(200 + i%17)
-			exec(attempt, id, 2, 2, "fallback configuration", "fallback-model", true, "success")
-			exec(usage, id, 2, 2, "fallback configuration", fallbackTokens, false)
-			row.Source, row.Model, row.Title = "fallback", "fallback-model", "fallback configuration"
-			row.Tokens += fallbackTokens
+		prepare := func(query string) *sql.Stmt {
+			tb.Helper()
+			stmt, err := tx.PrepareContext(tb.Context(), query)
+			if err != nil {
+				tb.Fatal(err)
+			}
+			return stmt
 		}
-		exec(event, id, id, name, "renamed-"+name)
-		expected[historyScaleRecords-1-i] = row
-	}
-	if err := tx.Commit(); err != nil {
+		entry := prepare(`INSERT INTO entries(id,name,kind,identity,size,mtime_ns,observed)
+		VALUES(?,?,'file',?,0,'2026-10-04T00:00:00.000Z','2026-10-04T00:00:00.000Z')`)
+		defer entry.Close()
+		item := prepare(`INSERT INTO run_items(id,run,entry,identity,size,mtime_ns,status,original_path)
+		VALUES(?,1,?,?,0,'2026-10-04T00:00:00.000Z','success',?)`)
+		defer item.Close()
+		attempt := prepare(`INSERT INTO model_attempts(item,attempt,model_config_id,model_config_title,model,fallback,started,duration_ms,status,message)
+		VALUES(?,?,?,?,?,?,'2026-10-04T00:00:00.000Z',10,?,'')`)
+		defer attempt.Close()
+		usage := prepare(`INSERT INTO token_usage_records(run,item,attempt,model_config_id,model_config_title,recorded_at,tokens,records,estimated_records)
+		VALUES(1,?,?,?,?,1791072000000,?,1,?)`)
+		defer usage.Close()
+		event := prepare(`INSERT INTO events(id,category,action,entry,run,old_path,new_path,created)
+		VALUES(?,'success','automatic',?,1,?,?,'2026-10-04T00:00:00.000Z')`)
+		defer event.Close()
+		exec := func(stmt *sql.Stmt, args ...any) {
+			tb.Helper()
+			if _, err := stmt.ExecContext(tb.Context(), args...); err != nil {
+				tb.Fatal(err)
+			}
+		}
+		for i := range historyScaleRecords {
+			id := int64(i + 1)
+			name, identity := fmt.Sprintf("clip-%05d.mp4", id), fmt.Sprintf("file-%d", id)
+			fallback := (i+1)*600/historyScaleRecords != i*600/historyScaleRecords
+			estimated := i%7 == 0
+			primaryTokens := int64(100 + i%23)
+			exec(entry, id, name, identity)
+			exec(item, id, id, identity, name)
+			status := "success"
+			if fallback {
+				status = "failed"
+			}
+			exec(attempt, id, 1, 1, "primary configuration", "primary-model", false, status)
+			exec(usage, id, 1, 1, "primary configuration", primaryTokens, estimated)
+			row := historyScaleRecord{ID: id, Source: "primary", Model: "primary-model", Title: "primary configuration", Tokens: primaryTokens, TokenEstimated: estimated}
+			if fallback {
+				fallbackTokens := int64(200 + i%17)
+				exec(attempt, id, 2, 2, "fallback configuration", "fallback-model", true, "success")
+				exec(usage, id, 2, 2, "fallback configuration", fallbackTokens, false)
+				row.Source, row.Model, row.Title = "fallback", "fallback-model", "fallback configuration"
+				row.Tokens += fallbackTokens
+			}
+			exec(event, id, id, name, "renamed-"+name)
+			expected[historyScaleRecords-1-i] = row
+		}
+		return nil
+	}); err != nil {
 		tb.Fatal(err)
 	}
-	return &App{DB: db}, expected
+	return &App{db: db}, expected
 }
 
 func historyScaleURL(source string, page int) string {

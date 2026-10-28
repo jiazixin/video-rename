@@ -1,12 +1,14 @@
 package app
 
 import (
+	"database/sql"
 	"log/slog"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"video-rename/internal/config"
+	"video-rename/internal/storage"
 )
 
 func TestClearHistoryCategoryIsolation(t *testing.T) {
@@ -16,13 +18,19 @@ func TestClearHistoryCategoryIsolation(t *testing.T) {
 	}
 	defer shutdown(t, a)
 	for _, category := range []string{"success", "failure"} {
-		if _, err = a.DB.Exec("INSERT INTO events(category,action,message,created) VALUES(?,'manual','test','now')", category); err != nil {
+		if _, err = storage.WriteValue(t.Context(), a.db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(t.Context(), "INSERT INTO events(category,action,message,created) VALUES(?,'manual','test','2026-10-01T00:00:00.000Z')", category)
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	var success, failureID int64
-	a.DB.QueryRow("SELECT id FROM events WHERE category='success'").Scan(&success)
-	a.DB.QueryRow("SELECT id FROM events WHERE category='failure'").Scan(&failureID)
+	a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM events WHERE category='success'").Scan(&success)
+	})
+	a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM events WHERE category='failure'").Scan(&failureID)
+	})
 	request := func(body string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
 		a.clearHistory(w, jsonRequest("POST", "/api/logs/clear", strings.NewReader(body)))
@@ -32,7 +40,9 @@ func TestClearHistoryCategoryIsolation(t *testing.T) {
 		t.Fatal(w.Body.String())
 	}
 	var n int
-	a.DB.QueryRow("SELECT count(*) FROM events WHERE category='success'").Scan(&n)
+	a.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM events WHERE category='success'").Scan(&n)
+	})
 	if n != 1 {
 		t.Fatal("cleared other category")
 	}

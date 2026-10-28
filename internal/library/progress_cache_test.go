@@ -1,8 +1,12 @@
 package library
 
 import (
+	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
+
+	"video-rename/internal/storage"
 )
 
 func TestProgressCacheTracksCommittedFileAndTaskChanges(t *testing.T) {
@@ -25,17 +29,18 @@ func TestProgressCacheTracksCommittedFileAndTaskChanges(t *testing.T) {
 	if p := read(); p.Total != 1 || l.progressCache[1] != original {
 		t.Fatal("cache changed on stable read", p)
 	}
-	tx, err := l.DB.BeginTx(t.Context(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = tx.Exec("INSERT INTO marks(identity,size,mtime,source) VALUES(?,?,?,'marked')", e.Identity, e.Size, e.Mtime); err != nil {
-		t.Fatal(err)
-	}
-	if p := read(); p.Processed != 0 {
-		t.Fatal("uncommitted mark leaked", p)
-	}
-	if err = tx.Rollback(); err != nil {
+	rollback := errors.New("test rollback")
+	err := l.db.Write(t.Context(), func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(t.Context(), "INSERT INTO marks(identity,size,mtime_ns,source) VALUES(?,?,?,'marked')", e.Identity, e.Size, e.ModifiedNS); err != nil {
+			t.Fatal(err)
+		}
+		if p := read(); p.Processed != 0 {
+			t.Fatal("uncommitted mark leaked", p)
+		}
+
+		return rollback
+	})
+	if !errors.Is(err, rollback) {
 		t.Fatal(err)
 	}
 	if p := read(); p.Processed != 0 || l.progressCache[1] != original {
@@ -43,16 +48,16 @@ func TestProgressCacheTracksCommittedFileAndTaskChanges(t *testing.T) {
 	}
 	exec := func(query string, args ...any) {
 		t.Helper()
-		if _, err := l.DB.Exec(query, args...); err != nil {
+		if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) { return tx.ExecContext(t.Context(), query, args...) }); err != nil {
 			t.Fatal(err)
 		}
 	}
-	exec("INSERT INTO marks(identity,size,mtime,source) VALUES(?,?,?,'marked')", e.Identity, e.Size, e.Mtime)
+	exec("INSERT INTO marks(identity,size,mtime_ns,source) VALUES(?,?,?,'marked')", e.Identity, e.Size, e.ModifiedNS)
 	if p := read(); p.Processed != 1 {
 		t.Fatal(p)
 	}
 	exec("INSERT INTO runs(id,source,targets,recursive,status,created,request_key) VALUES(1,'manual','[]',0,'running','','progress-cache')")
-	exec("INSERT INTO run_items(run,entry,identity,size,mtime,status) VALUES(1,?,?,?,?,'running')", e.ID, e.Identity, e.Size, e.Mtime)
+	exec("INSERT INTO run_items(run,entry,identity,size,mtime_ns,status) VALUES(1,?,?,?,?,'running')", e.ID, e.Identity, e.Size, e.ModifiedNS)
 	if p := read(); p.Active != 1 {
 		t.Fatal(p)
 	}

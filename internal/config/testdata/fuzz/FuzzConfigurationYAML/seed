@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("port: 8790\nauth:\n  username: admin\n  password: fixture-password\n")

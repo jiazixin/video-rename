@@ -9,25 +9,28 @@
 | cmd/video-rename、internal/app | 命令行、构建身份、生命周期、路由和 HTTP 参数处理 |
 | internal/auth、config、storage | 会话与跨站校验、部署配置、SQLite、加密密钥和实例锁 |
 | internal/library、rename、naming、domain、discovery | 索引、文件身份、无覆盖移动、编号、删除及恢复 |
-| internal/jobs、scheduler、pipeline | 持久队列、动态并发、暂停/重试、Cron 和媒体处理链 |
+| internal/job、scheduler、pipeline | 持久队列、动态并发、暂停/重试、Cron 和媒体处理链 |
 | internal/libraryscan | 独立后台目录扫描、范围规范化、调度与停止 |
 | internal/media、framecache、sampling | ffprobe/FFmpeg、采样、截图租约与容量控制 |
-| internal/models、vision、prompts、systemsettings | 模型配置与协议、提示词及运行设置 |
-| internal/notifications、tokenusage、runstats、timebucket | 通知队列、请求账本、运行分析及两类分析共用的趋势分桶 |
+| internal/model、vision、prompt、systemsetting | 模型配置与协议、提示词及运行设置 |
+| internal/notification、tokenusage、runstat、timebucket | 通知队列、请求账本、运行分析及两类分析共用的趋势分桶 |
 | web/src | Vue 应用装配、业务页面、共享组件、技术模块及样式 |
 
-部署 Config 与处理 TaskConfig 分离，任务快照不包含登录、部署路径或监听设置。HTTP 入口只负责装配，领域行为留在所属包。Web 的 API、契约与标签位于 app；日期、大小与剪贴板位于 lib；业务状态靠近所属 features。
+部署 Config 与处理 TaskConfig 分离，任务快照不包含登录、部署路径或监听设置。HTTP 入口只负责装配与契约，列表查询归属记录领域；每个领域通过私有存储依赖访问数据库。Web 的 API、契约与标签位于 app；日期、大小与剪贴板位于 lib；业务状态靠近所属 features。
 
 ## 数据库与文件安全
 
-- `internal/storage/schema.sql` 是唯一建表来源，当前结构号 **20261027**。空数据库事务创建完整结构；不支持的旧结构拒绝打开，不迁移、不自动重建。实体 ID 使用 AUTOINCREMENT。
-- SQLite 使用 WAL、FULL 同步、单写连接和最多四个只读连接。读池设置 `mode=ro` 与 `query_only`；所有新连接启用外键和 5 秒 busy_timeout。分页计数与数据使用同一快照，避免持有读连接时嵌套占满读池。
+- `internal/storage/schema.sql` 是唯一建表来源，当前结构号 **20261028**。空数据库事务创建完整结构；不支持的旧结构拒绝打开，不迁移、不自动重建。实体 ID 使用 AUTOINCREMENT。
+- SQLite DSN 使用 WAL、FULL 同步、单写连接及 `_txlock=immediate`，最多四个只读连接。读池设置 `file:` 前缀、`mode=ro` 与 `query_only`；所有新连接启用外键和 5 秒 busy_timeout。连接不导出，Write/View 统一管理事务，CollectRows 统一处理重复的结果集消费、迭代和关闭错误。分页计数与数据使用同一快照，避免持有读连接时嵌套占满读池。
 - 数据库符号链接解析到真实路径后选择锁和密钥；多硬链接数据库拒绝打开。SQLite 不放在网络盘。密钥、数据库与辅助文件的权限有回归检查。
 - 请求读取及认证写入传播取消。有效会话续期最多等待写池 100 毫秒，失败不发新 Cookie；之后请求重试续期。登录失败计数与预算检查在同一锁内进行。
 - 文件操作逐层打开父目录并拒绝符号链接，检查设备/inode，文件还检查 size/mtime。Linux 使用 renameat2(RENAME_NOREPLACE)，macOS 使用 renameatx_np(RENAME_EXCL)，操作后同步目录并复核路径；prepared 写入后和移动后复核文件身份/大小/mtime，成功事务提交前再次核对，异常保留 prepared 并停止提交。
 - 启动校验解析缓存受管目录与媒体、配置和持久状态的真实路径关系，禁止把持久数据放进自动清理命名空间；配置文件符号链接也核对目标。
 - 条目终态与批次计数在同一事务内保存，持久化错误传播至工作池并停止派发。批次终态提交失败时报告失败；持续不可写则保留活动状态待重启恢复，并输出服务错误日志。
 - 改名先持久化 prepared 日志再移动；编号使用冻结预览和两阶段移动。恢复按实际位置和身份判定，证据不足进入 review；统计缓存不参与文件安全判断。
+- 文件指纹存储整数 `mtime_ns`，保留纳秒变化检测；接口展示与其他业务时间采用 `internal/timefmt` 的 UTC 固定毫秒格式。文件成功提交前的最终 stat/fstat 复核是已登记的窄范围事务例外，见双语 README；不在事务内遍历目录、读取文件内容或调用网络/进程。
+- 管理员验证使用独立随机盐及 Argon2id（19 MiB、2 轮、并行度 1），认证组件不持有密码明文或快速密码摘要；会话令牌只存 SHA-256，密码变更使会话指纹失效。登录速率预算在密码派生前检查。
+- POST 幂等结果持久化在 `request_results`，空响应也可重放；同键异请求拒绝，未完成预留不会因重启或过期自动重做文件操作。完整请求、保留容量与恢复语义见 [API](API.md)。
 
 ## 性能约束
 
@@ -39,9 +42,9 @@
 
 历史模型来源和 token 汇总按 entry/item 查找，相关测试检查 EXPLAIN QUERY PLAN。`sqlite_autoindex_token_usage_records_1` 对应 `(item,attempt)` 唯一约束，修改约束时同步指定该索引的查询和回归。外键反向、活动队列、日志排序、候选清理和分析时间均有索引验证。
 
-截图缓存以增量账目维护容量；设置读取原子统计快照，不等待截图校验/删除持有的工作锁。批次详情目录汇总覆盖整批，按提交时目录排序后分页；终态运行记录完成最后一次读取后停止轮询。处理中筛选读取 jobs 内存中的逐项阶段（`internal/jobs/live.go`），并在同一请求中返回最近结束的 20 项。目录页有交互时延后应用更新，保留选择、编辑与播放状态。
+截图缓存以增量账目维护容量；设置读取原子统计快照，不等待截图校验/删除持有的工作锁。批次详情目录汇总覆盖整批，按提交时目录排序后分页；终态运行记录完成最后一次读取后停止轮询。处理中筛选读取 job 内存中的逐项阶段（`internal/job/live.go`），并在同一请求中返回最近结束的 20 项。目录页有交互时延后应用更新，保留选择、编辑与播放状态。
 
-首次统计、精确总数、深 OFFSET、包含搜索及全历史分位数仍有随数据量增长的成本。提高队列容量不等于提高磁盘或模型吞吐；真实 NAS 延迟与并发解码内存需要单独测量。
+首次统计、精确总数、深 OFFSET、包含搜索及全历史分位数仍有随数据量增长的成本。编号提交前逐项复核完整文件身份，NAS 元数据延迟会延长这段最终写事务；提高队列容量不等于提高磁盘或模型吞吐，真实 NAS 延迟与并发解码内存需要单独测量。
 
 ## 本地开发与完整回归
 
@@ -55,18 +58,31 @@ npm --prefix web run typecheck
 npm --prefix web run test
 npm --prefix web run build
 go mod verify
+go mod tidy -diff
 go test -count=1 ./...
-go test -race -count=1 ./...
+CGO_ENABLED=1 go test -race -count=1 ./...
 go vet ./...
-go test -tags=integration -count=1 ./internal/media
+go vet -tags=integration,scale ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+go test -tags=integration -count=1 ./internal/media ./cmd/video-rename
 go build -o bin/video-rename ./cmd/video-rename
 npm --prefix web exec -- playwright install chromium
 npm --prefix web run test:e2e
 ```
 
-开发时先启动 Go 服务，再运行 `npm --prefix web run dev`，Vite 将 `/api` 代理到 127.0.0.1:8790。前端由 Prettier 管理格式，`check`/`build` 包含严格类型和未使用变量/参数检查。
+开发时先启动 Go 服务，再运行 `npm --prefix web run dev`，Vite 将 `/api` 代理到 127.0.0.1:8790。前端由 Prettier 管理格式，`typecheck` 单独执行严格类型和未使用变量/参数检查，`build` 仅执行 Vite 生产构建；CI 显式依次调用各检查。
 
 Go 测试需要临时目录和本地 HTTP 监听权限。浏览器串行使用隔离服务器 **18790**、临时数据库、合成媒体、真实 FFmpeg 和本地假模型；不要占用该端口或复用真实服务。截图和 trace 在被忽略的 `web/test-results/`。
+
+不可信输入的 Fuzz 种子与解析器同包，放在 `testdata/fuzz/`。CI 每类执行 10 秒，本地可延长；短时通过不代表穷尽输入空间：
+
+```bash
+go test ./internal/config -run '^$' -fuzz '^FuzzConfigurationYAML$' -fuzztime=15s -parallel=2
+go test ./internal/media -run '^$' -fuzz '^FuzzProbeJSON$' -fuzztime=15s -parallel=2
+go test ./internal/naming -run '^$' -fuzz '^FuzzCleanTitle$' -fuzztime=15s -parallel=2
+go test ./internal/vision -run '^$' -fuzz '^FuzzModelResponse$' -fuzztime=15s -parallel=2
+```
 
 覆盖率另行生成：
 
@@ -80,9 +96,9 @@ go tool cover -func=coverage/go.out
 
 ```bash
 # 30万索引、5万分页、2万标记/编号、提交、来源筛选、10万条目/请求统计
-go test -tags=scale -run '^TestScale' -count=1 -timeout=15m -v ./internal/library ./internal/jobs ./internal/app ./internal/runstats
+go test -tags=scale -run '^TestScale' -count=1 -timeout=15m -v ./internal/library ./internal/job ./internal/app ./internal/runstat
 # 50万真实临时文件标记，以及53万文件/111目录扫描；顺序执行
-go test -tags=scale_large -run '^TestScaleLarge' -count=1 -timeout=15m -v ./internal/library
+go test -tags=integration,scale -run '^TestScaleLarge' -count=1 -timeout=15m -v ./internal/library
 # 完整历史筛选接口基准（夹具生成不计时）
 go test -tags=scale -run '^$' -bench '^BenchmarkHistoryModelSource$' -benchtime=1x -count=1 -benchmem ./internal/app
 # 11000条缓存账目保留检查（不含真实媒体和磁盘删除）
@@ -95,20 +111,26 @@ go test -run '^$' -bench '^BenchmarkCacheSweepRetained$' -benchtime=1x -count=1 
 
 前端使用 Vite 8、plugin-vue 6、vue-tsc 3。TypeScript 固定 **6.0.3**：当前发布的 vue-tsc 3.3.12 实测无法加载 TypeScript 7.0.2 的 `typescript/lib/tsc`，不使用私有 API 补丁或关闭类型检查；更新类型工具后再验证 TypeScript 7。构建使用 `vite/client` 声明导入的样式类型。
 
-YAML 使用 YAML 团队维护的 `go.yaml.in/yaml/v3`，不再依赖已归档的 `gopkg.in/yaml.v3`。SQLite 升级时沿用其要求的 libc 版本，并重新执行索引、持久化、竞态和规模测试。cron v3.0.1 虽发布时间较早，仍是当前稳定版；发布时间不是单独替换依据。
+YAML 使用 YAML 团队维护的 `go.yaml.in/yaml/v3`，不再依赖已归档的 `gopkg.in/yaml.v3`。SQLite 升级时沿用其要求的 libc 版本，并重新执行索引、持久化、竞态和规模测试。
+
+2026-10-28 核对 `go list -m -json github.com/robfig/cron/v3@latest`，最新稳定版仍为 v3.0.1（2020-01-04）。[官方仓库](https://github.com/robfig/cron) 未归档，但默认分支最近提交仍是 [2021-01-06 的 bc59245](https://github.com/robfig/cron/commit/bc59245fe10efaed9d51b56900192527ed733435)，不能据此称为活跃维护。当前仅使用五段表达式解析与 Next 计算，调度与生命周期由本项目管理；保留此依赖并记录维护停滞风险，漏洞或时区语义缺陷是重新评估的触发条件。
+
+密码派生新增 `golang.org/x/crypto v0.58.0` 的 Argon2id 实现（Go 项目维护、BSD-3-Clause），避免自行实现密码散列。其依赖约束同步提升 x/sys 至 v0.49.0、x/text 至 v0.43.0；使用固定版本重新执行模块校验、跨平台构建与漏洞检查。
+
+当前 x/crypto 模块被 [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932) 标记的范围是已停止维护的 OpenPGP 包。本项目只导入 Argon2id 及其依赖，没有导入 OpenPGP；`govulncheck -show verbose` 应区分模块告警与实际导入包/可达符号结果，不能笼统写成整个依赖树零告警。
 
 ```bash
 npm --prefix web outdated
 npm --prefix web audit
 go list -m -u all
-go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 ```
 
 版本与安全检查需要联网，结果仅代表执行时的公告数据库。依据：[YAML 维护声明](https://github.com/yaml/go-yaml)、[Vite 支持范围](https://vite.dev/releases)、[Vue 类型工具](https://github.com/vuejs/language-tools/tree/master/packages/tsc)。
 
 Go 最低版本为 **1.27.3**。这是 1.27 系列的补丁升级，包含 crypto/x509 安全修复；部署时需要重新构建并替换旧二进制，单独修改 `go.mod` 不会更新已经运行的程序。版本背景见 [Go 发布记录](https://go.dev/doc/devel/release#go1.27.minor)。
 
-GitHub Actions 使用 Node.js **26**（2026-10-28 起为 LTS；24 已于 2026-10-20 进入维护期），并设置 `check-latest: true`，每次运行取该主版本最新补丁（如 2026-10-21 的 26.12.1 安全版本），不使用 runner 预装缓存中可能落后的版本。本地构建仍只要求 `web/package.json` 声明的 Node.js ≥ 22.12。依据：[Node.js 发布计划](https://github.com/nodejs/Release)、[setup-node check-latest](https://github.com/actions/setup-node#check-latest-version)。
+GitHub Actions 使用 Node.js **26**（2026-10-28 起为 LTS；24 已于 2026-10-20 进入维护期），并设置 `check-latest: true`，每次运行取该主版本最新补丁（如 2026-10-21 的 26.12.1 安全版本），不使用 runner 预装缓存中可能落后的版本。本地构建仍只要求 `web/package.json` 声明的 Node.js ≥ 26.0。依据：[Node.js 发布计划](https://github.com/nodejs/Release)、[setup-node check-latest](https://github.com/actions/setup-node#check-latest-version)。
 
 构建版本按以下优先级确定：有效的 `-ldflags '-X main.version=…'` 显式注入 > Go 构建信息中的主模块版本 > 12 位提交号 > `dev`。覆盖值和模块版本先去除首尾空白，空值、`dev`、`(devel)` 不覆盖可用信息。版本输出与启动日志保留可取得的提交号和 `modified` 标记；缺少 VCS 信息不代表已核验干净状态。运行时不调用 Git，`--version` 不读取配置、不打开业务数据库或启动服务。
 
@@ -144,7 +166,7 @@ Web 私有包不独立发布。数据库结构号、缓存命名空间与编号�
 
 CI 使用 GitHub Actions，配置只在 `.github/workflows/` 维护，步骤与上文原生命令一致，Action 均按提交固定并在注释中标明已核对的 tag：
 
-- `ci.yml`：推送 `main` 和 Pull Request 时运行。`web` 检查 Prettier 格式并执行含严格类型检查的构建；`go` 先构建 Web，再执行 `go mod verify`、gofmt、Linux 与 darwin/arm64 交叉 `go vet`、`go test -race`，以及安装 FFmpeg 后的 `-tags=integration` 媒体与构建版本测试；`e2e` 构建 `bin/video-rename` 后在 Chromium 中运行完整 Playwright，失败时上传 `web/test-results/`；`release-snapshot` 执行 `goreleaser check` 和快照构建。macOS 只做交叉 vet 与交叉编译，未在 CI 中实机运行。
+- `ci.yml`：推送 `main` 和 Pull Request 时运行。`web` 检查 Prettier 格式并执行含严格类型检查的构建；`go` 先构建 Web，再依次执行 `go mod verify`、`go mod tidy -diff`、gofmt、goimports、全部 8 个发布目标的 `go vet`、带标签 vet、staticcheck、`go test -race`、govulncheck，再运行四类输入解析的短时 Fuzz 和安装 FFmpeg 后的 `-tags=integration` 媒体与构建版本测试；`e2e` 构建 `bin/video-rename` 后在 Chromium 中运行完整 Playwright，失败时上传 `web/test-results/`；`release-snapshot` 执行 `goreleaser check` 和快照构建。CI 中 macOS 只做交叉 vet 与交叉编译，未在 CI 中实机运行。
 - `release.yml`：推送 `v主.次.修订` 或 `v主.次.修订-预发布` tag 时运行，不使用依赖或构建缓存。先构建一次并核对 `--version` 精确等于 `video-rename <tag> (revision=<12位提交号>)`，再由 GoReleaser 构建并上传 Release。
 
 [.goreleaser.yaml](../.goreleaser.yaml) 先执行 `npm --prefix web ci --ignore-scripts` 与构建，再以 `CGO_ENABLED=0 -trimpath` 构建 linux amd64/arm64/ppc64le/s390x/riscv64/loong64 与 darwin amd64/arm64；32 位目标无法编译。不注入 `-X main.version`，版本由 Go 从检出的 tag 写入。输出在被忽略的 `bin/release/`，避免根 `dist/` 让工作区变脏。归档附带 LICENSE、中英文 README、配置示例及配置、运行、模型三份文档，并生成 SHA-256 `checksums.txt`。本地预演：

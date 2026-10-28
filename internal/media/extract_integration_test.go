@@ -6,6 +6,7 @@
 package media
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,7 +22,7 @@ func lookTool(t *testing.T, name string) string {
 	t.Helper()
 	p, err := exec.LookPath(name)
 	if err != nil {
-		t.Skipf("缺少 %s,跳过集成测试", name)
+		t.Skipf("missing %s; skipping integration test", name)
 	}
 	return p
 }
@@ -35,8 +36,12 @@ func genVideo(t *testing.T, path, size string, d time.Duration, extra ...string)
 		"-pix_fmt", "yuv420p"}
 	args = append(args, extra...)
 	args = append(args, path)
-	if out, err := exec.Command(ff, args...).CombinedOutput(); err != nil {
-		t.Fatalf("生成测试视频失败: %v: %s", err, out)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	command := exec.CommandContext(ctx, ff, args...)
+	command.WaitDelay = 5 * time.Second
+	if out, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("generate test video failed: %v: %s", err, out)
 	}
 }
 
@@ -59,10 +64,10 @@ func TestIntegrationProbeAndExtractLandscape(t *testing.T) {
 		t.Fatal(jerr)
 	}
 	if meta.DisplayWidth != 640 || meta.DisplayHeight != 360 {
-		t.Fatalf("显示尺寸 = %dx%d", meta.DisplayWidth, meta.DisplayHeight)
+		t.Fatalf("display dimensions = %dx%d", meta.DisplayWidth, meta.DisplayHeight)
 	}
 	if meta.Duration != 5*time.Second {
-		t.Fatalf("生成的 5 秒视频探测时长 = %v", meta.Duration)
+		t.Fatalf("probed duration of the generated 5-second video = %v", meta.Duration)
 	}
 
 	s := NewSampler(loadDefaultSampling(t))
@@ -74,11 +79,11 @@ func TestIntegrationProbeAndExtractLandscape(t *testing.T) {
 	// seconds in the window after skipping the first and last 5 percent.
 	wantTimes := []time.Duration{812500 * time.Microsecond, 1937500 * time.Microsecond, 3062500 * time.Microsecond, 4187500 * time.Microsecond}
 	if plan.TargetN != 4 || plan.WindowStart != 250*time.Millisecond || plan.WindowLen != 4500*time.Millisecond || len(plan.Times) != len(wantTimes) {
-		t.Fatalf("5 秒视频应在 [0.25s, 4.75s] 窗口取 4 帧: %+v", plan)
+		t.Fatalf("want 4 frames in [0.25s, 4.75s] for a 5-second video: %+v", plan)
 	}
 	for i, at := range wantTimes {
 		if plan.Times[i] != at {
-			t.Errorf("采样点 %d = %v, 期望 %v", i, plan.Times[i], at)
+			t.Errorf("sampling point %d = %v, want %v", i, plan.Times[i], at)
 		}
 	}
 
@@ -89,15 +94,15 @@ func TestIntegrationProbeAndExtractLandscape(t *testing.T) {
 	}
 	defer os.RemoveAll(set.TempDir)
 	if len(set.Frames) != 4 {
-		t.Fatalf("应提取 4 帧: %d (failed=%+v warn=%v)", len(set.Frames), set.Failed, set.Warn)
+		t.Fatalf("want 4 extracted frames: %d (failed=%+v warn=%v)", len(set.Frames), set.Failed, set.Warn)
 	}
 	for i, fr := range set.Frames {
 		// 640x360 < 768: no upscaling
 		if fr.Width != 640 || fr.Height != 360 {
-			t.Errorf("帧 %d 尺寸 %dx%d, 期望 640x360(不放大)", i, fr.Width, fr.Height)
+			t.Errorf("frame %d dimensions %dx%d, want 640x360(no upscaling)", i, fr.Width, fr.Height)
 		}
 		if fr.Planned != wantTimes[i] || fr.Actual != wantTimes[i] {
-			t.Errorf("帧 %d 时间点 planned=%v actual=%v, 期望 %v", i, fr.Planned, fr.Actual, wantTimes[i])
+			t.Errorf("frame %d time point planned=%v actual=%v, want %v", i, fr.Planned, fr.Actual, wantTimes[i])
 		}
 	}
 }
@@ -115,7 +120,7 @@ func TestIntegrationExtractPortrait4K(t *testing.T) {
 		t.Fatal(jerr)
 	}
 	if meta.DisplayWidth != 2160 || meta.DisplayHeight != 3840 {
-		t.Fatalf("显示尺寸 = %dx%d", meta.DisplayWidth, meta.DisplayHeight)
+		t.Fatalf("display dimensions = %dx%d", meta.DisplayWidth, meta.DisplayHeight)
 	}
 
 	ex := &Extractor{FFmpegPath: lookTool(t, "ffmpeg"), Images: defaultImages()}
@@ -128,7 +133,7 @@ func TestIntegrationExtractPortrait4K(t *testing.T) {
 	defer os.RemoveAll(set.TempDir)
 	for i, fr := range set.Frames {
 		if fr.Width != 432 || fr.Height != 768 {
-			t.Errorf("竖屏帧 %d 应为 432x768, got %dx%d", i, fr.Width, fr.Height)
+			t.Errorf("portrait frame %d want 432x768, got %dx%d", i, fr.Width, fr.Height)
 		}
 	}
 }
@@ -147,10 +152,10 @@ func TestIntegrationExtractSAR(t *testing.T) {
 		t.Fatal(jerr)
 	}
 	if meta.SARNum != 2 || meta.SARDen != 1 {
-		t.Fatalf("SAR = %d:%d, 期望 2:1", meta.SARNum, meta.SARDen)
+		t.Fatalf("SAR = %d:%d, want 2:1", meta.SARNum, meta.SARDen)
 	}
 	if meta.DisplayWidth != 1280 || meta.DisplayHeight != 360 {
-		t.Fatalf("显示尺寸 = %dx%d, 期望 1280x360", meta.DisplayWidth, meta.DisplayHeight)
+		t.Fatalf("display dimensions = %dx%d, want 1280x360", meta.DisplayWidth, meta.DisplayHeight)
 	}
 
 	ex := &Extractor{FFmpegPath: lookTool(t, "ffmpeg"), Images: defaultImages()}
@@ -158,12 +163,12 @@ func TestIntegrationExtractSAR(t *testing.T) {
 	plan, _ := s.Plan(meta.Duration, st.Size)
 	set, jerr := ex.Extract(t.Context(), job, meta, plan)
 	if jerr != nil {
-		t.Fatalf("SAR 提取失败: %v (meta=%+v)", jerr, meta)
+		t.Fatalf("SAR extraction failed: %v (meta=%+v)", jerr, meta)
 	}
 	defer os.RemoveAll(set.TempDir)
 	for i, fr := range set.Frames {
 		if fr.Width != 768 || fr.Height != 216 {
-			t.Errorf("SAR 帧 %d 应为 768x216, got %dx%d", i, fr.Width, fr.Height)
+			t.Errorf("SAR frame %d want 768x216, got %dx%d", i, fr.Width, fr.Height)
 		}
 	}
 }
@@ -183,16 +188,16 @@ func TestIntegrationVeryShortVideo(t *testing.T) {
 	s := NewSampler(loadDefaultSampling(t))
 	plan, _ := s.Plan(meta.Duration, st.Size)
 	if plan.TargetN != 1 {
-		t.Fatalf("0.4 秒视频应取 1 帧: %d", plan.TargetN)
+		t.Fatalf("0.4-second video should yield one frame: %d", plan.TargetN)
 	}
 	ex := &Extractor{FFmpegPath: lookTool(t, "ffmpeg"), Images: defaultImages()}
 	set, jerr := ex.Extract(t.Context(), job, meta, plan)
 	if jerr != nil {
-		t.Fatalf("极短视频应至少一帧: %v", jerr)
+		t.Fatalf("short video should yield at least one frame: %v", jerr)
 	}
 	defer os.RemoveAll(set.TempDir)
 	if len(set.Frames) != 1 {
-		t.Errorf("帧数 = %d", len(set.Frames))
+		t.Errorf("frame count = %d", len(set.Frames))
 	}
 }
 
@@ -205,9 +210,9 @@ func TestIntegrationCorruptFile(t *testing.T) {
 	job := domain.VideoJob{Path: video, Snapshot: st}
 	_, jerr := prober.Probe(t.Context(), job)
 	if jerr == nil {
-		t.Fatal("损坏文件应探测失败")
+		t.Fatal("corrupt file should fail probing")
 	}
-	t.Logf("错误码: %s", jerr.Code)
+	t.Logf("error code: %s", jerr.Code)
 }
 
 func defaultImages() config.ImagesConfig {

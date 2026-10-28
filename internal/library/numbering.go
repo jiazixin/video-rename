@@ -3,6 +3,7 @@ package library
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -14,18 +15,18 @@ import (
 
 // NumberingItem is one file in a numbering plan.
 type NumberingItem struct {
-	Entry     int64  `json:"entry"`
-	Old       string `json:"old_name"`
-	New       string `json:"new_name"`
-	Version   int64  `json:"-"`
-	Identity  string `json:"-"`
-	Size      int64  `json:"-"`
-	Mtime     string `json:"-"`
-	Temp      string `json:"-"`
-	Current   string `json:"-"`
-	Pending   string `json:"-"`
-	Operation int64  `json:"-"`
-	UndoOf    int64  `json:"-"`
+	Entry      int64  `json:"entry"`
+	Old        string `json:"old_name"`
+	New        string `json:"new_name"`
+	Version    int64  `json:"-"`
+	Identity   string `json:"-"`
+	Size       int64  `json:"-"`
+	ModifiedNS int64  `json:"-"`
+	Temp       string `json:"-"`
+	Current    string `json:"-"`
+	Pending    string `json:"-"`
+	Operation  int64  `json:"-"`
+	UndoOf     int64  `json:"-"`
 }
 
 func numberingToken() string {
@@ -72,20 +73,24 @@ func numberingFingerprintFailure(path string, b Numbering, actual string) error 
 
 func (l *Library) checkNumberingAvailable(ctx context.Context, id int64) error {
 	var pending bool
-	if err := l.DB.Read().QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM image_numberings WHERE status IN ('running','rollback','review'))").Scan(&pending); err != nil {
+	if err := l.db.View(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM image_numberings WHERE status IN ('running','rollback','review'))").Scan(&pending)
+	}); err != nil {
 		return err
 	}
 	if !pending {
 		return nil
 	}
 	var n int
-	err := l.DB.Read().QueryRowContext(ctx, `WITH RECURSIVE descendants(id) AS (SELECT ? UNION ALL SELECT e.id FROM entries e JOIN descendants d ON e.parent=d.id WHERE e.present=1), ancestors(id,parent) AS (SELECT id,parent FROM entries WHERE id=? UNION ALL SELECT e.id,e.parent FROM entries e JOIN ancestors a ON e.id=a.parent)
+	err := l.db.View(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `WITH RECURSIVE descendants(id) AS (SELECT ? UNION ALL SELECT e.id FROM entries e JOIN descendants d ON e.parent=d.id WHERE e.present=1), ancestors(id,parent) AS (SELECT id,parent FROM entries WHERE id=? UNION ALL SELECT e.id,e.parent FROM entries e JOIN ancestors a ON e.id=a.parent)
  SELECT count(*) FROM image_numberings WHERE status IN ('running','rollback','review') AND (parent IN (SELECT id FROM descendants) OR parent IN (SELECT id FROM ancestors))`, id, id).Scan(&n)
+	})
 	if err != nil {
 		return err
 	}
 	if n > 0 {
-		return domain.Fail(domain.KindConflict, "numbering_pending", "directory has unfinished numbering; recover it from the numbering records")
+		return domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_pending", Message: "directory has unfinished numbering; recover it from the numbering records"})
 	}
 	return nil
 }
@@ -111,5 +116,5 @@ func numberingMatch(path string, i NumberingItem) bool {
 		return false
 	}
 	s, err := domain.SnapshotFromInfo(info)
-	return err == nil && Identity(s) == i.Identity && s.Size == i.Size && stamp(s) == i.Mtime
+	return err == nil && Identity(s) == i.Identity && s.Size == i.Size && stamp(s) == i.ModifiedNS
 }

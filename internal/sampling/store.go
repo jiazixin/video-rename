@@ -1,4 +1,3 @@
-// Package sampling persists the global frame settings used by new batches.
 package sampling
 
 import (
@@ -12,12 +11,14 @@ import (
 )
 
 // Store stores the global frame settings.
-type Store struct{ DB *storage.Store }
+type Store struct{ db *storage.Store }
 
 // Get returns the stored frame settings.
 func (s Store) Get(ctx context.Context) (config.FrameSettings, error) {
 	var raw string
-	err := s.DB.QueryRowContext(ctx, "SELECT settings FROM sampling_settings WHERE id=1").Scan(&raw)
+	err := s.db.View(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT settings FROM sampling_settings WHERE id=1").Scan(&raw)
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		value := config.DefaultFrameSettings()
 		return value, value.Validate()
@@ -46,6 +47,11 @@ func (s Store) Save(ctx context.Context, value config.FrameSettings) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.DB.ExecContext(ctx, "INSERT INTO sampling_settings(id,settings) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET settings=excluded.settings", string(raw))
+	_, err = storage.WriteValue(ctx, s.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(ctx, "INSERT INTO sampling_settings(id,settings) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET settings=excluded.settings", string(raw))
+	})
 	return err
 }
+
+// New creates the sampling store.
+func New(db *storage.Store) Store { return Store{db: db} }

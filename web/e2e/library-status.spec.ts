@@ -3,7 +3,14 @@ import { test, expect, type Page } from '@playwright/test'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-type Entry = { id: number; name: string; version: number; processed: string; restore_id: number }
+type Entry = {
+  id: number
+  name: string
+  version: number
+  etag: string
+  processed: string
+  restore_id: number
+}
 
 async function fixture(page: Page, name: string, files: string[], directories: string[] = []) {
   const { mediaPath } = JSON.parse(readFileSync('test-results/fixture.json', 'utf8'))
@@ -47,7 +54,8 @@ async function fixture(page: Page, name: string, files: string[], directories: s
     for (let offset = 0; offset < names.length; offset += 100) {
       const targets = names.slice(offset, offset + 100).map((file) => defined(entries.get(file)).id)
       const request = await page.request.post('/api/entries/processed', {
-        data: { targets, marked: true, key: `status-${id}-${offset}` }
+        headers: { 'Idempotency-Key': `status-${id}-${offset}` },
+        data: { targets, marked: true }
       })
       expect(request.ok()).toBe(true)
       await expect
@@ -66,7 +74,8 @@ async function fixture(page: Page, name: string, files: string[], directories: s
   async function rename(oldName: string, nextName: string) {
     const entry = defined(entries.get(oldName))
     const result = await page.request.post(`/api/entries/${entry.id}/rename`, {
-      data: { name: nextName, version: entry.version, key: `status-rename-${entry.id}` }
+      headers: { 'If-Match': entry.etag, 'Idempotency-Key': `status-rename-${entry.id}` },
+      data: { name: nextName }
     })
     expect(result.ok()).toBe(true)
     const current = (await (await page.request.get(`/api/entries/status?ids=${entry.id}`)).json())
@@ -172,7 +181,8 @@ test('处理状态表头按状态分组及自然名称双向排序，进入目�
     expect(
       (
         await page.request.post(`/api/entries/${nested.id}/rename`, {
-          data: { name: 'manual.mp4', version: nested.version, key: `nested-status-${nested.id}` }
+          headers: { 'If-Match': nested.etag, 'Idempotency-Key': `nested-status-${nested.id}` },
+          data: { name: 'manual.mp4' }
         })
       ).ok()
     ).toBe(true)
@@ -295,7 +305,8 @@ test('图片和音频一键编号预览遵循处理状态筛选，还原后的�
   expect(
     (
       await page.request.post(`/api/operations/${restored.restore_id}/restore`, {
-        data: { key: `status-restore-${restored.id}` }
+        headers: { 'Idempotency-Key': `status-restore-${restored.id}` },
+        data: {}
       })
     ).ok()
   ).toBe(true)
@@ -354,7 +365,8 @@ test('未处理隐藏全部处理目录，递归标记后即时移除目录并�
   expect(
     (
       await page.request.post('/api/entries/processed', {
-        data: { targets: ids, marked: true, key: `directory-status-seed-${setup.id}` }
+        headers: { 'Idempotency-Key': `directory-status-seed-${setup.id}` },
+        data: { targets: ids, marked: true }
       })
     ).ok()
   ).toBe(true)
@@ -430,7 +442,8 @@ for (const width of [1440, 390]) {
       )
     }
     const result = await page.request.post('/api/entries/processed', {
-      data: { targets, marked: true, key: `sort-directories-${setup.id}` }
+      headers: { 'Idempotency-Key': `sort-directories-${setup.id}` },
+      data: { targets, marked: true }
     })
     expect(result.ok()).toBe(true)
     await expect

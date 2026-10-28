@@ -2,11 +2,12 @@ import { defined } from './support'
 import { test, expect } from '@playwright/test'
 
 const longTitle = 'AbCd'.repeat(20)
-const created = '2026-10-01T00:00:00Z'
+const created = '2026-10-01T00:00:00.000Z'
 const prompt = {
   id: 100,
   title: '测试提示词',
   body: '测试正文',
+  etag: '"v1"',
   version: 1,
   created,
   updated: created
@@ -17,6 +18,7 @@ const model = {
   prompt_id: prompt.id,
   prompt_title: prompt.title,
   body: prompt.body,
+  etag: '"v1"',
   version: 1,
   created,
   updated: created,
@@ -49,6 +51,7 @@ const plan = {
   enabled: false,
   next: '',
   last: '',
+  etag: '"v1"',
   version: 1,
   model_config_id: model.id,
   task: 'rename'
@@ -81,13 +84,13 @@ for (const width of [320, 390, 1440]) {
     for (const item of [
       {
         kind: 'model',
-        hash: 'settings/models',
+        path: 'settings/models',
         button: `删除模型配置 ${longTitle}`,
         dialog: '删除模型配置'
       },
-      { kind: 'plan', hash: 'plans', button: `删除 ${longTitle}`, dialog: '删除运行计划' }
+      { kind: 'plan', path: 'plans', button: `删除 ${longTitle}`, dialog: '删除运行计划' }
     ]) {
-      await page.goto(`/#${item.hash}`)
+      await page.goto(`/${item.path}`)
       await page.getByRole('button', { name: item.button, exact: true }).click()
       const dialog = page.getByRole('dialog', { name: item.dialog, exact: true })
       await expect(dialog).toContainText(longTitle)

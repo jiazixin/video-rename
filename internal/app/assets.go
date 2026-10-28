@@ -39,6 +39,7 @@ func assetHandler() http.Handler {
 				return
 			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			// The response is committed; the HTTP server closes a disconnected client.
 			_, _ = w.Write(data)
 			return
 		}

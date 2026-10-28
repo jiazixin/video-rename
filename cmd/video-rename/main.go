@@ -8,9 +8,11 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"video-rename/internal/app"
 	"video-rename/internal/config"
+	"video-rename/internal/timefmt"
 )
 
 const (
@@ -55,15 +57,41 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "video-rename: config: %v\n", err)
 		return exitFailure
 	}
-	logger := newLogger(cfg.Log, stdout)
+	logger, closeLog, err := newLogger(cfg.Log, stdout)
+	if err != nil {
+		fmt.Fprintf(stderr, "video-rename: log: %v\n", err)
+		return exitFailure
+	}
+	defer func() {
+		if err := closeLog(); err != nil {
+			fmt.Fprintf(stderr, "video-rename: log: %v\n", err)
+		}
+	}()
+	serverBuild, err := applicationBuild(build)
+	if err != nil {
+		logger.Error("service_failed", "error", err)
+		return exitFailure
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	context.AfterFunc(ctx, stop) // a second signal terminates the process
 	logger.Info("service_starting", "version", build.String())
-	if err := app.Serve(ctx, cfg, logger, build.String()); err != nil {
+	if err := app.Serve(ctx, app.ServeOptions{Config: cfg, Logger: logger, Build: serverBuild}); err != nil {
 		logger.Error("service_failed", "error", err)
 		return exitFailure
 	}
 	logger.Info("service_stopped")
 	return exitOK
+}
+
+func applicationBuild(build buildInfo) (app.Build, error) {
+	result := app.Build{Version: build.Version, Revision: build.Revision, Modified: build.Modified}
+	if build.Time != "" {
+		at, err := time.Parse(time.RFC3339, build.Time)
+		if err != nil {
+			return app.Build{}, fmt.Errorf("parse build timestamp: %w", err)
+		}
+		result.Time = timefmt.Time(at)
+	}
+	return result, nil
 }

@@ -53,17 +53,9 @@ func (e *Error) Is(target error) bool {
 	return ok && t.Code == e.Code
 }
 
-// Fail returns an expected failure. keyValues are alternating detail keys and
-// values.
-func Fail(kind Kind, code, message string, keyValues ...any) *Error {
-	e := &Error{Kind: kind, Code: code, Message: message}
-	for i := 0; i+1 < len(keyValues); i += 2 {
-		if e.Details == nil {
-			e.Details = make(map[string]any, len(keyValues)/2)
-		}
-		e.Details[fmt.Sprint(keyValues[i])] = keyValues[i+1]
-	}
-	return e
+// Fail returns an expected failure with structured diagnostic details.
+func Fail(kind Kind, record Record) *Error {
+	return &Error{Kind: kind, Code: record.Code, Message: record.Message, Details: record.Details}
 }
 
 // Wrap returns a copy of e caused by err.
@@ -113,7 +105,7 @@ func Invalid(fields ...FieldError) *Error {
 	for i, f := range fields {
 		parts[i] = f.Path + " (" + f.Reason + ")"
 	}
-	return Fail(KindInvalid, CodeInvalidArgument, "invalid fields: "+strings.Join(parts, ", "), "fields", fields)
+	return Fail(KindInvalid, Record{Code: CodeInvalidArgument, Message: "invalid fields: " + strings.Join(parts, ", "), Details: map[string]any{"fields": fields}})
 }
 
 // InvalidField returns the invalid_argument failure for one field.
@@ -122,9 +114,9 @@ func InvalidField(path, reason string) *Error { return Invalid(FieldError{path, 
 // Record is the persisted form of an outcome: the code clients map to text,
 // an English message and the details the text needs.
 type Record struct {
-	Code    string         `json:"code,omitempty"`
-	Message string         `json:"message,omitempty"`
-	Details map[string]any `json:"details,omitempty"`
+	Code    string         `json:"code,omitzero"`
+	Message string         `json:"message,omitzero"`
+	Details map[string]any `json:"details,omitzero"`
 }
 
 // RecordOf converts err for persistence. Errors without a code become

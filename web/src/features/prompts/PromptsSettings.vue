@@ -45,7 +45,7 @@
     saving = ref(false),
     dialogError = ref(''),
     editId = ref(0),
-    editVersion = ref(0),
+    editETag = ref(''),
     edit = ref({ title: '', body: '' });
   const deleteTarget = ref<PromptProfile>(),
     deleteError = ref(''),
@@ -172,7 +172,7 @@
   }
   function open(p?: PromptProfile) {
     editId.value = p?.id || 0;
-    editVersion.value = p?.version || 0;
+    editETag.value = p?.etag || '';
     edit.value = { title: p?.title || '', body: p?.body || '' };
     dialogError.value = '';
     editing.value = true;
@@ -184,7 +184,8 @@
     try {
       await api<unknown>(editId.value ? `/prompts/${editId.value}` : '/prompts', {
         method: editId.value ? 'PATCH' : 'POST',
-        body: { ...edit.value, version: editVersion.value }
+        headers: editId.value ? { 'If-Match': editETag.value } : {},
+        body: edit.value
       });
       editing.value = false;
       await load(true);
@@ -201,9 +202,8 @@
     try {
       await api<unknown>(`/prompts/${deleteTarget.value.id}`, {
         method: 'DELETE',
-        body: {
-          version: deleteTarget.value.version
-        }
+        headers: { 'If-Match': deleteTarget.value.etag },
+        body: {}
       });
       deleteTarget.value = undefined;
       await load(true);

@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"video-rename/internal/config"
-	"video-rename/internal/systemsettings"
+	"video-rename/internal/systemsetting"
 )
 
 func TestSystemSettingsAPI(t *testing.T) {
@@ -49,12 +49,12 @@ func TestSystemSettingsAPI(t *testing.T) {
 		t.Fatal(w.Body.String())
 	}
 	var response struct {
-		Settings systemsettings.Settings `json:"settings"`
+		Settings systemsetting.Settings `json:"settings"`
 	}
 	if err = json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Settings != systemsettings.Default() {
+	if response.Settings != systemsetting.Default() {
 		t.Fatal(response)
 	}
 	if w = request("POST", "/api/system/cache/clear", `{"confirm":true}`, false); w.Code != 403 {
@@ -66,7 +66,7 @@ func TestSystemSettingsAPI(t *testing.T) {
 	if w = request("POST", "/api/system/cache/clear", `{"confirm":true}`, true); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	value := systemsettings.Default()
+	value := systemsetting.Default()
 	value.ExtractWorkers, value.CacheGB = 3, 2
 	value.RunningBatchLimit, value.WaitingBatchLimit = 64, 5000
 	raw, _ := json.Marshal(value)

@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,11 +18,12 @@ import (
 
 	"video-rename/internal/domain"
 	"video-rename/internal/storage"
+	"video-rename/internal/timefmt"
 )
 
 // Entry is one indexed file or directory.
 type Entry struct {
-	Progress   *DirectoryProgress `json:"progress,omitempty"`
+	Progress   *DirectoryProgress `json:"progress,omitzero"`
 	Contents   *DirectoryContents `json:"contents"`
 	TaskStatus string             `json:"task_status"`
 	ID         int64              `json:"id"`
@@ -31,17 +33,20 @@ type Entry struct {
 	Identity   string             `json:"-"`
 	Size       int64              `json:"size"`
 	RenamedAt  string             `json:"renamed_at"`
-	Mtime      string             `json:"mtime"`
+	ModifiedNS int64              `json:"-"`
 	Version    int64              `json:"version"`
 	Processed  string             `json:"processed"`
 	RestoreID  int64              `json:"restore_id"`
 }
 
-// Library maps real media entries and coordinates all file system changes.
+// Library coordinates filesystem changes. mu protects mutations and recovery;
+// refreshMu protects refresh/scanner lifecycles, and progressCacheMu protects
+// cached counts. indexEpoch is an atomic hint, never file identity evidence.
 type Library struct {
+	logger          *slog.Logger
 	progressCacheMu sync.Mutex
 	progressCache   map[int64]directDirectoryCache
-	DB              *storage.Store
+	db              *storage.Store
 	Root            string
 	mu              sync.Mutex
 	refreshMu       sync.Mutex
@@ -58,29 +63,38 @@ type Library struct {
 
 // Identity returns the device and inode identity of s.
 func Identity(s domain.Snapshot) string { return fmt.Sprintf("%d:%d", s.Dev, s.Ino) }
-func stamp(s domain.Snapshot) string    { return s.ModTime.UTC().Format(time.RFC3339Nano) }
+func stamp(s domain.Snapshot) int64     { return s.ModTime.UnixNano() }
 
 // New opens the library rooted at root.
-func New(ctx context.Context, db *storage.Store, root string) (*Library, error) {
+func New(ctx context.Context, db *storage.Store, root string, logger *slog.Logger) (*Library, error) {
+	if logger == nil {
+		return nil, errors.New("library logger is required")
+	}
 	snap, err := domain.StatSnapshot(root)
 	if err != nil {
 		return nil, err
 	}
 	var old, ident string
-	err = db.QueryRowContext(ctx, "SELECT root,identity FROM library WHERE id=1").Scan(&old, &ident)
+	err = db.View(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT root,identity FROM library WHERE id=1").Scan(&old, &ident)
+	})
 	if err == nil && (old != root || ident != Identity(snap)) {
 		return nil, errors.New("media root bound to the database changed; check the mount and configuration")
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	if _, err = db.ExecContext(ctx, "INSERT OR IGNORE INTO library VALUES(1,?,?)", root, Identity(snap)); err != nil {
+	if _, err = storage.WriteValue(ctx, db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(ctx, "INSERT OR IGNORE INTO library VALUES(1,?,?)", root, Identity(snap))
+	}); err != nil {
 		return nil, err
 	}
-	if _, err = db.ExecContext(ctx, "INSERT OR IGNORE INTO entries(id,parent,name,kind,identity,size,mtime,observed) VALUES(1,0,'','directory',?,?,?,?)", Identity(snap), snap.Size, stamp(snap), storage.Now()); err != nil {
+	if _, err = storage.WriteValue(ctx, db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(ctx, "INSERT OR IGNORE INTO entries(id,parent,name,kind,identity,size,mtime_ns,observed) VALUES(1,0,'','directory',?,?,?,?)", Identity(snap), snap.Size, stamp(snap), storage.Now())
+	}); err != nil {
 		return nil, err
 	}
-	l := &Library{DB: db, Root: root, refreshing: map[int64]context.CancelFunc{}, scanSlots: make(chan struct{}, 2)}
+	l := &Library{db: db, Root: root, logger: logger.With("component", "library"), refreshing: map[int64]context.CancelFunc{}, scanSlots: make(chan struct{}, 2)}
 	if err = l.recoverNumberings(ctx); err != nil {
 		return nil, err
 	}
@@ -104,6 +118,21 @@ func (l *Library) Get(ctx context.Context, id int64) (Entry, error) {
 
 // GetBatch reads live status in one snapshot and preserves the requested order.
 func (l *Library) GetBatch(ctx context.Context, ids []int64) ([]Entry, error) {
+	return storage.ReadValue(ctx, l.db, func(tx *sql.Tx) ([]Entry, error) { return getEntries(ctx, tx, ids) })
+}
+
+func getEntry(ctx context.Context, tx *sql.Tx, id int64) (Entry, error) {
+	entries, err := getEntries(ctx, tx, []int64{id})
+	if err != nil {
+		return Entry{}, err
+	}
+	if len(entries) == 0 {
+		return Entry{}, sql.ErrNoRows
+	}
+	return entries[0], nil
+}
+
+func getEntries(ctx context.Context, tx *sql.Tx, ids []int64) (entries []Entry, err error) {
 	out := []Entry{}
 	if len(ids) == 0 {
 		return out, ctx.Err()
@@ -112,7 +141,7 @@ func (l *Library) GetBatch(ctx context.Context, ids []int64) ([]Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := l.DB.Read().QueryContext(ctx, `SELECT e.id,e.parent,e.name,e.kind,e.identity,e.size,e.mtime,e.version,
+	rows, err := tx.QueryContext(ctx, `SELECT e.id,e.parent,e.name,e.kind,e.identity,e.size,e.mtime_ns,e.version,
 	 `+entryProcessedSQL+`,
  COALESCE((SELECT id FROM operations o WHERE o.entry=e.id AND o.status='committed' AND o.undone=0 AND o.undo_of=0 ORDER BY id DESC LIMIT 1),0)
 	 ,`+entryTaskStatusSQL+`
@@ -121,11 +150,11 @@ func (l *Library) GetBatch(ctx context.Context, ids []int64) ([]Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { err = errors.Join(err, rows.Close()) }()
 	found := make(map[int64]Entry, len(ids))
 	for rows.Next() {
 		var e Entry
-		if err := rows.Scan(&e.ID, &e.Parent, &e.Name, &e.Kind, &e.Identity, &e.Size, &e.Mtime, &e.Version, &e.Processed, &e.RestoreID, &e.TaskStatus, &e.RenamedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.Parent, &e.Name, &e.Kind, &e.Identity, &e.Size, &e.ModifiedNS, &e.Version, &e.Processed, &e.RestoreID, &e.TaskStatus, &e.RenamedAt); err != nil {
 			return nil, err
 		}
 		found[e.ID] = e
@@ -145,17 +174,21 @@ func (l *Library) GetBatch(ctx context.Context, ids []int64) ([]Entry, error) {
 // Workers and path validation do not need UI history or running-scope summaries.
 func (l *Library) IndexedEntry(ctx context.Context, id int64) (Entry, error) {
 	var e Entry
-	err := l.DB.Read().QueryRowContext(ctx, `SELECT e.id,e.parent,e.name,e.kind,e.identity,e.size,e.mtime,e.version,
- COALESCE((SELECT source FROM marks m WHERE m.identity=e.identity AND m.size=e.size AND m.mtime=e.mtime),'')
- FROM entries e WHERE e.id=? AND e.present=1`, id).Scan(&e.ID, &e.Parent, &e.Name, &e.Kind, &e.Identity, &e.Size, &e.Mtime, &e.Version, &e.Processed)
+	err := l.db.View(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT e.id,e.parent,e.name,e.kind,e.identity,e.size,e.mtime_ns,e.version,
+ COALESCE((SELECT source FROM marks m WHERE m.identity=e.identity AND m.size=e.size AND m.mtime_ns=e.mtime_ns),'')
+ FROM entries e WHERE e.id=? AND e.present=1`, id).Scan(&e.ID, &e.Parent, &e.Name, &e.Kind, &e.Identity, &e.Size, &e.ModifiedNS, &e.Version, &e.Processed)
+	})
 	return e, err
 }
 
 // indexedSnapshot omits processing state when only filesystem evidence is needed.
 func (l *Library) indexedSnapshot(ctx context.Context, id int64) (Entry, error) {
 	var e Entry
-	err := l.DB.Read().QueryRowContext(ctx, `SELECT id,parent,name,kind,identity,size,mtime,version
- FROM entries WHERE id=? AND present=1`, id).Scan(&e.ID, &e.Parent, &e.Name, &e.Kind, &e.Identity, &e.Size, &e.Mtime, &e.Version)
+	err := l.db.View(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT id,parent,name,kind,identity,size,mtime_ns,version
+ FROM entries WHERE id=? AND present=1`, id).Scan(&e.ID, &e.Parent, &e.Name, &e.Kind, &e.Identity, &e.Size, &e.ModifiedNS, &e.Version)
+	})
 	return e, err
 }
 
@@ -216,9 +249,9 @@ func (l *Library) pathForEntry(ctx context.Context, e Entry) (string, error) {
 			var before domain.Snapshot
 			_, parseErr := fmt.Sscanf(entry.Identity, "%d:%d", &before.Dev, &before.Ino)
 			before.Size = entry.Size
-			before.ModTime, _ = time.Parse(time.RFC3339Nano, entry.Mtime)
-			diagnostic := domain.SourceChangedError("file identity changed; refresh the directory", domain.StagePathIdentity, p, before, s)
-			diagnostic.ProcessingLog += fmt.Sprintf("entry: %d\nkind: %s\nindexed identity: %q\nidentity parse error: %v\nsize or mtime changes of a directory alone do not cause this identity error.\n", entry.ID, entry.Kind, entry.Identity, parseErr)
+			before.ModTime = time.Unix(0, entry.ModifiedNS)
+			diagnostic := domain.SourceChangedError(domain.SourceChange{Message: "file identity changed; refresh the directory", Stage: domain.StagePathIdentity, Path: p, Before: before, After: s})
+			diagnostic.ProcessingLog += fmt.Sprintf("entry: %d\nkind: %s\nindexed identity: %q\nidentity parse error: %v\nsize or mtime_ns changes of a directory alone do not cause this identity error.\n", entry.ID, entry.Kind, entry.Identity, parseErr)
 			return "", diagnostic
 		}
 	}
@@ -231,6 +264,7 @@ func (l *Library) Relative(ctx context.Context, id int64) string {
 	if e != nil {
 		return ""
 	}
+	// Path returned an absolute descendant of this absolute root.
 	r, _ := filepath.Rel(l.Root, p)
 	return r
 }
@@ -271,7 +305,9 @@ func (l *Library) StartRefresh(ctx context.Context, id int64) {
 		case <-ctx.Done():
 			return
 		}
-		_ = l.Refresh(ctx, id)
+		if err := l.Refresh(ctx, id); err != nil && !errors.Is(err, context.Canceled) {
+			l.logger.Error("directory_refresh_failed", "directory_id", id, "error", err)
+		}
 	})
 }
 
@@ -289,170 +325,204 @@ type Page struct {
 	Breadcrumbs []Entry       `json:"breadcrumbs"`
 }
 
+// ListOrderedOptions groups the inputs for ListOrdered.
+type ListOrderedOptions struct {
+	ID         int64
+	Offset     int
+	Limit      int
+	Generation int64
+	Query      string
+	Kind       string
+	Status     string
+	Force      bool
+	SortBy     string
+}
+
 // ListOrdered continues a cursor listing; a cursor from an older generation is rejected.
-func (l *Library) ListOrdered(ctx context.Context, id int64, offset, limit int, generation int64, q, kind, status string, force bool, sortBy string) (Page, error) {
-	return l.listOrdered(ctx, id, offset, limit, generation, q, kind, status, force, sortBy, 0)
+func (l *Library) ListOrdered(ctx context.Context, params ListOrderedOptions) (Page, error) {
+	id, offset, limit, generation, q, kind, status, force, sortBy := params.ID, params.Offset, params.Limit, params.Generation, params.Query, params.Kind, params.Status, params.Force, params.SortBy
+
+	return l.listOrdered(ctx, listOrderedOptions{ID: id, Offset: offset, Limit: limit, Generation: generation, Query: q, Kind: kind, Status: status, Force: force, SortBy: sortBy, PageNumber: 0})
+}
+
+// ListPageOptions groups the inputs for ListPage.
+type ListPageOptions struct {
+	ID     int64
+	Page   int
+	Limit  int
+	Query  string
+	Kind   string
+	Status string
+	SortBy string
 }
 
 // ListPage reads a fresh page without carrying a cursor from an older index.
 // Count and page boundaries come from one snapshot, even during a rescan.
-func (l *Library) ListPage(ctx context.Context, id int64, page, limit int, q, kind, status, sortBy string) (Page, error) {
-	return l.listOrdered(ctx, id, 0, limit, 0, q, kind, status, false, sortBy, max(1, page))
+func (l *Library) ListPage(ctx context.Context, params ListPageOptions) (Page, error) {
+	id, page, limit, q, kind, status, sortBy := params.ID, params.Page, params.Limit, params.Query, params.Kind, params.Status, params.SortBy
+
+	return l.listOrdered(ctx, listOrderedOptions{ID: id, Offset: 0, Limit: limit, Generation: 0, Query: q, Kind: kind, Status: status, Force: false, SortBy: sortBy, PageNumber: max(1, page)})
 }
 
-func (l *Library) listOrdered(ctx context.Context, id int64, offset, limit int, generation int64, q, kind, status string, force bool, sortBy string, pageNumber int) (Page, error) {
-	p := Page{Items: []Entry{}, Breadcrumbs: []Entry{}}
-	statusFilter, err := processingStatusFilter(status)
-	if err != nil {
-		return p, err
-	}
-	p.Directory, err = l.Get(ctx, id)
-	if err != nil {
-		return p, err
-	}
-	if p.Directory.Kind != "directory" {
-		return p, errNotDirectory
-	}
-	tx, err := l.DB.Read().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return p, err
-	}
-	defer tx.Rollback()
-	var refreshed sql.NullString
-	err = tx.QueryRowContext(ctx, "SELECT generation,refreshed,error FROM directory_state WHERE dir=?", id).Scan(&p.Generation, &refreshed, &p.Error)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return p, err
-	}
-	p.Refreshed = refreshed.String
-	at, _ := time.Parse(time.RFC3339Nano, p.Refreshed)
-	if force || time.Since(at) > 30*time.Second {
-		l.StartRefresh(ctx, id)
-	}
-	l.refreshMu.Lock()
-	p.Refreshing = l.refreshing[id] != nil || l.scanning[id]
-	l.refreshMu.Unlock()
-	if generation != 0 && p.Generation != generation {
-		return p, errDirectoryRefresh
-	}
-	if limit != 50 && limit != 100 && limit != 200 {
-		limit = 100
-	}
-	if offset < 0 {
-		offset = 0
-	}
+// listOrderedOptions groups the inputs for listOrdered.
+type listOrderedOptions struct {
+	ID         int64
+	Offset     int
+	Limit      int
+	Generation int64
+	Query      string
+	Kind       string
+	Status     string
+	Force      bool
+	SortBy     string
+	PageNumber int
+}
 
-	var anchorKind int
-	var anchorName string
-	var anchorValue any
-	var anchorID int64
-	value, sortBy := directoryOrder(sortBy)
-	queryPrefix := ""
-	queryArgs := []any{}
-	if sortBy == "status_asc" || sortBy == "status_desc" {
-		ranks, err := directoryStatusRanks(ctx, tx, id, p.Generation, q)
+func (l *Library) listOrdered(ctx context.Context, params listOrderedOptions) (Page, error) {
+	id, offset, limit, generation, q, kind, status, force, sortBy, pageNumber := params.ID, params.Offset, params.Limit, params.Generation, params.Query, params.Kind, params.Status, params.Force, params.SortBy, params.PageNumber
+
+	return storage.ReadValue(ctx, l.db, func(tx *sql.Tx) (Page, error) {
+		p := Page{Items: []Entry{}, Breadcrumbs: []Entry{}}
+		statusFilter, err := processingStatusFilter(status)
 		if err != nil {
 			return p, err
 		}
-		queryPrefix = `WITH directory_status_ranks AS MATERIALIZED (SELECT CAST(key AS INTEGER) AS status_entry,value AS rank FROM json_each(?)) `
-		queryArgs = append(queryArgs, ranks)
-		value = `CASE WHEN kind='directory' THEN COALESCE((SELECT rank FROM directory_status_ranks WHERE status_entry=directory_items.entry),0) ELSE ` + value + ` END`
-	}
-	if offset > 0 {
-		if err = tx.QueryRowContext(ctx, queryPrefix+"SELECT CASE WHEN kind='directory' THEN 0 ELSE 1 END,name,entry,"+value+" FROM directory_items WHERE dir=? AND generation=? AND entry=?", append(append([]any{}, queryArgs...), id, p.Generation, offset)...).Scan(&anchorKind, &anchorName, &anchorID, &anchorValue); err != nil {
+		p.Directory, err = getEntry(ctx, tx, id)
+		if err != nil {
+			return p, err
+		}
+		if p.Directory.Kind != "directory" {
+			return p, errNotDirectory
+		}
+		var refreshed sql.NullString
+		err = tx.QueryRowContext(ctx, "SELECT generation,refreshed,error FROM directory_state WHERE dir=?", id).Scan(&p.Generation, &refreshed, &p.Error)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return p, err
+		}
+		p.Refreshed = refreshed.String
+		// Missing or malformed freshness evidence deliberately forces a refresh.
+		at, _ := time.Parse(timefmt.Layout, p.Refreshed)
+		if force || time.Since(at) > 30*time.Second {
+			l.StartRefresh(ctx, id)
+		}
+		l.refreshMu.Lock()
+		p.Refreshing = l.refreshing[id] != nil || l.scanning[id]
+		l.refreshMu.Unlock()
+		if generation != 0 && p.Generation != generation {
 			return p, errDirectoryRefresh
 		}
-	}
-	filter := "(?='' OR kind=?)"
-	if kind == "video" || kind == "audio" || kind == "other" || kind == "image" {
-		videoSQL := `(lower(name) LIKE '%.mp4' OR lower(name) LIKE '%.m4v' OR lower(name) LIKE '%.mkv' OR lower(name) LIKE '%.mov' OR lower(name) LIKE '%.avi' OR lower(name) LIKE '%.webm' OR lower(name) LIKE '%.flv' OR lower(name) LIKE '%.wmv' OR lower(name) LIKE '%.mpg' OR lower(name) LIKE '%.mpeg' OR lower(name) LIKE '%.ts' OR lower(name) LIKE '%.m2ts' OR lower(name) LIKE '%.mts' OR lower(name) LIKE '%.3gp' OR lower(name) LIKE '%.ogv' OR lower(name) LIKE '%.rmvb' OR lower(name) LIKE '%.asf' OR lower(name) LIKE '%.vob')`
-		imageSQL := `(lower(name) LIKE '%.jpg' OR lower(name) LIKE '%.jpeg' OR lower(name) LIKE '%.png' OR lower(name) LIKE '%.gif' OR lower(name) LIKE '%.webp' OR lower(name) LIKE '%.avif' OR lower(name) LIKE '%.bmp')`
-		audioSQL := `(lower(name) LIKE '%.mp3' OR lower(name) LIKE '%.m4a' OR lower(name) LIKE '%.m4b' OR lower(name) LIKE '%.aac' OR lower(name) LIKE '%.flac' OR lower(name) LIKE '%.wav' OR lower(name) LIKE '%.wave' OR lower(name) LIKE '%.ogg' OR lower(name) LIKE '%.oga' OR lower(name) LIKE '%.opus' OR lower(name) LIKE '%.wma' OR lower(name) LIKE '%.aiff' OR lower(name) LIKE '%.aif' OR lower(name) LIKE '%.caf')`
-		mediaSQL := videoSQL
-		if kind == "image" {
-			mediaSQL = imageSQL
+		if limit != 50 && limit != 100 && limit != 200 {
+			limit = 100
 		}
-		if kind == "audio" {
-			mediaSQL = audioSQL
+		if offset < 0 {
+			offset = 0
 		}
-		if kind == "other" {
-			mediaSQL = "NOT (" + videoSQL + " OR " + imageSQL + " OR " + audioSQL + ")"
-		}
-		filter = "(?<>'' AND ?<>'' AND kind='file' AND " + mediaSQL + ")"
-		if kind != "other" {
-			filter = "(" + filter + " OR kind='directory')"
-		}
-	}
-	filterArgs := []any{kind, kind}
-	if status != "" {
-		directoryIDs := "[]"
-		if kind == "" || kind == "directory" || kind == "video" || kind == "image" || kind == "audio" {
-			directoryIDs, err = directoryStatusIDs(ctx, tx, id, p.Generation, q, status)
+
+		var anchorKind int
+		var anchorName string
+		var anchorValue any
+		var anchorID int64
+		value, sortBy := directoryOrder(sortBy)
+		queryPrefix := ""
+		queryArgs := []any{}
+		if sortBy == "status_asc" || sortBy == "status_desc" {
+			ranks, err := directoryStatusRanks(ctx, directoryStatusRanksOptions{Tx: tx, ID: id, Generation: p.Generation, Query: q})
 			if err != nil {
 				return p, err
 			}
+			queryPrefix = `WITH directory_status_ranks AS MATERIALIZED (SELECT CAST(key AS INTEGER) AS status_entry,value AS rank FROM json_each(?)) `
+			queryArgs = append(queryArgs, ranks)
+			value = `CASE WHEN kind='directory' THEN COALESCE((SELECT rank FROM directory_status_ranks WHERE status_entry=directory_items.entry),0) ELSE ` + value + ` END`
 		}
-		filter = "(" + filter + ") AND ((kind='directory' AND entry IN (SELECT value FROM json_each(?))) OR (kind<>'directory' AND " + statusFilter + "))"
-		filterArgs = append(filterArgs, directoryIDs)
-	}
-	countArgs := append([]any{id, p.Generation, q}, filterArgs...)
-	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter, countArgs...).Scan(&p.Total); err != nil {
-		return p, err
-	}
-	order, comparison := "ASC", ">"
-	if strings.HasSuffix(sortBy, "_desc") {
-		order, comparison = "DESC", "<"
-	}
-	skip := 0
-	if pageNumber > 0 {
-		// Clamp before multiplying so arbitrary client page numbers cannot overflow.
-		p.Number = min(pageNumber, max(1, (p.Total+limit-1)/limit))
-		skip = (p.Number - 1) * limit
-	}
-	pageArgs := append(append([]any{}, queryArgs...), id, p.Generation, q)
-	pageArgs = append(pageArgs, filterArgs...)
-	pageArgs = append(pageArgs, offset, anchorKind, anchorKind, anchorValue, anchorName, anchorID, limit+1, skip)
-	rows, err := tx.QueryContext(ctx, queryPrefix+`SELECT entry FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter+` AND (?=0 OR CASE WHEN kind='directory' THEN 0 ELSE 1 END>? OR (CASE WHEN kind='directory' THEN 0 ELSE 1 END=? AND (`+value+`,name COLLATE NATURAL_NAME,entry)`+comparison+`(?,?,?))) ORDER BY CASE WHEN kind='directory' THEN 0 ELSE 1 END,`+value+` `+order+`,name COLLATE NATURAL_NAME `+order+`,entry `+order+` LIMIT ? OFFSET ?`, pageArgs...)
-	if err != nil {
-		return p, err
-	}
-	ids := []int64{}
-	for rows.Next() {
-		var eid int64
-		if err = rows.Scan(&eid); err != nil {
-			rows.Close()
+		if offset > 0 {
+			if err = tx.QueryRowContext(ctx, queryPrefix+"SELECT CASE WHEN kind='directory' THEN 0 ELSE 1 END,name,entry,"+value+" FROM directory_items WHERE dir=? AND generation=? AND entry=?", append(append([]any{}, queryArgs...), id, p.Generation, offset)...).Scan(&anchorKind, &anchorName, &anchorID, &anchorValue); err != nil {
+				return p, errDirectoryRefresh
+			}
+		}
+		filter := "(?='' OR kind=?)"
+		if kind == "video" || kind == "audio" || kind == "other" || kind == "image" {
+			videoSQL := `(lower(name) LIKE '%.mp4' OR lower(name) LIKE '%.m4v' OR lower(name) LIKE '%.mkv' OR lower(name) LIKE '%.mov' OR lower(name) LIKE '%.avi' OR lower(name) LIKE '%.webm' OR lower(name) LIKE '%.flv' OR lower(name) LIKE '%.wmv' OR lower(name) LIKE '%.mpg' OR lower(name) LIKE '%.mpeg' OR lower(name) LIKE '%.ts' OR lower(name) LIKE '%.m2ts' OR lower(name) LIKE '%.mts' OR lower(name) LIKE '%.3gp' OR lower(name) LIKE '%.ogv' OR lower(name) LIKE '%.rmvb' OR lower(name) LIKE '%.asf' OR lower(name) LIKE '%.vob')`
+			imageSQL := `(lower(name) LIKE '%.jpg' OR lower(name) LIKE '%.jpeg' OR lower(name) LIKE '%.png' OR lower(name) LIKE '%.gif' OR lower(name) LIKE '%.webp' OR lower(name) LIKE '%.avif' OR lower(name) LIKE '%.bmp')`
+			audioSQL := `(lower(name) LIKE '%.mp3' OR lower(name) LIKE '%.m4a' OR lower(name) LIKE '%.m4b' OR lower(name) LIKE '%.aac' OR lower(name) LIKE '%.flac' OR lower(name) LIKE '%.wav' OR lower(name) LIKE '%.wave' OR lower(name) LIKE '%.ogg' OR lower(name) LIKE '%.oga' OR lower(name) LIKE '%.opus' OR lower(name) LIKE '%.wma' OR lower(name) LIKE '%.aiff' OR lower(name) LIKE '%.aif' OR lower(name) LIKE '%.caf')`
+			mediaSQL := videoSQL
+			if kind == "image" {
+				mediaSQL = imageSQL
+			}
+			if kind == "audio" {
+				mediaSQL = audioSQL
+			}
+			if kind == "other" {
+				mediaSQL = "NOT (" + videoSQL + " OR " + imageSQL + " OR " + audioSQL + ")"
+			}
+			filter = "(?<>'' AND ?<>'' AND kind='file' AND " + mediaSQL + ")"
+			if kind != "other" {
+				filter = "(" + filter + " OR kind='directory')"
+			}
+		}
+		filterArgs := []any{kind, kind}
+		if status != "" {
+			directoryIDs := "[]"
+			if kind == "" || kind == "directory" || kind == "video" || kind == "image" || kind == "audio" {
+				directoryIDs, err = directoryStatusIDs(ctx, directoryStatusIDsOptions{Tx: tx, ID: id, Generation: p.Generation, Query: q, Status: status})
+				if err != nil {
+					return p, err
+				}
+			}
+			filter = "(" + filter + ") AND ((kind='directory' AND entry IN (SELECT value FROM json_each(?))) OR (kind<>'directory' AND " + statusFilter + "))"
+			filterArgs = append(filterArgs, directoryIDs)
+		}
+		countArgs := append([]any{id, p.Generation, q}, filterArgs...)
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter, countArgs...).Scan(&p.Total); err != nil {
 			return p, err
 		}
-		ids = append(ids, eid)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return p, err
-	}
-	// Release the snapshot before Get uses the read pool for live entry status.
-	if err = tx.Commit(); err != nil {
-		return p, err
-	}
-	if len(ids) > limit {
-		p.Next = int(ids[limit-1])
-		ids = ids[:limit]
-	}
-	p.Items, err = l.GetBatch(ctx, ids)
-	if err != nil {
-		return p, err
-	}
-	for cur := id; cur > 0 && len(p.Breadcrumbs) <= 1024; {
-		e, er := l.Get(ctx, cur)
-		if er != nil {
-			if ctx.Err() != nil {
-				return p, ctx.Err()
-			}
-			break
+		order, comparison := "ASC", ">"
+		if strings.HasSuffix(sortBy, "_desc") {
+			order, comparison = "DESC", "<"
 		}
-		p.Breadcrumbs = append([]Entry{e}, p.Breadcrumbs...)
-		cur = e.Parent
-	}
-	return p, nil
+		skip := 0
+		if pageNumber > 0 {
+			// Clamp before multiplying so arbitrary client page numbers cannot overflow.
+			p.Number = min(pageNumber, max(1, (p.Total+limit-1)/limit))
+			skip = (p.Number - 1) * limit
+		}
+		pageArgs := append(append([]any{}, queryArgs...), id, p.Generation, q)
+		pageArgs = append(pageArgs, filterArgs...)
+		pageArgs = append(pageArgs, offset, anchorKind, anchorKind, anchorValue, anchorName, anchorID, limit+1, skip)
+		rows, err := tx.QueryContext(ctx, queryPrefix+`SELECT entry FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter+` AND (?=0 OR CASE WHEN kind='directory' THEN 0 ELSE 1 END>? OR (CASE WHEN kind='directory' THEN 0 ELSE 1 END=? AND (`+value+`,name COLLATE NATURAL_NAME,entry)`+comparison+`(?,?,?))) ORDER BY CASE WHEN kind='directory' THEN 0 ELSE 1 END,`+value+` `+order+`,name COLLATE NATURAL_NAME `+order+`,entry `+order+` LIMIT ? OFFSET ?`, pageArgs...)
+		if err != nil {
+			return p, err
+		}
+		ids, err := storage.CollectRows(rows, func(rows *sql.Rows) (int64, error) {
+			var eid int64
+			err := rows.Scan(&eid)
+			return eid, err
+		})
+		if err != nil {
+			return p, err
+		}
+		// Entries and breadcrumbs use the same snapshot as the page boundaries.
+
+		if len(ids) > limit {
+			p.Next = int(ids[limit-1])
+			ids = ids[:limit]
+		}
+		p.Items, err = getEntries(ctx, tx, ids)
+		if err != nil {
+			return p, err
+		}
+		for cur := id; cur > 0 && len(p.Breadcrumbs) <= 1024; {
+			e, er := getEntry(ctx, tx, cur)
+			if er != nil {
+				if ctx.Err() != nil {
+					return p, ctx.Err()
+				}
+				break
+			}
+			p.Breadcrumbs = append([]Entry{e}, p.Breadcrumbs...)
+			cur = e.Parent
+		}
+		return p, nil
+	})
 }
 
 // Close cancels background refreshes and waits for them to finish.
@@ -474,7 +544,9 @@ func (l *Library) DisplayPath(ctx context.Context, id int64) string {
 	for i := 0; id > 1 && i < 1024; i++ {
 		var parent int64
 		var name string
-		if err := l.DB.Read().QueryRowContext(ctx, "SELECT parent,name FROM entries WHERE id=?", id).Scan(&parent, &name); err != nil {
+		if err := l.db.View(ctx, func(tx *sql.Tx) error {
+			return tx.QueryRowContext(ctx, "SELECT parent,name FROM entries WHERE id=?", id).Scan(&parent, &name)
+		}); err != nil {
 			return MissingDisplayPath
 		}
 		parts = append([]string{name}, parts...)
@@ -492,7 +564,7 @@ func directoryOrder(sortBy string) (string, string) {
 	case "size_asc", "size_desc":
 		value = "CASE WHEN kind='directory' THEN 0 ELSE size END"
 	case "mtime_asc", "mtime_desc":
-		value = "julianday(mtime)"
+		value = "mtime_ns"
 	case "renamed_asc", "renamed_desc":
 		value = "COALESCE((SELECT created FROM operations o WHERE o.entry=directory_items.entry AND o.status='committed' ORDER BY id DESC LIMIT 1),'')"
 	case "status_asc", "status_desc":

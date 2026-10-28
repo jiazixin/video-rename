@@ -108,11 +108,11 @@ func (c Config) validateFields() error {
 	if strings.TrimSpace(c.Auth.Username) == "" {
 		return fieldError("auth.username", "is required")
 	}
-	if strings.TrimSpace(c.Auth.Password) == "" {
+	if strings.TrimSpace(c.Auth.Password.Reveal()) == "" {
 		return fieldError("auth.password", "is required")
 	}
 	// configs/config.example.yaml ships this placeholder password.
-	if strings.Contains(c.Auth.Password, "请替换") {
+	if strings.Contains(c.Auth.Password.Reveal(), "请替换") {
 		return fieldError("auth.password", "must not be the example placeholder")
 	}
 	if strings.TrimSpace(c.Path) == "" {

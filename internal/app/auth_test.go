@@ -16,7 +16,7 @@ func TestServiceEndpointsAndStrictLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer shutdown(t, a)
-	a.version = "v1.0.0-test"
+	a.build.Version = "v1.0.0-test"
 	handler := a.Handler()
 	for _, tc := range []struct {
 		name, method, path, body, contentType string

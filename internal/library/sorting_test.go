@@ -1,11 +1,15 @@
 package library
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
+
+	"video-rename/internal/storage"
 )
 
 func TestNaturalSortingAcrossPages(t *testing.T) {
@@ -23,7 +27,7 @@ func TestNaturalSortingAcrossPages(t *testing.T) {
 		var generation int64
 		var files []string
 		for {
-			p, err := l.ListOrdered(t.Context(), 1, cursor, 50, generation, "", "", "", false, sortBy)
+			p, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: cursor, Limit: 50, Generation: generation, Query: "", Kind: "", Status: "", Force: false, SortBy: sortBy})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -66,14 +70,16 @@ func TestMetadataSortingAndRenameTime(t *testing.T) {
 	}
 	refresh(t, l, 1)
 	for i, name := range []string{"2.mp4", "10.mp4", "1.mp4"} {
-		_, err := l.DB.Exec("UPDATE directory_items SET size=?,mtime=? WHERE name=?", i+1, fmt.Sprintf("2026-09-%02dT00:00:00Z", i+1), name)
+		_, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(t.Context(), "UPDATE directory_items SET size=?,mtime_ns=? WHERE name=?", i+1, time.Date(2026, time.September, i+1, 0, 0, 0, 0, time.UTC).UnixNano(), name)
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
 	for _, field := range []string{"size", "mtime"} {
 		for _, direction := range []string{"asc", "desc"} {
-			p, err := l.ListOrdered(t.Context(), 1, 0, 50, 0, "", "", "", false, field+"_"+direction)
+			p, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 50, Generation: 0, Query: "", Kind: "", Status: "", Force: false, SortBy: field + "_" + direction})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -90,7 +96,7 @@ func TestMetadataSortingAndRenameTime(t *testing.T) {
 	if before.RenamedAt != "" {
 		t.Fatal("unexpected rename time")
 	}
-	op, err := l.Rename(t.Context(), before.ID, before.Version, "3.mp4", "sort-rename")
+	op, err := l.Rename(t.Context(), RenameRequest{ID: before.ID, Version: before.Version, Name: "3.mp4", Key: "sort-rename"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,10 +104,10 @@ func TestMetadataSortingAndRenameTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.RenamedAt != op.Created || after.Mtime != before.Mtime {
+	if after.RenamedAt != op.Created || after.ModifiedNS != before.ModifiedNS {
 		t.Fatalf("bad timestamps: %+v", after)
 	}
-	p, err := l.ListOrdered(t.Context(), 1, 0, 50, 0, "", "", "", false, "renamed_desc")
+	p, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 50, Generation: 0, Query: "", Kind: "", Status: "", Force: false, SortBy: "renamed_desc"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,14 +141,16 @@ func TestDirectoryStatusSorting(t *testing.T) {
 				setTestProcessingSource(t, l, nested.ID, "b.mp4", "automatic")
 			}
 			if group == 0 {
-				if _, err := l.DB.Exec(`INSERT INTO runs(source,targets,recursive,status,created,request_key) VALUES('manual',?,1,'running','now',?)`, fmt.Sprintf("[%d]", dir.ID), name); err != nil {
+				if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+					return tx.ExecContext(t.Context(), `INSERT INTO runs(source,targets,recursive,status,created,request_key) VALUES('manual',?,1,'running','2026-10-28T00:00:00.000Z',?)`, fmt.Sprintf("[%d]", dir.ID), name)
+				}); err != nil {
 					t.Fatal(err)
 				}
 			}
 		}
 	}
 	for _, direction := range []string{"asc", "desc"} {
-		p, err := l.ListPage(t.Context(), 1, 1, 50, "", "", "", "status_"+direction)
+		p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: 1, Limit: 50, Query: "", Kind: "", Status: "", SortBy: "status_" + direction})
 		if err != nil {
 			t.Fatal(err)
 		}

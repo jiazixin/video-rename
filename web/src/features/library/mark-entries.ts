@@ -1,4 +1,4 @@
-import { ref, type Ref } from 'vue'
+import { onScopeDispose, ref, type Ref } from 'vue'
 import { api, ApiError, newRequestKey } from '../../app/api'
 import { errorText } from '../../app/errors'
 import type { Entry, ServerRecord } from '../../app/contracts'
@@ -40,6 +40,28 @@ export function useMarkEntries({
   notify,
   disposed
 }: MarkOptions) {
+  const controller = new AbortController()
+  const signal = controller.signal
+  function stopped() {
+    return signal.aborted || disposed()
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let finishPoll: (() => void) | undefined
+  onScopeDispose(() => {
+    controller.abort()
+    clearTimeout(timer)
+    finishPoll?.()
+  })
+  function waitForPoll() {
+    return new Promise<void>((resolve) => {
+      finishPoll = resolve
+      timer = setTimeout(() => {
+        timer = undefined
+        finishPoll = undefined
+        resolve()
+      }, 1000)
+    })
+  }
   const marking = ref<Entry[]>([]),
     markValue = ref(true),
     markError = ref(''),
@@ -56,7 +78,7 @@ export function useMarkEntries({
     markKeys = []
   }
   async function submitMark() {
-    if (saving.value || markRetryUnavailable.value || !marking.value.length) return
+    if (stopped() || saving.value || markRetryUnavailable.value || !marking.value.length) return
     const entries = [...marking.value],
       markedValue = markValue.value
     beforeSubmit()
@@ -79,16 +101,18 @@ export function useMarkEntries({
         let result: MarkResult
         if (existingKey) {
           result = await api<MarkResult>(
-            `/entries/processed/status/${encodeURIComponent(requestKey)}`
+            `/entries/processed/status/${encodeURIComponent(requestKey)}`,
+            { signal }
           )
         } else {
           try {
             result = await api<MarkResult>('/entries/processed', {
               method: 'POST',
+              headers: { 'Idempotency-Key': requestKey },
+              signal,
               body: {
                 targets: entries.slice(i, i + 100).map((e) => e.id),
-                marked: markedValue,
-                key: requestKey
+                marked: markedValue
               }
             })
           } catch (e) {
@@ -101,15 +125,18 @@ export function useMarkEntries({
             throw e
           }
         }
+        if (stopped()) return
         while (result.status === 'running') {
           confirmed = changed + result.changed
           markProgress.value = `后台处理中：已变更 ${changed + result.changed} 个文件，未变更 ${unchanged + result.unchanged} 个，失败 ${failed + result.failed} 项…`
-          await new Promise((resolve) => setTimeout(resolve, 1000))
-          if (disposed()) return
+          await waitForPoll()
+          if (stopped()) return
           stage = 'query'
           result = await api<MarkResult>(
-            `/entries/processed/status/${encodeURIComponent(requestKey)}`
+            `/entries/processed/status/${encodeURIComponent(requestKey)}`,
+            { signal }
           )
+          if (stopped()) return
         }
         changed += result.changed
         unchanged += result.unchanged
@@ -138,6 +165,7 @@ export function useMarkEntries({
         ].join('\n')
       } else marking.value = []
     } catch (e) {
+      if (stopped()) return
       if (stage === 'query' && serverRejected(e) && e.status === 404) {
         markRetryUnavailable.value = true
         markError.value = `已确认变更 ${confirmed} 个文件；标记任务结果已不可查询（可能已回收、过期或服务重启）；已完成的标记会保留。请关闭弹窗，重新选择目标后再操作。`
@@ -152,7 +180,7 @@ export function useMarkEntries({
     } finally {
       markProgress.value = ''
       saving.value = false
-      await afterSubmit()
+      if (!stopped()) await afterSubmit()
     }
   }
   return { marking, markValue, markError, markProgress, markRetryUnavailable, openMark, submitMark }

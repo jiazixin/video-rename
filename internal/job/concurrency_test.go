@@ -1,0 +1,179 @@
+package job
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"video-rename/internal/config"
+	"video-rename/internal/domain"
+	"video-rename/internal/model"
+	"video-rename/internal/storage"
+)
+
+func TestRunningBatchConcurrencyChangesAndCancellation(t *testing.T) {
+	m, root := setup(t)
+	for i := range 8 {
+		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("%d.mp4", i)), []byte("video"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store := model.New(m.db)
+	profile, err := store.Get(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	save := func(workers int) {
+		t.Helper()
+		profile.Workers = workers
+		var err error
+		profile, err = store.Save(t.Context(), profile)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	save(1)
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "dynamic-workers"}, "manual", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan int, 8)
+	release := make(chan struct{})
+	m.analyzeTest = func(ctx context.Context, cfg *config.TaskConfig, j domain.VideoJob, _, _ string) (string, error) {
+		if cfg.Server.Model != "test-model" {
+			t.Error("request settings changed")
+		}
+		started <- cfg.Workers
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-release:
+			return "renamed-" + filepath.Base(j.Path), nil
+		}
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { defer close(done); m.Execute(ctx, id) }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("batch did not stop")
+		}
+	}()
+	next := func(want int) {
+		t.Helper()
+		select {
+		case got := <-started:
+			if got != want {
+				t.Fatalf("workers=%d, want %d", got, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("no task started")
+		}
+	}
+	noStart := func() {
+		t.Helper()
+		select {
+		case got := <-started:
+			t.Fatalf("unexpected dispatch with workers=%d", got)
+		case <-time.After(650 * time.Millisecond):
+		}
+	}
+	finishOne := func() {
+		t.Helper()
+		select {
+		case release <- struct{}{}:
+		case <-time.After(5 * time.Second):
+			t.Fatal("no task to release")
+		}
+	}
+	next(1)
+	// Increase while the first request is still blocked: no completion required.
+	profile.Model = "changed-model"
+	save(3)
+	next(3)
+	next(3)
+	save(1)
+	finishOne()
+	noStart()
+	finishOne()
+	noStart()
+	finishOne()
+	next(1)
+	// A new model request can start before the previous result commits. Wait for
+	// the three released files to commit before testing cancellation of the rest.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		run, err := m.Get(t.Context(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if run.Done == 3 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("released requests did not commit: %+v", run)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := m.Cancel(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancel timed out")
+	}
+	select {
+	case <-started:
+		t.Fatal("queued task dispatched after cancellation")
+	default:
+	}
+	run, err := m.Get(t.Context(), id)
+	if err != nil || run.Status != "cancelled" || run.Done != 3 {
+		t.Fatalf("run=%+v err=%v", run, err)
+	}
+}
+
+func TestDeletedModelUsesBatchConcurrencySnapshot(t *testing.T) {
+	m, root := setup(t)
+	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := model.New(m.db)
+	profile, err := store.Get(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile.Workers = 3
+	profile, err = store.Save(t.Context(), profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "deleted-workers"}, "manual", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = storage.WriteValue(t.Context(), m.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "DELETE FROM model_configs WHERE id=?", profile.ID)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m.analyzeTest = func(_ context.Context, cfg *config.TaskConfig, _ domain.VideoJob, _, _ string) (string, error) {
+		if cfg.Workers != 3 {
+			t.Errorf("workers=%d", cfg.Workers)
+		}
+		return "renamed", nil
+	}
+	m.Execute(t.Context(), id)
+	run, err := m.Get(t.Context(), id)
+	if err != nil || run.Status != "completed" || run.Done != 1 {
+		t.Fatalf("run=%+v err=%v", run, err)
+	}
+}

@@ -172,7 +172,7 @@ function fixture() {
 
 test('默认打开模型用量并可从侧栏切换运行分析', async ({ page }) => {
   await login(page)
-  await page.goto('/#usage')
+  await page.goto('/usage')
   await expect(page.getByRole('heading', { name: '模型用量.' })).toBeVisible()
   await expect(
     page.getByRole('list', { name: '用量概览' }).getByText('累计 token', { exact: true })
@@ -180,7 +180,7 @@ test('默认打开模型用量并可从侧栏切换运行分析', async ({ page 
   await page.getByRole('button', { name: '运行分析', exact: true }).click()
   await expect(page.getByText('批次成功率', { exact: true })).toBeVisible()
   await expect(page.getByRole('list', { name: '运行指标' }).getByRole('listitem')).toHaveCount(10)
-  await page.goto('/#usage/analysis')
+  await page.goto('/usage/analysis')
   await expect(page.getByText('批次成功率', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '模型用量', exact: true }).click()
   await expect(
@@ -192,7 +192,7 @@ test('默认打开模型用量并可从侧栏切换运行分析', async ({ page 
 test('指标卡、趋势图与散点渲染', async ({ page }) => {
   await login(page)
   await page.route('**/api/runs/analytics*', (route) => route.fulfill({ json: fixture() }))
-  await page.goto('/#usage/analysis')
+  await page.goto('/usage/analysis')
   await expect(
     page.getByRole('list', { name: '运行指标' }).getByRole('listitem').first()
   ).toContainText('50.0%')
@@ -228,7 +228,7 @@ test('有数据明细窄屏标题完整且分页换行', async ({ page }) => {
   await login(page)
   await page.route('**/api/runs/analytics*', (route) => route.fulfill({ json: fixture() }))
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/#usage/analysis')
+  await page.goto('/usage/analysis')
   const title = page.getByRole('heading', { name: '批次明细', exact: true })
   const panel = page.getByRole('region', { name: '批次明细', exact: true })
   const navigation = panel.getByRole('navigation', { name: '分页导航' })
@@ -268,7 +268,7 @@ test('明细排序与筛选请求参数', async ({ page }) => {
       sorted.batches.items = [defined(data.batches.items[0])]
     await route.fulfill({ json: sorted })
   })
-  await page.goto('/#usage/analysis')
+  await page.goto('/usage/analysis')
   await expect(page.getByRole('cell', { name: 'vision-a', exact: true }).first()).toBeVisible()
   await expect(page.getByText('共 3 个批次 · 第 1 / 1 页', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '按时间排序' }).click()
@@ -361,7 +361,7 @@ test('空区间显示无数据而不是伪造零值', async ({ page }) => {
       }
     })
   )
-  await page.goto('/#usage/analysis')
+  await page.goto('/usage/analysis')
   await expect(page.getByText('区间内没有已结束的批次', { exact: true })).toBeVisible()
   await expect(page.getByText('还没有可统计的逐项耗时', { exact: true })).toBeVisible()
   await expect(page.getByText('区间内没有批次记录', { exact: true })).toBeVisible()
@@ -400,7 +400,7 @@ test('接口错误显示重试而不是空数据', async ({ page }) => {
       }
     })
   )
-  await page.goto('/#usage/analysis')
+  await page.goto('/usage/analysis')
   await expect(page.getByRole('alert')).toContainText('数据库暂时不可用')
   let recovered = false
   await page.unroute('**/api/runs/analytics*')
@@ -424,7 +424,7 @@ test('无效自定义区间会中止上一请求并保留校验提示', async ({
     await route.fulfill({ json: fixture() })
   })
   const started = page.waitForRequest((req) => req.url().includes('/api/runs/analytics'))
-  await page.goto('/#usage/analysis')
+  await page.goto('/usage/analysis')
   await started
   const aborted = page.waitForEvent('requestfailed', (req) =>
     req.url().includes('/api/runs/analytics')
@@ -452,7 +452,7 @@ test('非法 JSON 响应显示错误并可重试', async ({ page }) => {
         })
       : route.fulfill({ json: fixture() })
   )
-  await page.goto('/#usage/analysis')
+  await page.goto('/usage/analysis')
   await expect(page.getByRole('alert')).toContainText('服务响应异常，请重试')
   malformed = false
   await page.getByRole('button', { name: '重试', exact: true }).click()
@@ -512,7 +512,7 @@ test('抽帧明细说明不使用模型且仅抽帧时没有模型性能比较',
     }
     return route.fulfill({ json: response })
   })
-  await page.goto('/#usage/analysis')
+  await page.goto('/usage/analysis')
   const detail = page.getByRole('region', { name: '批次明细', exact: true })
   const comparison = page.getByRole('region', { name: '模型配置性能比较', exact: true })
   for (const id of [31, 7]) {

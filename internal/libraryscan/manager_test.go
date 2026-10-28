@@ -2,9 +2,11 @@ package libraryscan
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,10 +19,16 @@ import (
 	"video-rename/internal/domain"
 	"video-rename/internal/library"
 	"video-rename/internal/storage"
-	"video-rename/internal/systemsettings"
+	"video-rename/internal/systemsetting"
+	"video-rename/internal/timefmt"
 )
 
-func fixture(t *testing.T) (*Manager, *library.Library, string, systemsettings.Store) {
+type testLibrary struct {
+	*library.Library
+	db *storage.Store
+}
+
+func fixture(t *testing.T) (*Manager, *testLibrary, string, systemsetting.Store) {
 	t.Helper()
 	base := t.TempDir()
 	root := filepath.Join(base, "media")
@@ -31,15 +39,23 @@ func fixture(t *testing.T) (*Manager, *library.Library, string, systemsettings.S
 	if err != nil {
 		t.Fatal(err)
 	}
-	l, err := library.New(t.Context(), db, root)
+	l, err := library.New(t.Context(), db, root, slog.New(slog.DiscardHandler))
 	if err != nil {
-		db.Close()
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
 		t.Fatal(err)
 	}
-	settings := systemsettings.Store{DB: db}
+	settings := systemsetting.New(db)
 	m := New(l, settings)
-	t.Cleanup(func() { m.Close(); l.Close(); db.Close() })
-	return m, l, root, settings
+	t.Cleanup(func() {
+		m.Close()
+		l.Close()
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return m, &testLibrary{Library: l, db: db}, root, settings
 }
 
 func put(t *testing.T, path string) {
@@ -52,10 +68,12 @@ func put(t *testing.T, path string) {
 	}
 }
 
-func entryID(t *testing.T, l *library.Library, parent int64, name string) int64 {
+func entryID(t *testing.T, l *testLibrary, parent int64, name string) int64 {
 	t.Helper()
 	var id int64
-	if err := l.DB.Read().QueryRow("SELECT id FROM entries WHERE parent=? AND name=? AND present=1", parent, name).Scan(&id); err != nil {
+	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE parent=? AND name=? AND present=1", parent, name).Scan(&id)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	return id
@@ -70,7 +88,7 @@ func await(t *testing.T, predicate func() bool) {
 	for !predicate() {
 		select {
 		case <-deadline.C:
-			t.Fatal("等待扫描状态超时")
+			t.Fatal("timed out waiting for scan status")
 		case <-tick.C:
 		}
 	}
@@ -114,7 +132,9 @@ func TestRecursiveDiscoveryFindsNewDirectoriesAndFiles(t *testing.T) {
 	newDir := entryID(t, l, b, "new")
 	entryID(t, l, newDir, "three.mp4")
 	var runs int
-	if err := l.DB.Read().QueryRow("SELECT COUNT(*) FROM runs").Scan(&runs); err != nil || runs != 0 {
+	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM runs").Scan(&runs)
+	}); err != nil || runs != 0 {
 		t.Fatalf("discovery created processing runs=%d err=%v", runs, err)
 	}
 }
@@ -138,7 +158,9 @@ func TestRecursiveDiscoveryTraversesMultipleChildPages(t *testing.T) {
 		t.Fatalf("recursive child pages: %+v", s)
 	}
 	var files int
-	if err := l.DB.Read().QueryRow("SELECT count(*) FROM entries WHERE kind='file' AND present=1").Scan(&files); err != nil || files != directories {
+	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM entries WHERE kind='file' AND present=1").Scan(&files)
+	}); err != nil || files != directories {
 		t.Fatalf("recursive discovery skipped a child page: files=%d err=%v", files, err)
 	}
 	remaining, err := os.ReadDir(scratch)
@@ -212,7 +234,7 @@ func TestDirectoryScanChangedRetriesOnceAndCountsOnlySuccessfulScan(t *testing.T
 	m.scan = func(ctx context.Context, id int64) (library.ScanDirectoryResult, error) {
 		if calls.Add(1) == 1 {
 			return library.ScanDirectoryResult{Files: 100, Added: 100, Changed: 100, Removed: 100},
-				fmt.Errorf("首次属性读取不一致：%w", library.ErrDirectoryScanChanged)
+				fmt.Errorf("first metadata read changed: %w", library.ErrDirectoryScanChanged)
 		}
 		return l.ScanDirectory(ctx, id)
 	}
@@ -233,7 +255,7 @@ func TestDirectoryScanChangedPersistentFailureRetriesOnlyOnce(t *testing.T) {
 	m.scan = func(context.Context, int64) (library.ScanDirectoryResult, error) {
 		attempt := calls.Add(1)
 		return library.ScanDirectoryResult{Files: 100, Added: 100},
-			fmt.Errorf("第 %d 次属性读取不一致：%w", attempt, library.ErrDirectoryScanChanged)
+			fmt.Errorf("metadata read %d changed: %w", attempt, library.ErrDirectoryScanChanged)
 	}
 	if _, err := m.Start(t.Context(), []int64{1}, "manual"); err != nil {
 		t.Fatal(err)
@@ -242,7 +264,7 @@ func TestDirectoryScanChangedPersistentFailureRetriesOnlyOnce(t *testing.T) {
 	if calls.Load() != 2 || s.Status != "failed" || s.Directories != 0 || s.Files != 0 || s.Added != 0 || len(s.Errors) != 1 {
 		t.Fatalf("persistent inconsistency was not bounded/reported once: calls=%d status=%+v", calls.Load(), s)
 	}
-	if s.Errors[0].Error.Code != "scan_changed" || !strings.Contains(s.Errors[0].Error.Message, "第 1 次属性读取不一致") || !strings.Contains(s.Errors[0].Error.Message, "第 2 次属性读取不一致") {
+	if s.Errors[0].Error.Code != "scan_changed" || !strings.Contains(s.Errors[0].Error.Message, "metadata read 1 changed") || !strings.Contains(s.Errors[0].Error.Message, "metadata read 2 changed") {
 		t.Fatalf("retry failure lost an observation: %+v", s.Errors)
 	}
 }
@@ -274,7 +296,7 @@ func TestDirectoryScanChangedDoesNotRetryAfterCancellation(t *testing.T) {
 func TestDirectoryScanOrdinaryFailureDoesNotRetry(t *testing.T) {
 	m, _, _, _ := fixture(t)
 	var calls atomic.Int64
-	wantErr := errors.New("NAS 目录读取失败")
+	wantErr := errors.New("read NAS directory failed")
 	m.scan = func(context.Context, int64) (library.ScanDirectoryResult, error) {
 		calls.Add(1)
 		return library.ScanDirectoryResult{Files: 100}, wantErr
@@ -327,6 +349,57 @@ func TestCloseWaitsForInFlightFilesystemCallAndRejectsNewWork(t *testing.T) {
 	}
 }
 
+func TestRunWaitsForInFlightScanAfterCancellation(t *testing.T) {
+	m, _, _, _ := fixture(t)
+	entered := make(chan struct{})
+	cancelled := make(chan struct{})
+	released := make(chan struct{})
+	release := sync.OnceFunc(func() { close(released) })
+	m.scan = func(ctx context.Context, _ int64) (library.ScanDirectoryResult, error) {
+		close(entered)
+		<-ctx.Done()
+		close(cancelled)
+		<-released
+		return library.ScanDirectoryResult{}, ctx.Err()
+	}
+	if _, err := m.Start(t.Context(), []int64{1}, "manual"); err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- m.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		release()
+	})
+	await(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.loopStarted
+	})
+	cancel()
+	select {
+	case <-cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not cancel its in-flight scan")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("Run returned before its in-flight scan completed: %v", err)
+	default:
+	}
+	release()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not finish after its scan completed")
+	}
+}
+
 func TestDirectoryFailurePreservesOldIndexAndContinuesIndependentRange(t *testing.T) {
 	m, l, root, _ := fixture(t)
 	put(t, filepath.Join(root, "bad", "old.mp4"))
@@ -341,7 +414,7 @@ func TestDirectoryFailurePreservesOldIndexAndContinuesIndependentRange(t *testin
 	actual := m.library.ScanDirectory
 	m.scan = func(ctx context.Context, id int64) (library.ScanDirectoryResult, error) {
 		if id == bad {
-			return library.ScanDirectoryResult{}, errors.New("NAS 目录读取失败")
+			return library.ScanDirectoryResult{}, errors.New("read NAS directory failed")
 		}
 		return actual(ctx, id)
 	}
@@ -355,7 +428,9 @@ func TestDirectoryFailurePreservesOldIndexAndContinuesIndependentRange(t *testin
 	entryID(t, l, bad, "old.mp4")
 	entryID(t, l, good, "new.mp4")
 	var badNew int
-	if err := l.DB.Read().QueryRow("SELECT COUNT(*) FROM entries WHERE parent=? AND name='new.mp4' AND present=1", bad).Scan(&badNew); err != nil || badNew != 0 {
+	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM entries WHERE parent=? AND name='new.mp4' AND present=1", bad).Scan(&badNew)
+	}); err != nil || badNew != 0 {
 		t.Fatalf("failed directory published new file: %d err=%v", badNew, err)
 	}
 }
@@ -424,7 +499,7 @@ func TestAutomaticScheduleWaitsOneHourAndReplansFromCompletion(t *testing.T) {
 		t.Fatalf("startup timer=%s status=%+v", timer.delay, m.Snapshot())
 	}
 	clock.Advance(10 * time.Minute)
-	config := systemsettings.DefaultScanSettings()
+	config := systemsetting.DefaultScanSettings()
 	config.IntervalMinutes = 120
 	if err := settings.SaveScan(t.Context(), config); err != nil {
 		t.Fatal(err)
@@ -440,7 +515,7 @@ func TestAutomaticScheduleWaitsOneHourAndReplansFromCompletion(t *testing.T) {
 	if s.Source != "automatic" || s.Status != "completed" || s.Directories != 1 {
 		t.Fatalf("automatic round=%+v", s)
 	}
-	await(t, func() bool { return m.Snapshot().NextScan == clock.Now().Add(2*time.Hour).Format(time.RFC3339Nano) })
+	await(t, func() bool { return m.Snapshot().NextScan == timefmt.Format(clock.Now().Add(2*time.Hour)) })
 	if timer := clock.Timer(); timer.delay != 2*time.Hour {
 		t.Fatalf("completion timer=%s", timer.delay)
 	}
@@ -479,7 +554,7 @@ func TestLongManualRoundWaitsNewIntervalFromCompletion(t *testing.T) {
 	}
 	<-entered
 	await(t, func() bool { return m.Snapshot().NextScan == "" && clock.Timer().stopped.Load() })
-	config := systemsettings.DefaultScanSettings()
+	config := systemsetting.DefaultScanSettings()
 	config.IntervalMinutes = 90
 	if err := settings.SaveScan(t.Context(), config); err != nil {
 		t.Fatal(err)
@@ -487,19 +562,21 @@ func TestLongManualRoundWaitsNewIntervalFromCompletion(t *testing.T) {
 	m.SettingsChanged()
 	clock.Advance(35 * time.Minute)
 	releaseOnce.Do(func() { close(release) })
-	if s := finished(t, m); s.Status != "completed" || s.Finished != clock.Now().Format(time.RFC3339Nano) {
+	if s := finished(t, m); s.Status != "completed" || s.Finished != timefmt.Format(clock.Now()) {
 		t.Fatalf("manual round=%+v", s)
 	}
 	await(t, func() bool {
 		timer := clock.Timer()
-		return m.Snapshot().NextScan == clock.Now().Add(90*time.Minute).Format(time.RFC3339Nano) &&
+		return m.Snapshot().NextScan == timefmt.Format(clock.Now().Add(90*time.Minute)) &&
 			timer != nil && timer.delay == 90*time.Minute && !timer.stopped.Load()
 	})
 }
 
 func TestSettingsReadFailureIsVisibleAndDoesNotScan(t *testing.T) {
 	m, l, _, settings := fixture(t)
-	if _, err := l.DB.Exec("INSERT INTO system_settings(id,extract_workers,cache_gb,policy) VALUES(1,8,10,'invalid JSON')"); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "INSERT INTO system_settings(id,extract_workers,cache_gb,policy) VALUES(1,8,10,'invalid JSON')")
+	}); err != nil {
 		t.Fatal(err)
 	}
 	var calls atomic.Int64
@@ -516,10 +593,12 @@ func TestSettingsReadFailureIsVisibleAndDoesNotScan(t *testing.T) {
 	if _, err := m.Start(t.Context(), nil, "manual"); err == nil {
 		t.Fatal("manual default scope silently ignored settings failure")
 	}
-	if _, err := l.DB.Exec("UPDATE system_settings SET policy='' WHERE id=1"); err != nil {
+	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "UPDATE system_settings SET policy='' WHERE id=1")
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := settings.SaveScan(t.Context(), systemsettings.DefaultScanSettings()); err != nil {
+	if err := settings.SaveScan(t.Context(), systemsetting.DefaultScanSettings()); err != nil {
 		t.Fatal(err)
 	}
 	m.SettingsChanged()
@@ -556,7 +635,7 @@ func TestExcludedDirectoriesApplyToManualAndAutomaticScans(t *testing.T) {
 			skip := entryID(t, l, 1, "skip")
 			nested := entryID(t, l, skip, "nested")
 			keep := entryID(t, l, 1, "keep")
-			settings := systemsettings.DefaultScanSettings()
+			settings := systemsetting.DefaultScanSettings()
 			settings.ExcludedTargets = []int64{skip}
 			if err := store.SaveScan(t.Context(), settings); err != nil {
 				t.Fatal(err)
@@ -574,7 +653,9 @@ func TestExcludedDirectoriesApplyToManualAndAutomaticScans(t *testing.T) {
 			entryID(t, l, keep, "new.mp4")
 			entryID(t, l, nested, "old.mp4") // Existing index is preserved.
 			var count int
-			if err := l.DB.Read().QueryRow("SELECT count(*) FROM entries WHERE parent IN (?,?) AND name='new.mp4'", skip, nested).Scan(&count); err != nil || count != 0 {
+			if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM entries WHERE parent IN (?,?) AND name='new.mp4'", skip, nested).Scan(&count)
+			}); err != nil || count != 0 {
 				t.Fatalf("excluded files indexed: %d %v", count, err)
 			}
 			for _, target := range []int64{skip, nested} {
@@ -624,7 +705,7 @@ func TestScanExclusionsFrozenUntilNextRound(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-entered
-	settings := systemsettings.DefaultScanSettings()
+	settings := systemsetting.DefaultScanSettings()
 	settings.ExcludedTargets = []int64{skip}
 	if err := store.SaveScan(t.Context(), settings); err != nil {
 		t.Fatal(err)

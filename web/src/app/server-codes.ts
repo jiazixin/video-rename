@@ -19,6 +19,10 @@ type FieldError = {
 const mediaLabels: Record<string, string> = { image: '图片', audio: '音频', mixed: '图片和音频' }
 
 const codeTexts: Record<string, string> = {
+  precondition_failed: '内容已被修改，请刷新后重试',
+  idempotency_key_reused: '请求键已用于其他操作，请重新提交',
+  idempotency_pending: '上次操作的结果尚未确定，请先核对记录与文件',
+  idempotency_capacity: '请求记录已达到保留上限，请稍后重试',
   // Requests, sessions and the service
   internal: '服务暂时无法完成请求',
   not_found: '请求的记录不存在或已删除，请刷新页面后重试',
@@ -30,7 +34,6 @@ const codeTexts: Record<string, string> = {
   invalid_credentials: '账号或密码错误',
   rate_limited: '登录尝试过于频繁，请稍后重试',
   shutting_down: '服务正在关闭，请稍后重试',
-  request_key_reused: '请求键已用于其他请求',
   secret_invalid: '保存的密钥数据无效',
   secret_unreadable: '保存的密钥无法解密，请核对数据库 .key 文件',
   no_ready_model: '请先在模型配置页面完善一个模型',

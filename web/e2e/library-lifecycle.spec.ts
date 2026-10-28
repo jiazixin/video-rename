@@ -7,7 +7,8 @@ const entry = (id: number, name: string, kind = 'file') => ({
   name,
   kind,
   size: 1,
-  mtime: '2026-10-01T00:00:00Z',
+  mtime: '2026-10-01T00:00:00.000Z',
+  etag: '"v1"',
   version: 1,
   processed: '',
   restore_id: 0,
@@ -40,6 +41,10 @@ async function login(page: Page) {
   await page.getByLabel('密码', { exact: true }).fill('test-password-123')
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await expect(page.getByRole('heading', { name: '文件目录.' })).toBeVisible()
+  await page.getByRole('button', { name: '批次记录', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '批次记录.' })).toBeVisible()
+  await page.getByRole('button', { name: '文件目录', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '文件目录.' })).toBeVisible()
 }
 async function mockLibrary(page: Page) {
   await page.route('**/api/directories/*/entries?*', (route) =>
@@ -48,9 +53,7 @@ async function mockLibrary(page: Page) {
   await page.route('**/api/entries/status?*', (route) => route.fulfill({ json: { items: rows } }))
 }
 async function leaveLibrary(page: Page) {
-  await page.evaluate(() => {
-    location.hash = 'runs'
-  })
+  await page.goBack()
   await expect(page.getByRole('heading', { name: '批次记录.' })).toBeVisible()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   expect(await page.evaluate(() => document.body.style.overflow)).not.toBe('hidden')
@@ -84,7 +87,7 @@ for (const failed of [false, true])
         status: 'completed',
         old_name: 'original.txt',
         new_name: name,
-        created: '2026-10-01T00:00:00Z'
+        created: '2026-10-01T00:00:00.000Z'
       }
     ]
     await page.route('**/api/entries/14/history', async (route) => {
@@ -200,7 +203,7 @@ test('关闭后重开音频不会被旧的下一首响应切换', async ({ page 
   }
 })
 
-test('关闭后重开图片不会被旧的下一张响应切换', async ({ page }) => {
+test('关闭图片取消旧的下一张请求，重开保持当前选择', async ({ page }) => {
   await mockLibrary(page)
   await login(page)
   let release!: () => void
@@ -217,12 +220,14 @@ test('关闭后重开图片不会被旧的下一张响应切换', async ({ page 
     await page.getByRole('button', { name: '预览图片 first.png', exact: true }).click()
     await page.getByRole('button', { name: '下一张图片', exact: true }).click()
     await expect.poll(() => requested).toBe(true)
+    const cancelled = page.waitForEvent('requestfailed', {
+      predicate: (request) => request.url().includes('/image-neighbor?')
+    })
     await page.getByRole('dialog').getByRole('button', { name: '关闭', exact: true }).click()
+    await cancelled
     await page.getByRole('button', { name: '预览图片 first.png', exact: true }).click()
     await expect(page.getByRole('button', { name: '下一张图片', exact: true })).toBeEnabled()
-    const response = page.waitForResponse((r) => r.url().includes('/image-neighbor?'))
     release()
-    await (await response).finished()
     await settleUI(page)
     await expect(page.getByRole('dialog', { name: 'first.png', exact: true })).toBeVisible()
   } finally {
@@ -346,7 +351,7 @@ test('离开文件目录后超过100个目标的标记仍完整提交', async ({
     if (groups.length === 1) await delayed
     await route.fulfill({
       json: {
-        key: body.key,
+        key: route.request().headers()['idempotency-key'],
         status: 'completed',
         changed: body.targets.length,
         unchanged: 0,
