@@ -1,9 +1,11 @@
 <script setup lang="ts">
+  import { vFormErrors, fieldErrors } from '../../app/form-errors';
   import { errorText } from '../../app/errors';
   import { useToast } from '../../app/use-toast';
-  import { computed, onMounted, ref } from 'vue';
+  import { computed, onMounted, ref, watch } from 'vue';
   import { Save, Images, Music2, Link2, Check, ArrowRight } from '@lucide/vue';
-  import { api } from '../../app/api';
+  import { useApi } from '../../app/use-api';
+  const { api, formError, invalidFields } = useApi();
   const toast = useToast();
   type Rules = { padding: number; lowercase: boolean; prefix: string; compact: boolean };
   type Settings = { image: Rules; audio: Rules; shared: boolean };
@@ -25,6 +27,11 @@
       (n) =>
         `${current.prefix}${String(n).padStart(width, '0')}.${current.lowercase ? extension.toLowerCase() : extension}`
     );
+  });
+  watch(formError, (error) => {
+    const path = fieldErrors(error).keys().next().value;
+    if (path?.startsWith('image.')) media.value = 'image';
+    if (path?.startsWith('audio.')) media.value = 'audio';
   });
   async function load() {
     loading.value = true;
@@ -49,7 +56,9 @@
       const padding = form.value[kind].padding;
       if (!Number.isInteger(padding) || padding < 1 || padding > 9) {
         media.value = kind;
-        error.value = `${kind === 'image' ? '图片' : '音频'}编号最小位数须为 1–9 的整数`;
+        error.value = errorText(
+          invalidFields([{ path: `${kind}.padding`, reason: 'out_of_range' }])
+        );
         return;
       }
     }
@@ -73,7 +82,7 @@
       >{{ error }}<button v-if="!form" @click="load">重新加载</button></div
     >
     <p v-if="loading" role="status">正在加载编号规则…</p>
-    <form v-else-if="form" @submit.prevent="save">
+    <form v-else-if="form" v-form-errors="formError" @submit.prevent="save">
       <fieldset :disabled="saving" class="numbering-fieldset">
         <div class="numbering-intro"
           ><div
@@ -99,6 +108,7 @@
                 ><label
                   >编号前缀<input
                     v-model="rules.prefix"
+                    :name="`${media}.prefix`"
                     :aria-label="`${mediaName}编号前缀`"
                     type="text"
                     maxlength="32"
@@ -107,6 +117,7 @@
                 ><label
                   >编号最小位数<input
                     v-model.number="rules.padding"
+                    :name="`${media}.padding`"
                     :aria-label="`${mediaName}编号最小位数`"
                     type="number"
                     min="1"
@@ -133,6 +144,7 @@
                   v-model="rules.compact"
                   type="radio"
                   :name="`numbering-method-${media}`"
+                  :data-field="`${media}.compact`"
                   :value="false"
                 /><span
                   ><strong>保留已有编号</strong><small>保留现有号码，新文件从最大编号后继续。</small
@@ -145,6 +157,7 @@
                   v-model="rules.compact"
                   type="radio"
                   :name="`numbering-method-${media}`"
+                  :data-field="`${media}.compact`"
                   :value="true"
                 /><span
                   ><strong>连续重新编号</strong><small>从 1 开始紧凑排列，自动跳过保留号码。</small
@@ -163,6 +176,7 @@
               ></span
             ><input
               v-model="rules.lowercase"
+              :name="`${media}.lowercase`"
               type="checkbox"
               role="switch"
               :aria-label="`${mediaName}扩展名转小写`"
@@ -185,6 +199,7 @@
               ><small>同一目录中互相保留已占用号码，仅改名当前选择的文件类型。</small></span
             ><input
               v-model="form.shared"
+              name="shared"
               type="checkbox"
               role="switch"
               aria-label="图片与音频共用序号" /></label
@@ -217,33 +232,33 @@
     margin: 0;
     min-width: 0;
     display: grid;
-    gap: 24px;
+    gap: var(--space-24);
   }
   .numbering-intro {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 20px;
+    gap: var(--space-20);
   }
   .numbering-intro h2 {
-    font-size: 20px;
-    font-weight: 600;
-    letter-spacing: -0.4px;
+    font-size: var(--font-size-20);
+    font-weight: var(--font-weight-600);
+    letter-spacing: var(--tracking-negative-0-4);
   }
   .numbering-intro p,
   .numbering-footer p {
-    font-size: 12px;
+    font-size: var(--font-size-12);
     color: var(--steel);
-    line-height: 1.7;
-    margin: 7px 0 0;
+    line-height: var(--line-height-1-7);
+    margin: var(--space-7) 0 0;
   }
   .media-picker {
     display: flex;
-    padding: 4px;
-    gap: 4px;
+    padding: var(--space-4);
+    gap: var(--space-4);
     background: var(--palette-f1f4f2);
     border: 1px solid var(--palette-e4e9e6);
-    border-radius: 10px;
+    border-radius: var(--radius-10);
     flex-shrink: 0;
   }
   .media-picker button {
@@ -256,60 +271,60 @@
   .media-picker button[aria-pressed='true'] {
     background: var(--palette-ffffff);
     color: var(--palette-28654d);
-    box-shadow: 0 1px 4px var(--palette-20382a12);
+    box-shadow: var(--shadow-21);
   }
   .numbering-editor {
     border: 1px solid var(--line);
-    border-radius: 12px;
+    border-radius: var(--radius-12);
     background: var(--palette-ffffff);
     overflow: hidden;
   }
   .numbering-editor-title {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 20px 24px;
+    gap: var(--space-12);
+    padding: var(--space-20) var(--space-24);
     border-bottom: 1px solid var(--palette-edf0ee);
   }
   .numbering-editor-title h2 {
-    font-size: 15px;
-    font-weight: 600;
+    font-size: var(--font-size-15);
+    font-weight: var(--font-weight-600);
   }
   .media-icon {
     display: grid;
     place-items: center;
     width: 36px;
     height: 36px;
-    border-radius: 9px;
+    border-radius: var(--radius-9);
     background: var(--palette-edf5f0);
     color: var(--palette-337756);
   }
   .independent-note {
-    font-size: 11px;
+    font-size: var(--font-size-11);
     color: var(--steel);
     margin-left: auto;
   }
   .numbering-format {
     display: grid;
     grid-template-columns: 1.1fr 1fr;
-    gap: 32px;
-    padding: 24px;
+    gap: var(--space-32);
+    padding: var(--space-24);
   }
   .numbering-settings h3 {
-    font-size: 13px;
-    font-weight: 600;
-    margin: 0 0 16px;
+    font-size: var(--font-size-13);
+    font-weight: var(--font-weight-600);
+    margin: 0 0 var(--space-16);
   }
   .format-inputs {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 16px;
+    gap: var(--space-16);
   }
   .format-inputs label {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    font-size: 12px;
+    gap: var(--space-8);
+    font-size: var(--font-size-12);
     margin: 0;
     min-width: 0;
   }
@@ -318,77 +333,77 @@
     min-width: 0;
   }
   .format-inputs small {
-    font-size: 11px;
-    line-height: 1.6;
+    font-size: var(--font-size-11);
+    line-height: var(--line-height-1-6);
     color: var(--steel);
-    font-weight: 400;
+    font-weight: var(--font-weight-400);
   }
   .filename-preview {
     min-width: 0;
     background: var(--palette-f5f8f6);
     border: 1px solid var(--palette-e5ece7);
-    border-radius: 9px;
-    padding: 16px 18px;
+    border-radius: var(--radius-9);
+    padding: var(--space-16) var(--space-18);
     align-self: stretch;
   }
   .preview-caption {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 10px;
-    font-size: 11px;
+    gap: var(--space-10);
+    font-size: var(--font-size-11);
     color: var(--palette-52665a);
   }
   .live-label {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 10px;
+    gap: var(--space-6);
+    font-size: var(--font-size-10);
   }
   .live-label i {
     width: 5px;
     height: 5px;
-    border-radius: 50%;
+    border-radius: var(--radius-round);
     background: var(--palette-47916c);
   }
   .example-names {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    margin: 14px 0;
+    gap: var(--space-6);
+    margin: var(--space-14) 0;
   }
   .example-names code {
     color: var(--palette-285c43);
-    font-size: 13px;
+    font-size: var(--font-size-13);
     overflow-wrap: anywhere;
     white-space: pre-wrap;
   }
   .example-names code:not(:first-child) {
     color: var(--palette-637368);
-    font-size: 12px;
+    font-size: var(--font-size-12);
   }
   .filename-preview p {
-    font-size: 10px;
+    font-size: var(--font-size-10);
     color: var(--palette-647369);
-    line-height: 1.6;
+    line-height: var(--line-height-1-6);
     margin: 0;
   }
   .numbering-method {
-    padding: 0 24px 24px;
+    padding: 0 var(--space-24) var(--space-24);
   }
   .method-options {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 12px;
+    gap: var(--space-12);
   }
   .method-option {
     display: flex;
     flex-direction: row;
     align-items: flex-start;
-    gap: 10px;
-    padding: 16px;
+    gap: var(--space-10);
+    padding: var(--space-16);
     border: 1px solid var(--line);
-    border-radius: 9px;
+    border-radius: var(--radius-9);
     cursor: pointer;
     margin: 0;
   }
@@ -399,7 +414,7 @@
   .method-option input {
     width: 15px;
     height: 15px;
-    margin: 2px 0 0;
+    margin: var(--space-2) 0 0;
     flex-shrink: 0;
   }
   .method-option > span {
@@ -408,26 +423,26 @@
   .method-option strong,
   .numbering-toggle strong {
     display: block;
-    font-size: 12px;
-    font-weight: 500;
-    line-height: 1.6;
+    font-size: var(--font-size-12);
+    font-weight: var(--font-weight-500);
+    line-height: var(--line-height-1-6);
   }
   .method-option small,
   .numbering-toggle small {
     display: block;
-    font-size: 11px;
-    font-weight: 400;
-    line-height: 1.7;
+    font-size: var(--font-size-11);
+    font-weight: var(--font-weight-400);
+    line-height: var(--line-height-1-7);
     color: var(--steel);
-    margin-top: 4px;
+    margin-top: var(--space-4);
   }
   .method-example {
     display: flex;
     align-items: center;
-    gap: 9px;
-    margin-top: 12px;
-    font-size: 11px;
-    font-weight: 400;
+    gap: var(--space-9);
+    margin-top: var(--space-12);
+    font-size: var(--font-size-11);
+    font-weight: var(--font-weight-400);
     color: var(--palette-65746a);
     font-variant-numeric: tabular-nums;
   }
@@ -436,9 +451,9 @@
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
-    gap: 24px;
+    gap: var(--space-24);
     margin: 0;
-    padding: 20px 24px;
+    padding: var(--space-20) var(--space-24);
     border-top: 1px solid var(--palette-edf0ee);
     cursor: pointer;
   }
@@ -451,39 +466,39 @@
   }
   .numbering-explanation {
     border-top: 1px solid var(--palette-edf0ee);
-    padding: 14px 24px;
-    font-size: 11px;
+    padding: var(--space-14) var(--space-24);
+    font-size: var(--font-size-11);
     color: var(--steel);
   }
   .numbering-explanation summary {
     cursor: pointer;
-    line-height: 1.8;
+    line-height: var(--line-height-1-8);
     width: fit-content;
   }
   .numbering-explanation ul {
-    margin: 12px 0 0;
-    padding-left: 18px;
-    line-height: 1.9;
+    margin: var(--space-12) 0 0;
+    padding-left: var(--space-18);
+    line-height: var(--line-height-1-9);
   }
   .numbering-shared {
     border: 1px solid var(--line);
-    border-radius: 12px;
+    border-radius: var(--radius-12);
     background: var(--palette-fafbfa);
   }
   .shared-heading {
     display: flex;
     align-items: center;
-    gap: 9px;
-    padding: 18px 24px 0;
+    gap: var(--space-9);
+    padding: var(--space-18) var(--space-24) 0;
     color: var(--palette-58685e);
   }
   .shared-heading h3 {
     margin: 0;
-    font-size: 12px;
+    font-size: var(--font-size-12);
   }
   .shared-heading > span {
     margin-left: auto;
-    font-size: 10px;
+    font-size: var(--font-size-10);
     color: var(--steel);
   }
   .numbering-shared .numbering-toggle {
@@ -491,26 +506,26 @@
   }
   .shared-note {
     margin: 0;
-    padding: 0 24px 18px;
-    font-size: 11px;
+    padding: 0 var(--space-24) var(--space-18);
+    font-size: var(--font-size-11);
     color: var(--steel);
-    line-height: 1.7;
+    line-height: var(--line-height-1-7);
   }
   .numbering-footer {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 20px;
-    margin-top: 24px;
-    padding: 20px 0;
+    gap: var(--space-20);
+    margin-top: var(--space-24);
+    padding: var(--space-20) 0;
     border-top: 1px solid var(--line);
   }
   .save-state {
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: var(--space-7);
     color: var(--palette-54715f);
-    font-size: 12px;
+    font-size: var(--font-size-12);
   }
   .save-state.dirty {
     color: var(--palette-80621f);
@@ -519,7 +534,7 @@
     width: 6px;
     height: 6px;
     background: currentColor;
-    border-radius: 50%;
+    border-radius: var(--radius-round);
   }
   .numbering-footer button {
     flex-shrink: 0;
@@ -530,22 +545,22 @@
   @media (max-width: 900px) {
     .numbering-format {
       grid-template-columns: 1fr;
-      gap: 20px;
+      gap: var(--space-20);
     }
     .example-names {
       flex-direction: row;
       flex-wrap: wrap;
-      gap: 8px 18px;
+      gap: var(--space-8) var(--space-18);
     }
     .example-names code:not(:first-child) {
-      font-size: 13px;
+      font-size: var(--font-size-13);
     }
   }
   @media (max-width: 600px) {
     .numbering-intro {
       align-items: flex-start;
       flex-direction: column;
-      gap: 16px;
+      gap: var(--space-16);
     }
     .media-picker {
       width: 100%;
@@ -554,39 +569,39 @@
       flex: 1;
     }
     .numbering-fieldset {
-      gap: 18px;
+      gap: var(--space-18);
     }
     .numbering-editor-title,
     .numbering-format,
     .numbering-toggle {
-      padding: 18px;
+      padding: var(--space-18);
     }
     .numbering-method {
-      padding: 0 18px 18px;
+      padding: 0 var(--space-18) var(--space-18);
     }
     .method-options {
       grid-template-columns: 1fr;
     }
     .format-inputs {
-      gap: 12px;
+      gap: var(--space-12);
     }
     .numbering-explanation {
-      padding: 14px 18px;
+      padding: var(--space-14) var(--space-18);
     }
     .shared-heading {
-      padding: 18px 18px 0;
+      padding: var(--space-18) var(--space-18) 0;
       flex-wrap: wrap;
     }
     .shared-heading > span {
       margin-left: 0;
     }
     .shared-note {
-      padding: 0 18px 18px;
+      padding: 0 var(--space-18) var(--space-18);
     }
     .numbering-footer {
       align-items: stretch;
       flex-direction: column;
-      gap: 16px;
+      gap: var(--space-16);
     }
     .numbering-footer button {
       width: 100%;

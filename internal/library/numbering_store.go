@@ -86,14 +86,16 @@ func (l *Library) NumberingHistory(ctx context.Context, parent int64, media stri
 
 // PreviewNumberingRestore previews undoing numbering id.
 func (l *Library) PreviewNumberingRestore(ctx context.Context, id string) (Numbering, error) {
-	l.mu.Lock()
+	if err := l.lockNumbering(ctx); err != nil {
+		return Numbering{}, err
+	}
 	defer l.mu.Unlock()
 	original, err := l.Numbering(ctx, id)
 	if err != nil {
 		return Numbering{}, err
 	}
 	if original.Status != "committed" || original.UndoOf != "" {
-		return Numbering{}, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_not_restorable", Message: "numbering batch cannot be restored"})
+		return Numbering{}, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingNotRestorable, Message: "numbering batch cannot be restored"})
 	}
 	if err = l.CheckAvailable(ctx, original.Parent); err != nil {
 		return Numbering{}, err
@@ -102,12 +104,15 @@ func (l *Library) PreviewNumberingRestore(ctx context.Context, id string) (Numbe
 	if err != nil {
 		return Numbering{}, err
 	}
-	fingerprint, err := directoryFingerprint(path)
+	fingerprint, err := directoryFingerprint(ctx, path)
 	if err != nil {
 		return Numbering{}, err
 	}
 	b := Numbering{ID: numberingToken(), Parent: original.Parent, Created: storage.Now(), Status: "preview", Fingerprint: fingerprint, UndoOf: id, Media: original.Media}
 	for _, i := range original.Items {
+		if err := ctx.Err(); err != nil {
+			return Numbering{}, err
+		}
 		if i.Old == i.New {
 			continue
 		}
@@ -116,12 +121,12 @@ func (l *Library) PreviewNumberingRestore(ctx context.Context, id string) (Numbe
 			return Numbering{}, err
 		}
 		if e.Parent != b.Parent || e.Name != i.New || e.RestoreID != i.Operation || !numberingMatch(filepath.Join(path, e.Name), i) {
-			return Numbering{}, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_item_changed_since", Message: "file changed or was renamed later; the batch cannot be restored", Details: map[string]any{"media": b.Media, "name": i.New}})
+			return Numbering{}, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingItemChangedSince, Message: "file changed or was renamed later; the batch cannot be restored", Details: map[string]any{"media": b.Media, "name": i.New}})
 		}
 		b.Items = append(b.Items, NumberingItem{Entry: e.ID, Version: e.Version, Identity: i.Identity, Size: i.Size, ModifiedNS: i.ModifiedNS, Old: i.New, New: i.Old, UndoOf: i.Operation})
 	}
 	if len(b.Items) == 0 {
-		return Numbering{}, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_nothing_to_restore", Message: "batch has nothing to restore", Details: map[string]any{"media": b.Media}})
+		return Numbering{}, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingNothingToRestore, Message: "batch has nothing to restore", Details: map[string]any{"media": b.Media}})
 	}
 	return l.saveNumberingPreview(ctx, b, path)
 }

@@ -1,5 +1,5 @@
 import { computed, ref } from 'vue'
-import { api, apiItems } from '../../app/api'
+import { useApi } from '../../app/use-api'
 import { errorText } from '../../app/errors'
 import type { Plan } from '../../app/contracts'
 
@@ -17,6 +17,7 @@ type PlanFormOptions = {
 
 // The form of a manual run or a schedule, filled from source when editing.
 export function usePlanForm({ mode, source, notify, onSaved }: PlanFormOptions) {
+  const { api, apiItems, formError } = useApi()
   const parts = source?.expression.split(' ')
   const taskType = ref(source?.task || 'rename'),
     modelConfigID = ref(source?.model_config_id || 0),
@@ -47,15 +48,20 @@ export function usePlanForm({ mode, source, notify, onSaved }: PlanFormOptions) 
     if (busy.value) return '正在提交…'
     return mode === 'manual' ? '立即运行' : '保存计划'
   })
+  let previewController: AbortController | undefined
   async function showPreview() {
+    previewController?.abort()
+    const controller = new AbortController()
+    previewController = controller
     error.value = ''
     try {
       preview.value = await apiItems<string>('/schedules/preview', {
         method: 'POST',
+        signal: controller.signal,
         body: { expression: expression.value, timezone: timezone.value }
       })
     } catch (e) {
-      error.value = errorText(e)
+      if (!controller.signal.aborted) error.value = errorText(e)
     }
   }
   async function submit() {
@@ -100,6 +106,7 @@ export function usePlanForm({ mode, source, notify, onSaved }: PlanFormOptions) 
     }
   }
   return {
+    formError,
     taskType,
     modelConfigID,
     name,

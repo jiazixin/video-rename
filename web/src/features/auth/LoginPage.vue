@@ -1,9 +1,12 @@
 <script setup lang="ts">
+  import { vFormErrors } from '../../app/form-errors';
   import { errorText } from '../../app/errors';
   import './login.css';
   import { ref } from 'vue';
   import { ArrowRight, Eye, EyeOff, Folder, FileVideo, Check, ShieldCheck } from '@lucide/vue';
-  import { api, setSession } from '../../app/api';
+  import { useApi } from '../../app/use-api';
+  import { setSession } from '../../app/api';
+  const { api, formError } = useApi();
   const username = ref(''),
     password = ref(''),
     visible = ref(false),
@@ -14,7 +17,7 @@
     error.value = '';
     try {
       setSession(
-        await api('/auth/login', {
+        await api<{ username: string }>('/auth/login', {
           method: 'POST',
           body: {
             username: username.value,
@@ -52,7 +55,7 @@
     ><main class="login-main"
       ><div class="login-form"
         ><h2>登录工作台</h2><p>使用配置文件中设置的账号，管理你的视频库。</p
-        ><form @submit.prevent="login"
+        ><form v-form-errors="formError" @submit.prevent="login"
           ><label
             >用户名<input
               v-model="username"

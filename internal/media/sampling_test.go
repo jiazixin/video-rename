@@ -165,8 +165,8 @@ func TestPlanRejectsInvalidDuration(t *testing.T) {
 func TestPlanCustomRules(t *testing.T) {
 	// custom tiers: ≤1m 4 frames, fallback 6 frames; the whole table is replaced
 	settings := config.DefaultFrameSettings()
-	limit := "1m"
-	settings.Sampling.DurationRules = []config.DurationRule{{MaxDuration: &limit, Frames: 4}, {Frames: 6}}
+	limit := int64(60000)
+	settings.Sampling.DurationRules = []config.DurationRule{{MaxDurationMS: &limit, Frames: 4}, {Frames: 6}}
 	if err := settings.Validate(); err != nil {
 		t.Fatal(err)
 	}

@@ -15,7 +15,7 @@ var (
 )
 
 // errUnstable is the extraction failure of a file skipped as unstable.
-var errUnstable = domain.Fail(domain.KindConflict, domain.Record{Code: "skip_unstable", Message: "file is not stable yet; left for the next run"})
+var errUnstable = domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonSkipUnstable, Message: "file is not stable yet; left for the next run"})
 
 // runFailedRecord is the stored message of items cancelled because their run failed.
 func runFailedRecord(cause error) string {

@@ -80,17 +80,3 @@ func (m *Manager) Get(ctx context.Context, id int64) (Run, error) {
 	}
 	return r, nil
 }
-
-// List returns the batches with IDs below before, newest first.
-func (m *Manager) List(ctx context.Context, before int64) ([]Run, error) {
-	return storage.ReadValue(ctx, m.db, func(tx *sql.Tx) ([]Run, error) {
-		if before <= 0 {
-			before = 1 << 62
-		}
-		rows, err := tx.QueryContext(ctx, "SELECT "+runColumns+" FROM runs r LEFT JOIN run_token_usage u ON u.run=r.id WHERE r.id<? ORDER BY r.id DESC LIMIT 50", before)
-		if err != nil {
-			return nil, err
-		}
-		return storage.CollectRows(rows, func(rows *sql.Rows) (Run, error) { return scanRun(rows) })
-	})
-}

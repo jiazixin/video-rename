@@ -19,26 +19,26 @@ func TestHistoryPagination(t *testing.T) {
 		}
 	}
 	for _, tc := range []struct {
-		name               string
-		page, size         int
-		wantPage, wantSize int
-		count, first       int
+		name                 string
+		offset, size         int
+		wantOffset, wantSize int
+		count, first         int
 	}{
-		{"first", 1, 50, 1, 50, 50, 123},
-		{"second", 2, 50, 2, 50, 50, 73},
-		{"last", 3, 50, 3, 50, 23, 23},
-		{"hundred", 2, 100, 2, 100, 23, 23},
-		{"two hundred", 1, 200, 1, 200, 123, 123},
-		{"defaults", 0, 0, 1, 50, 50, 123},
-		{"negative", -5, -10, 1, 50, 50, 123},
-		{"overflow", math.MaxInt, 50, 3, 50, 23, 23},
+		{"first", 0, 50, 0, 50, 50, 123},
+		{"second", 50, 50, 50, 50, 50, 73},
+		{"last", 100, 50, 100, 50, 23, 23},
+		{"hundred", 100, 100, 100, 100, 23, 23},
+		{"two hundred", 0, 200, 0, 200, 123, 123},
+		{"defaults", 0, 0, 0, 50, 50, 123},
+		{"negative", -5, -10, 0, 50, 50, 123},
+		{"overflow", math.MaxInt, 50, 100, 50, 23, 23},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := s.ListHistoryPage(t.Context(), tc.page, tc.size)
+			got, err := s.ListHistoryPage(t.Context(), tc.offset, tc.size)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Total != 123 || got.Page != tc.wantPage || got.Size != tc.wantSize || len(got.Items) != tc.count || got.Items[0].Run != int64(tc.first) {
+			if got.Total != 123 || got.Offset != tc.wantOffset || got.Limit != tc.wantSize || len(got.Items) != tc.count || got.Items[0].Run != int64(tc.first) {
 				t.Fatalf("unexpected page: %+v", got)
 			}
 			for i, item := range got.Items {
@@ -53,8 +53,8 @@ func TestHistoryPagination(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.ListHistoryPage(t.Context(), 3, 50)
-	if err != nil || got.Page != 1 || got.Total != 23 || len(got.Items) != 23 {
+	got, err := s.ListHistoryPage(t.Context(), 100, 50)
+	if err != nil || got.Offset != 0 || got.Total != 23 || len(got.Items) != 23 {
 		t.Fatal("page did not shrink", got, err)
 	}
 	if _, err := storage.WriteValue(t.Context(), s.db, func(tx *sql.Tx) (sql.Result, error) {
@@ -63,7 +63,7 @@ func TestHistoryPagination(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err = s.ListHistoryPage(t.Context(), 99, 50)
-	if err != nil || got.Page != 1 || got.Total != 0 || got.Items == nil || len(got.Items) != 0 {
+	if err != nil || got.Offset != 0 || got.Total != 0 || got.Items == nil || len(got.Items) != 0 {
 		t.Fatal("incorrect empty page", got, err)
 	}
 }

@@ -7,10 +7,35 @@
 - `GET /healthz` 无需登录，返回 `{"status": "ok"}`；`GET /api/info` 无需登录，返回 `{"version", "revision", "build_time", "modified", "capabilities"}`（`image_numbering`、`notifications`、`schedules`）。`revision` 与 `build_time` 在未知时省略，已知构建时间同样采用 UTC 固定毫秒格式。
 - 其余 `/api/` 接口需要会话 Cookie（`vr_session`）；写请求经 `http.CrossOriginProtection` 校验 `Sec-Fetch-Site` / `Origin`。
 - 每个响应带 `X-Request-ID`（入站值匹配 `^[A-Za-z0-9-]{1,64}$` 时沿用），与服务端日志的 `request_id` 相同；`/api/` 响应带 `Cache-Control: no-store`。
-- JSON 请求使用 `application/json`，PATCH 也接受 `application/merge-patch+json`（其他媒体类型返回 415 `unsupported_media_type`），不超过 64 KiB（否则 413 `payload_too_large`），未知字段返回 400。整数查询参数（`before`、`limit`、`page`、`size`、`offset`、`run` 等）与数字路径 ID 格式错误返回 400 `invalid_argument`（`reason` 为 `invalid_number`）；可选整数查询参数可以省略，显式空值、非整数和溢出值均拒绝。
-- 列表响应是对象：分页接口返回各自的分页字段（如 `{"items", "total", "page"}`），不分页的列表为 `{"items": [...]}`，不返回裸数组。
+- JSON 请求使用 `application/json`，PATCH 也接受 `application/merge-patch+json`（其他媒体类型返回 415 `unsupported_media_type`），不超过 64 KiB（否则 413 `payload_too_large`），未知字段返回 400。整数查询参数（`limit`、`offset`、`success_offset`、`failure_offset`、`run` 等）与数字路径 ID 格式错误返回 400 `invalid_argument`（`reason` 为 `invalid_number`）；可选整数查询参数可以省略，显式空值、非整数和溢出值均拒绝。
+- 列表响应是对象：分页接口返回各自的分页字段（如 `{"items": [], "total": 0, "offset": 0, "limit": 100}`），不分页的列表为 `{"items": [...]}`，不返回裸数组。
 - 创建提示词、模型配置（含复制）、计划、改名/还原操作和编号预览返回 201；提示词、配置和计划返回 `Location`。创建后台运行、重试运行、扫描、标记和编号任务返回 202，使用响应中的 ID 或 key 查询进度。无需创建资源的计算、设置更新和动作结果返回 200，没有响应体的成功操作返回 204。
 - 接口时间输出统一为 UTC 固定毫秒：`2026-10-28T00:00:00.000Z`。文件内容核验使用内部纳秒指纹，不向接口暴露。
+
+## 列表分页
+
+管理台需要总数和跳页，表格接口使用 `offset`、`limit`、`total`。`offset` 是从 0 开始的行偏移量，省略时取 0；超出总数时返回最后一个分页窗口，空列表返回 `offset: 0`。计数与条目来自同一数据库快照。表格 `limit` 只接受 50、100、200，省略时按下表取默认值；负偏移、非法大小、未知和重复查询字段返回 400。界面页码由偏移量换算，不是 API 字段。
+
+| GET 路径 | 查询字段 | 返回字段与默认大小 |
+| --- | --- | --- |
+| `/api/directories/{id}/entries` | `offset`、`limit`、`q`、`kind`、`status`、`sort` | `items`、`total`、`offset`、`limit`、`generation`、`refreshing`、`refreshed`、`error`、`directory`、`breadcrumbs`；默认 100 |
+| `/api/runs` | `category`、`task`、`offset`、`limit`、`status`、`profile`、`from`、`to`、`duration` | `items`、`total`、`offset`、`limit`、`profiles`；默认 50，缺省 category 为 `all` |
+| `/api/logs` | `category`、`offset`、`limit`、`q`、`action`、`model_source`、`run`、`from`、`to` | `items`、`total`、`offset`、`limit`；默认 100，category 必填 `success` 或 `failure` |
+| `/api/extractions` | `success_offset`、`failure_offset`、`limit`、`q`、`run`、`from`、`to` | `success` / `failure` 各含 `items`、`total`、`offset`、`limit`，另有 `running` 数量；每组默认 50 |
+| `/api/notifications/history` | `offset`、`limit` | `items`、`total`、`offset`、`limit`；默认 50 |
+| `/api/runs/{id}/items` | `offset`、`directory`、`status` | `items`、`total`、`offset`、`limit` 及整批统计；固定每页 100 |
+| `/api/usage/analytics`、`/api/runs/analytics` | `offset`、`limit` 及时间、模型、批次筛选 | `batches` 含 `items`、`total`、`offset`、`limit`；默认 20，允许 1–100 |
+
+以上接口不再接受 `page`、`size`、`before`、`paged`、`success_page`、`failure_page`、`success_before`、`failure_before` 或目录 `generation` 输入，不保留旧分页实现。目录 `generation` 是只读字符串，用于播放器跨页读取时识别目录变化。目录 `kind` 只接受空值、`file`、`directory`、`video`、`image`、`audio`、`other`；`sort` 为空或 `name` / `size` / `mtime` / `renamed` / `status` 加 `_asc` / `_desc`。
+
+日期筛选传 RFC 3339 时间（管理台传 UTC 毫秒格式），不接收只有日期而没有时间的值。`GET /api/entries/{id}/history` 使用 `cursor` 返回 `{"items": [...], "next_cursor": "..."}`，每页最多 100 条，末页省略 `next_cursor`；游标为上一页最后一条操作的 ID 字符串，按 ID 降序定位，拒绝无效、非正和重复游标。编号任务结果的 `offset` 是当前预览切片参数。
+
+## 数量和可选字段
+
+- 文件大小为 `size_bytes`；目录的可选 `contents`、`progress` 以及空错误记录省略，不返回 `null`。
+- 模型配置与运行快照的超时为整数 `timeout_ms`（1000–1800000，默认 180000）。不接受旧 `timeout` 字符串。
+- 抽帧时长档位使用整数 `max_duration_ms`；大小档位使用整数 `max_mib`。最后一档省略上限，表示覆盖剩余范围；其余档位的上限为正且严格递增。不接受 `max_duration` 字符串。
+- 持久化格式身份为 `2026102801`。旧身份或实际结构不匹配的数据库只读检查后拒绝打开，不自动迁移、重建或删除数据。
 
 ## 修改与并发
 
@@ -26,7 +51,7 @@
 
 管理台为 POST 创建一次请求键，在网络错误、超时、429 或 503 后至多重试两次，同一逻辑请求始终沿用同一键；只读 GET 同样可重试。认证登录/登出不自动分配幂等键或重试。`Retry-After` 超过 10 秒时直接展示错误。
 
-服务端只返回英文说明和代码；管理台按代码显示中文，不展示服务端的英文说明。唯一例外是 `details.detail`：它是 FFmpeg、文件系统、模型或通知服务等外部来源的原始诊断，管理台把它附在中文说明之后。
+服务端只返回英文说明和代码；管理台按代码显示中文，不展示服务端的英文说明。`details.detail`、`processing_log` 等原始诊断仅在明确的诊断视图展示，不拼入普通错误提示或 toast。
 
 ## 错误响应
 
@@ -39,6 +64,8 @@
 - `details`：可选，结构按错误码定义。
 - 编号预览、执行和恢复失败时，`details.processing_log` 带英文诊断全文。
 
+领域返回具型别的失败原因或字段问题，HTTP 层用明确登记的映射生成错误码。未知原因统一为 `internal`；记录中的 `validation_failed` 与 `unexpected_failure` 是持久化诊断代码，不作为 HTTP 通用码复用。
+
 HTTP 状态由失败类别决定：参数无效 400、未登录 401、跨站 403、记录不存在 404、状态或容量冲突 409、前置条件失败 412、频率超限 429、暂时不可用 503、服务端错误 500。未分类的错误统一为 500 `internal`，详情只写服务日志，不在响应中返回。
 
 | 状态码 | `code` | 含义 | `details` |
@@ -50,7 +77,7 @@ HTTP 状态由失败类别决定：参数无效 400、未登录 401、跨站 403
 | 413 | `payload_too_large` | 请求体超过 64 KiB | — |
 | 415 | `unsupported_media_type` | 请求媒体类型不受支持 | — |
 | 404 | `not_found`、`mark_result_gone`、`numbering_job_gone`、`prompt_not_found`、`model_config_not_found`、`entry_not_indexed` | 记录或任务结果不存在 | — |
-| 409 | 文件与目录：`entry_busy`、`descendant_busy`、`identity_changed`、`invalid_hierarchy`、`directory_refreshed`、`directory_changed`、`review_pending`、`scan_changed`、`scan_hierarchy_changed` | 当前文件状态不允许该操作 | — |
+| 409 | 文件与目录：`entry_busy`、`descendant_busy`、`identity_changed`、`invalid_hierarchy`、`directory_changed`、`review_pending`、`scan_changed`、`scan_hierarchy_changed` | 当前文件状态不允许该操作 | — |
 | 409 | 改名与还原：`operation_key_conflict`、`operation_not_committed`、`restore_not_latest`、`restore_source_changed`、`already_processed`、`source_unreadable`、`too_many_conflicts`、`retry_operation_missing`、`retry_operation_stale` | 改名日志或文件状态不允许该操作 | `operation_not_committed`：`status` |
 | 409 | 编号：`numbering_*`、`preview_stale`、`preview_not_ready` | 编号批次状态不允许该操作 | 视代码带 `media`（image、audio、mixed）、`name`、`status`、`cause`、`recovery` |
 | 409 | 运行：`run_active`、`run_not_pausable`、`run_not_paused`、`run_overlap`、`run_targets_unavailable` | 批次状态不允许该操作 | `run_overlap`、`run_targets_unavailable`：`run` |
@@ -62,13 +89,13 @@ HTTP 状态由失败类别决定：参数无效 400、未登录 401、跨站 403
 | 412 | `precondition_failed` | `If-Match` 缺失、过期或不匹配 | — |
 | 429 | `rate_limited` | 请求频率超过上限，带 `Retry-After` | — |
 | 500 | `internal`、`library_halted`、`secret_invalid`、`secret_unreadable`、`notification_credentials_unreadable`、`notification_config_invalid`、`scan_settings_unreadable`、`cache_clear_incomplete`、`delete_*`、`rename_*`（改名后核对失败）、`journal_source_changed`、`numbering_unconfirmed`、`numbering_evidence_unsaved`、`numbering_item_ambiguous`、`numbering_item_modified`、`mark_batch_failed` | 服务端错误或需要重启核对 | `cache_clear_incomplete`：`deleted` |
-| 503 | `shutting_down`、`root_unavailable`、`scan_closed`、`scan_target_unavailable`、`temp_capacity_too_small`、`frames_over_reservation`、`discovery_*`、`notification_failed` | 服务或外部依赖暂时不可用 | `scan_target_unavailable`：`path`；`discovery_timeout`：`timeout`；`discovery_http_error`：`status`；`notification_failed`：`reason`（`encode`、`invalid_endpoint`、`unreachable`、`response_unreadable`、`http_status`、`response_invalid`、`rejected`），`http_status` 另带 `status` |
+| 503 | `shutting_down`、`root_unavailable`、`scan_closed`、`scan_target_unavailable`、`temp_capacity_too_small`、`frames_over_reservation`、`discovery_*`、`notification_failed` | 服务或外部依赖暂时不可用 | `scan_target_unavailable`：`path`；`discovery_timeout`：`timeout_ms`；`discovery_http_error`：`status`；`notification_failed`：`reason`（`encode`、`invalid_endpoint`、`unreachable`、`response_unreadable`、`http_status`、`response_invalid`、`rejected`），`http_status` 另带 `status` |
 
 ## 参数错误
 
 `invalid_argument` 的 `details` 固定为 `{"fields": [{"path": "sampling.size_rules.0.frames", "reason": "out_of_range"}]}`：
 
-- `path` 是请求或设置字段的 JSON 名，嵌套用点分，列表项用下标（`sampling.duration_rules.2.max_duration`）；图片和音频编号字段以 `image.`、`audio.` 开头；整个请求体无效时为空字符串。
+- `path` 是请求或设置字段的 JSON 名，嵌套用点分，列表项用下标（`sampling.duration_rules.2.max_duration_ms`）；图片和音频编号字段以 `image.`、`audio.` 开头；整个请求体无效时为空字符串。
 - `reason` 是 snake_case 原因码，常用 `required`、`invalid`、`invalid_choice`、`invalid_number`、`invalid_time`、`invalid_date`、`invalid_timezone`、`out_of_range`、`too_long`、`too_many`、`selection_required`、`confirmation_required`；请求体另有 `not_object`、`invalid_json`、`trailing_data`，个别字段有专用原因（如 `temperature` 的 `out_of_range_anthropic`、`thinking` 的 `unsupported_model`、`endpoint` 的 `wecom_webhook_required`）。完整文案见 `web/src/app/server-codes.ts`，新增路径或原因码时两端同时修改。
 
 ## 任务与记录错误
@@ -103,6 +130,8 @@ HTTP 状态由失败类别决定：参数无效 400、未登录 401、跨站 403
 ```
 
 - 记录以 JSON 保存在 TEXT 列中，读取时必须是有效的记录 JSON。
+- 没有诊断时省略可选记录字段，包括运行明细的 `message` 和历史列表的 `error`；不发送空对象或旧的文本错误。
+- 记录无法编码时保存明确的 `internal` 失败记录，`details.record_code` 保留原代码，`details.detail` 说明编码错误；不得用代表“无错误”的空字符串替代失败。
 - `details.cause` 和 `details.recovery` 是嵌套记录，管理台把它们的文案接在主文案之后。
 - 文件记录还会使用以下代码：`skip_processed`、`skip_unstable`、`cancelled`、`interrupted_by_restart`、`run_failed`（带 `cause`）；运行有 `run_interrupted_by_restart`；抽帧记录有 `extraction_cancelled`、`extraction_interrupted_by_restart`；计划有 `schedule_triggered`、`schedule_skipped_active`；改名操作有 `parent_unverifiable`、`rename_evidence_mismatch`、`rename_not_started`；通知投递有 `notification_unconfirmed`。
 - 扫描错误为 `{path, scope, error}`；`scope` 为 `settings`（扫描设置读取失败）或 `targets`（扫描范围无效）时没有 `path`。

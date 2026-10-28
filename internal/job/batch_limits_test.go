@@ -16,8 +16,16 @@ import (
 	"video-rename/internal/systemsetting"
 )
 
-func batchTargets(t *testing.T, m *Manager, root string, n int) []int64 {
+type batchTargetsOptions struct {
+	m    *Manager
+	root string
+	n    int
+}
+
+func batchTargets(t *testing.T, options batchTargetsOptions) []int64 {
 	t.Helper()
+	m, root, n := options.m, options.root, options.n
+
 	for i := range n {
 		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("clip-%03d.mp4", i)), []byte("video"), 0o600); err != nil {
 			t.Fatal(err)
@@ -32,7 +40,7 @@ func batchTargets(t *testing.T, m *Manager, root string, n int) []int64 {
 
 func TestWaitingBatchCapacityAndPauseClassification(t *testing.T) {
 	m, root := setup(t)
-	targets := batchTargets(t, m, root, 27)
+	targets := batchTargets(t, batchTargetsOptions{m: m, root: root, n: 27})
 	settings := systemsetting.Default()
 	settings.WaitingBatchLimit = 25
 	store := systemsetting.New(m.db)
@@ -90,7 +98,7 @@ func TestWaitingBatchCapacityAndPauseClassification(t *testing.T) {
 
 func TestLoopDynamicBatchCapacityAndShutdown(t *testing.T) {
 	m, root := setup(t)
-	targets := batchTargets(t, m, root, 35)
+	targets := batchTargets(t, batchTargetsOptions{m: m, root: root, n: 35})
 	store := systemsetting.New(m.db)
 	settings := systemsetting.Default()
 	settings.StabilitySeconds = 0

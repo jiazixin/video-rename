@@ -201,7 +201,7 @@ func TestAudioNumberingAPI(t *testing.T) {
 }
 
 func TestNumberingFailurePreservesWrappedDiagnostics(t *testing.T) {
-	err := fmt.Errorf("parent/child：%w", &domain.JobError{Code: domain.CodeRenameConflict, Message: "目标被占用", ProcessingLog: "原文件名：photo.jpg\n目标类型：directory"})
+	err := fmt.Errorf("parent/child: %w", &domain.JobError{Code: domain.CodeRenameConflict, Message: "target is occupied", ProcessingLog: "original name: photo.jpg\ntarget type: directory"})
 	w := httptest.NewRecorder()
 	numberingFailure(w, httptest.NewRequest("POST", "/api/numberings/x/apply", nil), err)
 	var body struct {
@@ -216,7 +216,7 @@ func TestNumberingFailurePreservesWrappedDiagnostics(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if w.Code != http.StatusConflict || body.Error.Code != "rename_conflict" || !strings.Contains(body.Error.Message, "parent/child") || !strings.Contains(body.Error.Details.ProcessingLog, "目标类型：directory") {
+	if w.Code != http.StatusConflict || body.Error.Code != "rename_conflict" || !strings.Contains(body.Error.Message, "parent/child") || !strings.Contains(body.Error.Details.ProcessingLog, "target type: directory") {
 		t.Fatal(w.Code, body)
 	}
 }

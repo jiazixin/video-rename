@@ -36,7 +36,7 @@ func TestNotificationEndpointsRequireSessionAndSameSite(t *testing.T) {
 	var session map[string]string
 	json.Unmarshal(w.Body.Bytes(), &session)
 	cookies := w.Result().Cookies()
-	for _, url := range []string{"/api/notifications/history?page=99&size=100", "/api/notifications/history?size=200", "/api/notifications/history?page=0&size=-1"} {
+	for _, url := range []string{"/api/notifications/history?offset=99&limit=100", "/api/notifications/history?limit=200", "/api/notifications/history?offset=0"} {
 		w = httptest.NewRecorder()
 		r = httptest.NewRequest("GET", url, nil)
 		for _, c := range cookies {
@@ -44,7 +44,7 @@ func TestNotificationEndpointsRequireSessionAndSameSite(t *testing.T) {
 		}
 		a.Handler().ServeHTTP(w, r)
 		var page notification.HistoryPage
-		if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil || w.Code != 200 || page.Page != 1 || page.Items == nil || page.Total != 0 {
+		if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil || w.Code != 200 || page.Offset != 0 || page.Items == nil || page.Total != 0 {
 			t.Fatal("invalid history page", w.Code, w.Body.String(), err)
 		}
 	}

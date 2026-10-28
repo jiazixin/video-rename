@@ -13,7 +13,7 @@ func TestProgressCacheTracksCommittedFileAndTaskChanges(t *testing.T) {
 	l, root, _ := fixture(t)
 	put(t, filepath.Join(root, "clip.mp4"))
 	refresh(t, l, 1)
-	e := entry(t, l, 1, "clip.mp4")
+	e := entry(t, entryOptions{l: l, parent: 1, name: "clip.mp4"})
 	read := func() DirectoryProgress {
 		t.Helper()
 		got, err := l.WithProgressBatch(t.Context(), []Entry{{ID: 1, Kind: "directory"}})

@@ -3,8 +3,9 @@
   import { formatThousands } from '../../lib/format/number';
   import { errorText } from '../../app/errors';
   import { computed, ref } from 'vue';
-  import { api } from '../../app/api';
+  import { useApi } from '../../app/use-api';
   import { copyText } from '../../lib/clipboard/clipboard';
+  const { api } = useApi();
   const { id, processing } = defineProps<{ id: number; processing?: boolean }>();
   const active = ref(''),
     data = ref<Record<string, string>>(),
@@ -51,7 +52,7 @@
     busy.value = true;
     error.value = '';
     try {
-      data.value = await api(`/logs/${id}/diagnostics`);
+      data.value = await api<Record<string, string>>(`/logs/${id}/diagnostics`);
     } catch (e) {
       error.value = errorText(e);
     } finally {
@@ -146,15 +147,15 @@
     align-items: center;
     justify-content: center;
     min-height: 34px;
-    padding: 6px 12px;
-    gap: 6px;
+    padding: var(--space-6) var(--space-12);
+    gap: var(--space-6);
     border: 1px solid var(--control-line);
-    border-radius: 8px;
+    border-radius: var(--radius-8);
     background: var(--palette-ffffff);
     color: var(--steel);
-    font-size: 12px;
-    font-weight: 500;
-    line-height: 20px;
+    font-size: var(--font-size-12);
+    font-weight: var(--font-weight-500);
+    line-height: var(--line-height-20);
   }
   .diagnostic-buttons button:hover:not(:disabled) {
     background: var(--control-hover);
@@ -163,22 +164,22 @@
   }
 
   .context-summary {
-    margin-top: 10px;
-    padding: 8px 12px;
+    margin-top: var(--space-10);
+    padding: var(--space-8) var(--space-12);
     background: var(--palette-eef4f0);
-    border-radius: 5px;
+    border-radius: var(--radius-5);
   }
   .context-summary p {
-    margin: 5px 0;
+    margin: var(--space-5) 0;
   }
   .diagnostic-buttons {
     display: flex;
-    gap: 8px;
+    gap: var(--space-8);
     flex-wrap: wrap;
   }
   .diagnostic-buttons button {
-    font-size: 11px;
-    padding: 4px 10px;
+    font-size: var(--font-size-11);
+    padding: var(--space-4) var(--space-10);
   }
   .diagnostic-buttons button[aria-expanded='true'] {
     border-color: var(--palette-619982);
@@ -186,10 +187,10 @@
   }
   .diagnostic-content {
     text-align: left;
-    margin-top: 10px;
+    margin-top: var(--space-10);
     border: 1px solid var(--line);
-    border-radius: 6px;
-    padding: 12px;
+    border-radius: var(--radius-6);
+    padding: var(--space-12);
     background: var(--palette-f8faf9);
   }
   .diagnostic-content header {
@@ -197,7 +198,7 @@
     align-items: center;
     justify-content: space-between;
     color: var(--steel);
-    font-size: 11px;
+    font-size: var(--font-size-11);
   }
   .diagnostic-content pre {
     white-space: pre-wrap;
@@ -205,9 +206,9 @@
     max-height: 360px;
     overflow: auto;
     font: 12px/1.6 monospace;
-    margin: 10px 0 0;
+    margin: var(--space-10) 0 0;
   }
   .diagnostic-content p {
-    font-size: 12px;
+    font-size: var(--font-size-12);
   }
 </style>

@@ -13,7 +13,7 @@ test('抽帧设置保存、档位校验、刷新与窄屏', async ({ page }) => 
   await expect(page.getByLabel('跳过末尾（%）')).toHaveValue('5')
   await expect(page.getByLabel('截图最长边（像素）')).toHaveValue('768')
   await expect(page.getByLabel('JPEG 质量档位', { exact: true })).toHaveValue('4')
-  for (const [i, limit] of ['30s', '2m', '10m', '30m'].entries()) {
+  for (const [i, limit] of ['30000', '120000', '600000', '1800000'].entries()) {
     await expect(page.getByLabel(`时长上限 ${i + 1}`, { exact: true })).toHaveValue(limit)
   }
   for (const [i, frames] of ['8', '12', '24', '32', '32'].entries()) {
@@ -27,10 +27,10 @@ test('抽帧设置保存、档位校验、刷新与窄屏', async ({ page }) => 
   await page.getByRole('option', { name: '按视频时长', exact: true }).click()
   await expect(page.getByRole('heading', { name: '按文件大小取帧' })).toHaveCount(0)
   await page.getByRole('button', { name: '添加时长档位' }).click()
-  await page.getByLabel('时长上限 5', { exact: true }).fill('1m')
+  await page.getByLabel('时长上限 5', { exact: true }).fill('60000')
   await page.getByRole('button', { name: '保存抽帧设置' }).click()
   await expect(page.getByRole('alert')).toContainText('上限必须大于前一档')
-  await page.getByLabel('时长上限 5', { exact: true }).fill('1h')
+  await page.getByLabel('时长上限 5', { exact: true }).fill('3600000')
   await page.getByLabel('时长档位帧数 5', { exact: true }).fill('28')
   await page.getByRole('button', { name: '保存抽帧设置' }).click()
   await expect(toasts(page).first()).toContainText('设置已保存')
@@ -42,7 +42,7 @@ test('抽帧设置保存、档位校验、刷新与窄屏', async ({ page }) => 
   await page.reload()
   await expect(page.getByLabel('每个视频最大帧数')).toHaveValue('32')
   await expect(page.getByLabel('截图最长边（像素）')).toHaveValue('1024')
-  await expect(page.getByLabel('时长上限 5', { exact: true })).toHaveValue('1h')
+  await expect(page.getByLabel('时长上限 5', { exact: true })).toHaveValue('3600000')
   await expect(page.getByLabel('跳过开头（%）')).toHaveValue('0')
   await page.getByRole('combobox', { name: '抽帧策略' }).click()
   await page.getByRole('option', { name: '混合 · 时长为主，大小辅助', exact: true }).click()

@@ -86,26 +86,26 @@ func deliver(ctx context.Context, client *http.Client, m message) error {
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		return domain.Fail(domain.KindInternal, domain.Record{Code: "notification_failed", Message: "encode notification", Details: map[string]any{"reason": "encode"}})
+		return domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonNotificationFailed, Message: "encode notification", Details: map[string]any{"reason": "encode"}})
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(raw))
 	if err != nil {
-		return domain.Fail(domain.KindInvalid, domain.Record{Code: "notification_failed", Message: "notification endpoint is invalid", Details: map[string]any{"reason": "invalid_endpoint"}})
+		return domain.Fail(domain.KindInvalid, domain.Failure{Reason: domain.ReasonNotificationFailed, Message: "notification endpoint is invalid", Details: map[string]any{"reason": "invalid_endpoint"}})
 	}
 	req.Header.Set("Content-Type", "application/json")
 	res, err := client.Do(req)
 	if err != nil {
-		return domain.Fail(domain.KindUnavailable, domain.Record{Code: "notification_failed", Message: "notification connection failed or timed out", Details: map[string]any{"reason": "unreachable"}})
+		return domain.Fail(domain.KindUnavailable, domain.Failure{Reason: domain.ReasonNotificationFailed, Message: "notification connection failed or timed out", Details: map[string]any{"reason": "unreachable"}})
 	}
 	// The bounded read reports response failures; closing a read-only response
 	// does not change whether the remote service accepted this delivery.
 	defer res.Body.Close()
 	raw, err = io.ReadAll(io.LimitReader(res.Body, 65537))
 	if err != nil || len(raw) > 65536 {
-		return domain.Fail(domain.KindUnavailable, domain.Record{Code: "notification_failed", Message: "notification response unreadable or too large", Details: map[string]any{"reason": "response_unreadable"}})
+		return domain.Fail(domain.KindUnavailable, domain.Failure{Reason: domain.ReasonNotificationFailed, Message: "notification response unreadable or too large", Details: map[string]any{"reason": "response_unreadable"}})
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return domain.Fail(domain.KindUnavailable, domain.Record{Code: "notification_failed", Message: "notification service returned an error status", Details: map[string]any{"reason": "http_status", "status": res.StatusCode}})
+		return domain.Fail(domain.KindUnavailable, domain.Failure{Reason: domain.ReasonNotificationFailed, Message: "notification service returned an error status", Details: map[string]any{"reason": "http_status", "status": res.StatusCode}})
 	}
 	if kind == "webhook" {
 		return nil
@@ -116,7 +116,7 @@ func deliver(ctx context.Context, client *http.Client, m message) error {
 		Code    *int  `json:"code"`
 	}
 	if json.Unmarshal(raw, &answer) != nil {
-		return domain.Fail(domain.KindUnavailable, domain.Record{Code: "notification_failed", Message: "notification response is malformed", Details: map[string]any{"reason": "response_invalid"}})
+		return domain.Fail(domain.KindUnavailable, domain.Failure{Reason: domain.ReasonNotificationFailed, Message: "notification response is malformed", Details: map[string]any{"reason": "response_invalid"}})
 	}
 	switch kind {
 	case "telegram":
@@ -132,5 +132,5 @@ func deliver(ctx context.Context, client *http.Client, m message) error {
 			return nil
 		}
 	}
-	return domain.Fail(domain.KindUnavailable, domain.Record{Code: "notification_failed", Message: "notification service rejected the message", Details: map[string]any{"reason": "rejected"}})
+	return domain.Fail(domain.KindUnavailable, domain.Failure{Reason: domain.ReasonNotificationFailed, Message: "notification service rejected the message", Details: map[string]any{"reason": "rejected"}})
 }

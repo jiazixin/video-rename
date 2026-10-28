@@ -1,13 +1,13 @@
 .weekday-picker {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  margin: 5px 0 20px;
+  gap: var(--space-12);
+  margin: var(--space-5) 0 var(--space-20);
 }
 .weekday-picker label {
   flex-direction: row;
   align-items: center;
-  font-size: 12px;
+  font-size: var(--font-size-12);
   margin: 0;
 }
 .weekday-picker input {
@@ -17,99 +17,99 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin: 0 0 18px;
-  padding: 10px 12px;
+  margin: 0 0 var(--space-18);
+  padding: var(--space-10) var(--space-12);
   background: var(--surface);
-  border-radius: 6px;
+  border-radius: var(--radius-6);
 }
 .preview-rule code {
-  font-size: 12px;
+  font-size: var(--font-size-12);
 }
 .preview-rule button {
-  font-size: 11px;
+  font-size: var(--font-size-11);
   background: transparent;
   border: 0;
   padding: 0;
 }
 .schedule-preview {
-  font-size: 11px;
-  line-height: 1.9;
+  font-size: var(--font-size-11);
+  line-height: var(--line-height-1-9);
   color: var(--steel);
-  padding-left: 20px;
+  padding-left: var(--space-20);
 }
 .plan-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 16px;
+  gap: var(--space-16);
 }
 .plan-card {
-  padding: 21px;
+  padding: var(--space-21);
 }
 .plan-card header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 15px;
+  margin-bottom: var(--space-15);
 }
 .plan-icon {
   background: var(--palette-f5f7f6);
   color: var(--palette-789485);
-  padding: 9px;
-  border-radius: 8px;
+  padding: var(--space-9);
+  border-radius: var(--radius-8);
   display: flex;
 }
 .plan-card h3 {
-  font-size: 15px;
-  margin-bottom: 8px;
+  font-size: var(--font-size-15);
+  margin-bottom: var(--space-8);
 }
 .plan-expression {
-  font-size: 11px;
+  font-size: var(--font-size-11);
 }
 .plan-expression code {
-  margin-left: 8px;
+  margin-left: var(--space-8);
   color: var(--palette-6c727c);
 }
 .plan-meta {
-  margin-top: 18px;
+  margin-top: var(--space-18);
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  font-size: 10px;
+  gap: var(--space-6);
+  font-size: var(--font-size-10);
   color: var(--ash);
 }
 .plan-meta span {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-6);
 }
 .plan-next {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: 14px 0;
-  margin-top: 10px;
+  gap: var(--space-5);
+  padding: var(--space-14) 0;
+  margin-top: var(--space-10);
 }
 .plan-next > span {
-  font-size: 10px;
+  font-size: var(--font-size-10);
   color: var(--palette-94999f);
 }
 .plan-next strong {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-12);
+  font-weight: var(--font-weight-500);
 }
 .plan-card footer {
   border-top: 1px solid var(--line);
-  padding-top: 14px;
+  padding-top: var(--space-14);
   display: flex;
-  gap: 8px;
+  gap: var(--space-8);
 }
 .plan-card footer > button:first-child {
   margin-right: auto;
-  font-size: 11px;
-  padding: 6px 10px;
+  font-size: var(--font-size-11);
+  padding: var(--space-6) var(--space-10);
 }
 .plans-empty {
-  padding: 35px 20px;
+  padding: var(--space-35) var(--space-20);
   background: var(--palette-fcfdfc);
 }
 .plan-meta .plan-paths {
@@ -124,15 +124,15 @@
   align-items: center;
   justify-content: center;
   min-height: 34px;
-  padding: 6px 12px;
-  gap: 6px;
+  padding: var(--space-6) var(--space-12);
+  gap: var(--space-6);
   border: 1px solid var(--control-line);
-  border-radius: 8px;
+  border-radius: var(--radius-8);
   background: var(--palette-ffffff);
   color: var(--steel);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 20px;
+  font-size: var(--font-size-12);
+  font-weight: var(--font-weight-500);
+  line-height: var(--line-height-20);
 }
 .plan-card footer > button:hover:not(:disabled) {
   background: var(--control-hover);
@@ -147,8 +147,8 @@
   color: var(--tone-red-ink);
   background: var(--tone-red-bg);
   border-color: var(--tone-red-line);
-  gap: 6px;
-  line-height: 20px;
+  gap: var(--space-6);
+  line-height: var(--line-height-20);
 }
 .plan-card footer > button.danger-button:hover:not(:disabled) {
   color: var(--tone-red-ink);
@@ -158,22 +158,22 @@
 }
 
 .run-section {
-  padding: 24px;
+  padding: var(--space-24);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--radius-14);
   background: var(--palette-fafcfb);
-  margin-bottom: 28px;
+  margin-bottom: var(--space-28);
 }
 @media (max-width: 800px) {
   .run-section {
-    padding: 16px;
+    padding: var(--space-16);
   }
 }
 .plan-config-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0 16px;
-  margin-bottom: 18px;
+  gap: 0 var(--space-16);
+  margin-bottom: var(--space-18);
 }
 .plan-config-row > .prompt-picker {
   display: contents;
@@ -190,7 +190,7 @@
 .plan-config-row .prompt-picker > .help,
 .plan-config-row .prompt-picker > .notice {
   grid-column: 1/-1;
-  margin: 10px 0 0;
+  margin: var(--space-10) 0 0;
 }
 .plan-config-row .select-trigger {
   max-width: 100%;
@@ -201,20 +201,20 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
-  margin-bottom: 20px;
+  gap: var(--space-18);
+  margin-bottom: var(--space-20);
 }
 .plan-section-heading h2 {
   display: flex;
   align-items: center;
-  gap: 9px;
-  font-size: 17px;
+  gap: var(--space-9);
+  font-size: var(--font-size-17);
 }
 .plan-section-heading p {
   color: var(--ash);
-  font-size: 12px;
-  margin-top: 8px;
-  line-height: 1.7;
+  font-size: var(--font-size-12);
+  margin-top: var(--space-8);
+  line-height: var(--line-height-1-7);
 }
 .manual-plan-section {
   border-left: 3px solid var(--green, var(--tone-green-ink));
@@ -226,15 +226,15 @@
 .batch-filters {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px 16px;
+  gap: var(--space-14) var(--space-16);
 }
 .batch-filters > label {
   margin: 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  font-size: 12px;
+  gap: var(--space-7);
+  font-size: var(--font-size-12);
   color: var(--steel);
 }
 .batch-filters .select-field,
@@ -247,7 +247,7 @@
   align-self: end;
 }
 .batch-filter-help {
-  margin: 12px 0 20px;
+  margin: var(--space-12) 0 var(--space-20);
 }
 .plan-card header > .switch {
   margin-left: auto;
@@ -272,19 +272,19 @@
 .run-day-label {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--space-7);
   margin: 0;
-  font-size: 11px;
-  font-weight: 500;
+  font-size: var(--font-size-11);
+  font-weight: var(--font-weight-500);
   color: var(--palette-6e727a);
-  padding: 13px 20px 7px 18px;
+  padding: var(--space-13) var(--space-20) var(--space-7) var(--space-18);
 }
 .run-day-label svg {
   color: var(--palette-b3bab6);
 }
 .run-entry + .run-day-label {
   margin-top: 0;
-  padding-top: 2px;
+  padding-top: var(--space-2);
 }
 .run-entry {
   /* Task categories use green/violet; activity uses the original green. */
@@ -298,25 +298,25 @@
   position: relative;
   display: grid;
   grid-template-columns: 38px 18px minmax(0, 1fr);
-  column-gap: 8px;
-  margin: 0 6px 12px;
-  padding: 8px 20px 8px 12px;
-  border-radius: 6px;
+  column-gap: var(--space-8);
+  margin: 0 var(--space-6) var(--space-12);
+  padding: var(--space-8) var(--space-20) var(--space-8) var(--space-12);
+  border-radius: var(--radius-6);
 }
 .run-entry[data-task='extract'] {
   --task-ink: var(--palette-6941a5);
   --task-edge: var(--palette-c4b2df);
 }
 .run-entry.is-running {
-  box-shadow: inset 3px 0 0 var(--task-edge);
+  box-shadow: var(--shadow-18);
 }
 /* Task type reads as icon + text; only the status keeps a badge. */
 .run-task {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  line-height: 1.5;
+  gap: var(--space-5);
+  font-size: var(--font-size-12);
+  line-height: var(--line-height-1-5);
   color: var(--steel);
   white-space: nowrap;
 }
@@ -324,9 +324,9 @@
   color: var(--task-ink);
 }
 .run-time {
-  font-size: 11px;
-  line-height: 1;
-  padding-top: 14px;
+  font-size: var(--font-size-11);
+  line-height: var(--line-height-1);
+  padding-top: var(--space-14);
   text-align: right;
   color: var(--steel);
   font-variant-numeric: tabular-nums;
@@ -363,15 +363,15 @@
   top: 16px;
   width: 9px;
   height: 9px;
-  margin-left: -4.5px;
-  border-radius: 50%;
+  margin-left: var(--space-negative-4-5);
+  border-radius: var(--radius-round);
   background: var(--palette-c9ced4);
   border: 2px solid var(--palette-ffffff);
-  box-shadow: 0 0 0 1px var(--palette-d9dde0);
+  box-shadow: var(--shadow-19);
 }
 .run-entry.is-running .run-node-dot {
   background: var(--run-accent);
-  box-shadow: 0 0 0 1px var(--run-dot-ring);
+  box-shadow: var(--shadow-20);
 }
 .run-entry.is-running .run-node-dot::before,
 .run-entry.is-running .run-node-dot::after {
@@ -379,11 +379,11 @@
   position: absolute;
   inset: -5px;
   border: 1px solid var(--run-pulse);
-  border-radius: 50%;
-  animation: run-live-pulse 2.4s ease-out infinite both;
+  border-radius: var(--radius-round);
+  animation: run-live-pulse var(--duration-2400) ease-out infinite both;
 }
 .run-entry.is-running .run-node-dot::after {
-  animation-delay: 1.2s;
+  animation-delay: var(--duration-1200);
 }
 @keyframes run-live-pulse {
   0% {
@@ -406,18 +406,18 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-4);
 }
 .run-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-10);
   flex-wrap: wrap;
 }
 .run-head .status-badge {
-  padding: 3px 8px;
-  font-weight: 500;
-  border-radius: 6px;
+  padding: var(--space-3) var(--space-8);
+  font-weight: var(--font-weight-500);
+  border-radius: var(--radius-6);
 }
 .run-head .status-badge[data-status='scanning'] {
   --status-ink: var(--palette-2468af);
@@ -425,31 +425,31 @@
   --status-line: var(--palette-cfe1f6);
 }
 .run-id {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--font-size-13);
+  font-weight: var(--font-weight-600);
   font-variant-numeric: tabular-nums;
 }
 .run-duration {
   margin-left: auto;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-12);
+  font-weight: var(--font-weight-500);
   color: var(--steel);
 }
 .run-duration-value {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--space-9);
   font-variant-numeric: tabular-nums;
 }
 .run-duration-value .run-eta-sep {
   color: var(--palette-c6cad0);
-  font-weight: 400;
+  font-weight: var(--font-weight-400);
 }
 .run-duration-value .run-eta {
   color: var(--ash);
-  font-weight: 400;
+  font-weight: var(--font-weight-400);
 }
 @media (max-width: 600px) {
   .run-duration-value .run-eta,
@@ -460,10 +460,10 @@
 .run-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-6);
   flex-wrap: wrap;
-  font-size: 11px;
-  line-height: 1.4;
+  font-size: var(--font-size-11);
+  line-height: var(--line-height-1-4);
   color: var(--ash);
   min-width: 0;
 }
@@ -475,7 +475,7 @@
   margin-inline: 0;
   text-align: left;
   max-width: 220px;
-  font-size: 11px;
+  font-size: var(--font-size-11);
   color: var(--steel);
 }
 .run-tokens {
@@ -485,33 +485,33 @@
 .run-progress {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-10);
 }
 .run-progress-bar {
   flex: 1;
   min-width: 120px;
   height: 4px;
-  border-radius: 2px;
+  border-radius: var(--radius-2);
   background: var(--palette-eef0f2);
   overflow: hidden;
 }
 .run-progress-fill {
   display: block;
   height: 100%;
-  border-radius: 2px;
+  border-radius: var(--radius-2);
   background: var(--run-accent-soft);
-  transition: width 0.5s linear;
+  transition: width var(--duration-500) linear;
 }
 .run-entry.is-running .run-progress-bar {
   height: 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-3);
 }
 .run-entry.is-full .run-progress {
   display: none;
 }
 .run-entry.is-running .run-progress-fill {
   background: var(--run-accent);
-  border-radius: 3px;
+  border-radius: var(--radius-3);
 }
 .run-entry.is-running .run-progress-fill::after {
   content: '';
@@ -523,7 +523,7 @@
     var(--palette-rgba-255-255-255-0_55) 50%,
     transparent 75%
   );
-  animation: run-progress-sheen 1.6s linear infinite;
+  animation: run-progress-sheen var(--duration-1600) linear infinite;
 }
 @keyframes run-progress-sheen {
   from {
@@ -542,8 +542,8 @@
 .run-progress-pct {
   min-width: 34px;
   text-align: right;
-  font-size: 10px;
-  line-height: 1;
+  font-size: var(--font-size-10);
+  line-height: var(--line-height-1);
   color: var(--ash);
   font-variant-numeric: tabular-nums;
 }
@@ -553,15 +553,15 @@
 .run-foot {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-12);
   flex-wrap: wrap;
 }
 .run-stat-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  column-gap: 14px;
-  row-gap: 2px;
+  column-gap: var(--space-14);
+  row-gap: var(--space-2);
 }
 .run-entry .run-actions button.icon-only-action {
   width: 30px;
@@ -592,14 +592,14 @@
 /* Counters are plain text; only non-zero results take their status color. Spacing, not dots,
    separates them so a wrapped line never starts with a stray separator. */
 .run-stat {
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: var(--font-size-12);
+  line-height: var(--line-height-1-5);
   color: var(--ash);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .run-stat b {
-  font-weight: 600;
+  font-weight: var(--font-weight-600);
   color: var(--stat-ink, var(--steel));
 }
 .run-stat[data-stat='done'] {
@@ -613,19 +613,19 @@
 }
 .run-stat[data-zero] b {
   --stat-ink: var(--ash);
-  font-weight: 500;
+  font-weight: var(--font-weight-500);
 }
 
 @media (max-width: 600px) {
   .run-entry {
     grid-template-columns: 32px 16px minmax(0, 1fr);
-    padding: 10px 14px 9px 8px;
+    padding: var(--space-10) var(--space-14) var(--space-9) var(--space-8);
   }
   .run-day-label {
-    padding: 12px 14px 7px 10px;
+    padding: var(--space-12) var(--space-14) var(--space-7) var(--space-10);
   }
   .run-progress {
-    gap: 8px;
+    gap: var(--space-8);
   }
   .run-foot .run-actions {
     margin-left: auto;
@@ -633,12 +633,12 @@
 }
 
 .row-actions.run-actions {
-  gap: 8px;
+  gap: var(--space-8);
   white-space: nowrap;
 }
 .run-section > .pagination {
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--space-10);
 }
 @media (max-width: 600px) {
   .run-section > .pagination > .subtle {

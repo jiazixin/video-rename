@@ -21,12 +21,12 @@ type RetryProblem struct {
 // AllRetryableFailures lists every automatic failure with a file; other
 // failures are counted as skipped.
 func (s *Store) AllRetryableFailures(ctx context.Context) (records []RetryRecord, skipped int, err error) {
-	err = s.db.View(ctx, func(tx *sql.Tx) error {
+	err = s.db.View(ctx, func(tx *sql.Tx) (err error) {
 		rows, err := tx.QueryContext(ctx, "SELECT id,entry,action FROM events WHERE category='failure' ORDER BY id DESC")
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
+		defer func() { err = errors.Join(err, rows.Close()) }()
 		for rows.Next() {
 			var record RetryRecord
 			var action string

@@ -50,10 +50,10 @@ func (m *Manager) freezeRetry(ctx context.Context, task string, primary int64) (
 	}
 	model, err := (modelstore.New(m.db)).Get(ctx, settings.FallbackModelID)
 	if err != nil {
-		return p, domain.Fail(domain.KindConflict, domain.Record{Code: "fallback_model_unavailable", Message: "fallback model is unavailable"}).Wrap(err)
+		return p, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonFallbackModelUnavailable, Message: "fallback model is unavailable"}).Wrap(err)
 	}
 	if err = model.Validate(); err != nil {
-		return p, domain.Fail(domain.KindInvalid, domain.Record{Code: "fallback_model_invalid", Message: "fallback model configuration is invalid"}).Wrap(err)
+		return p, domain.Fail(domain.KindInvalid, domain.Failure{Reason: domain.ReasonFallbackModelInvalid, Message: "fallback model configuration is invalid"}).Wrap(err)
 	}
 	fixed, err := (systemsetting.New(m.db)).FixedPrompt(ctx)
 	if err != nil {

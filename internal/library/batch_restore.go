@@ -36,7 +36,7 @@ func (l *Library) RestoreBatch(ctx context.Context, run int64) (BatchRestoreResu
 		return out, err
 	}
 	if domain.ActiveRunStatus(status) {
-		return out, domain.Fail(domain.KindConflict, domain.Record{Code: "run_active", Message: "cancel the run and wait for it to finish first"})
+		return out, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonRunActive, Message: "cancel the run and wait for it to finish first"})
 	}
 	var ids []int64
 	err := l.db.View(ctx, func(tx *sql.Tx) error {

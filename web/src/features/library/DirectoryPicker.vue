@@ -6,8 +6,9 @@
   import { Folder, ChevronRight, Home } from '@lucide/vue';
   import DirectoryStatus from './DirectoryStatus.vue';
   import './directory-picker.css';
-  import { api } from '../../app/api';
+  import { useApi } from '../../app/use-api';
   import { type Page } from '../../app/contracts';
+  const { api } = useApi();
   const model = defineModel<number[]>({ required: true });
   const emit = defineEmits<{
     paths: [paths: Record<number, string>];
@@ -31,14 +32,19 @@
     busy = ref(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let serial = 0;
+  let loadController: AbortController | undefined;
   async function load() {
+    loadController?.abort();
+    const controller = new AbortController();
+    loadController = controller;
     const seq = ++serial;
     busy.value = true;
     error.value = '';
     clearTimeout(timer);
     try {
       const result = await api<Page>(
-        `/directories/${dir.value}/entries?kind=directory&page=${pageNumber.value}&limit=50`
+        `/directories/${dir.value}/entries?kind=directory&offset=${(pageNumber.value - 1) * 50}&limit=50`,
+        { signal: controller.signal }
       );
       if (seq !== serial) return;
       page.value = result;
@@ -50,7 +56,7 @@
       for (const entry of result.items)
         paths[entry.id] = prefix ? `${prefix} / ${entry.name}` : entry.name;
       emit('paths', paths);
-      pageNumber.value = result.page ?? pageNumber.value;
+      pageNumber.value = Math.floor(result.offset / result.limit) + 1;
       if (result.refreshing) timer = setTimeout(() => void load(), 1200);
     } catch (e) {
       if (seq === serial) error.value = errorText(e);
@@ -96,7 +102,7 @@
           page?.directory.name || '整个媒体库'
         }}</strong></span
       ><DirectoryStatus v-if="page" :entry="page.directory" /></label
-    ><div v-if="error" class="notice error"
+    ><div v-if="error" class="notice error" role="alert"
       >{{ error
       }}<button
         type="button"
@@ -107,7 +113,7 @@
         >重试</button
       ></div
     ><div class="picker-list"
-      ><div v-if="!page?.items.length" class="empty compact">{{
+      ><div v-if="!error && !page?.items.length" class="empty compact" role="status">{{
         busy || page?.refreshing ? '正在读取目录…' : '没有子目录'
       }}</div
       ><div v-for="entry in page?.items" :key="entry.id" class="picker-row"

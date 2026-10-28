@@ -23,14 +23,13 @@ const rows = [
 ]
 function directoryPage(items = rows, id = 1) {
   return {
-    page: 1,
+    offset: 0,
+    limit: 100,
     total: items.length,
     items,
-    next: 0,
     generation: '1',
     refreshing: false,
     refreshed: '',
-    error: '',
     directory: entry(id, '媒体库', 'directory'),
     breadcrumbs: []
   }
@@ -113,18 +112,20 @@ for (const failed of [false, true])
     try {
       await page.getByRole('button', { name: '历史 delete.txt', exact: true }).click()
       await expect.poll(() => requests).toBe(1)
+      const cancelled = page.waitForEvent('requestfailed', {
+        predicate: (request) => request.url().endsWith('/api/entries/14/history')
+      })
       await page
         .getByRole('dialog', { name: '命名历史' })
         .getByRole('button', { name: '关闭', exact: true })
         .last()
         .click()
+      await cancelled
       await expect(page.getByRole('dialog')).toHaveCount(0)
       await page.getByRole('button', { name: '历史 delete.txt', exact: true }).click()
       const dialog = page.getByRole('dialog', { name: '命名历史' })
       await expect(dialog).toContainText('新历史.txt')
-      const response = page.waitForResponse((r) => r.url().endsWith('/api/entries/14/history'))
       release()
-      await (await response).finished()
       await settleUI(page)
       await expect(dialog).toContainText('新历史.txt')
       await expect(dialog.getByText('旧历史.txt')).toHaveCount(0)
@@ -264,11 +265,13 @@ test('目录选择器忽略已离开目录的迟到错误', async ({ page }) => 
     const picker = page.getByRole('dialog')
     await picker.getByRole('button', { name: '子目录', exact: true }).click()
     await expect.poll(() => requested).toBe(true)
+    const cancelled = page.waitForEvent('requestfailed', {
+      predicate: (request) => request.url().includes('/directories/2/entries?')
+    })
     await picker.getByRole('button', { name: '媒体库', exact: true }).click()
+    await cancelled
     await expect(picker.getByRole('button', { name: '全选本页', exact: true })).toBeEnabled()
-    const response = page.waitForResponse((r) => r.url().includes('/directories/2/entries?'))
     release()
-    await (await response).finished()
     await settleUI(page)
     await expect(picker.getByText('旧目录读取失败')).toHaveCount(0)
     await expect(picker.getByRole('button', { name: '全选本页', exact: true })).toBeEnabled()
@@ -308,10 +311,12 @@ test('离开文件目录后批量删除的迟到失败不会重新弹框', async
       .click()
     await page.getByRole('button', { name: '确认永久删除', exact: true }).click()
     await expect.poll(() => requested).toBe(true)
+    const cancelled = page.waitForEvent('requestfailed', {
+      predicate: (request) => request.url().endsWith('/api/entries/14')
+    })
     await leaveLibrary(page)
-    const response = page.waitForResponse((r) => r.url().endsWith('/api/entries/14'))
+    await cancelled
     release()
-    await (await response).finished()
     await settleUI(page)
     await expect(page.getByRole('dialog')).toHaveCount(0)
   } finally {

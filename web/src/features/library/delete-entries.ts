@@ -1,5 +1,5 @@
 import { ref, type Ref } from 'vue'
-import { api } from '../../app/api'
+import { useApi } from '../../app/use-api'
 import { errorText } from '../../app/errors'
 import type { Entry } from '../../app/contracts'
 
@@ -23,17 +23,18 @@ type DeleteOptions = {
   disposed: () => boolean
 }
 
-function deleteRequest(e: Entry) {
-  return api(`/entries/${e.id}`, {
-    method: 'DELETE',
-    headers: { 'If-Match': e.etag },
-    body: { confirmed: true }
-  })
-}
-
 // Permanent deletes of one entry, or of the selection one entry at a time so a
 // failure keeps the remaining entries for retry.
 export function useDeleteEntries(options: DeleteOptions) {
+  const { api } = useApi()
+  function deleteRequest(e: Entry) {
+    return api<unknown>(`/entries/${e.id}`, {
+      method: 'DELETE',
+      headers: { 'If-Match': e.etag },
+      body: { confirmed: true }
+    })
+  }
+
   const { saving, chosen, notify } = options
   const deleting = ref<Entry>(),
     deleteError = ref(''),
@@ -90,6 +91,7 @@ export function useDeleteEntries(options: DeleteOptions) {
           await deleteRequest(e)
           chosen.value.delete(e.id)
         } catch (err) {
+          if (err instanceof DOMException && err.name === 'AbortError') return
           failed.push(e)
           errors.push(`${e.name}：${errorText(err)}`)
         }

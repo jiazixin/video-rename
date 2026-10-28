@@ -7,7 +7,10 @@ test('本页选择跨页保留、批次操作和折叠日志复制', async ({ pa
   await page.getByLabel('密码', { exact: true }).fill('test-password-123')
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await page.route('**/api/directories/1/entries?kind=directory*', async (route) => {
-    const second = new URL(route.request().url()).searchParams.get('page') === '2'
+    const second =
+      String(
+        Math.floor(Number(new URL(route.request().url()).searchParams.get('offset') || 0) / 50) + 1
+      ) === '2'
     const directory = { id: 1, name: '媒体库', kind: 'directory' }
     await route.fulfill({
       json: {
@@ -18,8 +21,8 @@ test('本页选择跨页保留、批次操作和折叠日志复制', async ({ pa
           name: `目录${id}`,
           kind: 'directory'
         })),
-        next: second ? 0 : 50,
-        page: second ? 2 : 1,
+        offset: second ? 50 : 0,
+        limit: 50,
         total: 51,
         refreshing: false
       }
@@ -108,8 +111,8 @@ test('本页选择跨页保留、批次操作和折叠日志复制', async ({ pa
           }
         ],
         total: 1,
-        page: 1,
-        next: 0
+        offset: 0,
+        limit: 100
       }
     })
   )

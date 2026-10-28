@@ -47,11 +47,12 @@
     refresh: refreshRecords,
     filter,
     directory
-  } = useRunRecords(
-    () => run.id,
-    () => sections.value.records,
-    () => active.value
-  );
+  } = useRunRecords({
+    runID: () => run.id,
+    enabled: () => sections.value.records,
+    active: () => active.value,
+    shareInRoute: true
+  });
   const closedDirectories = ref(new Set<string>());
   const expandedAttempts = ref(new Set<number>());
   const directoryOptions = computed(() => [

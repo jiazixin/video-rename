@@ -1,4 +1,6 @@
 <script setup lang="ts">
+  import { useRouteState, queryText, queryChoice, queryInteger } from '../../app/use-route-state';
+
   import { formatCompact, formatCount, formatPercent } from '../../lib/format/number';
   import { errorText } from '../../app/errors';
   import PageNavigation from '../../components/PageNavigation.vue';
@@ -26,6 +28,39 @@
     run = ref(0),
     sort = ref<'tokens' | 'recent'>('tokens'),
     page = ref(1);
+  const routeState = useRouteState(
+    {
+      period: queryChoice(preset, [
+        '1h',
+        '3h',
+        '6h',
+        '12h',
+        '24h',
+        'today',
+        '7d',
+        '30d',
+        'all',
+        'custom'
+      ]),
+      from_date: queryText(fromDate),
+      from_time: queryText(fromTime),
+      to_date: queryText(toDate),
+      to_time: queryText(toTime),
+      profile: queryInteger(profile, { min: -1 }),
+      source: queryChoice(source, ['', 'manual', 'scheduled']),
+      sort: queryChoice(sort, ['tokens', 'recent']),
+      page: queryInteger(page, { min: 1 }),
+      model: queryText(model),
+      run: queryInteger(run)
+    },
+    {
+      exactPath: true,
+      onRestore: () => {
+        frozenRange = undefined;
+        void load();
+      }
+    }
+  );
   const report = ref<UsageReport>(),
     error = ref(''),
     loading = ref(false);
@@ -96,7 +131,7 @@
     if (source.value) params.set('source', source.value);
     if (run.value) params.set('run', String(run.value));
     params.set('sort', sort.value);
-    params.set('page', String(page.value));
+    params.set('offset', String((page.value - 1) * 20));
     controller = new AbortController();
     loading.value = true;
     try {
@@ -105,7 +140,8 @@
       });
       if (mine === seq) {
         report.value = data;
-        if (page.value !== data.batches.page) page.value = data.batches.page;
+        if (page.value !== Math.floor(data.batches.offset / data.batches.limit) + 1)
+          page.value = Math.floor(data.batches.offset / data.batches.limit) + 1;
         error.value = '';
       }
     } catch (e) {
@@ -143,6 +179,7 @@
     if (model.value && selected && !selected.model_keys.includes(model.value)) profile.value = 0;
   }
   watch([preset, model, profile, source, run, sort, page, reload], (values, previous) => {
+    if (routeState.isRestoring.value) return;
     if (values.some((value, i) => i !== 6 && value !== previous[i])) {
       frozenRange = undefined;
       if (page.value !== 1) {
@@ -197,7 +234,7 @@
   const restModels = computed(() => (report.value ? report.value.models.slice(8) : []));
   const totalPages = computed(() =>
     report.value
-      ? Math.max(1, Math.ceil(report.value.batches.total / report.value.batches.size))
+      ? Math.max(1, Math.ceil(report.value.batches.total / report.value.batches.limit))
       : 1
   );
   const hasData = computed(() => !!totals.value && totals.value.records > 0);
@@ -392,8 +429,7 @@
                 >{{ sort === 'tokens' ? '按用量排序' : '按时间排序' }}</button
               >
               <span class="subtle"
-                >共 {{ report.batches.total }} 个批次 · 第 {{ report.batches.page }} /
-                {{ totalPages }} 页</span
+                >共 {{ report.batches.total }} 个批次 · 第 {{ page }} / {{ totalPages }} 页</span
               >
               <PageNavigation
                 :page="page"

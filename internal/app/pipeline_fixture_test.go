@@ -77,7 +77,7 @@ func installPipelineFixture(t *testing.T, a *App, fixture pipelineFixture) {
 	}
 	profile.ServerConfig = config.ServerConfig{
 		Provider: "custom", Protocol: "openai", BaseURL: server.URL + "/v1",
-		Model: fixture.model, Timeout: "10s", MaxTokens: 128,
+		Model: fixture.model, TimeoutMS: 10000, MaxTokens: 128,
 	}
 	if _, err := store.Save(t.Context(), profile); err != nil {
 		t.Fatal(err)

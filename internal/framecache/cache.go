@@ -379,7 +379,7 @@ func (c *Cache) Acquire(ctx context.Context, key string, reserve int64, build fu
 		}
 		if reserve > c.limit {
 			c.mu.Unlock()
-			return nil, domain.Fail(domain.KindUnavailable, domain.Record{Code: "temp_capacity_too_small", Message: "temp directory capacity cannot hold one video"})
+			return nil, domain.Fail(domain.KindUnavailable, domain.Failure{Reason: domain.ReasonTempCapacityTooSmall, Message: "temp directory capacity cannot hold one video"})
 		}
 		if err := c.pruneLocked(ctx, c.now(), reserve); err != nil {
 			c.mu.Unlock()
@@ -456,7 +456,7 @@ func (c *Cache) Acquire(ctx context.Context, key string, reserve int64, build fu
 		r.Checksums[f.Path] = hex.EncodeToString(hash[:])
 	}
 	if err = c.validate(publishCtx, r); err == nil && r.Bytes > reserve {
-		err = domain.Fail(domain.KindUnavailable, domain.Record{Code: "frames_over_reservation", Message: "frames exceed the reserved capacity"})
+		err = domain.Fail(domain.KindUnavailable, domain.Failure{Reason: domain.ReasonFramesOverReservation, Message: "frames exceed the reserved capacity"})
 	}
 	if err == nil {
 		err = c.persist(r)

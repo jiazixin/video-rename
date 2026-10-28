@@ -237,12 +237,12 @@
   }
   .date-trigger {
     min-height: 38px;
-    font-size: 12px;
-    gap: 9px;
+    font-size: var(--font-size-12);
+    gap: var(--space-9);
     justify-content: flex-start;
     width: 100%;
     font-variant-numeric: tabular-nums;
-    font-weight: 400;
+    font-weight: var(--font-weight-400);
   }
   .date-trigger svg {
     color: var(--palette-87948d);
@@ -254,17 +254,17 @@
     position: fixed;
     z-index: 190;
     width: 296px;
-    padding: 12px;
+    padding: var(--space-12);
     border: 1px solid var(--palette-dce4df);
-    border-radius: 11px;
+    border-radius: var(--radius-11);
     background: var(--palette-ffffff);
-    box-shadow: 0 10px 35px var(--palette-182c2020);
+    box-shadow: var(--shadow-1);
   }
   .calendar-panel > header {
     display: flex;
     align-items: center;
-    gap: 5px;
-    margin-bottom: 12px;
+    gap: var(--space-5);
+    margin-bottom: var(--space-12);
   }
   .calendar-panel :deep(.select-field) {
     min-width: 0;
@@ -275,33 +275,33 @@
   }
   .calendar-panel :deep(.select-trigger) {
     min-height: 32px;
-    gap: 3px;
-    padding: 5px 7px;
-    font-size: 12px;
+    gap: var(--space-3);
+    padding: var(--space-5) var(--space-7);
+    font-size: var(--font-size-12);
   }
   .calendar-panel .icon-btn {
-    padding: 4px;
+    padding: var(--space-4);
   }
   .calendar-week,
   .calendar-grid {
     display: grid;
     grid-template-columns: repeat(7, minmax(0, 1fr));
-    gap: 3px;
+    gap: var(--space-3);
   }
   .calendar-week {
-    font-size: 10px;
+    font-size: var(--font-size-10);
     color: var(--palette-929b96);
     text-align: center;
-    margin-bottom: 7px;
+    margin-bottom: var(--space-7);
   }
   .calendar-day {
     padding: 0;
     min-height: 33px;
-    font-size: 12px;
-    font-weight: 400;
+    font-size: var(--font-size-12);
+    font-weight: var(--font-weight-400);
     border: 1px solid transparent;
-    border-radius: 6px;
-    line-height: 1;
+    border-radius: var(--radius-6);
+    line-height: var(--line-height-1);
   }
   .calendar-day.outside {
     color: var(--palette-b7beb9);
@@ -327,13 +327,13 @@
     display: flex;
     justify-content: space-between;
     border-top: 1px solid var(--palette-edf0ee);
-    padding-top: 10px;
-    margin-top: 10px;
+    padding-top: var(--space-10);
+    margin-top: var(--space-10);
   }
   .calendar-panel footer button {
     border: 0;
-    padding: 5px 8px;
-    font-size: 11px;
+    padding: var(--space-5) var(--space-8);
+    font-size: var(--font-size-11);
     color: var(--palette-48735b);
   }
   .calendar-day:focus-visible {

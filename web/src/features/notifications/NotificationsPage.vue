@@ -1,4 +1,7 @@
 <script setup lang="ts">
+  import { vFormErrors } from '../../app/form-errors';
+  import { useRouteState, queryInteger } from '../../app/use-route-state';
+
   import { localTimeZone } from '../../lib/format/date';
   import { errorText } from '../../app/errors';
   import { useToast } from '../../app/use-toast';
@@ -7,9 +10,10 @@
   import SelectField from '../../components/SelectField.vue';
   import { computed, ref, onMounted, onUnmounted } from 'vue';
   import { Save, Send, RefreshCw, CircleHelp } from '@lucide/vue';
-  import { api, apiItems } from '../../app/api';
+  import { useApi } from '../../app/use-api';
   import type { ServerRecord } from '../../app/contracts';
   import './notifications.css';
+  const { api, apiItems, formError } = useApi();
   const toast = useToast();
   type Channel = {
     kind: string;
@@ -77,12 +81,24 @@
     updated: string;
     error?: ServerRecord;
   };
-  type HistoryPage = { items: Delivery[]; total: number; page: number; size: number };
+  type HistoryPage = { items: Delivery[]; total: number; offset: number; limit: number };
   const pageNumber = ref(1),
     size = ref(50),
     total = ref(0),
     historyLoading = ref(false),
     historyError = ref('');
+  useRouteState(
+    {
+      page: queryInteger(pageNumber, { min: 1 }),
+      limit: queryInteger(size, { choices: [50, 100, 200] })
+    },
+    {
+      exactPath: true,
+      onRestore: () => {
+        void logs();
+      }
+    }
+  );
   const totalPages = computed(() => Math.max(1, Math.ceil(total.value / size.value)));
   let historySeq = 0;
   const channels = ref<Channel[]>([]),
@@ -107,18 +123,23 @@
       error.value = errorText(e);
     }
   }
+  let historyController: AbortController | undefined;
   async function logs() {
+    historyController?.abort();
+    const controller = new AbortController();
+    historyController = controller;
     const seq = ++historySeq;
     historyLoading.value = true;
     try {
       const data = await api<HistoryPage>(
-        `/notifications/history?page=${pageNumber.value}&size=${size.value}`
+        `/notifications/history?offset=${(pageNumber.value - 1) * size.value}&limit=${size.value}`,
+        { signal: controller.signal }
       );
       if (alive && seq === historySeq) {
         history.value = data.items;
         total.value = data.total;
-        pageNumber.value = data.page;
-        size.value = data.size;
+        pageNumber.value = Math.floor(data.offset / data.limit) + 1;
+        size.value = data.limit;
         historyError.value = '';
       }
     } catch (e) {
@@ -139,7 +160,9 @@
     if (!historyLoading.value) await logs();
     if (alive) timer = setTimeout(() => void poll(), 5000);
   }
+  const errorChannel = ref('');
   async function save(c: Channel) {
+    errorChannel.value = c.kind;
     busy.value[c.kind] = true;
     errors.value[c.kind] = '';
     try {
@@ -217,6 +240,7 @@
       ><form
         v-for="c in channels"
         :key="c.kind"
+        v-form-errors="errorChannel === c.kind ? formError : undefined"
         class="panel notification-card"
         :aria-label="names[c.kind]"
         @submit.prevent="save(c)"
@@ -251,6 +275,7 @@
           ><label class="check-label"
             ><input
               v-model="c.enabled"
+              name="enabled"
               type="checkbox"
               role="switch"
               :aria-label="`启用${names[c.kind]}`"
@@ -262,6 +287,7 @@
             ><label
               >Bot Token<input
                 v-model="c.token"
+                name="token"
                 type="password"
                 :aria-label="`${names[c.kind]} Bot Token`"
                 :placeholder="c.has_token ? '已保存，留空保持不变' : '123456:ABC…'"
@@ -269,11 +295,13 @@
             ><label
               >Chat ID<input
                 v-model="c.chat_id"
+                name="chat_id"
                 :aria-label="`${names[c.kind]} Chat ID`"
                 placeholder="用户或群组 ID" /></label></template
           ><label v-else
             >推送地址<input
               v-model="c.endpoint"
+              name="endpoint"
               type="password"
               :aria-label="`${names[c.kind]}推送地址`"
               :placeholder="c.has_endpoint ? '已保存，留空保持不变' : 'https://…'"
@@ -282,6 +310,7 @@
             ><label
               >加签密钥（可选）<input
                 v-model="c.secret"
+                name="secret"
                 type="password"
                 aria-label="钉钉加签密钥"
                 :placeholder="c.has_secret ? '已保存，留空保持不变' : 'SEC…'"
@@ -289,12 +318,18 @@
             ><label v-if="c.has_secret" class="check-label"
               ><input
                 v-model="c.clear_secret"
+                name="clear_secret"
                 type="checkbox"
                 role="switch"
               />清除已保存的加签密钥</label
             ></template
           ><label class="check-label"
-            ><input v-model="c.failure_only" type="checkbox" role="switch" />仅失败时通知</label
+            ><input
+              v-model="c.failure_only"
+              name="failure_only"
+              type="checkbox"
+              role="switch"
+            />仅失败时通知</label
           ><small class="help">包含部分失败、失败与服务中断；关闭此选项也通知完成和取消。</small
           ><div v-if="errors[c.kind]" class="notice error" role="alert">{{ errors[c.kind] }}</div
           ><footer
@@ -360,22 +395,22 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin: 32px 0 17px;
+    margin: var(--space-32) 0 var(--space-17);
   }
   .section-heading h2 {
-    font-size: 16px;
+    font-size: var(--font-size-16);
   }
   .count {
-    font-size: 10px;
+    font-size: var(--font-size-10);
     color: var(--ash);
-    padding: 2px 6px;
+    padding: var(--space-2) var(--space-6);
     background: var(--palette-f1f3f4);
-    border-radius: 4px;
-    margin-left: 6px;
+    border-radius: var(--radius-4);
+    margin-left: var(--space-6);
     vertical-align: middle;
   }
   .section-heading > .subtle {
-    font-size: 10px;
+    font-size: var(--font-size-10);
   }
   @media (max-width: 800px) {
     .section-heading .subtle {

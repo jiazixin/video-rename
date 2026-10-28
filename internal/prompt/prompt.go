@@ -34,7 +34,7 @@ func (s Store) Get(ctx context.Context, id int64) (Profile, error) {
 		return tx.QueryRowContext(ctx, "SELECT "+columns+" FROM prompts WHERE id=?", id).Scan(&p.ID, &p.Title, &p.Body, &p.Version, &p.Created, &p.Updated)
 	})
 	if errors.Is(err, sql.ErrNoRows) {
-		return p, domain.Fail(domain.KindNotFound, domain.Record{Code: "prompt_not_found", Message: "prompt does not exist"})
+		return p, domain.Fail(domain.KindNotFound, domain.Failure{Reason: domain.ReasonPromptNotFound, Message: "prompt does not exist"})
 	}
 	return p, err
 }
@@ -79,7 +79,7 @@ func (s Store) Save(ctx context.Context, p Profile) (Profile, error) {
 				return p, err
 			}
 			if n >= 200 {
-				return p, domain.Fail(domain.KindTooMany, domain.Record{Code: "prompts_full", Message: "at most 200 prompts"})
+				return p, domain.Fail(domain.KindTooMany, domain.Failure{Reason: domain.ReasonPromptsFull, Message: "at most 200 prompts"})
 			}
 			res, err := tx.ExecContext(ctx, "INSERT INTO prompts(title,body,created,updated) VALUES(?,?,?,?)", p.Title, p.Body, storage.Now(), storage.Now())
 			if err != nil {
@@ -106,7 +106,7 @@ func (s Store) Save(ctx context.Context, p Profile) (Profile, error) {
 			return p, err
 		}
 		if n == 0 {
-			return p, domain.Fail(domain.KindConflict, domain.Record{Code: "prompt_changed", Message: "prompt was modified or deleted; refresh"})
+			return p, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonPromptChanged, Message: "prompt was modified or deleted; refresh"})
 		}
 	}
 	return s.Get(ctx, p.ID)
@@ -119,19 +119,19 @@ func (s Store) Delete(ctx context.Context, id, version int64) error {
 		var current int64
 		if err = tx.QueryRowContext(ctx, "SELECT version FROM prompts WHERE id=?", id).Scan(&current); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return domain.Fail(domain.KindNotFound, domain.Record{Code: "prompt_not_found", Message: "prompt does not exist"})
+				return domain.Fail(domain.KindNotFound, domain.Failure{Reason: domain.ReasonPromptNotFound, Message: "prompt does not exist"})
 			}
 			return err
 		}
 		if current != version {
-			return domain.Fail(domain.KindConflict, domain.Record{Code: "prompt_changed", Message: "prompt was modified; refresh"})
+			return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonPromptChanged, Message: "prompt was modified; refresh"})
 		}
 		var configs int
 		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM model_configs WHERE prompt_id=?", id).Scan(&configs); err != nil {
 			return err
 		}
 		if configs > 0 {
-			return domain.Fail(domain.KindConflict, domain.Record{Code: "prompt_in_use", Message: "prompt is used by model configurations", Details: map[string]any{"configs": configs}})
+			return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonPromptInUse, Message: "prompt is used by model configurations", Details: map[string]any{"configs": configs}})
 		}
 		if _, err = tx.ExecContext(ctx, "DELETE FROM prompts WHERE id=?", id); err != nil {
 			return err

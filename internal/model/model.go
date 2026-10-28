@@ -39,7 +39,7 @@ type Store struct{ db *storage.Store }
 
 // DefaultSettings returns the default model settings.
 func DefaultSettings() config.ServerConfig {
-	return config.ServerConfig{Workers: 2, Provider: "custom", Protocol: "openai", Timeout: "180s", Temperature: 0.7, MaxTokens: 1024}
+	return config.ServerConfig{Workers: 2, Provider: "custom", Protocol: "openai", TimeoutMS: 180000, Temperature: 0.7, MaxTokens: 1024}
 }
 
 // Seed creates the default prompt and model profile when none exist.
@@ -155,7 +155,7 @@ func (s Store) Save(ctx context.Context, p Profile) (Profile, error) {
 				return p, err
 			}
 			if n >= 200 {
-				return p, domain.Fail(domain.KindTooMany, domain.Record{Code: "model_configs_full", Message: "at most 200 model configurations"})
+				return p, domain.Fail(domain.KindTooMany, domain.Failure{Reason: domain.ReasonModelConfigsFull, Message: "at most 200 model configurations"})
 			}
 			res, err := tx.ExecContext(ctx, "INSERT INTO model_configs(title,prompt_id,created,updated,settings,api_key) VALUES(?,?,?,?,?,?)", p.Title, p.PromptID, storage.Now(), storage.Now(), string(raw), secret)
 			if err != nil {
@@ -182,7 +182,7 @@ func (s Store) Save(ctx context.Context, p Profile) (Profile, error) {
 			return p, err
 		}
 		if n == 0 {
-			return p, domain.Fail(domain.KindConflict, domain.Record{Code: "model_config_changed", Message: "model configuration was modified or deleted; refresh"})
+			return p, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonModelConfigChanged, Message: "model configuration was modified or deleted; refresh"})
 		}
 	}
 	return s.Get(ctx, p.ID)
@@ -232,7 +232,7 @@ func (s Store) SetDefault(ctx context.Context, id int64) error {
 		if n, err := res.RowsAffected(); err != nil {
 			return err
 		} else if n != 1 {
-			return domain.Fail(domain.KindConflict, domain.Record{Code: "model_config_changed", Message: "model configuration was modified or deleted; refresh"})
+			return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonModelConfigChanged, Message: "model configuration was modified or deleted; refresh"})
 		}
 		return nil
 	})
@@ -270,7 +270,7 @@ func (s Store) Snapshot(p Profile) (string, error) {
 // ApplySnapshot decrypts snapshot value into c.
 func (s Store) ApplySnapshot(value string, c *config.TaskConfig) error {
 	if value == "" {
-		return domain.Fail(domain.KindInvalid, domain.Record{Code: "model_snapshot_missing", Message: "run has no model configuration snapshot; create the run again"})
+		return domain.Fail(domain.KindInvalid, domain.Failure{Reason: domain.ReasonModelSnapshotMissing, Message: "run has no model configuration snapshot; create the run again"})
 	}
 	plain, err := s.db.Unseal(value)
 	if err != nil {
@@ -278,7 +278,7 @@ func (s Store) ApplySnapshot(value string, c *config.TaskConfig) error {
 	}
 	var snap snapshot
 	if err = json.Unmarshal([]byte(plain), &snap); err != nil {
-		return domain.Fail(domain.KindInvalid, domain.Record{Code: "model_snapshot_invalid", Message: "model snapshot is invalid"})
+		return domain.Fail(domain.KindInvalid, domain.Failure{Reason: domain.ReasonModelSnapshotInvalid, Message: "model snapshot is invalid"})
 	}
 	snap.Settings.APIKey = snap.Key
 	return c.ApplyModel(snap.Settings, snap.Body)

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"video-rename/internal/domain"
+	"video-rename/internal/pagination"
 	"video-rename/internal/storage"
 	"video-rename/internal/timebucket"
 	"video-rename/internal/timefmt"
@@ -29,8 +30,8 @@ type AnalysisQuery struct {
 	ProfileSet bool   // distinguishes profile 0 (extraction) from no filter
 	Source     string // "", manual or scheduled
 	Sort       string // recent (default), duration or size
-	Page       int
-	Size       int
+	Offset     int
+	Limit      int
 }
 
 // Report is the batch performance report.
@@ -152,10 +153,10 @@ type BatchRow struct {
 
 // PagedBatches is a page of report batches.
 type PagedBatches struct {
-	Items []BatchRow `json:"items"`
-	Total int        `json:"total"`
-	Page  int        `json:"page"`
-	Size  int        `json:"size"`
+	Items  []BatchRow `json:"items"`
+	Total  int        `json:"total"`
+	Offset int        `json:"offset"`
+	Limit  int        `json:"limit"`
 }
 
 // ReportOptions lists the values available as report filters.
@@ -257,7 +258,7 @@ var durationBands = []struct {
 // failureKey groups a stored failure record by its code and reason.
 func failureKey(record domain.Record) (string, domain.Record) {
 	if record.Code == "" {
-		record.Code = domain.CodeInternal
+		record.Code = domain.OutcomeUnexpectedFailure
 	}
 	key := record.Code
 	if reason, ok := record.Details["reason"].(string); ok {
@@ -293,18 +294,18 @@ func (q AnalysisQuery) normalized() AnalysisQuery {
 	if q.Sort == "" {
 		q.Sort = "recent"
 	}
-	q.Page = max(q.Page, 1)
-	if q.Size < 1 {
-		q.Size = 20
+	q.Offset = max(q.Offset, 0)
+	if q.Limit < 1 {
+		q.Limit = 20
 	}
-	q.Size = min(q.Size, 100)
+	q.Limit = min(q.Limit, 100)
 	return q
 }
 
 // cacheKey identifies a full report independent of the requested page.
 func (q AnalysisQuery) cacheKey() (string, error) {
 	scope := q
-	scope.Page, scope.Size, scope.Location = 0, 0, nil
+	scope.Offset, scope.Limit, scope.Location = 0, 0, nil
 	raw, err := json.Marshal(struct {
 		Query    AnalysisQuery
 		Timezone string
@@ -334,7 +335,7 @@ func Analytics(ctx context.Context, db *storage.Store, q AnalysisQuery) (*Report
 		var cached Report
 		if db.CachedReport(cacheKey, revision, &cached) {
 
-			return pageReport(ctx, &cached, q.Page, q.Size)
+			return pageReport(ctx, &cached, q.Offset, q.Limit)
 		}
 
 		selected, err := selectRuns(ctx, tx, q)
@@ -364,7 +365,7 @@ func Analytics(ctx context.Context, db *storage.Store, q AnalysisQuery) (*Report
 			return nil, err
 		}
 		db.CacheReport(cacheKey, revision, report)
-		return pageReport(ctx, report, q.Page, q.Size)
+		return pageReport(ctx, report, q.Offset, q.Limit)
 	})
 }
 
@@ -486,7 +487,7 @@ func (g failureGroups) add(message string, atMs int64) {
 	stored, err := domain.ParseRecord(message)
 	if err != nil {
 		// A record that cannot be read still counts as one internal failure.
-		stored = domain.Record{Code: domain.CodeInternal}
+		stored = domain.Record{Code: domain.OutcomeUnexpectedFailure}
 	}
 	key, record := failureKey(stored)
 	group := g[key]
@@ -713,7 +714,7 @@ func scatterPoints(runs []*runRow) []ScatterPoint {
 // slices out the requested page.
 func (a *accumulator) batchRows(q AnalysisQuery) PagedBatches {
 	ordered := sortedRuns(a.runs, q.Sort)
-	batches := PagedBatches{Items: make([]BatchRow, 0, len(ordered)), Total: len(ordered), Page: q.Page, Size: q.Size}
+	batches := PagedBatches{Items: make([]BatchRow, 0, len(ordered)), Total: len(ordered), Offset: q.Offset, Limit: q.Limit}
 	for _, r := range ordered {
 		batches.Items = append(batches.Items, BatchRow{ID: r.id, Task: r.task, Status: r.status, Source: r.source, ProfileID: r.profileID, ProfileTitle: r.profileTitle, Model: r.model, Provider: r.provider, Protocol: r.protocol, Created: r.created, Started: r.started, Finished: r.finished, Discovered: r.discovered, Done: r.done, Skipped: r.skipped, Failed: r.failed, DurationMs: r.durationMs, AvgItemMs: a.timingByRun[r.id].averageMs()})
 	}
@@ -811,9 +812,9 @@ func pageReport(ctx context.Context, report *Report, page, size int) (*Report, e
 		return nil, err
 	}
 	rows := report.Batches.Items
-	report.Batches.Page = min(page, max(1, (len(rows)+size-1)/size))
-	report.Batches.Size = size
-	start := (report.Batches.Page - 1) * size
+	report.Batches.Offset = pagination.Offset(page, len(rows), size)
+	report.Batches.Limit = size
+	start := report.Batches.Offset
 	report.Batches.Items = rows[min(start, len(rows)):min(start+size, len(rows))]
 	return report, nil
 }

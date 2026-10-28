@@ -32,7 +32,15 @@ test('批次暂停确认、错误重试、恢复、详情与窄屏', async ({ pa
   await page.route('**/api/runs/910', (route) => route.fulfill({ json: run }))
   await page.route('**/api/runs/910/items?*', (route) =>
     route.fulfill({
-      json: { items: [], directories: [], all_total: 0, failed_total: 0, total: 0, page: 1 }
+      json: {
+        items: [],
+        directories: [],
+        all_total: 0,
+        failed_total: 0,
+        total: 0,
+        offset: 0,
+        limit: 100
+      }
     })
   )
   let pauses = 0,
@@ -73,7 +81,7 @@ test('批次暂停确认、错误重试、恢复、详情与窄屏', async ({ pa
   expect(pauses).toBe(0)
   await row.getByRole('button', { name: '暂停调度' }).click()
   await dialog.getByRole('button', { name: '确认暂停' }).click()
-  await expect(dialog.getByRole('alert')).toContainText('请重试')
+  await expect(dialog.getByRole('alert')).toContainText('服务暂时无法完成请求')
   fail = false
   await dialog.getByRole('button', { name: '确认暂停' }).click()
   await expect(dialog).toHaveCount(0)

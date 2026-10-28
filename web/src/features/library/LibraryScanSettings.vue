@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import { vFormErrors } from '../../app/form-errors';
   import { useToast } from '../../app/use-toast';
   import { computed, onMounted, ref, watch } from 'vue';
   import { RefreshCw, Save } from '@lucide/vue';
@@ -7,7 +8,7 @@
   import ScanStatus from './ScanStatus.vue';
   import { useLibraryScan } from './library-scan';
   const scan = useLibraryScan();
-  const { state, error, actionError, submitting, scanning } = scan;
+  const { state, error, actionError, submitting, scanning, formError } = scan;
   const toast = useToast();
   const form = ref<LibraryScanSettings>(),
     saved = ref('');
@@ -49,12 +50,13 @@
       }}<button v-if="error" type="button" @click="scan.refresh">重新读取状态</button></div
     >
     <p v-if="!form && !error" class="help">正在读取扫描设置…</p>
-    <form v-if="form" @submit.prevent="save">
+    <form v-if="form" v-form-errors="formError" @submit.prevent="save">
       <fieldset :disabled="submitting" class="scan-settings-fields">
         <div class="scan-settings-options">
           <label class="check-label"
             ><input
               v-model="form.enabled"
+              name="enabled"
               type="checkbox"
               role="switch"
               aria-label="开启定时扫描"
@@ -64,6 +66,7 @@
             >扫描间隔<span class="scan-interval-input"
               ><input
                 v-model.number="form.interval_minutes"
+                name="interval_minutes"
                 aria-label="扫描间隔（分钟）"
                 type="number"
                 min="5"
@@ -82,6 +85,7 @@
         <div class="scan-settings-scope">
           <ScanDirectorySelection
             v-model="form.targets"
+            data-field="targets"
             :paths="state?.directory_paths || {}"
             title="扫描范围"
             description="包含全部子目录；选择媒体库可扫描全部文件夹。可选 1–100 个目录，重叠范围自动合并。"
@@ -92,6 +96,7 @@
           >
           <ScanDirectorySelection
             v-model="form.excluded_targets"
+            data-field="excluded_targets"
             :paths="state?.directory_paths || {}"
             title="排除目录"
             description="手动扫描和后台扫描均跳过这些目录及其子目录，排除优先于扫描范围。最多 100 个，可随时移除。"
@@ -131,14 +136,14 @@
 </template>
 <style scoped>
   .library-scan-settings {
-    padding: 26px;
+    padding: var(--space-26);
   }
   .library-scan-settings h2 {
-    margin: 8px 0;
+    margin: var(--space-8) 0;
   }
   .scan-settings-fields {
     border: 0;
-    margin: 20px 0;
+    margin: var(--space-20) 0;
     padding: 0;
     min-width: 0;
   }
@@ -146,11 +151,11 @@
     display: grid;
     grid-template-columns: auto auto minmax(0, 1fr);
     align-items: center;
-    gap: 18px 28px;
-    padding: 14px 16px;
-    margin-bottom: 22px;
+    gap: var(--space-18) var(--space-28);
+    padding: var(--space-14) var(--space-16);
+    margin-bottom: var(--space-22);
     border: 1px solid var(--palette-e5eae7);
-    border-radius: 8px;
+    border-radius: var(--radius-8);
     background: var(--palette-f8faf9);
   }
   .scan-settings-options label {
@@ -165,27 +170,27 @@
     display: flex;
     align-items: center;
     flex-direction: row;
-    gap: 8px;
+    gap: var(--space-8);
     white-space: nowrap;
   }
   .scan-interval-input {
     color: var(--ash);
-    font-size: 12px;
-    font-weight: 400;
+    font-size: var(--font-size-12);
+    font-weight: var(--font-weight-400);
   }
   .scan-interval-input input {
     width: 84px;
     min-height: 34px;
-    padding: 6px 10px;
+    padding: var(--space-6) var(--space-10);
     text-align: center;
     font-variant-numeric: tabular-nums;
   }
   .scan-interval-help {
     margin: 0;
-    padding-left: 22px;
+    padding-left: var(--space-22);
     border-left: 1px solid var(--line);
-    font-size: 11px;
-    line-height: 1.7;
+    font-size: var(--font-size-11);
+    line-height: var(--line-height-1-7);
   }
   .scan-interval-help span {
     display: block;
@@ -194,42 +199,42 @@
     min-width: 0;
   }
   .scan-settings-scope > .help {
-    margin: 6px 0 12px;
+    margin: var(--space-6) 0 var(--space-12);
   }
   .scan-settings-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 12px;
+    gap: var(--space-12);
     align-items: center;
-    margin-bottom: 20px;
+    margin-bottom: var(--space-20);
   }
   @media (max-width: 960px) {
     .scan-settings-options {
       grid-template-columns: auto minmax(0, 1fr);
-      gap: 12px 24px;
+      gap: var(--space-12) var(--space-24);
     }
     .scan-interval {
       justify-content: flex-end;
     }
     .scan-interval-help {
       grid-column: 1 / -1;
-      padding: 10px 0 0;
+      padding: var(--space-10) 0 0;
       border-left: 0;
       border-top: 1px solid var(--line);
     }
     .scan-interval-help span {
       display: inline;
-      margin-left: 6px;
+      margin-left: var(--space-6);
     }
   }
   @media (max-width: 600px) {
     .library-scan-settings {
-      padding: 16px;
+      padding: var(--space-16);
     }
     .scan-settings-options {
       grid-template-columns: minmax(0, 1fr);
-      gap: 14px;
-      padding: 14px;
+      gap: var(--space-14);
+      padding: var(--space-14);
     }
     .scan-interval {
       justify-content: space-between;
@@ -239,7 +244,7 @@
       margin-left: 0;
     }
     .scan-settings-actions {
-      gap: 8px;
+      gap: var(--space-8);
     }
     .scan-settings-actions > button {
       flex: 1 1 auto;

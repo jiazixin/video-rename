@@ -3,11 +3,13 @@ package record
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"maps"
 	"slices"
 	"strings"
 
 	"video-rename/internal/domain"
+	"video-rename/internal/pagination"
 	"video-rename/internal/storage"
 )
 
@@ -104,11 +106,12 @@ func (s *Store) RunItems(ctx context.Context, input RunQuery) (RunSnapshot, erro
 		if err == nil {
 			err = rows.Err()
 		}
-		rows.Close()
+		err = errors.Join(err, rows.Close())
 		if err != nil {
 			return RunSnapshot{}, err
 		}
-		page := min(max(1, number(q.Get("page"))), max(1, (total+99)/100))
+		const limit int64 = 100
+		offset := pagination.Offset(number(q.Get("offset")), total, limit)
 		scope := "i.run=?"
 		scopeArgs := []any{run}
 		if q.Has("directory") {
@@ -131,7 +134,7 @@ func (s *Store) RunItems(ctx context.Context, input RunQuery) (RunSnapshot, erro
 		if status != "" {
 			args = append(args, status)
 		}
-		args = append(args, (page-1)*100)
+		args = append(args, offset)
 		rows, err = tx.QueryContext(ctx, `SELECT i.id,i.entry,i.status,i.message,i.original_path,
  MAX(i.started_ms,i.finished_ms),COALESCE(o.new_name,''),COALESCE(o.status,''),COALESCE(o.undone,0)
  FROM run_items i`+runItemOperation+`
@@ -149,14 +152,18 @@ func (s *Store) RunItems(ctx context.Context, input RunQuery) (RunSnapshot, erro
 				break
 			}
 			directory, name := splitRunPath(original)
-			out = append(out, map[string]any{"id": id, "entry": entry, "status": itemStatus, "message": message, "original_path": original, "directory": directory, "original_name": name, "new_name": newName, "operation_status": operationStatus, "undone": undone != 0, "updated_ms": updated})
+			item := map[string]any{"id": id, "entry": entry, "status": itemStatus, "original_path": original, "directory": directory, "original_name": name, "new_name": newName, "operation_status": operationStatus, "undone": undone != 0, "updated_ms": updated}
+			if !message.IsZero() {
+				item["message"] = message
+			}
+			out = append(out, item)
 			itemIDs = append(itemIDs, id)
 			entryIDs = append(entryIDs, entry)
 		}
 		if err == nil {
 			err = rows.Err()
 		}
-		rows.Close()
+		err = errors.Join(err, rows.Close())
 		if err != nil {
 			return RunSnapshot{}, err
 		}
@@ -182,13 +189,17 @@ func (s *Store) RunItems(ctx context.Context, input RunQuery) (RunSnapshot, erro
 					break
 				}
 				directory, name := splitRunPath(original)
-				recent = append(recent, map[string]any{"id": id, "status": itemStatus, "message": message, "directory": directory, "original_name": name, "new_name": newName, "operation_status": operationStatus, "undone": undone != 0, "started_ms": started, "finished_ms": finished})
+				item := map[string]any{"id": id, "status": itemStatus, "directory": directory, "original_name": name, "new_name": newName, "operation_status": operationStatus, "undone": undone != 0, "started_ms": started, "finished_ms": finished}
+				if !message.IsZero() {
+					item["message"] = message
+				}
+				recent = append(recent, item)
 				recentIDs = append(recentIDs, id)
 			}
 			if err == nil {
 				err = rows.Err()
 			}
-			rows.Close()
+			err = errors.Join(err, rows.Close())
 			if err != nil {
 				return RunSnapshot{}, err
 			}
@@ -212,13 +223,13 @@ func (s *Store) RunItems(ctx context.Context, input RunQuery) (RunSnapshot, erro
 			if err == nil {
 				err = rows.Err()
 			}
-			rows.Close()
+			err = errors.Join(err, rows.Close())
 			if err != nil {
 				return RunSnapshot{}, err
 			}
 			extra["skip_reasons"] = reasons
 		}
-		result := map[string]any{"items": out, "directories": directories, "total": total, "all_total": all.Total, "done_total": all.Done, "running_total": all.Running, "skipped_total": all.Skipped, "failed_total": all.Failed, "page": page}
+		result := map[string]any{"items": out, "directories": directories, "total": total, "all_total": all.Total, "done_total": all.Done, "running_total": all.Running, "skipped_total": all.Skipped, "failed_total": all.Failed, "offset": offset, "limit": limit}
 		maps.Copy(result, extra)
 		return RunSnapshot{Data: result, Items: out, Extra: extra, ItemIDs: itemIDs, EntryIDs: entryIDs}, nil
 

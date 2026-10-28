@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -8,28 +9,25 @@ import (
 	"strings"
 )
 
-// Kind classifies an expected failure. The HTTP layer maps it to a status code.
+// Kind classifies expected failures without depending on a transport.
 type Kind int
 
 // Failure kinds.
 const (
-	KindInvalid         Kind = iota + 1 // bad input; 400
-	KindNotFound                        // missing record or resource; 404
-	KindConflict                        // state does not allow the operation; 409
-	KindUnavailable                     // temporarily unavailable; 503
-	KindTooMany                         // rate or count limit reached; 429
-	KindInternal                        // invariant broken or recovery needed; 500
-	KindUnauthenticated                 // missing or expired session; 401
-	KindForbidden                       // request not allowed; 403
+	KindInvalid         Kind = iota + 1 // bad input
+	KindNotFound                        // missing record or resource
+	KindConflict                        // state does not allow the operation
+	KindUnavailable                     // temporarily unavailable
+	KindTooMany                         // rate or count limit reached
+	KindInternal                        // invariant broken or recovery needed
+	KindUnauthenticated                 // missing or expired session
+	KindForbidden                       // request not allowed
 )
 
-// Error is an expected failure. Code is the snake_case code clients map to
-// text, Message is English text for developers and logs, and Details carries
-// the values a client needs for its own message. Err is the optional cause;
-// its text is passed to clients as details.detail.
+// Error is a typed domain failure with an optional underlying cause.
 type Error struct {
 	Kind    Kind
-	Code    string
+	Reason  FailureReason
 	Message string
 	Details map[string]any
 	Err     error
@@ -46,16 +44,16 @@ func (e *Error) Error() string {
 // Unwrap returns the cause.
 func (e *Error) Unwrap() error { return e.Err }
 
-// Is reports whether target is an expected failure with the same code, so a
+// Is reports whether target is an expected failure with the same reason, so a
 // wrapped copy still matches the failure it was made from.
 func (e *Error) Is(target error) bool {
 	t, ok := target.(*Error)
-	return ok && t.Code == e.Code
+	return ok && t.Reason == e.Reason
 }
 
 // Fail returns an expected failure with structured diagnostic details.
-func Fail(kind Kind, record Record) *Error {
-	return &Error{Kind: kind, Code: record.Code, Message: record.Message, Details: record.Details}
+func Fail(kind Kind, failure Failure) *Error {
+	return &Error{Kind: kind, Reason: failure.Reason, Message: failure.Message, Details: failure.Details}
 }
 
 // Wrap returns a copy of e caused by err.
@@ -65,9 +63,8 @@ func (e *Error) Wrap(err error) *Error {
 	return &copied
 }
 
-// ClientDetails returns the details sent to clients, with the cause's text as
-// detail.
-func (e *Error) ClientDetails() map[string]any {
+// DiagnosticDetails includes the cause for persisted diagnostics, not HTTP responses.
+func (e *Error) DiagnosticDetails() map[string]any {
 	if e.Err == nil {
 		return e.Details
 	}
@@ -84,32 +81,47 @@ func (e *Error) ClientDetails() map[string]any {
 // AsError returns the expected failure in the chain of err.
 func AsError(err error) (*Error, bool) { return errors.AsType[*Error](err) }
 
-// Common failure codes.
-const (
-	CodeInvalidArgument = "invalid_argument"
-	CodeNotFound        = "not_found"
-	CodeInternal        = "internal"
-)
+// OutcomeUnexpectedFailure identifies a diagnostic that has no expected domain reason.
+const OutcomeUnexpectedFailure = "unexpected_failure"
 
-// FieldError is one invalid field of a request or setting. Path names the
-// field with dots and list indexes (sampling.size_rules.0.frames); Reason is a
-// snake_case reason code.
+// FieldError identifies one invalid domain field and its validation reason.
 type FieldError struct {
 	Path   string `json:"path"`
 	Reason string `json:"reason"`
 }
 
-// Invalid returns the invalid_argument failure for fields.
-func Invalid(fields ...FieldError) *Error {
-	parts := make([]string, len(fields))
-	for i, f := range fields {
-		parts[i] = f.Path + " (" + f.Reason + ")"
-	}
-	return Fail(KindInvalid, Record{Code: CodeInvalidArgument, Message: "invalid fields: " + strings.Join(parts, ", "), Details: map[string]any{"fields": fields}})
+// ValidationError reports invalid fields without an HTTP code or status.
+type ValidationError struct {
+	Fields []FieldError
+	Err    error
 }
 
-// InvalidField returns the invalid_argument failure for one field.
-func InvalidField(path, reason string) *Error { return Invalid(FieldError{path, reason}) }
+// Error describes the invalid fields for developers.
+func (e *ValidationError) Error() string {
+	parts := make([]string, len(e.Fields))
+	for i, field := range e.Fields {
+		parts[i] = field.Path + " (" + field.Reason + ")"
+	}
+	return "invalid fields: " + strings.Join(parts, ", ")
+}
+
+// Unwrap returns the validation cause, if present.
+func (e *ValidationError) Unwrap() error { return e.Err }
+
+// Wrap attaches a cause to a copy of the validation failure.
+func (e *ValidationError) Wrap(err error) *ValidationError {
+	copied := *e
+	copied.Err = err
+	return &copied
+}
+
+// Invalid describes the invalid fields.
+func Invalid(fields ...FieldError) *ValidationError { return &ValidationError{Fields: fields} }
+
+// InvalidField describes one invalid field.
+func InvalidField(path, reason string) *ValidationError {
+	return Invalid(FieldError{Path: path, Reason: reason})
+}
 
 // Record is the persisted form of an outcome: the code clients map to text,
 // an English message and the details the text needs.
@@ -119,9 +131,11 @@ type Record struct {
 	Details map[string]any `json:"details,omitzero"`
 }
 
+// IsZero reports whether the record contains no outcome or diagnostic.
+func (r Record) IsZero() bool { return r.Code == "" && r.Message == "" && len(r.Details) == 0 }
+
 // RecordOf converts err for persistence. Errors without a code become
-// internal with their text as
-// details.detail. Message is the full text of err, including the context of
+// unexpected_failure with their text in details.detail. Message is the full text of err, including the context of
 // wrapping errors; that context also becomes details.detail when the
 // failure has no detail of its own.
 func RecordOf(err error) Record {
@@ -133,8 +147,11 @@ func RecordOf(err error) Record {
 		r.Message = err.Error()
 		return r
 	}
+	if e, ok := errors.AsType[*ValidationError](err); ok {
+		return Record{Code: "validation_failed", Message: err.Error(), Details: map[string]any{"fields": e.Fields}}
+	}
 	if e, ok := AsError(err); ok {
-		details := e.ClientDetails()
+		details := e.DiagnosticDetails()
 		if _, ok := details["detail"]; !ok && err.Error() != e.Error() {
 			details = maps.Clone(details)
 			if details == nil {
@@ -142,9 +159,9 @@ func RecordOf(err error) Record {
 			}
 			details["detail"] = err.Error()
 		}
-		return Record{Code: e.Code, Message: err.Error(), Details: details}
+		return Record{Code: outcomeCodes[e.Reason], Message: err.Error(), Details: details}
 	}
-	return Record{Code: CodeInternal, Message: err.Error(), Details: map[string]any{"detail": err.Error()}}
+	return Record{Code: OutcomeUnexpectedFailure, Message: err.Error(), Details: map[string]any{"detail": err.Error()}}
 }
 
 // RecordText encodes err for a TEXT column; nil encodes as "".
@@ -152,14 +169,25 @@ func RecordText(err error) string { return RecordOf(err).Text() }
 
 // Text encodes r for a TEXT column. The zero Record encodes as "".
 func (r Record) Text() string {
-	if r.Code == "" && r.Message == "" && len(r.Details) == 0 {
+	if r.IsZero() {
 		return ""
 	}
 	b, err := json.Marshal(r)
-	if err != nil {
-		return ""
+	if err == nil {
+		return string(b)
 	}
-	return string(b)
+	// Serialization must not turn a failure into the empty, successful outcome.
+	// The diagnostic contains only strings; invalid external text is replaced
+	// by the encoder so even a malformed original code remains reportable.
+	diagnostic, diagnosticErr := json.Marshal(Record{
+		Code:    OutcomeUnexpectedFailure,
+		Message: "outcome record encoding failed",
+		Details: map[string]any{"record_code": r.Code, "detail": err.Error()},
+	}, jsontext.AllowInvalidUTF8(true))
+	if diagnosticErr != nil {
+		panic(fmt.Errorf("encode string-only record diagnostic: %w", diagnosticErr))
+	}
+	return string(diagnostic)
 }
 
 // ParseRecord decodes column text written by Text.

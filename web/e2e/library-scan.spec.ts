@@ -72,7 +72,7 @@ test('手动递归扫描发现多个目录中新视频和新子目录，不创�
   writeFileSync(join(folder, '乙目录', '新视频乙.mp4'), 'scan fixture')
   mkdirSync(join(folder, '全新目录', '深层'), { recursive: true })
   writeFileSync(join(folder, '全新目录', '深层', '深层新增.mp4'), 'scan fixture')
-  const beforeResponse = await page.request.get('/api/runs?category=all&page=1&size=1')
+  const beforeResponse = await page.request.get('/api/runs?category=all&offset=0&limit=50')
   expect(beforeResponse.ok()).toBe(true)
   const before = await beforeResponse.json()
   expect(Number.isInteger(before.total)).toBe(true)
@@ -83,28 +83,28 @@ test('手动递归扫描发现多个目录中新视频和新子目录，不创�
   await expect(page.getByRole('button', { name: '全新目录', exact: true })).toBeVisible({
     timeout: 15000
   })
-  const parent = await (await page.request.get(`/api/directories/${id}/entries?page=1`)).json()
+  const parent = await (await page.request.get(`/api/directories/${id}/entries?offset=0`)).json()
   for (const [dirName, fileName] of [
     ['甲目录', '新视频甲.mp4'],
     ['乙目录', '新视频乙.mp4']
   ] as const) {
     const child = parent.items.find((e: Record<string, unknown>) => e.name === dirName)
     const files = await (
-      await page.request.get(`/api/directories/${child.id}/entries?page=1`)
+      await page.request.get(`/api/directories/${child.id}/entries?offset=0`)
     ).json()
     expect(files.items.map((e: Record<string, unknown>) => e.name)).toContain(fileName)
     expect(files.items.find((e: Record<string, unknown>) => e.name === fileName).processed).toBe('')
   }
   const fresh = parent.items.find((e: Record<string, unknown>) => e.name === '全新目录')
   const nested = await (
-    await page.request.get(`/api/directories/${fresh.id}/entries?page=1`)
+    await page.request.get(`/api/directories/${fresh.id}/entries?offset=0`)
   ).json()
   const deep = nested.items.find((e: Record<string, unknown>) => e.name === '深层')
   const deepFiles = await (
-    await page.request.get(`/api/directories/${deep.id}/entries?page=1`)
+    await page.request.get(`/api/directories/${deep.id}/entries?offset=0`)
   ).json()
   expect(deepFiles.items.map((e: Record<string, unknown>) => e.name)).toEqual(['深层新增.mp4'])
-  const afterResponse = await page.request.get('/api/runs?category=all&page=1&size=1')
+  const afterResponse = await page.request.get('/api/runs?category=all&offset=0&limit=50')
   expect(afterResponse.ok()).toBe(true)
   const after = await afterResponse.json()
   expect(after.total).toBe(before.total)
@@ -173,7 +173,7 @@ for (const mode of ['auto', 'auto-delayed', 'selected', 'late-selection'] as con
     })
     await page.route('**/api/directories/1/state', (route) => {
       stateRequests++
-      return route.fulfill({ json: { generation, refreshed: '', refreshing: false, error: '' } })
+      return route.fulfill({ json: { generation, refreshed: '', refreshing: false } })
     })
     await page.route('**/api/directories/1/entries?*', async (route) => {
       listRequests++
@@ -184,14 +184,13 @@ for (const mode of ['auto', 'auto-delayed', 'selected', 'late-selection'] as con
       }
       return route.fulfill({
         json: {
-          page: 1,
+          offset: 0,
+          limit: 100,
           total: items.length,
           items,
-          next: 0,
           generation,
           refreshed: '',
           refreshing: false,
-          error: '',
           directory: entry(1, '媒体库', 'directory'),
           breadcrumbs: []
         }
@@ -301,7 +300,7 @@ async function mockDirectoryUpdates(
       })
     }
     return route.fulfill({
-      json: { generation: updates.generation, refreshed: '', refreshing: false, error: '' }
+      json: { generation: updates.generation, refreshed: '', refreshing: false }
     })
   })
   await page.route('**/api/directories/1/entries?*', (route) => {
@@ -309,14 +308,13 @@ async function mockDirectoryUpdates(
     const items = updates.generation === '1' ? initial : [...initial, ...updates.added]
     return route.fulfill({
       json: {
-        page: 1,
+        offset: 0,
+        limit: 100,
         total: items.length,
         items,
-        next: 0,
         generation: updates.generation,
         refreshed: '',
         refreshing: updates.refreshing,
-        error: '',
         directory: entry(1, '媒体库', 'directory'),
         breadcrumbs: []
       }
@@ -412,7 +410,7 @@ for (const viewport of [
     await page.clock.runFor(6000)
     const pollError = page
       .getByRole('alert')
-      .filter({ hasText: '目录更新检查失败：服务暂时无法完成请求（暂时断开）' })
+      .filter({ hasText: '目录更新检查失败：服务暂时无法完成请求' })
     await expect(pollError).toBeVisible()
     expect(await noticeElement.evaluate((element) => element.isConnected)).toBe(true)
     await page.evaluate(() => {
@@ -533,7 +531,7 @@ test('扫描失败和取消反馈清晰，不覆盖尚未保存的扫描间隔',
     { times: 1 }
   )
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
-  await expect(panel.getByRole('alert')).toContainText('NAS 连接中断')
+  await expect(panel.getByRole('alert')).toContainText('服务暂时无法完成请求')
   await panel.getByRole('button', { name: '重新读取状态', exact: true }).click()
   await expect(panel.getByRole('alert')).toHaveCount(0)
   await expect(panel.getByLabel('扫描间隔（分钟）', { exact: true })).toHaveValue('120')
@@ -672,7 +670,8 @@ test('目录选择弹窗加载失败可重试，长路径列表在窄屏不溢�
   )
   await excluded.getByRole('button', { name: '添加排除目录' }).click()
   const dialog = page.getByRole('dialog', { name: '选择排除目录' })
-  await expect(dialog).toContainText('测试目录暂时不可用')
+  await expect(dialog.getByRole('alert')).toContainText('服务暂时无法完成请求')
+  await expect(dialog.getByText('没有子目录', { exact: true })).toHaveCount(0)
   await expect(dialog.getByLabel('选择当前目录', { exact: true })).toBeDisabled()
   await dialog.getByRole('button', { name: '重试', exact: true }).click()
   await expect(dialog.getByLabel('选择 家庭影像', { exact: true })).toBeEnabled()

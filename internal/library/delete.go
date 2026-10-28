@@ -43,7 +43,7 @@ func (l *Library) Delete(ctx context.Context, id, version int64) error {
 		return err
 	}
 	if active > 0 {
-		return domain.Fail(domain.KindConflict, domain.Record{Code: "descendant_busy", Message: "a descendant has an active job"})
+		return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonDescendantBusy, Message: "a descendant has an active job"})
 	}
 	p, err := l.Path(ctx, id)
 	if err != nil {
@@ -76,7 +76,7 @@ func (l *Library) Delete(ctx context.Context, id, version int64) error {
 	defer cancel()
 	l.indexEpoch.Add(1)
 	if err := root.RemoveAll(rel); err != nil {
-		return domain.Fail(domain.KindInternal, domain.Record{Code: "delete_incomplete", Message: "delete stopped; the directory may be partly deleted"}).Wrap(err)
+		return domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonDeleteIncomplete, Message: "delete stopped; the directory may be partly deleted"}).Wrap(err)
 	}
 	_, err = storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
 		return tx.ExecContext(ctx, `WITH RECURSIVE descendants(id) AS (
@@ -85,12 +85,12 @@ func (l *Library) Delete(ctx context.Context, id, version int64) error {
 	})
 	if err != nil {
 		l.broken = err
-		return domain.Fail(domain.KindInternal, domain.Record{Code: "delete_index_failed", Message: "deleted, but the index update failed"}).Wrap(err)
+		return domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonDeleteIndexFailed, Message: "deleted, but the index update failed"}).Wrap(err)
 	}
 	if _, err := storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
 		return tx.ExecContext(ctx, "DELETE FROM directory_items WHERE entry IN (SELECT id FROM entries WHERE present=0)")
 	}); err != nil {
-		return domain.Fail(domain.KindInternal, domain.Record{Code: "delete_listing_failed", Message: "deleted, but the listing update failed"}).Wrap(err)
+		return domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonDeleteListingFailed, Message: "deleted, but the listing update failed"}).Wrap(err)
 	}
 	return nil
 }

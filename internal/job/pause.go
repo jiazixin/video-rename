@@ -42,7 +42,7 @@ func (m *Manager) Pause(ctx context.Context, id int64) error {
 		return err
 	}
 	if n == 0 {
-		return domain.Fail(domain.KindConflict, domain.Record{Code: "run_not_pausable", Message: "run finished or is cancelling; cannot pause"})
+		return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonRunNotPausable, Message: "run finished or is cancelling; cannot pause"})
 	}
 	if active, ok := m.active[id]; ok && !active.control.paused {
 		active.control.paused = true
@@ -74,7 +74,7 @@ func (m *Manager) Resume(ctx context.Context, id int64) error {
 		return err
 	}
 	if n == 0 {
-		return domain.Fail(domain.KindConflict, domain.Record{Code: "run_not_paused", Message: "run is not paused; cannot resume"})
+		return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonRunNotPaused, Message: "run is not paused; cannot resume"})
 	}
 	if ok {
 		c := active.control

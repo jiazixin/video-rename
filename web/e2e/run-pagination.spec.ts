@@ -74,8 +74,8 @@ test('批次顶部组合筛选、请求参数与重置', async ({ page }) => {
       json: {
         items: [],
         total: 0,
-        page: 1,
-        size: 50,
+        offset: 0,
+        limit: 50,
         profiles: [
           { id: 41, title: '配置 A' },
           { id: 42, title: '配置 B' }

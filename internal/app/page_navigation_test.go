@@ -40,8 +40,8 @@ func TestNumberedHistoryExtractionAndItemPages(t *testing.T) {
 		Items []struct {
 			ID int64 `json:"id"`
 		} `json:"items"`
-		Total int `json:"total"`
-		Page  int `json:"page"`
+		Total  int `json:"total"`
+		Offset int `json:"offset"`
 	}
 	read := func(handler http.HandlerFunc, url string, group string) result {
 		t.Helper()
@@ -73,19 +73,26 @@ func TestNumberedHistoryExtractionAndItemPages(t *testing.T) {
 		prefix, group string
 		lastFirst     int64
 	}{
-		{"logs", a.logs, "/logs?category=success&limit=100&page=", "", 5},
-		{"extractions", a.extractions, "/extractions?limit=100&success_page=", "success", 5},
-		{"items", a.items, "/runs/1/items?page=", "", 201},
+		{"logs", a.logs, "/logs?category=success&limit=100&offset=", "", 5},
+		{"extractions", a.extractions, "/extractions?limit=100&success_offset=", "success", 5},
+		{"items", a.items, "/runs/1/items?offset=", "", 201},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, number := range []string{"3", "9223372036854775807"} {
+			for _, number := range []string{"200", "9223372036854775807"} {
 				p := read(tc.handler, tc.prefix+number, tc.group)
-				if p.Page != 3 || p.Total != 205 || len(p.Items) != 5 || p.Items[0].ID != tc.lastFirst {
+				if p.Offset != 200 || p.Total != 205 || len(p.Items) != 5 || p.Items[0].ID != tc.lastFirst {
 					t.Fatalf("last page: %+v", p)
 				}
 			}
-			p := read(tc.handler, tc.prefix+"-5", tc.group)
-			if p.Page != 1 || len(p.Items) != 100 {
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest("GET", tc.prefix+"-5", nil)
+			r.SetPathValue("id", "1")
+			tc.handler(w, r)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("negative offset: status %d", w.Code)
+			}
+			p := read(tc.handler, tc.prefix+"0", tc.group)
+			if p.Offset != 0 || len(p.Items) != 100 {
 				t.Fatalf("first page: %+v", p)
 			}
 		})
@@ -95,8 +102,8 @@ func TestNumberedHistoryExtractionAndItemPages(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, p := range []result{read(a.logs, "/logs?category=success&page=99", ""), read(a.extractions, "/extractions?success_page=99", "success"), read(a.items, "/runs/1/items?page=99", "")} {
-		if p.Page != 1 || p.Total != 0 || len(p.Items) != 0 {
+	for _, p := range []result{read(a.logs, "/logs?category=success&offset=99", ""), read(a.extractions, "/extractions?success_offset=99", "success"), read(a.items, "/runs/1/items?offset=99", "")} {
+		if p.Offset != 0 || p.Total != 0 || len(p.Items) != 0 {
 			t.Fatalf("empty page: %+v", p)
 		}
 	}

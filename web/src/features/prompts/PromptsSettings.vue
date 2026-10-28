@@ -1,14 +1,16 @@
 <script setup lang="ts">
+  import { vFormErrors } from '../../app/form-errors';
   import { errorText } from '../../app/errors';
   import { useToast } from '../../app/use-toast';
   import { computed, nextTick, onMounted, ref } from 'vue';
   import { PenLine, Plus, RotateCcw, Save, Trash2, X } from '@lucide/vue';
-  import { api } from '../../app/api';
+  import { useApi } from '../../app/use-api';
   import { formatTime } from '../../lib/format/date';
   import { type PromptProfile } from '../../app/contracts';
   import ModalDialog from '../../components/ModalDialog.vue';
   import ModalTransition from '../../components/ModalTransition.vue';
   import './prompts.css';
+  const { api, formError } = useApi();
   const toast = useToast();
   const fixed = ref(''),
     savedFixed = ref(''),
@@ -128,9 +130,7 @@
     keywordInputElement.value?.focus();
   }
   function addFailureKeywordOnEnter(event: KeyboardEvent) {
-    // Safari reports the IME confirmation Enter only as keyCode 229.
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- no standard replacement for Safari IME detection
-    if (event.isComposing || composingKeyword.value || event.keyCode === 229) return;
+    if (event.isComposing || composingKeyword.value) return;
     event.preventDefault();
     addFailureKeyword();
   }
@@ -171,6 +171,7 @@
     }
   }
   function open(p?: PromptProfile) {
+    formError.value = undefined;
     editId.value = p?.id || 0;
     editETag.value = p?.etag || '';
     edit.value = { title: p?.title || '', body: p?.body || '' };
@@ -188,6 +189,7 @@
         body: edit.value
       });
       editing.value = false;
+      toast.show('提示词已保存');
       await load(true);
     } catch (e) {
       dialogError.value = errorText(e);
@@ -206,6 +208,7 @@
         body: {}
       });
       deleteTarget.value = undefined;
+      toast.show('提示词已删除');
       await load(true);
     } catch (e) {
       deleteError.value = errorText(e);
@@ -216,7 +219,7 @@
   onMounted(load);
 </script>
 <template>
-  <section class="prompts-page">
+  <section v-form-errors="formError" class="prompts-page">
     <div v-if="error" class="notice error" role="alert"
       >{{ error }}<button @click="load(true)">重试</button></div
     >
@@ -227,6 +230,7 @@
         <div class="prompts-fixed-controls">
           <textarea
             v-model="fixed"
+            name="fixed_prompt"
             aria-label="固定提示词"
             :disabled="savingFixed"
             rows="9"
@@ -297,6 +301,7 @@
                 id="failure-keyword-input"
                 ref="keywordInputElement"
                 v-model="keywordInput"
+                name="failure_keywords"
                 aria-label="新增失败关键词"
                 :aria-invalid="!!keywordInputError"
                 :aria-describedby="
@@ -379,10 +384,11 @@
         v-if="editing"
         :title="editId ? '编辑提示词' : '新增提示词'"
         @close="!saving && (editing = false)"
-        ><form class="prompt-form" @submit.prevent="save"
+        ><form v-form-errors="formError" class="prompt-form" @submit.prevent="save"
           ><label
             >提示词名称<input
               v-model="edit.title"
+              name="title"
               aria-label="提示词名称"
               required
               maxlength="80"
@@ -390,6 +396,7 @@
           ><label
             >提示词内容<textarea
               v-model="edit.body"
+              name="body"
               aria-label="提示词内容"
               required
               rows="10"

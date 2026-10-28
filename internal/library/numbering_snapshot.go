@@ -1,11 +1,16 @@
 package library
 
 import (
+	"cmp"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"video-rename/internal/domain"
@@ -26,21 +31,54 @@ type numberingEntrySnapshot struct {
 	ModifiedNS int64  `json:"mtime_ns"`
 }
 
-func directoryFingerprint(path string) (string, error) {
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		return "", err
+// Read bounded pages and observe cancellation between filesystem operations.
+// A filesystem call already in progress must return before cancellation is seen.
+func scanNumberingDirectory(ctx context.Context, path string, visit func(os.DirEntry) error) (err error) {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	snapshot := numberingDirectorySnapshot{Version: 4, Entries: make([]numberingEntrySnapshot, 0, len(entries))}
-	hash := sha256.New()
-	for _, e := range entries {
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	dir, err := root.Open(".")
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, dir.Close()) }()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		entries, readErr := dir.ReadDir(refreshPageSize)
+		for _, entry := range entries {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := visit(entry); err != nil {
+				return err
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			return ctx.Err()
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
+}
+
+func directoryFingerprint(ctx context.Context, path string) (string, error) {
+	snapshot := numberingDirectorySnapshot{Version: 4, Entries: []numberingEntrySnapshot{}}
+	err := scanNumberingDirectory(ctx, path, func(e os.DirEntry) error {
 		info, err := e.Info()
 		if err != nil {
-			return "", err
+			return err
 		}
 		snap, err := domain.SnapshotFromInfo(info)
 		if err != nil {
-			return "", err
+			return err
 		}
 		entry := numberingEntrySnapshot{Name: e.Name(), Type: info.Mode().Type().String(), Identity: Identity(snap)}
 		// Descendant contents and permission bits are not part of this rename plan.
@@ -48,11 +86,28 @@ func directoryFingerprint(path string) (string, error) {
 			entry.Size = info.Size()
 			entry.ModifiedNS = stamp(snap)
 		}
-		fmt.Fprintf(hash, "%q:%q:%q:%d:%d\n", entry.Name, entry.Type, entry.Identity, entry.Size, entry.ModifiedNS)
 		snapshot.Entries = append(snapshot.Entries, entry)
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	// ReadDir pages follow filesystem order; snapshots use lexical name order.
+	slices.SortFunc(snapshot.Entries, func(a, b numberingEntrySnapshot) int {
+		return cmp.Compare(a.Name, b.Name)
+	})
+	hash := sha256.New()
+	for _, entry := range snapshot.Entries {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		fmt.Fprintf(hash, "%q:%q:%q:%d:%d\n", entry.Name, entry.Type, entry.Identity, entry.Size, entry.ModifiedNS)
 	}
 	snapshot.Hash = hex.EncodeToString(hash.Sum(nil))
 	raw, err := json.Marshal(snapshot)
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	return string(raw), err
 }
 func decodeNumberingSnapshot(raw string) (numberingDirectorySnapshot, bool) {

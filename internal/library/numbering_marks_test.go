@@ -22,7 +22,7 @@ func TestNumberingSkipsMediaMarksAndReservesNumbers(t *testing.T) {
 					refresh(t, l, 1)
 					ids := []int64{}
 					for _, name := range []string{"pic-001.JPG", "aud-002.MP3", "my-picture.png", "my-song.flac"} {
-						ids = append(ids, entry(t, l, 1, name).ID)
+						ids = append(ids, entry(t, entryOptions{l: l, parent: 1, name: name}).ID)
 					}
 					if r := l.SetProcessed(t.Context(), ids, true); r.Changed != 4 || r.Failed != 0 {
 						t.Fatal(r)
@@ -88,11 +88,11 @@ func TestNumberingRejectsMarkAddedAfterPreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := entry(t, l, 1, "song.MP3")
+	e := entry(t, entryOptions{l: l, parent: 1, name: "song.MP3"})
 	if r := l.SetProcessed(t.Context(), []int64{e.ID}, true); r.Changed != 1 || r.Failed != 0 {
 		t.Fatal(r)
 	}
-	if _, err := l.ApplyNumbering(t.Context(), b.ID, nil); err == nil || !errors.Is(err, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_item_marked", Message: ""})) {
+	if _, err := l.ApplyNumbering(t.Context(), b.ID, nil); err == nil || !errors.Is(err, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingItemMarked, Message: ""})) {
 		t.Fatalf("old preview ignored new protection: %v", err)
 	}
 	for _, name := range []string{"photo.JPG", "song.MP3"} {

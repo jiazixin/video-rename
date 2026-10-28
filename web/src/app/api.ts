@@ -203,11 +203,6 @@ async function send<T>(path: string, options: ApiOptions): Promise<T> {
   return data as T
 }
 
-/** Reads a list response and returns its items. */
-export async function apiItems<T>(path: string, options: ApiOptions = {}): Promise<T[]> {
-  return (await api<{ items: T[] }>(path, options)).items
-}
-
 /** Returns the diagnostic a numbering failure carries in details.processing_log. */
 function processingLogOf(details: unknown): string {
   if (typeof details !== 'object' || details === null || !('processing_log' in details)) return ''

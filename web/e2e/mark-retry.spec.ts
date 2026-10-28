@@ -7,7 +7,7 @@ const entry = (id: number): Entry => ({
   parent: 1,
   name: `retry-${id}.png`,
   kind: 'file',
-  size: 1,
+  size_bytes: 1,
   mtime: '2026-10-01T00:00:00.000Z',
   etag: '"v1"',
   version: 1,
@@ -33,14 +33,13 @@ async function setup(page: Page, count = 1) {
     const limit = Number(new URL(route.request().url()).searchParams.get('limit'))
     return route.fulfill({
       json: {
-        page: 1,
+        offset: 0,
+        limit: 100,
         total: entries.length,
         items: entries.slice(0, limit),
-        next: 0,
         generation: '1',
         refreshing: false,
         refreshed: '',
-        error: '',
         directory: { ...entry(1), name: '媒体库', kind: 'directory' },
         breadcrumbs: []
       }
@@ -299,7 +298,7 @@ for (const interrupted of [false, true]) {
           ...result(defined(route.request().headers()['idempotency-key']), 0),
           interrupted,
           failed: interrupted ? 0 : 1,
-          failures: interrupted ? [] : [{ name: 'retry-1000.png', message: '文件正在处理' }]
+          failures: interrupted ? [] : [{ name: 'retry-1000.png', error: { code: 'entry_busy' } }]
         }
       })
     })

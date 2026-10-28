@@ -12,7 +12,7 @@ import (
 	"video-rename/internal/domain"
 )
 
-var errPrecondition = domain.Fail(domain.KindConflict, domain.Record{Code: "precondition_failed", Message: "resource precondition does not match; refresh the resource"})
+var errPrecondition = &httpFailure{http.StatusPreconditionFailed, errorBody{Code: "precondition_failed", Message: "resource precondition does not match; refresh the resource"}}
 
 func entityTag(version int64) string { return `"v` + strconv.FormatInt(version, 10) + `"` }
 

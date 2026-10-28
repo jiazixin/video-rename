@@ -1,9 +1,9 @@
 /*
  * Text for codes sent by the Go server. The server sends stable codes with
  * English developer messages and the details each text needs; the interface
- * shows the text mapped here, never the server's message. Stored records
- * written before codes were introduced have no code and are shown as is.
- * details.detail is raw tool or system output and is appended after the text.
+ * shows the text mapped here, never the server's message. Records without
+ * a code have no user-facing text.
+ * Raw tool and system diagnostics stay in explicit diagnostic views.
  * See docs/API.md. Only errors.ts reads this catalog.
  */
 
@@ -11,7 +11,7 @@ import type { ServerRecord } from './contracts'
 import { displayPath } from '../lib/format/path'
 
 /** One invalid field of an invalid_argument error. */
-type FieldError = {
+export type FieldError = {
   path: string
   reason: string
 }
@@ -53,7 +53,6 @@ const codeTexts: Record<string, string> = {
   symlink_not_allowed: '不允许操作符号链接或特殊文件',
   protected_entry: '不能修改媒体根目录、符号链接或特殊文件',
   root_unavailable: '媒体根目录不可用或挂载已变化',
-  directory_refreshed: '目录已刷新，请返回第一页',
   directory_changed: '目录已变化，请重新预览',
   entry_not_indexed:
     '文件或上级目录已不在索引中，请到文件目录刷新并重新提交命名；若文件已删除，可清除对应记录',
@@ -158,7 +157,7 @@ const codeTexts: Record<string, string> = {
   model_config_is_fallback: '请先在处理与缓存中更换或取消兜底模型，再删除此配置',
   model_config_in_use: '有 {plans} 个运行计划使用此配置，请先更换计划中的模型配置',
   discovery_request_invalid: '模型检测请求无效',
-  discovery_timeout: '模型列表检测超时（{timeout}），请重试或检查服务',
+  discovery_timeout: '模型列表检测超时（{timeout_ms} 毫秒），请重试或检查服务',
   discovery_unreachable: '无法连接模型服务，请检查地址、网络和超时',
   discovery_read_failed: '读取模型列表失败',
   discovery_http_error: '模型列表接口返回 HTTP {status}，请检查 URL、密钥及服务是否支持 /models',
@@ -285,8 +284,8 @@ const fieldTexts: Record<string, string> = {
   'api_key:required': '请填写 API 密钥',
   'api_key:reenter_after_endpoint_change': '服务地址或类型已改变，请重新填写密钥，或明确清除旧密钥',
   'model:required': '请填写模型名称（最长 256 个字符）',
-  'timeout:out_of_range': '请求超时须在 1 秒至 30 分钟之间',
-  'timeout:invalid_choice': '超时只能选择 5s、10s 或 15s',
+  'timeout_ms:out_of_range': '请求超时须在 1 秒至 30 分钟之间',
+  'probe_timeout_seconds:invalid_choice': '超时只能选择 5s、10s 或 15s',
   'temperature:out_of_range': '温度须在 0–2 之间',
   'temperature:out_of_range_anthropic': 'Anthropic 协议的温度须在 0–1 之间',
   'max_tokens:out_of_range': '输出上限须在 1–32768 之间',
@@ -317,17 +316,18 @@ const fieldTexts: Record<string, string> = {
   'sampling.skip_end_ratio:sum_too_large': '开头与结尾跳过比例之和必须小于 1',
   'sampling.duration_rules:required': '时长规则不能为空',
   'sampling.size_rules:required': '大小规则不能为空',
-  'sampling.duration_rules:last_not_null': '时长规则最后一档的上限必须为空（兜底档）',
-  'sampling.size_rules:last_not_null': '大小规则最后一档的上限必须为空（兜底档）',
-  'sampling.duration_rules.*.max_duration:null_not_last':
+  'sampling.duration_rules:last_not_unbounded': '时长规则最后一档的上限必须为空（兜底档）',
+  'sampling.size_rules:last_not_unbounded': '大小规则最后一档的上限必须为空（兜底档）',
+  'sampling.duration_rules.*.max_duration_ms:unbounded_not_last':
     '时长规则第 {tier} 档：只有最后一档的上限可以为空',
-  'sampling.duration_rules.*.max_duration:invalid_duration':
+  'sampling.duration_rules.*.max_duration_ms:out_of_range':
     '时长规则第 {tier} 档：上限不是有效时长',
-  'sampling.duration_rules.*.max_duration:not_positive': '时长规则第 {tier} 档：上限必须为正数',
-  'sampling.duration_rules.*.max_duration:not_increasing':
+  'sampling.duration_rules.*.max_duration_ms:not_positive': '时长规则第 {tier} 档：上限必须为正数',
+  'sampling.duration_rules.*.max_duration_ms:not_increasing':
     '时长规则第 {tier} 档：上限必须大于前一档',
   'sampling.duration_rules.*.frames:out_of_range': '时长规则第 {tier} 档：帧数须在 1–32 之间',
-  'sampling.size_rules.*.max_mib:null_not_last': '大小规则第 {tier} 档：只有最后一档的上限可以为空',
+  'sampling.size_rules.*.max_mib:unbounded_not_last':
+    '大小规则第 {tier} 档：只有最后一档的上限可以为空',
   'sampling.size_rules.*.max_mib:out_of_range':
     '大小规则第 {tier} 档：上限必须为有效的正整数且换算字节后不能溢出',
   'sampling.size_rules.*.max_mib:not_increasing': '大小规则第 {tier} 档：上限必须大于前一档',
@@ -452,8 +452,8 @@ export function recordText(record: ServerRecord | null | undefined): string {
   const code = record.code
   if (!code) return ''
   const details = record.details ?? {}
-  if (code === 'invalid_argument') {
-    const fields = Array.isArray(details.fields) ? (details.fields as FieldError[]) : []
+  if (code === 'invalid_argument' || code === 'validation_failed') {
+    const fields = fieldIssues(details)
     return fields.length ? fields.map(fieldText).join('；') : '请求参数无效'
   }
   const reason = typeof details.reason === 'string' ? details.reason : ''
@@ -465,6 +465,27 @@ export function recordText(record: ServerRecord | null | undefined): string {
   if (typeof details.directory === 'string') text = `${displayPath(details.directory)}：${text}`
   if (isRecord(details.cause)) text += `：${recordText(details.cause)}`
   if (isRecord(details.recovery)) text += `；恢复失败：${recordText(details.recovery)}`
-  if (typeof details.detail === 'string' && details.detail) text += `（${details.detail}）`
   return text
+}
+
+/** Reads only valid field issues from a transport boundary. */
+export function fieldIssues(details: unknown): FieldError[] {
+  if (
+    typeof details !== 'object' ||
+    details === null ||
+    !('fields' in details) ||
+    !Array.isArray(details.fields)
+  )
+    return []
+  return details.fields
+    .filter(
+      (field: unknown): field is FieldError =>
+        typeof field === 'object' &&
+        field !== null &&
+        'path' in field &&
+        typeof field.path === 'string' &&
+        'reason' in field &&
+        typeof field.reason === 'string'
+    )
+    .slice(0, 100)
 }

@@ -50,7 +50,7 @@ export function recordPage(items: FixtureItem[], query: URLSearchParams) {
   if (status === 'running')
     selected.sort((a, b) => a.updated_ms - b.updated_ms || defined(a.id) - defined(b.id))
   const page = Math.min(
-    Math.max(1, Number(query.get('page')) || 1),
+    Math.max(1, Number(String(Math.floor(Number(query.get('offset') || 0) / 100) + 1)) || 1),
     Math.max(1, Math.ceil(selected.length / 100))
   )
   const count = (s: string) => records.filter((r) => r.status === s).length
@@ -88,7 +88,8 @@ export function recordPage(items: FixtureItem[], query: URLSearchParams) {
     skipped_total: count('skipped'),
     failed_total: count('failed'),
     total: selected.length,
-    page,
+    offset: (page - 1) * 100,
+    limit: 100,
     items: selected
       .slice((page - 1) * 100, page * 100)
       .map((r) => ({ ...r, message: r.message ? { code: r.message } : undefined })),

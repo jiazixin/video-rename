@@ -18,7 +18,7 @@ import (
 )
 
 // ErrClosed reports that the scan manager is closed.
-var ErrClosed = domain.Fail(domain.KindUnavailable, domain.Record{Code: "scan_closed", Message: "directory scan is closed"})
+var ErrClosed = domain.Fail(domain.KindUnavailable, domain.Failure{Reason: domain.ReasonScanClosed, Message: "directory scan is closed"})
 
 var errRunning = errors.New("directory scan manager is already running")
 
@@ -154,7 +154,7 @@ func (m *Manager) ValidateTargets(ctx context.Context, targets []int64) ([]int64
 			return nil, domain.InvalidField("targets", "not_directory")
 		}
 		if _, err = m.library.Path(ctx, id); err != nil {
-			return nil, domain.Fail(domain.KindUnavailable, domain.Record{Code: "scan_target_unavailable", Message: "scan target is unavailable", Details: map[string]any{"path": m.library.DisplayPath(ctx, id)}}).Wrap(err)
+			return nil, domain.Fail(domain.KindUnavailable, domain.Failure{Reason: domain.ReasonScanTargetUnavailable, Message: "scan target is unavailable", Details: map[string]any{"path": m.library.DisplayPath(ctx, id)}}).Wrap(err)
 		}
 		seen := map[int64]bool{id: true}
 		for parent := e.Parent; parent > 0; {
@@ -162,13 +162,13 @@ func (m *Manager) ValidateTargets(ctx context.Context, targets []int64) ([]int64
 				return nil, err
 			}
 			if seen[parent] || len(seen) > 1024 {
-				return nil, domain.Fail(domain.KindConflict, domain.Record{Code: "invalid_hierarchy", Message: "directory hierarchy is invalid"})
+				return nil, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonInvalidHierarchy, Message: "directory hierarchy is invalid"})
 			}
 			seen[parent] = true
 			ancestors[id] = append(ancestors[id], parent)
 			e, err = m.library.IndexedEntry(ctx, parent)
 			if err != nil || e.Kind != "directory" {
-				return nil, domain.Fail(domain.KindConflict, domain.Record{Code: "scan_hierarchy_changed", Message: "scan directory hierarchy changed; refresh"})
+				return nil, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonScanHierarchyChanged, Message: "scan directory hierarchy changed; refresh"})
 			}
 			parent = e.Parent
 		}
@@ -208,7 +208,7 @@ func (m *Manager) Start(ctx context.Context, targets []int64, source string) (St
 		m.status.NextScan = ""
 		m.mu.Unlock()
 		m.notify()
-		return m.Snapshot(), domain.Fail(domain.KindInternal, domain.Record{Code: "scan_settings_unreadable", Message: "read scan settings"}).Wrap(err)
+		return m.Snapshot(), domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonScanSettingsUnreadable, Message: "read scan settings"}).Wrap(err)
 	}
 	if len(targets) == 0 {
 		targets = settings.Targets
@@ -320,7 +320,7 @@ func (m *Manager) Run(ctx context.Context) error {
 		m.status.NextScan = ""
 		var at time.Time
 		if err != nil {
-			m.settingsError = domain.Fail(domain.KindInternal, domain.Record{Code: "scan_settings_unreadable", Message: "read scan settings"}).Wrap(err)
+			m.settingsError = domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonScanSettingsUnreadable, Message: "read scan settings"}).Wrap(err)
 		} else {
 			m.settingsError = nil
 			if !m.active && !m.closed {
@@ -536,7 +536,7 @@ func (m *Manager) run(ctx context.Context, targets, excluded []int64) {
 				continue
 			}
 			if len(stack) >= 1024 {
-				m.addError(ctx, child, domain.Fail(domain.KindInvalid, domain.Record{Code: "scan_too_deep", Message: "directory tree deeper than 1024 levels"}))
+				m.addError(ctx, child, domain.Fail(domain.KindInvalid, domain.Failure{Reason: domain.ReasonScanTooDeep, Message: "directory tree deeper than 1024 levels"}))
 				continue
 			}
 			skip, err := m.excluded(ctx, child, excluded)
@@ -573,7 +573,7 @@ func (m *Manager) excluded(ctx context.Context, id int64, excluded []int64) (boo
 			return true, nil
 		}
 		if seen[id] || len(seen) >= 1024 {
-			return false, domain.Fail(domain.KindConflict, domain.Record{Code: "invalid_hierarchy", Message: "directory hierarchy is invalid"})
+			return false, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonInvalidHierarchy, Message: "directory hierarchy is invalid"})
 		}
 		seen[id] = true
 		e, err := m.library.IndexedEntry(ctx, id)

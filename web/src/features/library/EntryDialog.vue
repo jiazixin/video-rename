@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import { vFormErrors } from '../../app/form-errors';
   import './library.css';
   import { computed } from 'vue';
   import { ArrowRight, FileVideo, Folder, Undo2 } from '@lucide/vue';
@@ -8,7 +9,20 @@
   import type { Entry, Operation } from '../../app/contracts';
   import type { EntryDialogMode } from './entry-dialog';
   // One entry's rename, restore, run submission or naming history.
-  const { mode, entry, history, extension, error, saving } = defineProps<{
+  const {
+    mode,
+    entry,
+    history,
+    extension,
+    error,
+    saving,
+    formError,
+    hasMoreHistory,
+    loadingHistory
+  } = defineProps<{
+    formError: unknown;
+    hasMoreHistory: boolean;
+    loadingHistory: boolean;
     mode: EntryDialogMode;
     entry: Entry;
     history: Operation[];
@@ -19,7 +33,7 @@
   const newName = defineModel<string>('newName', { required: true });
   const modelConfigID = defineModel<number>('modelConfigId', { required: true });
   const recursive = defineModel<boolean>('recursive', { required: true });
-  const emit = defineEmits<{ close: []; submit: [] }>();
+  const emit = defineEmits<{ close: []; submit: []; loadMore: [] }>();
   const titles: Record<string, string> = {
     extract: '目录抽帧',
     rename: '重命名',
@@ -49,7 +63,7 @@
 
 <template>
   <ModalDialog :title="title" @close="!saving && emit('close')"
-    ><form @submit.prevent="emit('submit')">
+    ><form v-form-errors="formError" @submit.prevent="emit('submit')">
       <div class="selection-summary"
         ><Folder v-if="entry.kind === 'directory'" :size="23" /><FileVideo
           v-else
@@ -59,9 +73,13 @@
       <template v-if="mode === 'rename'"
         ><label
           >新名称<div class="extension-input"
-            ><input v-model="newName" aria-label="新名称" required maxlength="240" /><span>{{
-              extension
-            }}</span></div
+            ><input
+              v-model="newName"
+              name="name"
+              aria-label="新名称"
+              required
+              maxlength="240"
+            /><span>{{ extension }}</span></div
           ></label
         ><p class="help">只修改名称，文件保留在原目录。成功后可以还原。</p></template
       >
@@ -73,13 +91,22 @@
         ></template
       >
       <template v-else-if="mode === 'auto' || mode === 'extract'"
-        ><ModelPicker v-if="mode === 'auto'" v-model="modelConfigID" /><p>{{
+        ><ModelPicker
+          v-if="mode === 'auto'"
+          v-model="modelConfigID"
+          data-field="model_config_id"
+        /><p>{{
           mode === 'extract'
             ? '为当前目录内的视频预先生成截图，之后重命名可直接复用缓存。'
             : '后台将抽取视频画面，由指定模型生成名称并自动修改。'
         }}</p
         ><label v-if="entry.kind === 'directory'" class="check-label"
-          ><input v-model="recursive" type="checkbox" role="switch" />包含子目录</label
+          ><input
+            v-model="recursive"
+            name="recursive"
+            type="checkbox"
+            role="switch"
+          />包含子目录</label
         ><p class="help">{{
           mode === 'extract'
             ? '覆盖目录内全部分页的视频，包括已处理视频；已有有效截图直接复用。进度见“批次记录”，结果见“抽帧记录”。'
@@ -91,7 +118,15 @@
           ><span class="badge">{{ historySource(h.source) }} · {{ h.status }}</span
           ><p>{{ h.old_name }} <ArrowRight :size="14" /> {{ h.new_name }}</p
           ><DateTime :value="h.created" /></div
-        ><p v-if="!history.length" class="empty compact">暂无命名历史</p></template
+        ><p v-if="loadingHistory" role="status">正在加载命名历史…</p>
+        <p v-else-if="!history.length" class="empty compact">暂无命名历史</p>
+        <button
+          v-if="hasMoreHistory"
+          type="button"
+          :disabled="loadingHistory"
+          @click="emit('loadMore')"
+          >加载更早记录</button
+        ></template
       >
       <div v-if="error" class="notice error" role="alert">{{ error }}</div
       ><div class="modal-actions"
@@ -108,19 +143,19 @@
 
 <style scoped>
   .selection-summary {
-    padding: 15px;
+    padding: var(--space-15);
     background: var(--control-hover);
-    border-radius: 8px;
+    border-radius: var(--radius-8);
     display: flex;
-    gap: 12px;
+    gap: var(--space-12);
     align-items: center;
-    margin-bottom: 22px;
+    margin-bottom: var(--space-22);
     overflow-wrap: anywhere;
   }
   .selection-summary svg {
     color: var(--palette-7a9284);
   }
   .selection-summary strong {
-    font-size: 13px;
+    font-size: var(--font-size-13);
   }
 </style>

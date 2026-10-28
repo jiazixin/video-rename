@@ -27,10 +27,9 @@ type historyScaleRecord struct {
 }
 
 type historyScalePage struct {
-	Items []historyScaleRecord `json:"items"`
-	Total int                  `json:"total"`
-	Page  int                  `json:"page"`
-	Next  int64                `json:"next"`
+	Items  []historyScaleRecord `json:"items"`
+	Total  int                  `json:"total"`
+	Offset int                  `json:"offset"`
 }
 
 // historyScaleFixture models one completed batch without touching media or
@@ -114,7 +113,7 @@ func historyScaleFixture(tb testing.TB) (*App, []historyScaleRecord) {
 }
 
 func historyScaleURL(source string, page int) string {
-	return fmt.Sprintf("/api/logs?category=success&model_source=%s&limit=100&page=%d", source, page)
+	return fmt.Sprintf("/api/logs?category=success&model_source=%s&limit=100&offset=%d", source, (page-1)*100)
 }
 
 func TestScaleHistoryModelSource(t *testing.T) {
@@ -155,8 +154,8 @@ func TestScaleHistoryModelSource(t *testing.T) {
 				wantPage := min(requested, last)
 				startIndex := (wantPage - 1) * 100
 				want := matches[startIndex:min(startIndex+100, len(matches))]
-				if page.Total != tc.total || page.Page != wantPage || len(page.Items) != len(want) {
-					t.Fatalf("total=%d page=%d items=%d, want total=%d page=%d items=%d", page.Total, page.Page, len(page.Items), tc.total, wantPage, len(want))
+				if page.Total != tc.total || page.Offset != (wantPage-1)*100 || len(page.Items) != len(want) {
+					t.Fatalf("total=%d offset=%d items=%d, want total=%d offset=%d items=%d", page.Total, page.Offset, len(page.Items), tc.total, wantPage, len(want))
 				}
 				for i, row := range page.Items {
 					if row != want[i] {
@@ -166,14 +165,7 @@ func TestScaleHistoryModelSource(t *testing.T) {
 						t.Fatal("history is not in descending ID order")
 					}
 				}
-				wantNext := int64(0)
-				if wantPage < last {
-					wantNext = want[len(want)-1].ID
-				}
-				if page.Next != wantNext {
-					t.Fatalf("next=%d, want %d", page.Next, wantNext)
-				}
-				t.Logf("%d records, %d pages, page %d: %s", page.Total, last, page.Page, elapsed)
+				t.Logf("%d records, %d pages, page %d: %s", page.Total, last, page.Offset, elapsed)
 			}
 		})
 	}

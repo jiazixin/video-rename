@@ -37,14 +37,14 @@
 </template>
 <style scoped>
   .numbering-diagnostics {
-    margin: 12px 0;
+    margin: var(--space-12) 0;
   }
   .numbering-diagnostics summary {
     cursor: pointer;
-    margin-bottom: 8px;
+    margin-bottom: var(--space-8);
   }
   .numbering-diagnostics span {
-    margin-left: 8px;
+    margin-left: var(--space-8);
   }
   .numbering-diagnostics pre {
     max-height: 320px;
@@ -52,9 +52,9 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     background: var(--surface);
-    padding: 12px;
+    padding: var(--space-12);
     border: 1px solid var(--line);
-    border-radius: 8px;
-    font-size: 12px;
+    border-radius: var(--radius-8);
+    font-size: var(--font-size-12);
   }
 </style>

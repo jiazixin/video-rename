@@ -124,9 +124,9 @@
     align-items: center;
     justify-content: flex-end;
     flex-wrap: wrap;
-    gap: 10px 16px;
+    gap: var(--space-10) var(--space-16);
     min-width: 0;
-    font-size: 12px;
+    font-size: var(--font-size-12);
     color: var(--steel);
   }
   .page-steps,
@@ -134,7 +134,7 @@
   .page-jump label {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-6);
   }
   .page-navigation button {
     display: inline-flex;
@@ -142,13 +142,13 @@
     justify-content: center;
     min-width: 32px;
     min-height: 32px;
-    padding: 5px 7px;
+    padding: var(--space-5) var(--space-7);
     border: 1px solid var(--line);
-    border-radius: 7px;
+    border-radius: var(--radius-7);
     background: var(--palette-ffffff);
     color: var(--steel);
-    font-size: 12px;
-    line-height: 20px;
+    font-size: var(--font-size-12);
+    line-height: var(--line-height-20);
   }
   .page-navigation button:hover:not(:disabled) {
     border-color: var(--palette-89bca7);
@@ -163,36 +163,36 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: var(--space-6);
     min-width: 72px;
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
   }
   .page-current {
     color: var(--tone-green-ink);
-    font-weight: 600;
+    font-weight: var(--font-weight-600);
   }
   .page-slash {
     color: var(--ash);
   }
   .page-jump {
-    gap: 8px;
+    gap: var(--space-8);
   }
   .page-jump label {
     flex-direction: row;
-    gap: 8px;
+    gap: var(--space-8);
     white-space: nowrap;
-    font-size: 12px;
-    font-weight: 400;
+    font-size: var(--font-size-12);
+    font-weight: var(--font-weight-400);
     margin: 0;
   }
   .page-jump input {
     width: 54px;
     min-width: 0;
     min-height: 32px;
-    padding: 5px 6px;
+    padding: var(--space-5) var(--space-6);
     border: 1px solid var(--line);
-    border-radius: 7px;
+    border-radius: var(--radius-7);
     background: var(--palette-ffffff);
     color: var(--ink);
     font: inherit;
@@ -215,16 +215,16 @@
     flex-basis: 100%;
     text-align: right;
     color: var(--tone-red-ink);
-    font-size: 12px;
+    font-size: var(--font-size-12);
   }
   @media (max-width: 600px) {
     .page-navigation {
       justify-content: center;
-      gap: 10px;
+      gap: var(--space-10);
       width: 100%;
     }
     .page-steps {
-      gap: 8px;
+      gap: var(--space-8);
     }
     .page-navigation .page-edge {
       display: none;

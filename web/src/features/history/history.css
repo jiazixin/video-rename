@@ -1,8 +1,8 @@
 .detail-list {
   display: grid;
   grid-template-columns: 80px 1fr;
-  gap: 15px;
-  font-size: 12px;
+  gap: var(--space-15);
+  font-size: var(--font-size-12);
 }
 .detail-list dt {
   color: var(--ash);
@@ -28,7 +28,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--steel);
-  font-size: 12px;
+  font-size: var(--font-size-12);
 }
 .history-table-scroll {
   container-type: inline-size;
@@ -93,7 +93,7 @@
   white-space: nowrap;
 }
 .history-row-actions button + button {
-  margin-left: 6px;
+  margin-left: var(--space-6);
 }
 .history-filename {
   display: block;
@@ -101,21 +101,21 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: var(--font-size-12);
   max-width: 100%;
   color: var(--palette-454c48);
 }
 .history-table th,
 .history-table td {
-  padding-left: 14px;
-  padding-right: 14px;
+  padding-left: var(--space-14);
+  padding-right: var(--space-14);
 }
 .history-table th.history-run,
 .history-table th.history-tokens,
 .history-table td.history-run-value,
 .history-table td.history-token-value {
-  padding-left: 8px;
-  padding-right: 8px;
+  padding-left: var(--space-8);
+  padding-right: var(--space-8);
   white-space: nowrap;
 }
 .history-run-value span {
@@ -126,9 +126,9 @@
 .action-badge {
   display: inline-flex;
   align-items: center;
-  border-radius: 5px;
-  padding: 4px 8px;
-  font-size: 10px;
+  border-radius: var(--radius-5);
+  padding: var(--space-4) var(--space-8);
+  font-size: var(--font-size-10);
   white-space: nowrap;
   color: var(--palette-656d77);
   background: var(--palette-f0f1f4);
@@ -167,7 +167,7 @@
 }
 .history-heading-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-8);
   flex-wrap: wrap;
 }
 .history-table tr.is-selected {
@@ -175,7 +175,7 @@
 }
 .history-table .history-select {
   width: 42px;
-  padding: 12px;
+  padding: var(--space-12);
   text-align: center;
 }
 .history-table .table-model {

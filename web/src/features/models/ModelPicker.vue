@@ -2,9 +2,10 @@
   import './models.css';
   import { errorText } from '../../app/errors';
   import { computed, onMounted, ref } from 'vue';
-  import { apiItems } from '../../app/api';
+  import { useApi } from '../../app/use-api';
   import { type ModelProfile } from '../../app/contracts';
   import SelectField from '../../components/SelectField.vue';
+  const { apiItems } = useApi();
   const model = defineModel<number>({ required: true });
   const rows = ref<ModelProfile[]>([]),
     error = ref(''),

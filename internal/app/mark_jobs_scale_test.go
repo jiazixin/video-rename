@@ -14,7 +14,7 @@ func TestScaleBackgroundMarksDisconnected(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	start := time.Now()
-	markRequest(t, a, ctx, "scale-disconnected", ids, true, 202)
+	markRequest(ctx, t, markRequestOptions{a: a, key: "scale-disconnected", ids: ids, marked: true, wantCode: 202})
 	t.Logf("submission returned in %s", time.Since(start))
 	cancel()
 	result := awaitMark(t, a, "scale-disconnected")

@@ -28,7 +28,7 @@ test.beforeAll(async ({ request }) => {
       protocol: 'openai',
       base_url: modelURL(),
       model: '视觉模型 · 本地测试',
-      timeout: '10s',
+      timeout_ms: 10000,
       temperature: 0.7,
       max_tokens: 1024,
       api_key: 'test-fixture-key'
@@ -441,7 +441,6 @@ test('状态颜色、每页居中和日志日历', async ({ page }) => {
       done: 0,
       skipped: 0,
       failed: 0,
-      error: '',
       plan: 0,
       model_config_id: 1,
       model_config_title: '',
@@ -811,8 +810,8 @@ test('运行记录文件名分列、省略与操作颜色', async ({ page }) => 
           model_config_title: action === 'automatic' ? 'fixture profile' : ''
         })),
         total: 6,
-        page: 1,
-        next: 0
+        offset: 0,
+        limit: 100
       }
     })
   )
@@ -902,14 +901,14 @@ test('表格内容与下拉面板中轴对齐', async ({ page }) => {
               finished: '2026-09-28T13:58:06.000Z',
               duration_ms: 3000,
               cached: false,
-              frames: 12,
-              message: ''
+              frames: 12
             }
           ],
           total: 1,
-          next: 0
+          offset: 0,
+          limit: 100
         },
-        failure: { items: [], total: 0, next: 0 },
+        failure: { items: [], total: 0, offset: 0, limit: 100 },
         running: 0
       }
     })
@@ -1006,8 +1005,8 @@ test('失败记录诊断展开、收起与复制', async ({ page }) => {
           }
         ],
         total: 1,
-        page: 1,
-        next: 0
+        offset: 0,
+        limit: 100
       }
     })
   )
@@ -1216,7 +1215,6 @@ test('图片识别测试与智谱 Coding Plan 预设', async ({ page }) => {
     return r.fulfill({
       json: {
         status: 'passed',
-        message: '测试图片识别正确',
         answer: 'red,green,blue,yellow',
         expected: 'red,green,blue,yellow',
         elapsed_ms: 123,
@@ -1649,8 +1647,8 @@ test('运行详情显示目录文件清单与翻页、成功历史诊断', async
           }
         ],
         total: 1,
-        page: 1,
-        next: 0
+        offset: 0,
+        limit: 100
       }
     })
   )
@@ -1755,7 +1753,7 @@ test('历史批次自绘筛选和失败批次列', async ({ page }) => {
       created: '2026-09-21T08:00:00.000Z'
     }))
     const items = all.filter((row) => !params.get('run') || String(row.run) === params.get('run'))
-    return route.fulfill({ json: { items, total: items.length, page: 1, next: 0 } })
+    return route.fulfill({ json: { items, total: items.length, offset: 0, limit: 100 } })
   })
   await page.getByRole('button', { name: '运行记录', exact: true }).click()
   const batch = page.getByRole('combobox', { name: '批次', exact: true })
@@ -1793,7 +1791,7 @@ test('历史统计分页和多选重试成功后刷新移除', async ({ page }) 
     const q = new URL(r.request().url()).searchParams
     const category = q.get('category'),
       limit = Number(q.get('limit')),
-      pageNumber = Number(q.get('page')) || 1
+      pageNumber = Math.floor(Number(q.get('offset') || 0) / limit) + 1 || 1
     const all = Array.from({ length: 105 }, (_, i) => ({
       id: 105 - i,
       entry: 105 - i,
@@ -1809,8 +1807,8 @@ test('历史统计分页和多选重试成功后刷新移除', async ({ page }) 
       json: {
         items,
         total: all.length,
-        page: pageNumber,
-        next: rest.length > limit ? defined(items.at(-1)).id : 0
+        offset: (pageNumber - 1) * limit,
+        limit
       }
     })
   })
@@ -1867,8 +1865,8 @@ test('通知同步浏览器时区和请求上下文统计', async ({ page }) => 
           }
         ],
         total: 1,
-        page: 1,
-        next: 0
+        offset: 0,
+        limit: 100
       }
     })
   )
@@ -2241,7 +2239,6 @@ test('图片识别测试在所选时限结束等待并允许重试', async ({ pa
     r.fulfill({
       json: {
         status: 'passed',
-        message: '测试图片识别正确',
         answer: 'red,blue,green,yellow',
         expected: 'red,blue,green,yellow',
         elapsed_ms: 100,

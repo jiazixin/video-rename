@@ -3,13 +3,15 @@
   import PageNavigation from '../../components/PageNavigation.vue';
   import { computed, onDeactivated, ref } from 'vue';
   import { Hash, History, Undo2 } from '@lucide/vue';
-  import { api, ApiError, apiItems } from '../../app/api';
+  import { useApi } from '../../app/use-api';
+  import { ApiError } from '../../app/api';
   import type { ServerRecord } from '../../app/contracts';
   import DateTime from '../../components/DateTime.vue';
   import ModalDialog from '../../components/ModalDialog.vue';
   import ModalTransition from '../../components/ModalTransition.vue';
   import NumberingDiagnostics from './NumberingDiagnostics.vue';
   import './media-numbering.css';
+  const { api, apiItems } = useApi();
   type Batch = {
     id: string;
     parent: number;

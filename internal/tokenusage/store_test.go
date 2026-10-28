@@ -24,8 +24,16 @@ func openStore(t *testing.T) *storage.Store {
 	return db
 }
 
-func seedRun(t *testing.T, db *storage.Store, id int64, summary string) {
+type seedRunOptions struct {
+	db      *storage.Store
+	id      int64
+	summary string
+}
+
+func seedRun(t *testing.T, options seedRunOptions) {
 	t.Helper()
+	db, id, summary := options.db, options.id, options.summary
+
 	if _, err := storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
 		return tx.ExecContext(t.Context(), `INSERT INTO runs(id,source,targets,recursive,status,created,request_key,config_summary) VALUES(?, 'manual','[]',1,'completed',?,?,?)`, id, storage.Now(), storage.Now(), summary)
 	}); err != nil {
@@ -33,8 +41,16 @@ func seedRun(t *testing.T, db *storage.Store, id int64, summary string) {
 	}
 }
 
-func seedItem(t *testing.T, db *storage.Store, id, run int64) {
+type seedItemOptions struct {
+	db  *storage.Store
+	id  int64
+	run int64
+}
+
+func seedItem(t *testing.T, options seedItemOptions) {
 	t.Helper()
+	db, id, run := options.db, options.id, options.run
+
 	if _, err := storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
 		return tx.ExecContext(t.Context(), `INSERT OR IGNORE INTO entries(id,parent,name,kind,identity,size,mtime_ns,observed) VALUES(1,0,'clip.mp4','file','i',1,0,'o')`)
 	}); err != nil {
@@ -59,8 +75,8 @@ func aggregate(t *testing.T, db *storage.Store, run int64) (tokens int64, record
 
 func TestRecordWritesLedgerAndAggregateOnce(t *testing.T) {
 	db := openStore(t)
-	seedRun(t, db, 7, `{"model":"vision","provider":"custom","protocol":"openai"}`)
-	seedItem(t, db, 101, 7)
+	seedRun(t, seedRunOptions{db: db, id: 7, summary: `{"model":"vision","provider":"custom","protocol":"openai"}`})
+	seedItem(t, seedItemOptions{db: db, id: 101, run: 7})
 	at := time.Date(2026, 9, 23, 8, 30, 0, 0, time.UTC)
 	if err := RecordAttempt(t.Context(), RecordAttemptOptions{Store: db, Run: 7, Item: 101, Attempt: 1, ProfileID: 1, Title: "测试模型", Summary: `{}`, Request: `{"_local_context":{"text_tokens_estimate":75}}`, Response: `{"usage":{"total_tokens":120}}`, At: at}); err != nil {
 		t.Fatal(err)
@@ -92,9 +108,9 @@ func TestRecordWritesLedgerAndAggregateOnce(t *testing.T) {
 
 func TestRecordKeepsEstimatesAndSkipsUncountedExchanges(t *testing.T) {
 	db := openStore(t)
-	seedRun(t, db, 8, `{}`)
-	seedItem(t, db, 102, 8)
-	seedItem(t, db, 103, 8)
+	seedRun(t, seedRunOptions{db: db, id: 8, summary: `{}`})
+	seedItem(t, seedItemOptions{db: db, id: 102, run: 8})
+	seedItem(t, seedItemOptions{db: db, id: 103, run: 8})
 	if err := RecordAttempt(t.Context(), RecordAttemptOptions{Store: db, Run: 8, Item: 102, Attempt: 1, ProfileID: 1, Title: "测试模型", Summary: `{}`, Request: `{"_local_context":{"text_tokens_estimate":75}}`, Response: `{"error":"timeout"}`, At: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
@@ -116,8 +132,8 @@ func TestRecordKeepsEstimatesAndSkipsUncountedExchanges(t *testing.T) {
 
 func TestAttemptsCountOnceAndGroupByActualModel(t *testing.T) {
 	db := openStore(t)
-	seedRun(t, db, 9, `{"model":"primary"}`)
-	seedItem(t, db, 104, 9)
+	seedRun(t, seedRunOptions{db: db, id: 9, summary: `{"model":"primary"}`})
+	seedItem(t, seedItemOptions{db: db, id: 104, run: 9})
 	at := time.Now()
 	for _, n := range []int{1, 2, 2} {
 		profile, title, summary := int64(1), "主模型", `{"model":"primary"}`

@@ -58,7 +58,7 @@ test('编号规则分类草稿、实时示例、保存与响应式布局', async
   await page.screenshot({ path: 'test-results/numbering-settings-desktop.png', fullPage: true })
   fail = true
   await save.click()
-  await expect(page.getByRole('alert')).toContainText('保存失败')
+  await expect(page.getByRole('alert')).toContainText('服务暂时无法完成请求')
   await expect(page.getByLabel('图片编号前缀', { exact: true })).toHaveValue('IMG_')
   fail = false
   await save.click()

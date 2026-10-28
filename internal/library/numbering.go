@@ -90,7 +90,7 @@ func (l *Library) checkNumberingAvailable(ctx context.Context, id int64) error {
 		return err
 	}
 	if n > 0 {
-		return domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_pending", Message: "directory has unfinished numbering; recover it from the numbering records"})
+		return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingPending, Message: "directory has unfinished numbering; recover it from the numbering records"})
 	}
 	return nil
 }

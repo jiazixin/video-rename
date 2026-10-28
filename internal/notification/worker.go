@@ -25,17 +25,6 @@ type Delivery struct {
 	Updated  string        `json:"updated"`
 }
 
-// History returns the 30 latest deliveries.
-func (s *Service) History(ctx context.Context) ([]Delivery, error) {
-	return storage.ReadValue(ctx, s.db, func(tx *sql.Tx) ([]Delivery, error) {
-		rows, err := tx.QueryContext(ctx, "SELECT id,kind,run,status,attempts,error,updated FROM notification_deliveries ORDER BY id DESC LIMIT 30")
-		if err != nil {
-			return nil, err
-		}
-		return storage.CollectRows(rows, scanDelivery)
-	})
-}
-
 func scanDelivery(rows *sql.Rows) (Delivery, error) {
 	var d Delivery
 	err := rows.Scan(&d.ID, &d.Kind, &d.Run, &d.Status, &d.Attempts, &d.Error, &d.Updated)

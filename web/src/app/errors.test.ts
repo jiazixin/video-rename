@@ -37,13 +37,13 @@ describe('errorText for stored records', () => {
     expect(errorText({ message: 'no code' })).toBe('')
   })
 
-  it('appends nested causes and raw details', () => {
+  it('maps nested causes without exposing internal diagnostic text', () => {
     expect(
       errorText({
         code: 'numbering_rolled_back',
         details: { cause: { code: 'rename_conflict', details: { detail: 'EEXIST' } } }
       })
-    ).toBe('操作失败，已恢复原名：目标已存在（EEXIST）')
+    ).toBe('操作失败，已恢复原名：目标已存在')
   })
 
   it('names the numbering phase and directory', () => {

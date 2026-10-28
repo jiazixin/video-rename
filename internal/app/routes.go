@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -87,7 +88,37 @@ func (rt *router) HandleFunc(pattern string, handler http.HandlerFunc) {
 
 // numericQuery names the integer query parameters of the API; a value that
 // does not parse is reported instead of silently becoming 0.
-var numericQuery = regexp.MustCompile(`^(before|limit|page|size|offset|generation|run|[a-z]+_before|[a-z]+_page)$`)
+var numericQuery = regexp.MustCompile(`^(limit|offset|run|[a-z]+_offset)$`)
+
+// queryFields keeps each list endpoint's contract explicit. Repeated filters
+// are ambiguous, and unsupported fields must not select a different protocol.
+func queryFields(query url.Values, allowed ...string) error {
+	for name, values := range query {
+		if !slices.Contains(allowed, name) || len(values) != 1 {
+			return domain.InvalidField(name, "invalid")
+		}
+		if len(values[0]) > 2000 {
+			return domain.InvalidField(name, "too_long")
+		}
+		if name == "offset" || strings.HasSuffix(name, "_offset") {
+			offset, err := strconv.ParseInt(values[0], 10, 64)
+			if err != nil || offset < 0 {
+				return domain.InvalidField(name, "out_of_range")
+			}
+		}
+		if name == "limit" {
+			limit, err := strconv.ParseInt(values[0], 10, 64)
+			if err != nil || limit <= 0 || limit > 200 {
+				return domain.InvalidField(name, "out_of_range")
+			}
+			// Analytics endpoints expose a bounded variable row count; tables offer three sizes.
+			if !slices.Contains(allowed, "timezone") && limit != 50 && limit != 100 && limit != 200 {
+				return domain.InvalidField(name, "invalid_choice")
+			}
+		}
+	}
+	return nil
+}
 
 func malformedNumber(query url.Values) (string, bool) {
 	for name, values := range query {

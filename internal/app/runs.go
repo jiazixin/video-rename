@@ -2,7 +2,6 @@ package app
 
 import (
 	"net/http"
-	"net/url"
 
 	"video-rename/internal/domain"
 	"video-rename/internal/job"
@@ -24,31 +23,23 @@ func (a *App) runRoutes(api *router) {
 		send(w, http.StatusAccepted, map[string]int64{"id": id})
 	})
 	api.HandleFunc("GET /api/runs", func(w http.ResponseWriter, r *http.Request) {
-		if category := r.URL.Query().Get("category"); category != "" {
-			if category != "all" && category != "manual" && category != "automatic" {
-				writeError(w, r, domain.InvalidField("category", "invalid_choice"))
-				return
-			}
-			task := r.URL.Query().Get("task")
-			if task != "" && task != "rename" && task != "extract" {
-				writeError(w, r, domain.InvalidField("task", "invalid_choice"))
-				return
-			}
-			v, err := a.Jobs.ListPage(r.Context(), job.ListPageOptions{Category: category, Task: task, Page: int(number(r.URL.Query().Get("page"))), Size: int(number(r.URL.Query().Get("size"))), Filters: []url.Values{r.URL.Query()}})
-			if err != nil {
-				writeError(w, r, err)
-				return
-			}
-			send(w, http.StatusOK, v)
+		q := r.URL.Query()
+		if err := queryFields(q, "category", "task", "offset", "limit", "status", "profile", "from", "to", "duration"); err != nil {
+			writeError(w, r, err)
 			return
 		}
-		v, err := a.Jobs.List(r.Context(), number(r.URL.Query().Get("before")))
+		category := q.Get("category")
+		if category == "" {
+			category = "all"
+		}
+		v, err := a.Jobs.ListPage(r.Context(), job.ListPageOptions{Category: category, Task: q.Get("task"), Offset: int(number(q.Get("offset"))), Limit: int(number(q.Get("limit"))), Filters: q})
 		if err != nil {
 			writeError(w, r, err)
 			return
 		}
 		send(w, http.StatusOK, v)
 	})
+
 	api.HandleFunc("GET /api/runs/{id}", func(w http.ResponseWriter, r *http.Request) {
 		v, err := a.Jobs.Get(r.Context(), number(r.PathValue("id")))
 		if err != nil {
@@ -107,6 +98,10 @@ func (a *App) runRoutes(api *router) {
 
 func (a *App) items(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
+	if err := queryFields(r.URL.Query(), "offset", "directory", "status"); err != nil {
+		writeError(w, r, err)
+		return
+	}
 	snapshot, err := record.New(a.db).RunItems(r.Context(), record.RunQuery{Run: number(r.PathValue("id")), Filters: r.URL.Query()})
 	if err != nil {
 		writeError(w, r, err)

@@ -28,7 +28,7 @@ func (l *Library) AdjacentImage(ctx context.Context, id int64, previous bool) (E
 		return Entry{}, err
 	}
 	if current.Kind != "file" || !IsImage(current.Name) {
-		return Entry{}, domain.Fail(domain.KindInvalid, domain.Record{Code: "not_image", Message: "entry is not an image"})
+		return Entry{}, domain.Fail(domain.KindInvalid, domain.Failure{Reason: domain.ReasonNotImage, Message: "entry is not an image"})
 	}
 	order, compare := "ASC", ">"
 	if previous {

@@ -12,8 +12,16 @@ import (
 	"time"
 )
 
-func numberingRequestTest(t *testing.T, a *App, req numberingRequest, want int) numberingStatus {
+type numberingRequestTestOptions struct {
+	a    *App
+	req  numberingRequest
+	want int
+}
+
+func numberingRequestTest(t *testing.T, options numberingRequestTestOptions) numberingStatus {
 	t.Helper()
+	a, req, want := options.a, options.req, options.want
+
 	raw, err := json.Marshal(req)
 	if err != nil {
 		t.Fatal(err)
@@ -58,15 +66,15 @@ func TestNumberingBackgroundPreviewConfirmationAndPaging(t *testing.T) {
 		}
 	}
 	req := numberingRequest{Key: "preview-pages", Action: "preview", Parent: 1}
-	numberingRequestTest(t, a, req, 202)
+	numberingRequestTest(t, numberingRequestTestOptions{a: a, req: req, want: 202})
 	s := waitNumberingTest(t, a, req.Key)
 	if s.Status != "completed" || s.Files != 205 {
 		t.Fatal(s)
 	}
-	numberingRequestTest(t, a, req, 200)
+	numberingRequestTest(t, numberingRequestTestOptions{a: a, req: req, want: 200})
 	changed := req
 	changed.Parent = 2
-	numberingRequestTest(t, a, changed, 409)
+	numberingRequestTest(t, numberingRequestTestOptions{a: a, req: changed, want: 409})
 	a.numberingMu.Lock()
 	batches := a.numberingJobs[req.Key].result
 	a.numberingMu.Unlock()
@@ -99,7 +107,7 @@ func TestNumberingBackgroundPreviewConfirmationAndPaging(t *testing.T) {
 			t.Fatal("internal journal exposed")
 		}
 	}
-	numberingRequestTest(t, a, numberingRequest{Key: "confirmed-apply", Action: "apply", Parent: 1, Preview: req.Key}, 202)
+	numberingRequestTest(t, numberingRequestTestOptions{a: a, req: numberingRequest{Key: "confirmed-apply", Action: "apply", Parent: 1, Preview: req.Key}, want: 202})
 	s = waitNumberingTest(t, a, "confirmed-apply")
 	if s.Status != "completed" || s.Done != 1 || s.Files != 205 {
 		t.Fatal(s)
@@ -127,7 +135,7 @@ func TestNumberingExplicitCancelAndLease(t *testing.T) {
 				return false
 			}
 			req := numberingRequest{Key: "cancel-preview", Action: "preview", Parent: 1}
-			numberingRequestTest(t, a, req, 202)
+			numberingRequestTest(t, numberingRequestTestOptions{a: a, req: req, want: 202})
 			select {
 			case <-entered:
 			case <-time.After(5 * time.Second):
@@ -179,7 +187,7 @@ func TestNumberingJobsProtectedAndShutdown(t *testing.T) {
 	if err := a.Shutdown(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	numberingRequestTest(t, a, numberingRequest{Key: "closed-service", Action: "preview", Parent: 1}, 503)
+	numberingRequestTest(t, numberingRequestTestOptions{a: a, req: numberingRequest{Key: "closed-service", Action: "preview", Parent: 1}, want: 503})
 }
 
 func TestNumberingCancelKeepsCompletedDirectories(t *testing.T) {
@@ -189,7 +197,7 @@ func TestNumberingCancelKeepsCompletedDirectories(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	numberingRequestTest(t, a, numberingRequest{Key: "partial-preview", Action: "preview", Parent: 1}, 202)
+	numberingRequestTest(t, numberingRequestTestOptions{a: a, req: numberingRequest{Key: "partial-preview", Action: "preview", Parent: 1}, want: 202})
 	if s := waitNumberingTest(t, a, "partial-preview"); s.Status != "completed" {
 		t.Fatal(s)
 	}
@@ -211,7 +219,7 @@ func TestNumberingCancelKeepsCompletedDirectories(t *testing.T) {
 		}
 		return false
 	}
-	numberingRequestTest(t, a, numberingRequest{Key: "partial-apply", Action: "apply", Parent: 1, Batches: batchIDs}, 202)
+	numberingRequestTest(t, numberingRequestTestOptions{a: a, req: numberingRequest{Key: "partial-apply", Action: "apply", Parent: 1, Batches: batchIDs}, want: 202})
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):
@@ -237,7 +245,7 @@ func TestNumberingCloseBeforeSubmit(t *testing.T) {
 	r := httptest.NewRequest("POST", "/cancel", nil)
 	r.SetPathValue("key", "close-before-submit")
 	a.cancelNumberingJob(httptest.NewRecorder(), r)
-	s := numberingRequestTest(t, a, numberingRequest{Key: "close-before-submit", Action: "preview", Parent: 1}, 200)
+	s := numberingRequestTest(t, numberingRequestTestOptions{a: a, req: numberingRequest{Key: "close-before-submit", Action: "preview", Parent: 1}, want: 200})
 	if s.Status != "cancelled" {
 		t.Fatal(s)
 	}

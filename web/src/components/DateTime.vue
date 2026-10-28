@@ -32,20 +32,20 @@
 <style scoped>
   .stacked-date-time {
     display: inline-grid;
-    gap: var(--date-time-gap, 4px);
+    gap: var(--date-time-gap, var(--space-4));
     width: max-content;
     vertical-align: middle;
     text-align: inherit;
-    font-size: 12px;
-    font-weight: 400;
+    font-size: var(--font-size-12);
+    font-weight: var(--font-weight-400);
     font-variant-numeric: tabular-nums;
-    line-height: 1.4;
+    line-height: var(--line-height-1-4);
     white-space: nowrap;
     color: var(--steel);
   }
   .stacked-date-time > span:first-child {
     color: var(--ink);
-    font-weight: 500;
+    font-weight: var(--font-weight-500);
   }
   .date-time-empty {
     color: var(--steel);

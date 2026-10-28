@@ -1,4 +1,6 @@
 <script setup lang="ts">
+  import { vFormErrors } from '../../app/form-errors';
+  import { useToast } from '../../app/use-toast';
   import { errorText } from '../../app/errors';
   import { onMounted, onUnmounted, ref, reactive, watch, computed } from 'vue';
   import {
@@ -12,13 +14,15 @@
     Trash2,
     ScanEye
   } from '@lucide/vue';
-  import { api, apiItems } from '../../app/api';
+  import { useApi } from '../../app/use-api';
   import { formatTime } from '../../lib/format/date';
   import { type ModelProfile, type ProbeResult, type PromptProfile } from '../../app/contracts';
   import ModalDialog from '../../components/ModalDialog.vue';
   import ModalTransition from '../../components/ModalTransition.vue';
   import SelectField from '../../components/SelectField.vue';
   import './models.css';
+  const { api, apiItems, formError, invalidFields } = useApi();
+  const toast = useToast();
   type Preset = { id: string; name: string; base_url: string; protocol: string };
   const emit = defineEmits<{ changed: [] }>();
   const rows = ref<ModelProfile[]>([]),
@@ -38,7 +42,7 @@
     protocol: profile?.protocol ?? 'openai',
     base_url: profile?.base_url ?? '',
     model: profile?.model ?? '',
-    timeout: profile?.timeout ?? '180s',
+    timeout_ms: profile?.timeout_ms ?? 180000,
     temperature: profile?.temperature ?? 0.7,
     max_tokens: profile?.max_tokens ?? 1024,
     workers: profile?.workers ?? 2,
@@ -70,6 +74,7 @@
       await load();
       emit('changed');
       open(copy);
+      toast.show('模型配置已复制');
     } catch (e) {
       error.value = errorText(e);
     } finally {
@@ -87,6 +92,7 @@
         body: {}
       });
       deleteTarget.value = undefined;
+      toast.show('模型配置已删除');
       await load();
       emit('changed');
     } catch (e) {
@@ -179,6 +185,7 @@
     }
   }
   function open(p?: ModelProfile) {
+    formError.value = undefined;
     selected.value = p;
     // Drafts contain only writable fields; response metadata never enters a PATCH.
     Object.assign(form, initial(p));
@@ -217,7 +224,7 @@
   const selectedPrompt = computed(() => prompts.value.find((p) => p.id === form.prompt_id));
   async function save() {
     if (!form.prompt_id) {
-      dialogError.value = '请选择提示词；可先在系统设置的 Prompt配置 中新增。';
+      dialogError.value = errorText(invalidFields([{ path: 'prompt_id', reason: 'required' }]));
       return;
     }
     saving.value = true;
@@ -232,6 +239,7 @@
         }
       );
       editing.value = false;
+      toast.show('模型配置已保存');
       apiKey.value = '';
       await load();
       emit('changed');
@@ -285,6 +293,7 @@
     settingDefault.value = true;
     try {
       await api<unknown>(`/model-configs/${p.id}/default`, { method: 'POST', body: {} });
+      toast.show('默认模型已更新');
       await load();
       emit('changed');
     } catch (e) {
@@ -443,10 +452,11 @@
         :title="selected ? '编辑模型配置' : '新增模型配置'"
         wide
         @close="close"
-        ><form class="model-form" @submit.prevent="save"
+        ><form v-form-errors="formError" class="model-form" @submit.prevent="save"
           ><label
             >配置名称<input
               v-model="form.title"
+              name="title"
               aria-label="配置名称"
               required
               maxlength="80"
@@ -455,12 +465,14 @@
             ><label
               >服务类型<SelectField
                 v-model="form.provider"
+                data-field="provider"
                 label="服务类型"
                 :options="presets.map((p) => ({ value: p.id, label: providerName(p.id) }))"
                 @change="chooseProvider" /></label
             ><label v-if="form.provider === 'custom'"
               >接口协议<SelectField
                 v-model="form.protocol"
+                data-field="protocol"
                 label="接口协议"
                 :options="[
                   { value: 'openai', label: 'OpenAI 兼容' },
@@ -474,6 +486,7 @@
           <label
             >服务 URL<input
               v-model="form.base_url"
+              name="base_url"
               aria-label="服务 URL"
               type="url"
               required
@@ -483,6 +496,7 @@
           <label
             >API 密钥<input
               v-model="apiKey"
+              name="api_key"
               aria-label="API 密钥"
               type="password"
               autocomplete="new-password"
@@ -492,12 +506,18 @@
                 selected?.has_api_key ? '已保存，留空保持原密钥' : '本地无鉴权服务可留空'
               " /></label
           ><label v-if="selected?.has_api_key" class="check-label"
-            ><input v-model="clearKey" type="checkbox" role="switch" />清除已保存密钥</label
+            ><input
+              v-model="clearKey"
+              name="api_key"
+              type="checkbox"
+              role="switch"
+            />清除已保存密钥</label
           >
           <div class="model-detect"
             ><label
               >模型名称<input
                 v-model="form.model"
+                name="model"
                 aria-label="模型名称"
                 required
                 maxlength="256"
@@ -526,6 +546,7 @@
                 ><span class="probe-timeout-text">检测超时</span
                 ><SelectField
                   v-model="probeTimeout"
+                  data-field="probe_timeout_seconds"
                   label="检测超时"
                   :options="[
                     { value: 5, label: '5s' },
@@ -559,6 +580,7 @@
             ><label
               >并发任务数<input
                 v-model.number="form.workers"
+                name="workers"
                 aria-label="并发任务数"
                 type="number"
                 min="1"
@@ -568,18 +590,23 @@
                 >同时处理的视频数量，保存后也应用于该配置的排队和运行中批次；降低时等待在途任务完成。</small
               ></label
             ><label
-              >请求超时<input
-                v-model="form.timeout"
+              >请求超时（毫秒）<input
+                v-model.number="form.timeout_ms"
+                name="timeout_ms"
                 aria-label="请求超时"
                 required
-                placeholder="180s"
-              /><small>单次模型请求的最长等待时间。</small></label
+                type="number"
+                min="1000"
+                max="1800000"
+                step="1"
+              /><small>单次模型请求的最长等待时间，1000 毫秒 = 1 秒。</small></label
             ></div
           >
           <div class="form-grid model-parameters"
             ><label
               >思考模式<SelectField
                 v-model="form.thinking"
+                data-field="thinking"
                 label="思考模式"
                 :options="[
                   { value: 'default', label: '跟随模型默认' },
@@ -590,6 +617,7 @@
             <label v-if="form.provider === 'custom' && form.thinking !== 'default'"
               >思考参数类型<SelectField
                 v-model="form.thinking_adapter"
+                data-field="thinking_adapter"
                 label="思考参数类型"
                 :options="[{ value: 'auto', label: '请选择服务支持的参数' }, ...thinkingAdapters]"
                 @change="changeThinkingAdapter"
@@ -605,6 +633,7 @@
               "
               >思考强度<SelectField
                 v-model="form.thinking_effort"
+                data-field="thinking_effort"
                 label="思考强度"
                 :options="[
                   { value: 'low', label: '低' },
@@ -616,6 +645,7 @@
               >{{ isLlama ? '思考预算' : '固定思考预算'
               }}<input
                 v-model.number="form.thinking_budget"
+                name="thinking_budget"
                 :aria-label="isLlama ? '思考预算' : '固定思考预算'"
                 type="number"
                 :min="isLlama ? 1 : 1024"
@@ -632,6 +662,7 @@
             <label
               >最大输出 token<input
                 v-model.number="form.max_tokens"
+                name="max_tokens"
                 aria-label="最大输出 token"
                 type="number"
                 min="1"
@@ -644,6 +675,7 @@
             <label
               >温度<input
                 v-model.number="form.temperature"
+                name="temperature"
                 aria-label="温度"
                 type="number"
                 min="0"
@@ -655,6 +687,7 @@
           <label class="check-label"
             ><input
               v-model="form.omit_temperature"
+              name="omit_temperature"
               type="checkbox"
               role="switch"
             />使用模型默认温度（不发送 temperature）</label
@@ -669,6 +702,7 @@
           <label
             >命名提示词<SelectField
               v-model="form.prompt_id"
+              data-field="prompt_id"
               label="命名提示词"
               :options="prompts.map((p) => ({ value: p.id, label: p.title }))" /></label
           ><details v-if="selectedPrompt" class="prompt-preview"

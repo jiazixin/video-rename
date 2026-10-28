@@ -139,7 +139,7 @@ func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test", Timeout: "2s", MaxTokens: 128}
+	profile.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test", TimeoutMS: 2000, MaxTokens: 128}
 	if _, err = (modelstore.New(a.db)).Save(t.Context(), profile); err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +323,7 @@ func TestRetryHistoryMissingFilesDoNotBlockValidTargets(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			profile.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test", Timeout: "2s", MaxTokens: 128}
+			profile.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test", TimeoutMS: 2000, MaxTokens: 128}
 			if _, err = (modelstore.New(a.db)).Save(t.Context(), profile); err != nil {
 				t.Fatal(err)
 			}

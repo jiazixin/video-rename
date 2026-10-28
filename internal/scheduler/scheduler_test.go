@@ -125,7 +125,7 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prompt, err := (model.New(db)).Save(t.Context(), model.Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: "计划配置", PromptID: libraryPrompt.ID})
+	prompt, err := (model.New(db)).Save(t.Context(), model.Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", TimeoutMS: 2000, Temperature: 0.2, MaxTokens: 128, Title: "计划配置", PromptID: libraryPrompt.ID})
 	if err != nil {
 		t.Fatal(err)
 	}

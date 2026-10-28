@@ -35,36 +35,36 @@ func TestScaleAnalyticsFilteringAndCachedPages(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	q := AnalysisQuery{To: 1001 * 3600000, Size: 20}
+	q := AnalysisQuery{To: 1001 * 3600000, Limit: 20}
 	for _, page := range []int{1, 2} {
-		q.Page = page
+		q.Offset = (page - 1) * 20
 		start := time.Now()
 		r, err := Analytics(t.Context(), db, q)
-		if err != nil || r.Totals.TimedItems != 100000 || r.Batches.Page != page {
+		if err != nil || r.Totals.TimedItems != 100000 || r.Batches.Offset != (page-1)*20 {
 			t.Fatal(r, err)
 		}
 		t.Logf("run analytics page %d: %s", page, time.Since(start))
 	}
 	q.From = 1000 * 3600000
-	q.Page = 1
+	q.Offset = 0
 	start := time.Now()
 	r, err := Analytics(t.Context(), db, q)
 	if err != nil || r.Totals.Batches != 1 || r.Totals.TimedItems != 100 {
 		t.Fatal(r, err)
 	}
 	t.Logf("run analytics one indexed hour: %s", time.Since(start))
-	u := tokenusage.AnalyticsQuery{To: q.To, Size: 20}
+	u := tokenusage.AnalyticsQuery{To: q.To, Limit: 20}
 	for _, page := range []int{1, 2} {
-		u.Page = page
+		u.Offset = (page - 1) * 20
 		start = time.Now()
 		r, err := tokenusage.Analytics(t.Context(), db, u)
-		if err != nil || r.Totals.Tokens != 1000000 || r.Batches.Page != page {
+		if err != nil || r.Totals.Tokens != 1000000 || r.Batches.Offset != (page-1)*20 {
 			t.Fatal(r, err)
 		}
 		t.Logf("usage analytics page %d: %s", page, time.Since(start))
 	}
 	u.Run = 1000
-	u.Page = 1
+	u.Offset = 0
 	start = time.Now()
 	usage, err := tokenusage.Analytics(t.Context(), db, u)
 	if err != nil || usage.Totals.Tokens != 1000 || usage.Totals.Batches != 1 {

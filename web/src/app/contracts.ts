@@ -7,12 +7,12 @@ export type ServerRecord = {
 
 export type Entry = {
   progress?: { total: number; processed: number; unknown: number; active: number }
-  contents?: { directories: number; videos: number; images: number; audio: number } | null
+  contents?: { directories: number; videos: number; images: number; audio: number }
   id: number
   parent: number
   name: string
   kind: string
-  size: number
+  size_bytes: number
   mtime: string
   renamed_at?: string
   etag: string
@@ -22,10 +22,10 @@ export type Entry = {
   task_status: string
 }
 export type Page = {
-  page?: number
+  offset: number
+  limit: number
   total: number
   items: Entry[]
-  next: number
   generation: string
   refreshing: boolean
   refreshed: string
@@ -135,7 +135,7 @@ export type ModelProfile = {
   protocol: string
   base_url: string
   model: string
-  timeout: string
+  timeout_ms: number
   temperature: number
   max_tokens: number
   omit_temperature: boolean
@@ -226,7 +226,7 @@ export type UsageReport = {
   profiles: UsageProfile[]
   sources: UsageSource[]
   top_batches: UsageBatch[]
-  batches: { items: UsageBatch[]; total: number; page: number; size: number }
+  batches: { items: UsageBatch[]; total: number; offset: number; limit: number }
   options: {
     models: { key: string; model: string; provider: string; protocol: string }[]
     profiles: { id: number; title: string; model_keys: string[]; deleted: boolean }[]
@@ -321,7 +321,7 @@ export type AnalysisReport = {
   scatter: AnalysisScatter[]
   failures: AnalysisFailure[]
   batch_failures: AnalysisFailure[]
-  batches: { items: AnalysisBatch[]; total: number; page: number; size: number }
+  batches: { items: AnalysisBatch[]; total: number; offset: number; limit: number }
   options: { profiles: { id: number; title: string }[] }
 }
 
@@ -374,8 +374,8 @@ export type LogRecord = {
 export type LogPage = {
   items: LogRecord[]
   total: number
-  next: number
-  page: number
+  offset: number
+  limit: number
 }
 export type LogRetryResult = {
   accepted: number[]

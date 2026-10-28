@@ -145,7 +145,7 @@ for (const width of [320, 390, 1440]) {
     await expect(removeKeyword(page, '无法识别这些画面')).toBeVisible()
     await expect(input).toHaveValue('')
     await save.click()
-    await expect(page.getByRole('alert')).toContainText('测试保存失败')
+    await expect(page.getByRole('alert')).toContainText('服务暂时无法完成请求')
     await expect(removeKeyword(page, '无法识别这些画面')).toBeVisible()
     await expect(save).toBeEnabled()
     failSave = false
@@ -201,7 +201,7 @@ test('失败关键词加载失败时禁止空草稿保存，重试后恢复', as
     }
   })
   await login(page)
-  await expect(page.getByRole('alert').first()).toContainText('测试加载失败')
+  await expect(page.getByRole('alert').first()).toContainText('服务暂时无法完成请求')
   await expect(page.getByLabel('新增失败关键词', { exact: true })).toHaveCount(0)
   const save = page.getByRole('button', { name: '保存失败关键词', exact: true })
   if (await save.count()) await expect(save).toBeDisabled()

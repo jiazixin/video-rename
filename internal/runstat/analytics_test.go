@@ -265,11 +265,11 @@ func TestAnalyticsProfilesFiltersAndPaging(t *testing.T) {
 	if report.Batches.Items[0].ID != 1 {
 		t.Fatal("size sort", report.Batches.Items)
 	}
-	report, err = Analytics(t.Context(), db, AnalysisQuery{From: from, To: to, Location: time.UTC, Page: 2, Size: 3})
+	report, err = Analytics(t.Context(), db, AnalysisQuery{From: from, To: to, Location: time.UTC, Offset: 3, Limit: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Batches.Items) != 2 || report.Batches.Page != 2 {
+	if len(report.Batches.Items) != 2 || report.Batches.Offset != 3 {
 		t.Fatal("pagination", report.Batches)
 	}
 }
@@ -310,7 +310,7 @@ func TestQueuedCancellationAndRenamedProfiles(t *testing.T) {
 	base := time.Date(2026, 9, 27, 0, 0, 0, 0, time.UTC)
 	seedBatch2(t, db, seedBatch{id: 1, source: "manual", profile: 1, title: "旧名", status: "cancelled", created: at(base), finished: at(base.Add(time.Hour))})
 	seedBatch2(t, db, seedBatch{id: 2, source: "manual", profile: 1, title: "新名", status: "completed", created: at(base), started: at(base), finished: at(base.Add(time.Minute))})
-	report, err := Analytics(t.Context(), db, AnalysisQuery{To: base.Add(2 * time.Hour).UnixMilli(), Page: int(^uint(0) >> 1), Size: 20})
+	report, err := Analytics(t.Context(), db, AnalysisQuery{To: base.Add(2 * time.Hour).UnixMilli(), Offset: int(^uint(0) >> 1), Limit: 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +320,7 @@ func TestQueuedCancellationAndRenamedProfiles(t *testing.T) {
 	if len(report.Options.Profiles) != 1 || report.Options.Profiles[0].Title != "新名" {
 		t.Fatal("profile option duplicated", report.Options)
 	}
-	if report.Batches.Page != 1 || len(report.Batches.Items) != 2 {
+	if report.Batches.Offset != 0 || len(report.Batches.Items) != 2 {
 		t.Fatal("invalid pagination", report.Batches)
 	}
 }
@@ -382,13 +382,13 @@ func TestAnalyticsCachePagesAndCommittedChanges(t *testing.T) {
 	for i := int64(1); i <= 3; i++ {
 		seedBatch2(t, db, seedBatch{id: i, source: "manual", profile: 1, title: "profile", status: "completed", created: at(base.Add(time.Duration(i) * time.Hour)), started: at(base.Add(time.Duration(i) * time.Hour)), finished: at(base.Add(time.Duration(i)*time.Hour + time.Minute)), done: i})
 	}
-	q := AnalysisQuery{To: base.Add(24 * time.Hour).UnixMilli(), Size: 1}
+	q := AnalysisQuery{To: base.Add(24 * time.Hour).UnixMilli(), Limit: 1}
 	first, err := Analytics(t.Context(), db, q)
 	if err != nil || len(first.Batches.Items) != 1 || first.Batches.Items[0].ID != 3 {
 		t.Fatal(first, err)
 	}
 	first.Totals.Done = 999
-	q.Page = 2
+	q.Offset = 1
 	second, err := Analytics(t.Context(), db, q)
 	if err != nil || second.Totals.Done != 6 || second.Batches.Items[0].ID != 2 {
 		t.Fatal(second, err)

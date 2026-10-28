@@ -1,4 +1,12 @@
 <script setup lang="ts">
+  import {
+    useRouteState,
+    queryText,
+    queryChoice,
+    queryInteger,
+    queryIDs,
+    queryBoolean
+  } from '../../app/use-route-state';
   import './library.css';
   import { errorText } from '../../app/errors';
   import PageNavigation from '../../components/PageNavigation.vue';
@@ -30,7 +38,7 @@
   } from '@lucide/vue';
   import './library-actions.css';
   import './theater.css';
-  import { api, apiItems } from '../../app/api';
+  import { useApi } from '../../app/use-api';
   import { formatTime } from '../../lib/format/date';
   import { formatSize } from '../../lib/format/bytes';
   import {
@@ -77,6 +85,7 @@
   import { useDeleteEntries } from './delete-entries';
   import { useBatchActions } from './batch-actions';
   import { useEntryDialog, type EntryDialogMode, type RunTask } from './entry-dialog';
+  const { api, apiItems } = useApi();
   const { ready } = defineProps<{ ready: boolean }>();
   type LoadOptions = {
     /** Reload in the background without the busy state or resetting the selection anchor. */
@@ -163,6 +172,75 @@
     processingStatus = ref(''),
     pageNumber = ref(1),
     limit = ref(100);
+  const pendingSelection = ref(new Set<number>());
+  const selectedIDs = computed({
+    get: () => new Set([...pendingSelection.value, ...chosen.value.keys()]),
+    set: (ids: Set<number>) => {
+      pendingSelection.value = new Set([...ids].filter((id) => !chosen.value.has(id)));
+      chosen.value = new Map([...chosen.value].filter(([id]) => ids.has(id)));
+    }
+  });
+  const routeState = useRouteState(
+    {
+      q: queryText(q),
+      kind: queryChoice(kind, ['', 'file', 'directory', 'video', 'audio', 'image', 'other']),
+      status: queryChoice(processingStatus, [
+        '',
+        'unprocessed',
+        'processed',
+        'manual',
+        'automatic',
+        'marked',
+        'active',
+        'queued',
+        'scanning',
+        'running',
+        'paused',
+        'cancelling'
+      ]),
+      sort: queryChoice(sort, [
+        'name_asc',
+        'name_desc',
+        'size_asc',
+        'size_desc',
+        'mtime_asc',
+        'mtime_desc',
+        'renamed_asc',
+        'renamed_desc',
+        'status_asc',
+        'status_desc'
+      ]),
+      page: queryInteger(pageNumber, { min: 1 }),
+      limit: queryInteger(limit, { choices: [50, 100, 200] }),
+      selected: queryIDs(selectedIDs),
+      multi: queryBoolean(multi)
+    },
+    {
+      canWrite: () => routeDirectory() === dir.value,
+      onRestore: () => {
+        void load({ quiet: true });
+      }
+    }
+  );
+  async function restoreSelection(signal: AbortSignal) {
+    const ids = [...pendingSelection.value];
+    if (!ids.length) return;
+    const restored: Entry[] = [];
+    // The status endpoint accepts at most 300 IDs per request.
+    const chunkSize = 200;
+    for (let offset = 0; offset < ids.length; offset += chunkSize) {
+      const entries = await apiItems<Entry>(
+        `/entries/status?ids=${ids.slice(offset, offset + chunkSize).join(',')}`,
+        { signal }
+      );
+      restored.push(...entries);
+    }
+    if (signal.aborted) return;
+    for (const entry of restored)
+      if (pendingSelection.value.has(entry.id)) chosen.value.set(entry.id, entry);
+    for (const id of ids) pendingSelection.value.delete(id);
+    if (chosen.value.size) multi.value = true;
+  }
   const {
     preview,
     imageBusy,
@@ -237,6 +315,7 @@
   let listRequest = 0,
     timer: ReturnType<typeof setTimeout> | undefined,
     searchTimer: ReturnType<typeof setTimeout> | undefined;
+  let listController: AbortController | undefined, statusController: AbortController | undefined;
   function scheduleSync() {
     clearTimeout(timer);
     if (!disposed && active.value)
@@ -251,12 +330,17 @@
     scheduleSync();
   }
   async function syncEntries() {
+    statusController?.abort();
+    const controller = new AbortController();
+    statusController = controller;
     const listAtStart = listRequest,
       request = ++statusRequest;
     clearTimeout(timer);
     if (disposed || !active.value || busy.value || !page.value) return;
     try {
-      const runs = await Promise.all([...trackedRuns].map((id) => api<Run>(`/runs/${id}`)));
+      const runs = await Promise.all(
+        [...trackedRuns].map((id) => api<Run>(`/runs/${id}`, { signal: controller.signal }))
+      );
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- disposed changes while awaiting
       if (listAtStart !== listRequest || request !== statusRequest || disposed) return;
       for (const run of runs) if (!isActiveRunStatus(run.status)) trackedRuns.delete(run.id);
@@ -270,7 +354,9 @@
       const entries: Entry[] = [];
       for (let i = 0; i < ids.length; i += 300)
         entries.push(
-          ...(await apiItems<Entry>(`/entries/status?ids=${ids.slice(i, i + 300).join(',')}`))
+          ...(await apiItems<Entry>(`/entries/status?ids=${ids.slice(i, i + 300).join(',')}`, {
+            signal: controller.signal
+          }))
         );
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- the compared state can change while awaiting
       if (listAtStart !== listRequest || request !== statusRequest || disposed) return;
@@ -308,6 +394,10 @@
     }
   }
   async function load({ quiet = false, keepRows = true, canApply }: LoadOptions = {}) {
+    listController?.abort();
+    statusController?.abort();
+    const controller = new AbortController();
+    listController = controller;
     if (!quiet) resetSelectionAnchor();
     const request = ++listRequest;
     clearTimeout(timer);
@@ -316,14 +406,16 @@
     try {
       const requestedPage = pageNumber.value;
       const params = new URLSearchParams({
-        page: String(requestedPage),
+        offset: String((requestedPage - 1) * limit.value),
         limit: String(limit.value),
         q: q.value,
         kind: kind.value,
         status: processingStatus.value,
         sort: sort.value
       });
-      const p = await api<Page>(`/directories/${dir.value}/entries?${params}`);
+      const p = await api<Page>(`/directories/${dir.value}/entries?${params}`, {
+        signal: controller.signal
+      });
       if (request !== listRequest) return;
       // Background scans must not move the rows being read or selected. Fetch by
       // ID as renamed entries can have moved outside this page's latest sort range.
@@ -331,10 +423,11 @@
         quiet &&
         keepRows &&
         page.value?.items.length &&
-        (p.page ?? requestedPage) === requestedPage
+        p.offset === (requestedPage - 1) * p.limit
       ) {
         const entries = await apiItems<Entry>(
-          `/entries/status?ids=${page.value.items.map((e) => e.id).join(',')}`
+          `/entries/status?ids=${page.value.items.map((e) => e.id).join(',')}`,
+          { signal: controller.signal }
         );
         if (request !== listRequest) return;
         const latest = new Map(entries.map((e) => [e.id, e]));
@@ -360,7 +453,7 @@
         if (trackedRuns.size) scheduleSync();
         return;
       }
-      pageNumber.value = p.page ?? requestedPage;
+      pageNumber.value = Math.floor(p.offset / p.limit) + 1;
       page.value = p;
       // This response applies the latest list, which may already be newer than
       // the last lightweight state poll. Do not keep an outdated update notice.
@@ -370,6 +463,8 @@
       await restorePosition(request, p);
       if (request !== listRequest) return;
       for (const e of p.items) if (chosen.value.has(e.id)) chosen.value.set(e.id, e);
+      await restoreSelection(controller.signal);
+      if (request !== listRequest) return;
       if (p.refreshing)
         timer = setTimeout(() => void load({ quiet: true, keepRows, canApply }), 1500);
       else if (
@@ -558,6 +653,7 @@
     clearTimeout(searchTimer);
     returnAnchor.value = undefined;
     clearSelection();
+    pendingSelection.value.clear();
     const child = page.value?.items.find((e) => e.id === id && e.kind === 'directory');
     positions.set(dir.value, {
       pageNumber: pageNumber.value,
@@ -579,14 +675,18 @@
     pendingPosition = saved ? { ...saved } : undefined;
     if (!saved) window.scrollTo({ top: 0, behavior: 'instant' });
     dir.value = id;
-    if (updateRoute && (routeDirectory() !== id || !route.params.directory))
-      void router.push({ name: 'library', params: { directory: String(id) } });
     pageNumber.value = saved?.pageNumber || 1;
     q.value = saved?.q || '';
     kind.value = saved?.kind ?? '';
     processingStatus.value = saved?.status ?? '';
     sort.value = saved?.sort ?? sort.value;
     limit.value = saved?.limit ?? limit.value;
+    if (updateRoute && (routeDirectory() !== id || !route.params.directory))
+      void router.push({
+        name: 'library',
+        params: { directory: String(id) },
+        query: routeState.query()
+      });
     page.value = snapshots.get(id);
     void load({ quiet: !!page.value });
     if (page.value) void restorePosition(listRequest, page.value);
@@ -602,6 +702,7 @@
     const directory = dir.value;
     try {
       await api<unknown>(`/directories/${directory}/refresh`, { method: 'POST', body: {} });
+      toast.show('目录刷新已提交');
       if (directory === dir.value) await load({ keepRows: false });
     } catch (e) {
       if (directory === dir.value) error.value = errorText(e);
@@ -632,7 +733,11 @@
     dialogMode,
     newName,
     dialogError,
+    formError: entryFormError,
     history,
+    hasMoreHistory,
+    loadingHistory,
+    loadHistory,
     extension,
     openEntryDialog,
     closeDialog,
@@ -1067,8 +1172,11 @@
                         :ref="setInlineInput"
                         v-model="inlineName"
                         :aria-label="`编辑 ${e.name}`"
+                        :aria-invalid="inlineError ? true : undefined"
+                        :aria-describedby="inlineError ? 'inline-rename-error' : undefined"
                         :readonly="inlineSaving"
                         maxlength="240"
+                        @input="inlineError = ''"
                         @keydown.enter.prevent="saveInlineRename"
                       /><button
                         v-if="inlineExtension && !inlineFullName"
@@ -1081,7 +1189,9 @@
                         @click="editInlineExtension"
                         >{{ inlineExtension }}</button
                       ></div
-                    ><small v-if="inlineError" role="alert">{{ inlineError }}</small></div
+                    ><small v-if="inlineError" id="inline-rename-error" role="alert">{{
+                      inlineError
+                    }}</small></div
                   ><button
                     v-else-if="e.kind === 'directory'"
                     class="name-button"
@@ -1102,7 +1212,9 @@
                   ><span v-else class="name-text" :title="e.name">{{ e.name }}</span></div
                 ></td
               >
-              <td class="subtle mono">{{ e.kind === 'directory' ? '—' : formatSize(e.size) }}</td
+              <td class="subtle mono">{{
+                e.kind === 'directory' ? '—' : formatSize(e.size_bytes)
+              }}</td
               ><td class="subtle contents-cell"
                 ><DirectoryContents v-if="e.kind === 'directory'" :contents="e.contents" /><span
                   v-else
@@ -1218,9 +1330,13 @@
         :mode="dialogMode"
         :entry="dialogEntry"
         :history="history"
+        :has-more-history="hasMoreHistory"
+        :loading-history="loadingHistory"
         :extension="extension"
         :error="dialogError"
+        :form-error="entryFormError"
         :saving="saving"
+        @load-more="loadHistory()"
         @close="closeDialog()"
         @submit="submit"
     /></ModalTransition>
@@ -1303,21 +1419,21 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding-top: 17px;
-    font-size: 10px;
+    padding-top: var(--space-17);
+    font-size: var(--font-size-10);
     color: var(--palette-93979c);
   }
   .page-footnote button {
-    font-size: 10px;
+    font-size: var(--font-size-10);
   }
   @media (max-width: 800px) {
     .page-footnote {
-      gap: 10px;
+      gap: var(--space-10);
     }
   }
 
   .library-scan-status {
-    margin-bottom: 12px;
+    margin-bottom: var(--space-12);
   }
   .directory-update-notice {
     position: fixed;
@@ -1326,33 +1442,33 @@
     z-index: 90;
     display: flex;
     align-items: flex-start;
-    gap: 12px;
+    gap: var(--space-12);
     width: 380px;
     max-width: calc(100vw - 32px);
     max-height: calc(100dvh - 32px);
     overflow-y: auto;
-    padding: 16px;
+    padding: var(--space-16);
     border: 1px solid var(--palette-e8d7a6);
-    border-radius: 12px;
+    border-radius: var(--radius-12);
     background: var(--palette-fffbef);
     color: var(--palette-73551b);
-    box-shadow: 0 8px 30px var(--palette-49340b1a);
-    font-size: 13px;
+    box-shadow: var(--shadow-12);
+    font-size: var(--font-size-13);
   }
   .directory-update-icon {
     flex-shrink: 0;
-    margin-top: 2px;
+    margin-top: var(--space-2);
   }
   .directory-update-content {
     flex: 1;
     min-width: 0;
   }
   .directory-update-content strong {
-    font-size: 14px;
+    font-size: var(--font-size-14);
   }
   .directory-update-content p {
-    margin: 4px 0 12px;
-    line-height: 1.6;
+    margin: var(--space-4) 0 var(--space-12);
+    line-height: var(--line-height-1-6);
     overflow-wrap: anywhere;
   }
   /* Amber member of the shared tinted button family, matching the notice it sits in. */
@@ -1360,7 +1476,7 @@
     border-color: var(--tone-amber-line);
     background: var(--tone-amber-bg);
     color: var(--tone-amber-ink);
-    font-weight: 600;
+    font-weight: var(--font-weight-600);
   }
   .directory-update-content button:hover:not(:disabled) {
     border-color: var(--tone-amber-line);
@@ -1379,8 +1495,8 @@
   .library-heading {
     flex-direction: column;
     align-items: flex-start;
-    gap: 16px;
-    margin-bottom: 24px;
+    gap: var(--space-16);
+    margin-bottom: var(--space-24);
   }
   .library-heading h1 {
     margin: 0;
@@ -1412,7 +1528,7 @@
     text-align: right;
   }
   .library-directory-overview {
-    border-radius: 12px 12px 0 0;
+    border-radius: var(--radius-12) var(--radius-12) 0 0;
   }
   .library-panel-controls {
     border-top: 0;
@@ -1421,7 +1537,7 @@
   }
   .library-file-rows {
     border-top: 0;
-    border-radius: 0 0 12px 12px;
+    border-radius: 0 0 var(--radius-12) var(--radius-12);
   }
   .library-file-rows .file-table {
     border-collapse: separate;
@@ -1438,29 +1554,29 @@
   }
   @media (max-width: 800px) {
     .library-page .page-heading {
-      margin-bottom: 12px;
-      gap: 8px;
+      margin-bottom: var(--space-12);
+      gap: var(--space-8);
     }
     .library-directory-overview .panel-toolbar {
-      padding: 10px 12px;
-      gap: 8px;
+      padding: var(--space-10) var(--space-12);
+      gap: var(--space-8);
     }
     .library-panel-controls .filterbar {
-      padding: 8px 12px;
-      gap: 8px;
+      padding: var(--space-8) var(--space-12);
+      gap: var(--space-8);
     }
     .library-panel-controls .batch-toolbar {
       flex-wrap: nowrap;
       overflow-x: auto;
-      padding: 8px 12px;
+      padding: var(--space-8) var(--space-12);
     }
     .library-panel-controls .batch-toolbar > * {
       flex-shrink: 0;
       white-space: nowrap;
     }
     .library-panel-controls .pagination {
-      padding: 8px 12px;
-      gap: 8px;
+      padding: var(--space-8) var(--space-12);
+      gap: var(--space-8);
     }
   }
   @media (max-width: 600px) {
@@ -1475,14 +1591,14 @@
       min-height: 44px;
     }
     .library-page .page-heading h1 {
-      font-size: 22px;
+      font-size: var(--font-size-22);
       margin-bottom: 0;
     }
     .library-directory-overview .directory-toolbar {
       position: relative;
     }
     .library-directory-overview .breadcrumbs {
-      padding-right: 42px;
+      padding-right: var(--space-42);
       flex-wrap: nowrap;
       overflow-x: auto;
       scrollbar-width: thin;
@@ -1498,7 +1614,7 @@
       width: 44px;
       min-height: 44px;
       font-size: 0;
-      padding: 8px;
+      padding: var(--space-8);
       gap: 0;
     }
     .library-panel-controls .filterbar {
@@ -1510,7 +1626,7 @@
       width: 100%;
     }
     .library-panel-controls .filterbar > .subtle {
-      font-size: 10px;
+      font-size: var(--font-size-10);
       text-align: right;
     }
     .library-panel-controls .filter-spacer {
@@ -1526,7 +1642,7 @@
 
   .file-table tr.return-anchor {
     background: var(--palette-e3f2e9);
-    box-shadow: inset 3px 0 var(--palette-398366);
+    box-shadow: var(--shadow-13);
   }
   .file-table .row-actions button {
     width: 36px;
@@ -1543,7 +1659,7 @@
   .batch-delete-group {
     display: inline-flex;
     align-items: center;
-    gap: 10px;
+    gap: var(--space-10);
   }
   .batch-delete-group .batch-divider {
     display: block;
@@ -1558,13 +1674,13 @@
     text-align: center;
     color: var(--ink);
     font: inherit;
-    font-weight: 500;
+    font-weight: var(--font-weight-500);
     cursor: text;
   }
   .inline-rename-trigger:focus-visible {
     outline: 2px solid var(--palette-89bca7);
     outline-offset: 3px;
-    border-radius: 2px;
+    border-radius: var(--radius-2);
   }
   .inline-rename {
     min-width: 0;
@@ -1576,14 +1692,14 @@
     align-items: center;
     min-width: 0;
     border: 1px solid var(--palette-89bca7);
-    border-radius: 6px;
+    border-radius: var(--radius-6);
     background: var(--palette-ffffff);
-    box-shadow: 0 0 0 2px var(--palette-e3f2e9);
+    box-shadow: var(--shadow-14);
   }
   .inline-rename-field input {
     min-width: 0;
     width: 100%;
-    padding: 6px 8px;
+    padding: var(--space-6) var(--space-8);
     border: 0;
     background: transparent;
     font: inherit;
@@ -1596,7 +1712,7 @@
     flex-shrink: 0;
     border: 0;
     background: transparent;
-    padding: 6px 8px;
+    padding: var(--space-6) var(--space-8);
     white-space: nowrap;
     color: var(--ash);
     font: inherit;
@@ -1612,7 +1728,7 @@
   }
   .inline-rename small {
     display: block;
-    margin-top: 5px;
+    margin-top: var(--space-5);
     color: var(--palette-b44444);
     overflow-wrap: anywhere;
   }
@@ -1622,7 +1738,7 @@
   .file-table .contents-cell {
     min-width: 76px;
     white-space: nowrap;
-    font-size: 11px;
+    font-size: var(--font-size-11);
   }
   .directory-summary > button + button {
     margin-left: 0;

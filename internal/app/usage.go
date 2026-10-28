@@ -14,8 +14,12 @@ import (
 // history and to defaults to now.
 func (a *App) usageAnalytics(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
+	if err := queryFields(query, "from", "to", "timezone", "source", "sort", "profile", "run", "offset", "limit", "model"); err != nil {
+		writeError(w, r, err)
+		return
+	}
 	now := time.Now().UTC()
-	v := tokenusage.AnalyticsQuery{From: 0, To: now.UnixMilli(), Location: time.UTC, Page: 1, Size: 20}
+	v := tokenusage.AnalyticsQuery{From: 0, To: now.UnixMilli(), Location: time.UTC, Offset: 0, Limit: 20}
 	if raw := query.Get("from"); raw != "" {
 		parsed, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
@@ -77,21 +81,21 @@ func (a *App) usageAnalytics(w http.ResponseWriter, r *http.Request) {
 			}
 			v.Run = parsed
 		},
-		"page": func(value string) {
+		"offset": func(value string) {
 			parsed, err := strconv.Atoi(value)
-			if err != nil || parsed < 1 {
+			if err != nil || parsed < 0 {
 				badRequest = "invalid_number"
 				return
 			}
-			v.Page = parsed
+			v.Offset = parsed
 		},
-		"size": func(value string) {
+		"limit": func(value string) {
 			parsed, err := strconv.Atoi(value)
 			if err != nil || parsed < 1 || parsed > 100 {
 				badRequest = "out_of_range"
 				return
 			}
-			v.Size = parsed
+			v.Limit = parsed
 		},
 	} {
 		if raw := query.Get(key); raw != "" {

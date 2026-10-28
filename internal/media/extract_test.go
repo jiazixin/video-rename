@@ -20,8 +20,17 @@ import (
 )
 
 // makeJPEG writes a real JPEG file as the fake ffmpeg output fixture.
-func makeJPEG(t *testing.T, path string, w, h int, quality int) {
+type makeJPEGOptions struct {
+	path    string
+	w       int
+	h       int
+	quality int
+}
+
+func makeJPEG(t *testing.T, options makeJPEGOptions) {
 	t.Helper()
+	path, w, h, quality := options.path, options.w, options.h, options.quality
+
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	for y := range h {
 		for x := range w {
@@ -41,8 +50,16 @@ func makeJPEG(t *testing.T, path string, w, h int, quality int) {
 // fakeFFmpeg writes a fake ffmpeg script.
 // copyFrom is the JPEG copied to the output argument; failAt makes a matching -ss value fail (may be empty);
 // when reFrom is set, outputs ending in .re.jpg (re-encode calls) copy that file.
-func fakeFFmpeg(t *testing.T, name, copyFrom, failAt string) string {
+type fakeFFmpegOptions struct {
+	name     string
+	copyFrom string
+	failAt   string
+}
+
+func fakeFFmpeg(t *testing.T, options fakeFFmpegOptions) string {
 	t.Helper()
+	name, copyFrom, failAt := options.name, options.copyFrom, options.failAt
+
 	sh, err := exec.LookPath("sh")
 	if err != nil {
 		t.Skip("sh is unavailable")
@@ -124,8 +141,8 @@ func TestTargetDims(t *testing.T) {
 func TestExtractHappyPath(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "f.jpg")
-	makeJPEG(t, fixture, 768, 432, 90)
-	ff := fakeFFmpeg(t, "ffmpeg-ok", fixture, "")
+	makeJPEG(t, makeJPEGOptions{path: fixture, w: 768, h: 432, quality: 90})
+	ff := fakeFFmpeg(t, fakeFFmpegOptions{name: "ffmpeg-ok", copyFrom: fixture, failAt: ""})
 
 	job, _ := fakeJob(t, 100)
 	meta := domain.VideoMeta{StreamIndex: 0, DisplayWidth: 3840, DisplayHeight: 2160}
@@ -161,14 +178,14 @@ func TestExtractHappyPath(t *testing.T) {
 func TestExtractRetriesAtOneThird(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "f.jpg")
-	makeJPEG(t, fixture, 320, 180, 90)
+	makeJPEG(t, makeJPEGOptions{path: fixture, w: 320, h: 180, quality: 90})
 	plan := testPlan(2)
 	// the first midpoint 3.500 fails; the retry point is 2+1/3*3 = 3.000 (1/3 of segment [2,5))
 	mid := formatSeconds(plan.Times[0])
 	if mid != "3.500" {
 		t.Fatalf("fixture midpoint should be 3.500, got %s", mid)
 	}
-	ff := fakeFFmpeg(t, "ffmpeg-retry", fixture, mid)
+	ff := fakeFFmpeg(t, fakeFFmpegOptions{name: "ffmpeg-retry", copyFrom: fixture, failAt: mid})
 
 	job, _ := fakeJob(t, 100)
 	meta := domain.VideoMeta{StreamIndex: 0, DisplayWidth: 320, DisplayHeight: 180}
@@ -198,9 +215,9 @@ func TestExtractOversizeRecompress(t *testing.T) {
 	dir := t.TempDir()
 	big := filepath.Join(dir, "big.jpg")
 	small := filepath.Join(dir, "big.jpg.re") // copied when a re-encode call writes .re.jpg
-	makeJPEG(t, big, 320, 180, 100)
-	makeJPEG(t, small, 240, 134, 50) // 320*0.75=240, 180*0.75=135→even 134
-	ff := fakeFFmpeg(t, "ffmpeg-big", big, "")
+	makeJPEG(t, makeJPEGOptions{path: big, w: 320, h: 180, quality: 100})
+	makeJPEG(t, makeJPEGOptions{path: small, w: 240, h: 134, quality: 50}) // 320*0.75=240, 180*0.75=135→even 134
+	ff := fakeFFmpeg(t, fakeFFmpegOptions{name: "ffmpeg-big", copyFrom: big, failAt: ""})
 
 	job, _ := fakeJob(t, 100)
 	meta := domain.VideoMeta{StreamIndex: 0, DisplayWidth: 320, DisplayHeight: 180}
@@ -231,8 +248,8 @@ func TestExtractOversizeRecompress(t *testing.T) {
 func TestExtractImageTooLargeFailsVideo(t *testing.T) {
 	dir := t.TempDir()
 	big := filepath.Join(dir, "big.jpg")
-	makeJPEG(t, big, 320, 180, 100)
-	ff := fakeFFmpeg(t, "ffmpeg-huge", big, "")
+	makeJPEG(t, makeJPEGOptions{path: big, w: 320, h: 180, quality: 100})
+	ff := fakeFFmpeg(t, fakeFFmpegOptions{name: "ffmpeg-huge", copyFrom: big, failAt: ""})
 
 	job, _ := fakeJob(t, 100)
 	meta := domain.VideoMeta{StreamIndex: 0, DisplayWidth: 320, DisplayHeight: 180}
@@ -275,7 +292,7 @@ func TestExtractBudgetTimeout(t *testing.T) {
 func TestExtractPartialFailureStillSucceeds(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "f.jpg")
-	makeJPEG(t, fixture, 320, 180, 90)
+	makeJPEG(t, makeJPEGOptions{path: fixture, w: 320, h: 180, quality: 90})
 	plan := testPlan(2)
 	// both midpoints and both retry points fail (retry points differ from midpoints, so every -ss fails here)
 	sh, _ := exec.LookPath("sh")
@@ -298,7 +315,7 @@ func TestExtractPartialFailureStillSucceeds(t *testing.T) {
 func TestExtractArgumentsIncludeSeekAndMap(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "f.jpg")
-	makeJPEG(t, fixture, 320, 180, 90)
+	makeJPEG(t, makeJPEGOptions{path: fixture, w: 320, h: 180, quality: 90})
 	argsFile := filepath.Join(dir, "args.txt")
 	sh, _ := exec.LookPath("sh")
 	p := filepath.Join(dir, "ffmpeg-args")
@@ -369,8 +386,8 @@ func TestExtractToolVanishingBeforeRetryStopsBatch(t *testing.T) {
 func TestExtractCancelledContext(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "f.jpg")
-	makeJPEG(t, fixture, 320, 180, 90)
-	ff := fakeFFmpeg(t, "ffmpeg-cancel", fixture, "")
+	makeJPEG(t, makeJPEGOptions{path: fixture, w: 320, h: 180, quality: 90})
+	ff := fakeFFmpeg(t, fakeFFmpegOptions{name: "ffmpeg-cancel", copyFrom: fixture, failAt: ""})
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	job, _ := fakeJob(t, 100)

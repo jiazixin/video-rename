@@ -14,7 +14,7 @@ func TestDeploymentRejectsModelConfiguration(t *testing.T) {
 }
 
 func TestRuntimeModelValidation(t *testing.T) {
-	base := ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://localhost:8080/v1/", Model: "vision", Timeout: "180s", Temperature: 0, MaxTokens: 128}
+	base := ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://localhost:8080/v1/", Model: "vision", TimeoutMS: 180000, Temperature: 0, MaxTokens: 128}
 	var cfg TaskConfig
 	if err := cfg.ApplyModel(base, "prompt"); err != nil {
 		t.Fatal(err)
@@ -29,7 +29,7 @@ func TestRuntimeModelValidation(t *testing.T) {
 			t.Fatalf("accepted URL %s", u)
 		}
 	}
-	for _, mutate := range []func(*ServerConfig){func(s *ServerConfig) { s.Timeout = "0s" }, func(s *ServerConfig) { s.Timeout = "1h" }, func(s *ServerConfig) { s.Temperature = 2.1 }, func(s *ServerConfig) { s.MaxTokens = 0 }, func(s *ServerConfig) { s.APIKey = "key\r\nInjected: value" }, func(s *ServerConfig) { s.Model = " " }, func(s *ServerConfig) { s.Provider = "bad" }, func(s *ServerConfig) { s.Protocol = "anthropic"; s.Temperature = 1.1 }} {
+	for _, mutate := range []func(*ServerConfig){func(s *ServerConfig) { s.TimeoutMS = 0 }, func(s *ServerConfig) { s.TimeoutMS = 3600000 }, func(s *ServerConfig) { s.Temperature = 2.1 }, func(s *ServerConfig) { s.MaxTokens = 0 }, func(s *ServerConfig) { s.APIKey = "key\r\nInjected: value" }, func(s *ServerConfig) { s.Model = " " }, func(s *ServerConfig) { s.Provider = "bad" }, func(s *ServerConfig) { s.Protocol = "anthropic"; s.Temperature = 1.1 }} {
 		c := base
 		mutate(&c)
 		if cfg.ApplyModel(c, "p") == nil {
@@ -41,7 +41,7 @@ func TestRuntimeModelValidation(t *testing.T) {
 func TestModelWorkers(t *testing.T) {
 	for _, n := range []int{-1, 0, 1, 4, 32, 33} {
 		c := TaskConfig{}
-		err := c.ApplyModel(ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://localhost/v1", Model: "test", Timeout: "10s", MaxTokens: 1024, Workers: n}, "title")
+		err := c.ApplyModel(ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://localhost/v1", Model: "test", TimeoutMS: 10000, MaxTokens: 1024, Workers: n}, "title")
 		if (err != nil) != (n < 0 || n > 32) {
 			t.Fatalf("workers %d: %v", n, err)
 		}

@@ -91,7 +91,7 @@ func (a *App) systemSettingsRoutes(mux *router) {
 		}
 		result, err := a.Jobs.Cache.Clear(r.Context())
 		if err != nil {
-			writeError(w, r, domain.Fail(domain.KindInternal, domain.Record{Code: "cache_clear_incomplete", Message: "cache clear stopped", Details: map[string]any{"deleted": result.Deleted}}).Wrap(err))
+			writeError(w, r, domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonCacheClearIncomplete, Message: "cache clear stopped", Details: map[string]any{"deleted": result.Deleted}}).Wrap(err))
 			return
 		}
 		send(w, http.StatusOK, result)

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-  import { CircleCheck, X } from '@lucide/vue';
+  import { CircleAlert, CircleCheck, X } from '@lucide/vue';
+  import type { ToastItem } from './toast-types';
   const { notices, animated } = defineProps<{
-    notices: readonly { id: number; message: string }[];
+    notices: readonly ToastItem[];
     animated: boolean;
   }>();
   defineEmits<{ close: [id: number] }>();
@@ -14,11 +15,18 @@
         v-for="notice in notices"
         :key="notice.id"
         class="toast-notice"
+        :class="notice.tone"
         role="status"
         aria-live="polite"
         aria-atomic="true"
       >
-        <CircleCheck class="toast-icon" :size="20" aria-hidden="true" />
+        <CircleAlert
+          v-if="notice.tone === 'error'"
+          class="toast-icon"
+          :size="20"
+          aria-hidden="true"
+        />
+        <CircleCheck v-else class="toast-icon" :size="20" aria-hidden="true" />
         <span class="toast-message">{{ notice.message }}</span>
         <button
           type="button"
@@ -41,7 +49,7 @@
     z-index: 300;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--space-12);
     width: 380px;
     max-width: calc(100vw - 32px);
     max-height: calc(100dvh - 48px);
@@ -53,38 +61,53 @@
     display: flex;
     flex-shrink: 0;
     align-items: flex-start;
-    gap: 12px;
+    gap: var(--space-12);
     width: 100%;
     box-sizing: border-box;
-    padding: 18px 16px 21px;
+    padding: var(--space-18) var(--space-16) var(--space-21);
     border: 1px solid var(--palette-cee5db);
-    border-radius: 12px;
+    border-radius: var(--radius-12);
     background: var(--palette-f0f8f5);
     color: var(--palette-287257);
-    box-shadow: 0 8px 30px var(--palette-182c201a);
+    box-shadow: var(--shadow-7);
     overflow: hidden;
     pointer-events: auto;
   }
   .toast-icon {
     flex-shrink: 0;
-    margin-top: 1px;
+    margin-top: var(--space-1);
+  }
+  .toast-notice.error {
+    border-color: var(--tone-red-line);
+    background: var(--tone-red-bg);
+    color: var(--tone-red-ink);
+  }
+  .toast-notice.error .toast-close:hover {
+    background: var(--tone-red-line);
+  }
+  .toast-notice.error .toast-close:focus-visible {
+    outline-color: var(--tone-red-ink);
+  }
+  .toast-notice.error .toast-countdown {
+    background: var(--tone-red-ink);
   }
   .toast-message {
     flex: 1;
     min-width: 0;
-    line-height: 1.6;
-    font-size: 14px;
+    line-height: var(--line-height-1-6);
+    font-size: var(--font-size-14);
     overflow-wrap: anywhere;
     white-space: pre-line;
   }
   .toast-close {
     flex-shrink: 0;
-    min-height: 0;
-    padding: 3px;
+    min-width: var(--control-hit-area);
+    min-height: var(--control-hit-area);
+    padding: var(--space-3);
     border: 0;
     background: transparent;
     color: inherit;
-    border-radius: 4px;
+    border-radius: var(--radius-4);
   }
   .toast-close:hover {
     background: var(--palette-dceee5);
@@ -128,6 +151,12 @@
       top: 16px;
       right: 16px;
       max-height: calc(100dvh - 32px);
+    }
+  }
+  @media (max-width: 600px), (pointer: coarse) {
+    .toast-close {
+      min-width: var(--control-touch-area);
+      min-height: var(--control-touch-area);
     }
   }
   @media (prefers-reduced-motion: reduce) {

@@ -105,7 +105,7 @@ type directoryStatusNodesOptions struct {
 }
 
 // Read all matching siblings before paging so subtree state determines both
-// numbered pages and cursor boundaries, rather than sorting only visible rows.
+// numbered pages, rather than sorting only visible rows.
 func directoryStatusNodes(ctx context.Context, params directoryStatusNodesOptions) (map[int64]*directoryProcessing, error) {
 	tx, id, generation, query, status := params.Tx, params.ID, params.Generation, params.Query, params.Status
 

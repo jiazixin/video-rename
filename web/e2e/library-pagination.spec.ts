@@ -16,7 +16,7 @@ async function setup(page: Page, name: string) {
   await expect
     .poll(async () => {
       const data = await (
-        await page.request.get('/api/directories/1/entries?page=1&limit=200')
+        await page.request.get('/api/directories/1/entries?offset=0&limit=200')
       ).json()
       return data.items.some((e: Record<string, unknown>) => e.name === name)
     })
@@ -26,13 +26,15 @@ async function setup(page: Page, name: string) {
   await expect(bodyRows(page)).toHaveCount(100)
   const id = libraryDirectory(page.url())
   async function rescan() {
-    const before = await (await page.request.get(`/api/directories/${id}/entries?page=1`)).json()
+    const before = await (await page.request.get(`/api/directories/${id}/entries?offset=0`)).json()
     expect((await page.request.post(`/api/directories/${id}/refresh`, { data: {} })).ok()).toBe(
       true
     )
     await expect
       .poll(async () => {
-        const after = await (await page.request.get(`/api/directories/${id}/entries?page=1`)).json()
+        const after = await (
+          await page.request.get(`/api/directories/${id}/entries?offset=0`)
+        ).json()
         // An unchanged listing keeps its generation; the timestamp marks completion.
         return after.refreshed !== before.refreshed && !after.refreshing
       })
@@ -286,7 +288,7 @@ test('目录缩小后保留最后一个有效页，空目录回到第一页', as
   await expect(page.getByRole('alert')).toHaveCount(0)
 })
 
-test('迟到的第二页响应不覆盖新搜索，真实错误在当前页可重试', async ({ page }) => {
+test('新搜索取消过期的第二页请求，真实错误在当前页可重试', async ({ page }) => {
   const { id } = await setup(page, '分页体验-迟到')
   let release!: () => void, started!: () => void
   const delayed = new Promise<void>((resolve) => {
@@ -298,7 +300,10 @@ test('迟到的第二页响应不覆盖新搜索，真实错误在当前页可�
   let fail = true
   await page.route(`**/api/directories/${id}/entries?*`, async (route) => {
     const params = new URL(route.request().url()).searchParams
-    if (params.get('page') === '2' && !params.get('q')) {
+    if (
+      String(Math.floor(Number(params.get('offset') || 0) / 100) + 1) === '2' &&
+      !params.get('q')
+    ) {
       if (fail) {
         fail = false
         await route.fulfill({
@@ -320,18 +325,20 @@ test('迟到的第二页响应不覆盖新搜索，真实错误在当前页可�
   })
   try {
     await page.getByRole('button', { name: '下一页', exact: true }).click()
-    await expect(page.getByRole('alert')).toContainText('测试读取失败')
+    await expect(page.getByRole('alert')).toContainText('服务暂时无法完成请求')
     await page.getByRole('button', { name: '重试', exact: true }).click()
     await waiting
+    const cancelled = page.waitForEvent('requestfailed', {
+      predicate: (request) =>
+        request.url().includes(`/directories/${id}/entries?`) &&
+        String(
+          Math.floor(Number(new URL(request.url()).searchParams.get('offset') || 0) / 100) + 1
+        ) === '2'
+    })
     await page.getByLabel('搜索当前目录').fill('clip005')
     await expect(bodyRows(page)).toHaveCount(1)
-    const oldResponse = page.waitForResponse(
-      (r) =>
-        r.url().includes(`/directories/${id}/entries?`) &&
-        new URL(r.url()).searchParams.get('page') === '2'
-    )
     release()
-    await oldResponse
+    await cancelled
     await expect(bodyRows(page)).toHaveCount(1)
     await expect(bodyRows(page)).toContainText('clip005.mp4')
     await expect(
@@ -500,4 +507,34 @@ test('红框工具区随页面上移后吸顶，标题与目录信息滚走，�
     await page.locator('.library-heading').evaluate((el) => el.getBoundingClientRect().top)
   ).toBeGreaterThan(0)
   await expect.poll(aligned).toBeLessThan(2)
+})
+
+test('刷新和浏览器后退恢复筛选、页码与跨页选择', async ({ page }) => {
+  await setup(page, '分页体验-URL恢复')
+  await page.getByLabel('搜索当前目录').fill('clip')
+  await expect(bodyRows(page)).toHaveCount(100)
+  await page.getByRole('button', { name: '多选', exact: true }).click()
+  await page.getByLabel('选择 clip000.mp4', { exact: true }).check()
+  const nav = page.getByRole('navigation', { name: '分页导航', exact: true })
+  await nav.getByRole('button', { name: '末页', exact: true }).click()
+  await page.getByLabel('选择 clip200.mp4', { exact: true }).check()
+  await expect.poll(() => new URL(page.url()).searchParams.get('page')).toBe('3')
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get('selected')?.split(',').length)
+    .toBe(2)
+  await page.reload()
+  await expect(page.getByLabel('搜索当前目录')).toHaveValue('clip')
+  await expect(pageReadout(nav)).toHaveText(/^3\//)
+  await expect(page.getByLabel('选择 clip200.mp4', { exact: true })).toBeChecked()
+  await expect(page.getByRole('group', { name: '批量操作' }).getByText(/^已选 /)).toHaveText(
+    '已选 2 项'
+  )
+  await page.getByRole('button', { name: '运行记录', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '运行记录.' })).toBeVisible()
+  await page.goBack()
+  await expect(page.getByLabel('搜索当前目录')).toHaveValue('clip')
+  await expect(pageReadout(nav)).toHaveText(/^3\//)
+  await expect(page.getByLabel('选择 clip200.mp4', { exact: true })).toBeChecked()
+  await nav.getByRole('button', { name: '首页', exact: true }).click()
+  await expect(page.getByLabel('选择 clip000.mp4', { exact: true })).toBeChecked()
 })

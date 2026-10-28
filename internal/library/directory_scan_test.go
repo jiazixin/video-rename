@@ -29,7 +29,7 @@ func TestScanDirectoryDiscoversNestedDirectoriesAndChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	changed := entry(t, l, 1, "changed.mp4")
+	changed := entry(t, entryOptions{l: l, parent: 1, name: "changed.mp4"})
 	if err := os.WriteFile(filepath.Join(root, "changed.mp4"), []byte("a different complete video fixture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestScanDirectoryDiscoversNestedDirectoriesAndChanges(t *testing.T) {
 	if result.Files != 3 || result.Added != 3 || result.Changed != 1 || result.Removed != 1 || len(result.Directories) != 1 {
 		t.Fatalf("unexpected scan counts: %+v", result)
 	}
-	current := entry(t, l, 1, "changed.mp4")
+	current := entry(t, entryOptions{l: l, parent: 1, name: "changed.mp4"})
 	if current.ID != changed.ID || current.Version != changed.Version+1 {
 		t.Fatalf("content update lost identity or version: before=%+v after=%+v", changed, current)
 	}
@@ -68,7 +68,7 @@ func TestScanDirectoryDiscoversNestedDirectoriesAndChanges(t *testing.T) {
 	if err != nil || deep.Files != 1 || len(deep.Directories) != 0 {
 		t.Fatalf("deep scan: %+v %v", deep, err)
 	}
-	link := entry(t, l, 1, "linked")
+	link := entry(t, entryOptions{l: l, parent: 1, name: "linked"})
 	if _, err := l.ScanDirectory(t.Context(), link.ID); err == nil {
 		t.Fatal("symlink target was scanned")
 	}
@@ -82,7 +82,7 @@ func TestScanDirectoryUnchangedDoesNotRewriteIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	file := entry(t, l, 1, "unchanged.mp4")
+	file := entry(t, entryOptions{l: l, parent: 1, name: "unchanged.mp4"})
 	var observation string
 	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
 		return tx.QueryRowContext(t.Context(), "SELECT observed FROM entries WHERE id=?", file.ID).Scan(&observation)
@@ -121,7 +121,7 @@ func TestScanDirectorySlowMetadataDoesNotBlockRename(t *testing.T) {
 	put(t, filepath.Join(root, "b.mp4"))
 	refresh(t, l, 1)
 	before := scanTestDirectoryState(t, l, 1)
-	file := entry(t, l, 1, "b.mp4")
+	file := entry(t, entryOptions{l: l, parent: 1, name: "b.mp4"})
 	entered, released := make(chan struct{}), make(chan struct{})
 	release := sync.OnceFunc(func() { close(released) })
 	enter := sync.OnceFunc(func() { close(entered) })
@@ -172,7 +172,7 @@ func TestScanDirectorySlowMetadataDoesNotBlockRename(t *testing.T) {
 	if after.Generation != before.Generation {
 		t.Fatal("stale scan published a new generation")
 	}
-	current := entry(t, l, 1, "renamed.mp4")
+	current := entry(t, entryOptions{l: l, parent: 1, name: "renamed.mp4"})
 	if current.ID != file.ID || current.Version != file.Version+1 {
 		t.Fatalf("scan damaged a committed rename: %+v", current)
 	}
@@ -198,7 +198,7 @@ func TestScanDirectoryIgnoresUnrelatedIndexChanges(t *testing.T) {
 					put(t, filepath.Join(root, name, "video.mp4"))
 				}
 				refresh(t, l, 1)
-				a, b := entry(t, l, 1, "a").ID, entry(t, l, 1, "b").ID
+				a, b := entry(t, entryOptions{l: l, parent: 1, name: "a"}).ID, entry(t, entryOptions{l: l, parent: 1, name: "b"}).ID
 				refresh(t, l, a)
 				refresh(t, l, b)
 				before, err := l.DirectoryState(t.Context(), a)
@@ -260,7 +260,7 @@ func TestScanDirectoryIgnoresUnchangedAncestorRefresh(t *testing.T) {
 	}
 	put(t, filepath.Join(inside, "video.mp4"))
 	refresh(t, l, 1)
-	id := entry(t, l, 1, "inside").ID
+	id := entry(t, entryOptions{l: l, parent: 1, name: "inside"}).ID
 	refresh(t, l, id)
 	before, err := l.DirectoryState(t.Context(), id)
 	if err != nil {
@@ -293,7 +293,7 @@ func TestScanDirectoryRejectsRestoredEntryVersionChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	file := entry(t, l, 1, "video.mp4")
+	file := entry(t, entryOptions{l: l, parent: 1, name: "video.mp4"})
 	disk, err := domain.StatSnapshot(root)
 	if err != nil {
 		t.Fatal(err)
@@ -327,7 +327,7 @@ func TestScanDirectoryRejectsRestoredEntryVersionChange(t *testing.T) {
 	if !errors.Is(err, ErrDirectoryScanChanged) {
 		t.Fatalf("restored entry's version change was accepted: %v", err)
 	}
-	current := entry(t, l, 1, "video.mp4")
+	current := entry(t, entryOptions{l: l, parent: 1, name: "video.mp4"})
 	if current.ID != file.ID || current.Identity != file.Identity || current.Size != file.Size || current.ModifiedNS != file.ModifiedNS || current.Version != file.Version+2 {
 		t.Fatalf("rename/restore did not preserve content and change only the version: before=%+v after=%+v", file, current)
 	}
@@ -365,7 +365,7 @@ func TestScanDirectoryMetadataFailureKeepsIndexAndCleansScratch(t *testing.T) {
 	if after.Generation != before.Generation || after.Error.Message == "" {
 		t.Fatalf("metadata failure published partial data: %+v", after)
 	}
-	assertScanIndexCounts(t, l, before.Generation, 1, 0)
+	assertScanIndexCounts(t, assertScanIndexCountsOptions{l: l, generation: before.Generation, published: 1, staged: 0})
 	files, err := os.ReadDir(scratch)
 	if err != nil || len(files) != 0 {
 		t.Fatalf("scratch was not removed: %v %v", files, err)
@@ -393,7 +393,7 @@ func TestScanDirectoryPublicationFailureRetainsGeneration(t *testing.T) {
 	if after.Generation != before.Generation || after.Error.Message == "" {
 		t.Fatalf("failed scan lost complete generation: %+v", after)
 	}
-	assertScanIndexCounts(t, l, before.Generation, 1, 0)
+	assertScanIndexCounts(t, assertScanIndexCountsOptions{l: l, generation: before.Generation, published: 1, staged: 0})
 	var hidden int
 	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
 		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM entries WHERE observed LIKE 'directory-scan:%'").Scan(&hidden)
@@ -508,7 +508,7 @@ func TestScanDirectoryMetadataUsesPinnedDescriptorDuringSymlinkSwitch(t *testing
 		put(t, filepath.Join(dir, "one.mp4"))
 	}
 	refresh(t, l, 1)
-	id := entry(t, l, 1, "inside").ID
+	id := entry(t, entryOptions{l: l, parent: 1, name: "inside"}).ID
 	actual, err := domain.StatSnapshot(filepath.Join(inside, "one.mp4"))
 	if err != nil {
 		t.Fatal(err)
@@ -532,7 +532,7 @@ func TestScanDirectoryMetadataUsesPinnedDescriptorDuringSymlinkSwitch(t *testing
 	if err != nil || result.Files != 1 {
 		t.Fatalf("pinned metadata scan: %+v %v", result, err)
 	}
-	indexed := entry(t, l, id, "one.mp4")
+	indexed := entry(t, entryOptions{l: l, parent: id, name: "one.mp4"})
 	if indexed.Identity != Identity(actual) {
 		t.Fatalf("scan published metadata from outside root: indexed=%s actual=%s", indexed.Identity, Identity(actual))
 	}
@@ -632,7 +632,7 @@ func TestScanCleanupCannotDeletePublishedGeneration(t *testing.T) {
 	if err := l.cleanScanStaging(t.Context(), cleanScanStagingOptions{Stage: stage, ID: 1, Gen: state.Generation, Marker: "directory-scan:1:uncertain", Published: false}); err != nil {
 		t.Fatal(err)
 	}
-	assertScanIndexCounts(t, l, state.Generation, 1, 0)
+	assertScanIndexCounts(t, assertScanIndexCountsOptions{l: l, generation: state.Generation, published: 1, staged: 0})
 }
 
 func TestDirectoryScannerReclaimsLegacyOrphansAcrossDirectories(t *testing.T) {
@@ -643,13 +643,13 @@ func TestDirectoryScannerReclaimsLegacyOrphansAcrossDirectories(t *testing.T) {
 		}
 	}
 	refresh(t, l, 1)
-	a, b := entry(t, l, 1, "a").ID, entry(t, l, 1, "b").ID
+	a, b := entry(t, entryOptions{l: l, parent: 1, name: "a"}).ID, entry(t, entryOptions{l: l, parent: 1, name: "b"}).ID
 	for _, parent := range []int64{a, b} {
 		for n := range 140 {
-			scanTestCandidate(t, l, parent, fmt.Sprintf("orphan-%d.mp4", n), "directory-scan:legacy")
+			scanTestCandidate(t, scanTestCandidateOptions{l: l, parent: parent, name: fmt.Sprintf("orphan-%d.mp4", n), marker: "directory-scan:legacy"})
 		}
 	}
-	retained := scanTestCandidate(t, l, a, "retained.mp4", "retained-history")
+	retained := scanTestCandidate(t, scanTestCandidateOptions{l: l, parent: a, name: "retained.mp4", marker: "retained-history"})
 	scanner, err := l.NewDirectoryScanner(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -688,7 +688,7 @@ func TestScanCapturedOrphansAreRecheckedBeforeDeletion(t *testing.T) {
 	for _, change := range []string{"visible", "referenced", "different-marker", "different-scan-marker"} {
 		t.Run(change, func(t *testing.T) {
 			l, _, _ := fixture(t)
-			candidate := scanTestCandidate(t, l, 1, "orphan.mp4", "directory-scan:legacy")
+			candidate := scanTestCandidate(t, scanTestCandidateOptions{l: l, parent: 1, name: "orphan.mp4", marker: "directory-scan:legacy"})
 			scanner, err := l.NewDirectoryScanner(t.Context())
 			if err != nil {
 				t.Fatal(err)
@@ -734,7 +734,7 @@ func TestScanCapturedOrphansAreRecheckedBeforeDeletion(t *testing.T) {
 
 func TestScanCleanupCandidateFailureKeepsGenerationRows(t *testing.T) {
 	l, _, _ := fixture(t)
-	candidate := scanTestCandidate(t, l, 1, "pending.mp4", "directory-scan:interrupted")
+	candidate := scanTestCandidate(t, scanTestCandidateOptions{l: l, parent: 1, name: "pending.mp4", marker: "directory-scan:interrupted"})
 	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
 		return tx.ExecContext(t.Context(), `INSERT INTO directory_state(dir,generation) VALUES(1,7);
 	 INSERT INTO directory_items VALUES(1,8,?,'pending.mp4','file',1,0);
@@ -827,8 +827,17 @@ func TestScanCleanupFindsCommittedPageAfterStageUpdateFailure(t *testing.T) {
 	}
 }
 
-func scanTestCandidate(t *testing.T, l *Library, parent int64, name, marker string) int64 {
+type scanTestCandidateOptions struct {
+	l      *Library
+	parent int64
+	name   string
+	marker string
+}
+
+func scanTestCandidate(t *testing.T, options scanTestCandidateOptions) int64 {
 	t.Helper()
+	l, parent, name, marker := options.l, options.parent, options.name, options.marker
+
 	res, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
 		return tx.ExecContext(t.Context(), "INSERT INTO entries(parent,name,kind,identity,size,mtime_ns,present,observed) VALUES(?,?,'file',?,1,0,0,?)", parent, name, name, marker)
 	})
@@ -851,7 +860,7 @@ func TestDirectoryScannerReusesStageAfterFailureAndCancellation(t *testing.T) {
 		put(t, filepath.Join(root, name, "same-name.mp4"))
 	}
 	refresh(t, l, 1)
-	a, b := entry(t, l, 1, "a").ID, entry(t, l, 1, "b").ID
+	a, b := entry(t, entryOptions{l: l, parent: 1, name: "a"}).ID, entry(t, entryOptions{l: l, parent: 1, name: "b"}).ID
 	scanner, err := l.NewDirectoryScanner(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -888,7 +897,7 @@ func TestDirectoryScannerReusesStageAfterFailureAndCancellation(t *testing.T) {
 	if err != nil || result.Files != 1 || result.Added != 1 {
 		t.Fatalf("cancelled-directory retry: %+v %v", result, err)
 	}
-	if entry(t, l, a, "same-name.mp4").ID == entry(t, l, b, "same-name.mp4").ID {
+	if entry(t, entryOptions{l: l, parent: a, name: "same-name.mp4"}).ID == entry(t, entryOptions{l: l, parent: b, name: "same-name.mp4"}).ID {
 		t.Fatal("stage reused an entry ID from another directory")
 	}
 	path := scanner.stage.Path()
@@ -920,10 +929,10 @@ func TestScanDirectoryRejectsAncestorReplacementAfterPinnedVerification(t *testi
 			}
 			put(t, filepath.Join(scanned, "video.mp4"))
 			refresh(t, l, 1)
-			id := entry(t, l, 1, "inside").ID
+			id := entry(t, entryOptions{l: l, parent: 1, name: "inside"}).ID
 			if replaceAncestor {
 				refresh(t, l, id)
-				id = entry(t, l, id, "nested").ID
+				id = entry(t, entryOptions{l: l, parent: id, name: "nested"}).ID
 			}
 			refresh(t, l, id)
 			before := scanTestDirectoryState(t, l, id)
@@ -966,8 +975,17 @@ func waitScanResult(t *testing.T, done <-chan error) error {
 	}
 }
 
-func assertScanIndexCounts(t *testing.T, l *Library, generation int64, published, staged int) {
+type assertScanIndexCountsOptions struct {
+	l          *Library
+	generation int64
+	published  int
+	staged     int
+}
+
+func assertScanIndexCounts(t *testing.T, options assertScanIndexCountsOptions) {
 	t.Helper()
+	l, generation, published, staged := options.l, options.generation, options.published, options.staged
+
 	var visible, indexed, unpublished int
 	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
 		return tx.QueryRowContext(t.Context(), `SELECT

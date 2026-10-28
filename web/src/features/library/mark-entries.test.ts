@@ -15,7 +15,7 @@ const entry: Entry = {
   parent: 1,
   name: 'fixture.jpg',
   kind: 'file',
-  size: 1,
+  size_bytes: 1,
   mtime: '2026-10-27T00:00:00.000Z',
   etag: '"v1"',
   version: 1,

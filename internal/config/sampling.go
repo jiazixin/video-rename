@@ -33,15 +33,15 @@ type SamplingConfig struct {
 	ParsedSize     []ParsedSizeRule     `yaml:"-" json:"-"`
 }
 
-// DurationRule is a duration tier; a nil MaxDuration marks the fallback tier.
+// DurationRule is a duration tier; a nil MaxDurationMS marks the fallback tier.
 type DurationRule struct {
-	MaxDuration *string `yaml:"max_duration" json:"max_duration"`
-	Frames      int     `yaml:"frames" json:"frames"`
+	MaxDurationMS *int64 `yaml:"max_duration_ms,omitempty" json:"max_duration_ms,omitzero"`
+	Frames        int    `yaml:"frames" json:"frames"`
 }
 
 // SizeRule is a size tier in MiB; a nil MaxMiB marks the fallback tier.
 type SizeRule struct {
-	MaxMiB *int64 `yaml:"max_mib" json:"max_mib"`
+	MaxMiB *int64 `yaml:"max_mib,omitempty" json:"max_mib,omitzero"`
 	Frames int    `yaml:"frames" json:"frames"`
 }
 
@@ -66,10 +66,10 @@ type ParsedSizeRule struct {
 // defaultDurationRules are the default duration tiers.
 func defaultDurationRules() []DurationRule {
 	return []DurationRule{
-		{new("30s"), 8},
-		{new("2m"), 12},
-		{new("10m"), 24},
-		{new("30m"), 32},
+		{new(int64(30000)), 8},
+		{new(int64(120000)), 12},
+		{new(int64(600000)), 24},
+		{new(int64(1800000)), 32},
 		{nil, 32},
 	}
 }
@@ -159,7 +159,7 @@ func (s *FrameSettings) validateSampling() []domain.FieldError {
 }
 
 // parseDurationRules validates the duration table and converts it to absolute limits.
-// Rules: the table is non-empty; limits are positive and strictly increasing; only the last entry may be null.
+// Rules: the table is non-empty; limits are positive and strictly increasing; only the last entry may omit its limit.
 func parseDurationRules(rules []DurationRule) ([]ParsedDurationRule, []domain.FieldError) {
 	if len(rules) == 0 {
 		return nil, []domain.FieldError{{Path: "sampling.duration_rules", Reason: "required"}}
@@ -169,30 +169,30 @@ func parseDurationRules(rules []DurationRule) ([]ParsedDurationRule, []domain.Fi
 	prev := time.Duration(0)
 	for i, r := range rules {
 		last := i == len(rules)-1
-		if r.MaxDuration == nil {
+		if r.MaxDurationMS == nil {
 			if !last {
-				errs = append(errs, ruleField("sampling.duration_rules", i, domain.FieldError{Path: "max_duration", Reason: "null_not_last"}))
+				errs = append(errs, ruleField("sampling.duration_rules", i, domain.FieldError{Path: "max_duration_ms", Reason: "unbounded_not_last"}))
 			}
 			out = append(out, ParsedDurationRule{Max: time.Duration(math.MaxInt64), Frames: r.Frames})
 			continue
 		}
-		d, err := time.ParseDuration(*r.MaxDuration)
-		if err != nil {
-			errs = append(errs, ruleField("sampling.duration_rules", i, domain.FieldError{Path: "max_duration", Reason: "invalid_duration"}))
+		if *r.MaxDurationMS > math.MaxInt64/int64(time.Millisecond) {
+			errs = append(errs, ruleField("sampling.duration_rules", i, domain.FieldError{Path: "max_duration_ms", Reason: "out_of_range"}))
 			continue
 		}
-		if d <= 0 {
-			errs = append(errs, ruleField("sampling.duration_rules", i, domain.FieldError{Path: "max_duration", Reason: "not_positive"}))
+		if *r.MaxDurationMS <= 0 {
+			errs = append(errs, ruleField("sampling.duration_rules", i, domain.FieldError{Path: "max_duration_ms", Reason: "not_positive"}))
 			continue
 		}
+		d := time.Duration(*r.MaxDurationMS) * time.Millisecond
 		if d <= prev {
-			errs = append(errs, ruleField("sampling.duration_rules", i, domain.FieldError{Path: "max_duration", Reason: "not_increasing"}))
+			errs = append(errs, ruleField("sampling.duration_rules", i, domain.FieldError{Path: "max_duration_ms", Reason: "not_increasing"}))
 			continue
 		}
 		prev = d
 		out = append(out, ParsedDurationRule{Max: d, Frames: r.Frames})
 	}
-	errs = append(errs, checkRuleTail("sampling.duration_rules", rules, func(i int) bool { return rules[i].MaxDuration != nil })...)
+	errs = append(errs, checkRuleTail("sampling.duration_rules", rules, func(i int) bool { return rules[i].MaxDurationMS != nil })...)
 	errs = append(errs, checkFrames("sampling.duration_rules", rules, func(i int) int { return rules[i].Frames })...)
 	return out, errs
 }
@@ -209,7 +209,7 @@ func parseSizeRules(rules []SizeRule) ([]ParsedSizeRule, []domain.FieldError) {
 		last := i == len(rules)-1
 		if r.MaxMiB == nil {
 			if !last {
-				errs = append(errs, ruleField("sampling.size_rules", i, domain.FieldError{Path: "max_mib", Reason: "null_not_last"}))
+				errs = append(errs, ruleField("sampling.size_rules", i, domain.FieldError{Path: "max_mib", Reason: "unbounded_not_last"}))
 			}
 			out = append(out, ParsedSizeRule{Max: math.MaxInt64, Frames: r.Frames})
 			continue
@@ -230,10 +230,10 @@ func parseSizeRules(rules []SizeRule) ([]ParsedSizeRule, []domain.FieldError) {
 	return out, errs
 }
 
-// checkRuleTail requires the last tier to be the null fallback tier.
+// checkRuleTail requires the last tier to be the unbounded fallback tier.
 func checkRuleTail[T any](name string, rules []T, nonNull func(int) bool) []domain.FieldError {
 	if len(rules) > 0 && nonNull(len(rules)-1) {
-		return []domain.FieldError{{Path: name, Reason: "last_not_null"}}
+		return []domain.FieldError{{Path: name, Reason: "last_not_unbounded"}}
 	}
 	return nil
 }

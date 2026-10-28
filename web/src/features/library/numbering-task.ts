@@ -52,7 +52,7 @@ export function useNumberingTask() {
         await new Promise<void>((resolve, reject) => {
           const abort = () => {
             clearTimeout(timer)
-            reject(new DOMException('已停止', 'AbortError'))
+            reject(new DOMException('numbering task stopped', 'AbortError'))
           }
           const timer = setTimeout(() => {
             signal.removeEventListener('abort', abort)

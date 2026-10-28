@@ -47,6 +47,7 @@ video-rename 由 Go 服务、内嵌的 Vue 3 页面和 SQLite 组成，构建后
 | 项目 | 要求 |
 | --- | --- |
 | 操作系统 | Linux 或 macOS |
+| 浏览器 | Chrome / Edge 124+、Firefox 124+、Safari 17.4+；依赖原生请求取消 API |
 | FFmpeg | 抽帧与自动命名需要 `ffmpeg`、`ffprobe` 在 PATH 中；只浏览和手动改名可不安装 |
 | 模型服务（可选） | 支持图片输入的 OpenAI 兼容或 Anthropic 服务；不使用自动命名时无需配置 |
 | 数据目录 | 本机磁盘；媒体目录可以是网络挂载 |

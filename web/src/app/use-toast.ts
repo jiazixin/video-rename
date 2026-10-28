@@ -1,11 +1,10 @@
-import { nextTick, onActivated, onDeactivated, onScopeDispose, readonly, ref } from 'vue'
-import { onBeforeRouteLeave } from 'vue-router'
-
-/** One write-operation result shown in the global notice stack. */
-export type ToastItem = { id: number; message: string }
+import { inject, nextTick, onActivated, onDeactivated, onScopeDispose, readonly, ref } from 'vue'
+import { matchedRouteKey, onBeforeRouteLeave } from 'vue-router'
+import type { ToastItem } from '../components/toast-types'
 
 /** How long a notice stays before it closes itself, in milliseconds. */
 const toastDurationMs = 5000
+const maxNotices = 5
 
 const items = ref<ToastItem[]>([])
 const timers = new Map<number, ReturnType<typeof setTimeout>>()
@@ -26,9 +25,13 @@ export function closeToast(id: number): void {
   items.value = items.value.filter((item) => item.id !== id)
 }
 
-function pushToast(message: string): number {
+function pushToast(message: string, tone: ToastItem['tone']): number {
+  while (items.value.length >= maxNotices) {
+    const oldest = items.value.at(-1)
+    if (oldest) closeToast(oldest.id)
+  }
   const id = ++nextID
-  items.value.unshift({ id, message })
+  items.value.unshift({ id, message, tone })
   timers.set(
     id,
     setTimeout(() => {
@@ -45,12 +48,17 @@ function pushToast(message: string): number {
  * on another page. The leaving page fades out first, so its notices go when the
  * navigation starts rather than at unmount.
  */
-export function useToast(): { show: (message: string) => void; clear: () => void } {
+export function useToast(): {
+  show: (message: string, tone?: ToastItem['tone']) => void
+  clear: () => void
+} {
   let isActive = true
   const own = new Set<number>()
-  function show(message: string) {
+  function show(message: string, tone: ToastItem['tone'] = 'success') {
     if (!message || !isActive) return
-    own.add(pushToast(message))
+    const visible = new Set(items.value.map((item) => item.id))
+    for (const id of own) if (!visible.has(id)) own.delete(id)
+    own.add(pushToast(message, tone))
   }
   function clear() {
     for (const id of own) closeToast(id)
@@ -69,7 +77,7 @@ export function useToast(): { show: (message: string) => void; clear: () => void
   onActivated(() => {
     isActive = true
   })
-  onBeforeRouteLeave(deactivate)
+  if (inject(matchedRouteKey, undefined)) onBeforeRouteLeave(deactivate)
   onDeactivated(deactivate)
   onScopeDispose(deactivate)
   return { show, clear }

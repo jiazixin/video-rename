@@ -55,16 +55,11 @@ func (s *Store) Batches(ctx context.Context, extraction bool) ([]int64, error) {
 		if err != nil {
 			return nil, err
 		}
-		defer rows.Close()
-		out := []int64{}
-		for rows.Next() {
+		return storage.CollectRows(rows, func(rows *sql.Rows) (int64, error) {
 			var id int64
-			if err := rows.Scan(&id); err != nil {
-				return nil, err
-			}
-			out = append(out, id)
-		}
-		return out, rows.Err()
+			err := rows.Scan(&id)
+			return id, err
+		})
 	})
 }
 

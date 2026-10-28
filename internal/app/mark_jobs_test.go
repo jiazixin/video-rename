@@ -51,8 +51,18 @@ func markTestApp(t *testing.T, files int) (*App, []int64) {
 	return a, ids
 }
 
-func markRequest(t *testing.T, a *App, ctx context.Context, key string, ids []int64, marked bool, wantCode int) markStatus {
+type markRequestOptions struct {
+	a        *App
+	key      string
+	ids      []int64
+	marked   bool
+	wantCode int
+}
+
+func markRequest(ctx context.Context, t *testing.T, options markRequestOptions) markStatus {
 	t.Helper()
+	a, key, ids, marked, wantCode := options.a, options.key, options.ids, options.marked, options.wantCode
+
 	body, err := json.Marshal(map[string]any{"targets": ids, "marked": marked, "key": key})
 	if err != nil {
 		t.Fatal(err)
@@ -108,7 +118,7 @@ func TestBackgroundMarksSurviveRequestCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	result := markRequest(t, a, ctx, "request-survives", ids, true, 202)
+	result := markRequest(ctx, t, markRequestOptions{a: a, key: "request-survives", ids: ids, marked: true, wantCode: 202})
 	if result.Status != "running" {
 		t.Fatal(result)
 	}
@@ -118,20 +128,20 @@ func TestBackgroundMarksSurviveRequestCancellation(t *testing.T) {
 		t.Fatal("worker did not start")
 	}
 	cancel() // Reverse proxy/client disconnects after submission.
-	markRequest(t, a, t.Context(), "request-survives", ids, true, 200)
-	markRequest(t, a, t.Context(), "request-survives", ids, false, 409)
-	markRequest(t, a, t.Context(), "another-request", ids, false, 409)
+	markRequest(t.Context(), t, markRequestOptions{a: a, key: "request-survives", ids: ids, marked: true, wantCode: 200})
+	markRequest(t.Context(), t, markRequestOptions{a: a, key: "request-survives", ids: ids, marked: false, wantCode: 409})
+	markRequest(t.Context(), t, markRequestOptions{a: a, key: "another-request", ids: ids, marked: false, wantCode: 409})
 	close(release)
 	result = awaitMark(t, a, "request-survives")
 	if result.Status != "completed" || result.Changed != 280 || result.Failed != 0 || result.Interrupted {
 		t.Fatal(result)
 	}
 	// A lost final response must return the original counts without redoing work.
-	result = markRequest(t, a, t.Context(), "request-survives", ids, true, 200)
+	result = markRequest(t.Context(), t, markRequestOptions{a: a, key: "request-survives", ids: ids, marked: true, wantCode: 200})
 	if result.Changed != 280 || result.Unchanged != 0 {
 		t.Fatal(result)
 	}
-	markRequest(t, a, t.Context(), "unmark-request", ids, false, 202)
+	markRequest(t.Context(), t, markRequestOptions{a: a, key: "unmark-request", ids: ids, marked: false, wantCode: 202})
 	result = awaitMark(t, a, "unmark-request")
 	if result.Status != "completed" || result.Changed != 280 {
 		t.Fatal(result)
@@ -148,7 +158,7 @@ func TestBackgroundMarksReportFailuresAndShutdown(t *testing.T) {
 	t.Run("file failure", func(t *testing.T) {
 		a, ids := markTestApp(t, 2)
 		a.Library.Busy = func(context.Context, int64) bool { return true }
-		markRequest(t, a, t.Context(), "busy-files-test", ids, true, 202)
+		markRequest(t.Context(), t, markRequestOptions{a: a, key: "busy-files-test", ids: ids, marked: true, wantCode: 202})
 		r := awaitMark(t, a, "busy-files-test")
 		if r.Status != "partial_failure" || r.Failed != 4 || len(r.Failures) != 4 {
 			t.Fatal(r)
@@ -163,7 +173,7 @@ func TestBackgroundMarksReportFailuresAndShutdown(t *testing.T) {
 			<-ctx.Done()
 			return false
 		}
-		markRequest(t, a, t.Context(), "shutdown-request", ids, true, 202)
+		markRequest(t.Context(), t, markRequestOptions{a: a, key: "shutdown-request", ids: ids, marked: true, wantCode: 202})
 		select {
 		case <-entered:
 		case <-time.After(5 * time.Second):
@@ -176,13 +186,13 @@ func TestBackgroundMarksReportFailuresAndShutdown(t *testing.T) {
 		if r.Status != "interrupted" || !r.Interrupted {
 			t.Fatal(r)
 		}
-		markRequest(t, a, t.Context(), "after-shutdown", ids, true, 503)
+		markRequest(t.Context(), t, markRequestOptions{a: a, key: "after-shutdown", ids: ids, marked: true, wantCode: 503})
 	})
 }
 
 func TestBackgroundMarkStatusMissingAndProtected(t *testing.T) {
 	a, ids := markTestApp(t, 1)
-	markRequest(t, a, t.Context(), "short", ids, true, 400)
+	markRequest(t.Context(), t, markRequestOptions{a: a, key: "short", ids: ids, marked: true, wantCode: 400})
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/api/entries/processed/status/missing-key", nil)
 	r.SetPathValue("key", "missing-key")
@@ -201,7 +211,7 @@ func TestBackgroundMarksContinueBeyondResultCacheCapacity(t *testing.T) {
 	a, ids := markTestApp(t, 1)
 	for i := range 256 {
 		key := fmt.Sprintf("continuous-mark-%03d", i)
-		markRequest(t, a, t.Context(), key, ids, i%2 == 0, 202)
+		markRequest(t.Context(), t, markRequestOptions{a: a, key: key, ids: ids, marked: i%2 == 0, wantCode: 202})
 		result := awaitMark(t, a, key)
 		if result.Status != "completed" || result.Changed != 2 || result.Unchanged != 0 || result.Failed != 0 {
 			t.Fatalf("request %d: %+v", i, result)
@@ -214,7 +224,7 @@ func TestBackgroundMarksContinueBeyondResultCacheCapacity(t *testing.T) {
 		}
 	}
 	// Replaying a retained result must not undo a later opposite operation.
-	result := markRequest(t, a, t.Context(), "continuous-mark-254", ids, true, 200)
+	result := markRequest(t.Context(), t, markRequestOptions{a: a, key: "continuous-mark-254", ids: ids, marked: true, wantCode: 200})
 	if result.Changed != 2 || result.Unchanged != 0 {
 		t.Fatal(result)
 	}
@@ -245,10 +255,10 @@ func TestBackgroundMarksEvictOldestCompletedResult(t *testing.T) {
 		}
 	}
 	// Lookup and validation precede eviction, including at full capacity.
-	if result := markRequest(t, a, t.Context(), "cached-mark-000", ids, true, 200); result.Changed != 2 {
+	if result := markRequest(t.Context(), t, markRequestOptions{a: a, key: "cached-mark-000", ids: ids, marked: true, wantCode: 200}); result.Changed != 2 {
 		t.Fatal(result)
 	}
-	markRequest(t, a, t.Context(), "cached-mark-000", ids, false, 409)
+	markRequest(t.Context(), t, markRequestOptions{a: a, key: "cached-mark-000", ids: ids, marked: false, wantCode: 409})
 	if len(a.markJobs) != 128 {
 		t.Fatal("lookup or conflict evicted a cached result")
 	}
@@ -264,15 +274,15 @@ func TestBackgroundMarksEvictOldestCompletedResult(t *testing.T) {
 		})
 		return false
 	}
-	markRequest(t, a, t.Context(), "new-capacity-request", ids, true, 202)
+	markRequest(t.Context(), t, markRequestOptions{a: a, key: "new-capacity-request", ids: ids, marked: true, wantCode: 202})
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):
 		t.Fatal("worker did not start")
 	}
 	// The active worker and all more recent results survive capacity pressure.
-	markRequest(t, a, t.Context(), "blocked-capacity-request", ids, false, 409)
-	markRequest(t, a, t.Context(), "new-capacity-request", ids, true, 200)
+	markRequest(t.Context(), t, markRequestOptions{a: a, key: "blocked-capacity-request", ids: ids, marked: false, wantCode: 409})
+	markRequest(t.Context(), t, markRequestOptions{a: a, key: "new-capacity-request", ids: ids, marked: true, wantCode: 200})
 	a.markMu.Lock()
 	_, oldest := a.markJobs["cached-mark-000"]
 	_, next := a.markJobs["cached-mark-001"]
@@ -291,7 +301,7 @@ func TestBackgroundMarksEvictOldestCompletedResult(t *testing.T) {
 func TestBackgroundMarkResultExpiresWithoutRemovingMarks(t *testing.T) {
 	a, ids := markTestApp(t, 1)
 	key := "expired-mark-result"
-	markRequest(t, a, t.Context(), key, ids, true, 202)
+	markRequest(t.Context(), t, markRequestOptions{a: a, key: key, ids: ids, marked: true, wantCode: 202})
 	awaitMark(t, a, key)
 	a.markMu.Lock()
 	a.markJobs[key].finished = time.Now().Add(-2 * time.Hour)
@@ -315,7 +325,7 @@ func TestBackgroundMarkResultExpiresWithoutRemovingMarks(t *testing.T) {
 	}); err != nil || count != 2 {
 		t.Fatalf("expired result removed marks: count=%d err=%v", count, err)
 	}
-	markRequest(t, a, t.Context(), "after-expired-result", ids, false, 202)
+	markRequest(t.Context(), t, markRequestOptions{a: a, key: "after-expired-result", ids: ids, marked: false, wantCode: 202})
 	if result := awaitMark(t, a, "after-expired-result"); result.Changed != 2 {
 		t.Fatal(result)
 	}

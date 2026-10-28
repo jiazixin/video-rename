@@ -89,7 +89,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 24px;
+    padding: var(--space-24);
   }
   .modal {
     width: 480px;
@@ -97,8 +97,8 @@
     max-height: 90vh;
     background: var(--palette-ffffff);
     border: 1px solid var(--line);
-    border-radius: 15px;
-    box-shadow: 0 20px 100px var(--palette-0002);
+    border-radius: var(--radius-15);
+    box-shadow: var(--shadow-2);
     display: flex;
     flex-direction: column;
   }
@@ -109,35 +109,35 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 19px 24px;
+    padding: var(--space-19) var(--space-24);
     border-bottom: 1px solid var(--line);
   }
   .modal > header h2 {
-    font-size: 16px;
+    font-size: var(--font-size-16);
   }
   .modal-content {
-    padding: 24px;
+    padding: var(--space-24);
     overflow: auto;
   }
   .modal-content :deep(p) {
-    font-size: 13px;
+    font-size: var(--font-size-13);
   }
   .modal-content :deep(label) {
-    margin-bottom: 16px;
+    margin-bottom: var(--space-16);
   }
   @media (max-width: 800px) {
     .modal-backdrop {
-      padding: 14px;
+      padding: var(--space-14);
     }
   }
   @media (max-width: 800px) {
     .modal-content {
-      padding: 20px;
+      padding: var(--space-20);
     }
   }
   @media (max-width: 800px) {
     .modal > header {
-      padding: 15px 20px;
+      padding: var(--space-15) var(--space-20);
     }
   }
   @media (max-width: 800px) {
@@ -164,7 +164,8 @@
   /* Theater: media viewers sit in a large dark frame. A clear margin of dimmed page stays
      around it so clicking outside closes the viewer. */
   .modal-backdrop.theater {
-    padding: clamp(16px, 5vh, 56px) clamp(16px, 6vw, 96px);
+    padding: clamp(var(--space-16), 5vh, var(--space-56))
+      clamp(var(--space-16), 6vw, var(--space-96));
     background: var(--palette-rgba-6-9-8-0_78);
     backdrop-filter: blur(6px);
   }
@@ -180,36 +181,36 @@
     max-width: none;
     height: 100%;
     max-height: 960px;
-    padding: 12px;
+    padding: var(--space-12);
     background: var(--stage);
     border: 1px solid var(--stage-line);
-    border-radius: 14px;
-    box-shadow: 0 24px 80px var(--palette-rgba-0-0-0-0_55);
+    border-radius: var(--radius-14);
+    box-shadow: var(--shadow-3);
     color: var(--stage-ink);
     outline: none;
   }
   .theater-modal > header {
-    gap: 12px;
-    padding: 2px 4px 10px 6px;
+    gap: var(--space-12);
+    padding: var(--space-2) var(--space-4) var(--space-10) var(--space-6);
     border-bottom: 0;
   }
   .theater-modal .modal-heading {
     flex: 1;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: var(--space-10);
   }
   .theater-modal .modal-heading h2 {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 15px;
+    font-size: var(--font-size-15);
     color: var(--stage-ink);
   }
   .theater-modal > header .icon-btn {
     color: var(--stage-ink);
-    border-radius: 8px;
+    border-radius: var(--radius-8);
   }
   .theater-modal > header .icon-btn:hover {
     background: var(--stage-hover);
@@ -227,14 +228,14 @@
     flex-direction: column;
     min-height: 0;
     overflow: hidden;
-    padding: 16px 24px;
+    padding: var(--space-16) var(--space-24);
   }
   .contained-modal > header,
   .modal-footer {
     flex-shrink: 0;
   }
   .modal-footer {
-    padding: 12px 24px 16px;
+    padding: var(--space-12) var(--space-24) var(--space-16);
     border-top: 1px solid var(--line);
   }
   .modal-footer :deep(.modal-actions) {
@@ -244,16 +245,16 @@
   }
   @media (max-width: 600px) {
     .modal-backdrop.theater {
-      padding: 12px;
+      padding: var(--space-12);
     }
     .modal.theater-modal {
-      padding: 8px;
+      padding: var(--space-8);
     }
     .contained-modal > .modal-content {
-      padding: 12px 16px;
+      padding: var(--space-12) var(--space-16);
     }
     .modal-footer {
-      padding: 12px 16px;
+      padding: var(--space-12) var(--space-16);
     }
   }
 </style>

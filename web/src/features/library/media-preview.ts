@@ -1,6 +1,6 @@
 import { errorText } from '../../app/errors'
 import { computed, onScopeDispose, ref } from 'vue'
-import { api } from '../../app/api'
+import { api, ApiError } from '../../app/api'
 import type { Entry, Page } from '../../app/contracts'
 import { isVideo, isAudio, isImage } from './entry-types'
 
@@ -11,6 +11,19 @@ type ListQuery = { q: string; status: string; sort: string }
 // Switching keeps its own lookups, so a slow or capped list never blocks previous/next.
 export type MediaQueue = { items: Entry[]; complete: boolean }
 const queueLimit = 1000
+const queuePageSize = 200
+
+function assertSameListing(result: Page, expected: { page: number; generation?: string }) {
+  if (
+    result.offset !== (expected.page - 1) * queuePageSize ||
+    (expected.generation !== undefined && result.generation !== expected.generation)
+  )
+    throw new ApiError('directory changed between pages', {
+      status: 409,
+      code: 'directory_changed',
+      requestId: ''
+    })
+}
 
 function useMediaQueue(
   kind: 'video' | 'audio' | 'image',
@@ -29,27 +42,27 @@ function useMediaQueue(
       { directory, ...query } = filters(),
       items: Entry[] = []
     queue.value = undefined
-    let offset = 0,
-      generation = '0'
+    let page = 1,
+      generation: string | undefined
     try {
       while (items.length < queueLimit) {
         const params = new URLSearchParams({
-          offset: String(offset),
-          limit: '200',
+          offset: String((page - 1) * queuePageSize),
+          limit: String(queuePageSize),
           kind,
-          generation,
           ...query
         })
         const result = await api<Page>(`/directories/${directory}/entries?${params}`, {
           signal: current.signal
         })
         if (request !== token) return
+        assertSameListing(result, { page, generation })
         items.push(...result.items.filter((e) => e.kind === 'file' && match(e)))
-        if (!result.next) {
+        if (page * queuePageSize >= result.total) {
           queue.value = { items, complete: true }
           return
         }
-        offset = result.next
+        page++
         generation = result.generation
       }
       queue.value = { items: items.slice(0, queueLimit), complete: false }
@@ -218,26 +231,26 @@ export function useMediaPreview(query: () => MediaQuery) {
     list.busy.value = true
     list.notice.value = ''
     try {
-      let offset = 0,
-        generation = '0',
+      let page = 1,
+        generation: string | undefined,
         last: Entry | undefined,
         found = false
       // Read the same ordered, filtered directory across page boundaries.
       for (;;) {
         const params = new URLSearchParams({
-          offset: String(offset),
-          limit: '200',
+          offset: String((page - 1) * queuePageSize),
+          limit: String(queuePageSize),
           q: query().search,
           kind: list.kind,
           status: query().status,
-          sort: query().sort,
-          generation
+          sort: query().sort
         })
         const result = await api<Page>(`/directories/${query().directory}/entries?${params}`, {
           signal: current.signal
         })
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- the compared state can change while awaiting
         if (request !== list.token.value || list.current.value?.id !== id) return
+        assertSameListing(result, { page, generation })
         for (const entry of result.items) {
           if (entry.kind !== 'file' || !list.match(entry)) continue
           if (found && !previous) {
@@ -254,13 +267,13 @@ export function useMediaPreview(query: () => MediaQuery) {
           }
           last = entry
         }
-        if (!result.next) {
+        if (page * queuePageSize >= result.total) {
           list.notice.value = found
             ? `已经是最后一${list.unit}`
             : '当前文件已不在列表中，请关闭后重新选择'
           return
         }
-        offset = result.next
+        page++
         generation = result.generation
       }
     } catch (e) {

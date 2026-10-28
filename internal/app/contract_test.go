@@ -69,7 +69,7 @@ func requireContractStatus(t *testing.T, w *httptest.ResponseRecorder, want int)
 
 func TestNumericQueryRejectsMalformedValues(t *testing.T) {
 	c := newContractClient(t)
-	for _, field := range []string{"page", "size"} {
+	for _, field := range []string{"offset", "limit"} {
 		for _, value := range []string{"", "invalid", "1.5", "9223372036854775808"} {
 			t.Run(field+"="+value, func(t *testing.T) {
 				query := url.Values{field: {value}}
@@ -132,7 +132,7 @@ func TestMergePatchPreconditionsAndRetiredFields(t *testing.T) {
 }
 func TestModelAndScheduleMergePatch(t *testing.T) {
 	c := newContractClient(t)
-	model := c.call(contractRequest{method: "POST", path: "/api/model-configs", key: "model-create-1", body: `{"title":"model","prompt_id":1,"provider":"custom","protocol":"openai","base_url":"http://localhost/v1","model":"fixture","api_key":"private-secret","timeout":"10s","max_tokens":100,"temperature":0.7}`})
+	model := c.call(contractRequest{method: "POST", path: "/api/model-configs", key: "model-create-1", body: `{"title":"model","prompt_id":1,"provider":"custom","protocol":"openai","base_url":"http://localhost/v1","model":"fixture","api_key":"private-secret","timeout_ms":10000,"max_tokens":100,"temperature":0.7}`})
 	requireContractStatus(t, model, 201)
 	location := model.Header().Get("Location")
 	unchanged := c.call(contractRequest{method: "PATCH", path: location, tag: model.Header().Get("ETag"), body: `{"title":"renamed"}`})

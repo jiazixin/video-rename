@@ -15,8 +15,17 @@ import (
 	"video-rename/internal/timefmt"
 )
 
-func setTestProcessingSource(t *testing.T, l *Library, parent int64, name, source string) {
+type setTestProcessingSourceOptions struct {
+	l      *Library
+	parent int64
+	name   string
+	source string
+}
+
+func setTestProcessingSource(t *testing.T, options setTestProcessingSourceOptions) {
 	t.Helper()
+	l, parent, name, source := options.l, options.parent, options.name, options.source
+
 	result, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
 		return tx.ExecContext(t.Context(), `INSERT INTO marks(identity,size,mtime_ns,source) SELECT identity,size,mtime_ns,? FROM entries WHERE parent=? AND name=? AND present=1`, source, parent, name)
 	})
@@ -42,7 +51,7 @@ func TestProcessingStatusFiltersAndSortingAcrossPages(t *testing.T) {
 	sources := []string{"", "marked", "manual", "automatic", "restore"}
 	for i := range 255 {
 		if source := sources[i%len(sources)]; source != "" {
-			setTestProcessingSource(t, l, 1, fmt.Sprintf("clip%d.mp4", i), source)
+			setTestProcessingSource(t, setTestProcessingSourceOptions{l: l, parent: 1, name: fmt.Sprintf("clip%d.mp4", i), source: source})
 		}
 	}
 	// A mark from an older file snapshot must not count as the current state.
@@ -82,24 +91,17 @@ func TestProcessingStatusFiltersAndSortingAcrossPages(t *testing.T) {
 				}
 				expected := append(directories, files...)
 				var actual []string
-				cursor := 0
-				var generation int64
 				for page := 1; ; page++ {
-					p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: page, Limit: 50, Query: "", Kind: "video", Status: status, SortBy: "status_" + direction})
-					if err != nil || p.Number != page || p.Total != len(expected) {
+					p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: max(0, (page)-1) * (50), Limit: 50, Query: "", Kind: "video", Status: status, SortBy: "status_" + direction})
+					if err != nil || p.Offset != (page-1)*p.Limit || p.Total != len(expected) {
 						t.Fatalf("page %d: %+v, %v", page, p, err)
-					}
-					c, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: cursor, Limit: 50, Generation: generation, Query: "", Kind: "video", Status: status, Force: false, SortBy: "status_" + direction})
-					if err != nil || c.Total != p.Total || c.Next != p.Next || !slices.EqualFunc(c.Items, p.Items, func(a, b Entry) bool { return a.ID == b.ID }) {
-						t.Fatalf("cursor disagrees with page %d: %v", page, err)
 					}
 					for _, e := range p.Items {
 						actual = append(actual, e.Name)
 					}
-					if p.Next == 0 {
+					if page*50 >= p.Total {
 						break
 					}
-					cursor, generation = p.Next, p.Generation
 				}
 				if !slices.Equal(actual, expected) {
 					t.Fatalf("wrong filtered order: got %v, want %v", actual, expected)
@@ -107,15 +109,15 @@ func TestProcessingStatusFiltersAndSortingAcrossPages(t *testing.T) {
 			})
 		}
 	}
-	p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: 99, Limit: 50, Query: "clip12", Kind: "video", Status: "manual", SortBy: "status_asc"})
-	if err != nil || p.Number != 1 || p.Total != 3 || len(p.Items) != 3 || p.Items[0].Name != "clip12.mp4" || p.Items[1].Name != "clip122.mp4" || p.Items[2].Name != "clip127.mp4" {
+	p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 4900, Limit: 50, Query: "clip12", Kind: "video", Status: "manual", SortBy: "status_asc"})
+	if err != nil || p.Offset != 0 || p.Total != 3 || len(p.Items) != 3 || p.Items[0].Name != "clip12.mp4" || p.Items[1].Name != "clip122.mp4" || p.Items[2].Name != "clip127.mp4" {
 		t.Fatalf("combined filters and clamping: %+v, %v", p, err)
 	}
-	p, err = l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: 1, Limit: 50, Query: "", Kind: "image", Status: "processed", SortBy: "status_asc"})
+	p, err = l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 0, Limit: 50, Query: "", Kind: "image", Status: "processed", SortBy: "status_asc"})
 	if err != nil || p.Total != 0 || len(p.Items) != 0 {
 		t.Fatalf("unknown directories incorrectly reported as processed: %+v, %v", p, err)
 	}
-	if _, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: 1, Limit: 50, Query: "", Kind: "", Status: "invalid' OR 1=1", SortBy: "status_asc"}); err == nil {
+	if _, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 0, Limit: 50, Query: "", Kind: "", Status: "invalid' OR 1=1", SortBy: "status_asc"}); err == nil {
 		t.Fatal("invalid status accepted")
 	}
 }
@@ -127,10 +129,10 @@ func TestProcessingStatusUsesLiveTaskPrecedenceAndScope(t *testing.T) {
 	}
 	put(t, filepath.Join(root, "child", "clip.mp4"))
 	refresh(t, l, 1)
-	dir := entry(t, l, 1, "child")
+	dir := entry(t, entryOptions{l: l, parent: 1, name: "child"})
 	refresh(t, l, dir.ID)
-	file := entry(t, l, dir.ID, "clip.mp4")
-	setTestProcessingSource(t, l, dir.ID, file.Name, "manual")
+	file := entry(t, entryOptions{l: l, parent: dir.ID, name: "clip.mp4"})
+	setTestProcessingSource(t, setTestProcessingSourceOptions{l: l, parent: dir.ID, name: file.Name, source: "manual"})
 	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
 		return tx.ExecContext(t.Context(), `INSERT INTO runs(id,source,targets,recursive,status,created,request_key) VALUES(1,'manual','[1]',1,'scanning','2026-10-28T00:00:00.000Z','status-scope')`)
 	}); err != nil {
@@ -138,7 +140,7 @@ func TestProcessingStatusUsesLiveTaskPrecedenceAndScope(t *testing.T) {
 	}
 	assertStatus := func(filter, task string, count int) {
 		t.Helper()
-		p, err := l.ListPage(t.Context(), ListPageOptions{ID: dir.ID, Page: 1, Limit: 50, Query: "", Kind: "video", Status: filter, SortBy: "status_asc"})
+		p, err := l.ListPage(t.Context(), ListPageOptions{ID: dir.ID, Offset: 0, Limit: 50, Query: "", Kind: "video", Status: filter, SortBy: "status_asc"})
 		if err != nil || p.Total != count || len(p.Items) != count {
 			t.Fatalf("filter %s: %+v, %v", filter, p, err)
 		}
@@ -180,10 +182,10 @@ func TestNumberingStatusFilterKeepsHiddenNumbersAndUsesStatusSorting(t *testing.
 		put(t, filepath.Join(root, name))
 	}
 	refresh(t, l, 1)
-	setTestProcessingSource(t, l, 1, "2.jpg", "marked")
-	setTestProcessingSource(t, l, 1, "5.jpg", "automatic")
-	setTestProcessingSource(t, l, 1, "photo2.jpg", "manual")
-	setTestProcessingSource(t, l, 1, "photo10.jpg", "manual")
+	setTestProcessingSource(t, setTestProcessingSourceOptions{l: l, parent: 1, name: "2.jpg", source: "marked"})
+	setTestProcessingSource(t, setTestProcessingSourceOptions{l: l, parent: 1, name: "5.jpg", source: "automatic"})
+	setTestProcessingSource(t, setTestProcessingSourceOptions{l: l, parent: 1, name: "photo2.jpg", source: "manual"})
+	setTestProcessingSource(t, setTestProcessingSourceOptions{l: l, parent: 1, name: "photo10.jpg", source: "manual"})
 	settings := domain.DefaultNumberingSettings()
 	settings.Image.Compact = true
 	for _, direction := range []string{"asc", "desc"} {
@@ -213,7 +215,7 @@ func TestNumberingStatusFilterKeepsHiddenNumbersAndUsesStatusSorting(t *testing.
 			t.Fatalf("unexpected numbering result: %s: %v", name, err)
 		}
 	}
-	if _, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "image", Status: "marked", Sort: "status_asc", Settings: settings}); err == nil || !errors.Is(err, domain.Fail(domain.KindInvalid, domain.Record{Code: "numbering_nothing_selected", Message: ""})) {
+	if _, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: 1, Media: "image", Status: "marked", Sort: "status_asc", Settings: settings}); err == nil || !errors.Is(err, domain.Fail(domain.KindInvalid, domain.Failure{Reason: domain.ReasonNumberingNothingSelected, Message: ""})) {
 		t.Fatalf("protected marked files entered numbering: %v", err)
 	}
 }
@@ -309,23 +311,17 @@ func TestDirectoryProcessingFiltersUseSubtreesBeforePaging(t *testing.T) {
 						slices.Reverse(expected)
 					}
 					var actual []string
-					cursor := 0
 					for page := 1; ; page++ {
-						p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: page, Limit: 50, Query: "", Kind: "video", Status: status, SortBy: field + "_" + direction})
+						p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: max(0, (page)-1) * (50), Limit: 50, Query: "", Kind: "video", Status: status, SortBy: field + "_" + direction})
 						if err != nil || p.Total != len(expected) {
 							t.Fatalf("page %d: total %d, want %d, error %v", page, p.Total, len(expected), err)
-						}
-						c, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: cursor, Limit: 50, Generation: p.Generation, Query: "", Kind: "video", Status: status, Force: false, SortBy: field + "_" + direction})
-						if err != nil || c.Total != p.Total || c.Next != p.Next || !slices.EqualFunc(c.Items, p.Items, func(a, b Entry) bool { return a.ID == b.ID }) {
-							t.Fatalf("cursor disagrees on page %d: %v", page, err)
 						}
 						for _, e := range p.Items {
 							actual = append(actual, e.Name)
 						}
-						if p.Next == 0 {
+						if page*50 >= p.Total {
 							break
 						}
-						cursor = p.Next
 					}
 					if !slices.Equal(actual, expected) {
 						t.Fatalf("filtered directories: got %v, want %v", actual, expected)
@@ -335,9 +331,9 @@ func TestDirectoryProcessingFiltersUseSubtreesBeforePaging(t *testing.T) {
 		}
 	}
 	// Filtering removes later pages before clamping, and combines with search.
-	p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: 100, Limit: 50, Query: "folder20", Kind: "image", Status: "unprocessed", SortBy: "name_asc"})
-	if err != nil || p.Number != 1 || p.Total != 5 {
-		t.Fatalf("search/media/clamping: page %d, total %d, error %v", p.Number, p.Total, err)
+	p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 4950, Limit: 50, Query: "folder20", Kind: "image", Status: "unprocessed", SortBy: "name_asc"})
+	if err != nil || p.Offset != 0 || p.Total != 5 {
+		t.Fatalf("search/media/clamping: page %d, total %d, error %v", p.Offset, p.Total, err)
 	}
 }
 
@@ -351,14 +347,14 @@ func TestDirectoryFiltersUseLiveTaskStateAndUnknownDescendants(t *testing.T) {
 	put(t, filepath.Join(root, "completed", "clip.mp4"))
 	put(t, filepath.Join(root, "unknown", "clip.mp4"))
 	refresh(t, l, 1)
-	completed, unknown := entry(t, l, 1, "completed"), entry(t, l, 1, "unknown")
+	completed, unknown := entry(t, entryOptions{l: l, parent: 1, name: "completed"}), entry(t, entryOptions{l: l, parent: 1, name: "unknown"})
 	for _, dir := range []Entry{completed, unknown} {
 		refresh(t, l, dir.ID)
-		setTestProcessingSource(t, l, dir.ID, "clip.mp4", "manual")
+		setTestProcessingSource(t, setTestProcessingSourceOptions{l: l, parent: dir.ID, name: "clip.mp4", source: "manual"})
 	}
 	assertNames := func(status string, expected ...string) {
 		t.Helper()
-		p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: 1, Limit: 50, Query: "", Kind: "", Status: status, SortBy: "name_asc"})
+		p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 0, Limit: 50, Query: "", Kind: "", Status: status, SortBy: "name_asc"})
 		if err != nil || p.Total != len(expected) {
 			t.Fatalf("%s: total %d, error %v", status, p.Total, err)
 		}
@@ -373,7 +369,7 @@ func TestDirectoryFiltersUseLiveTaskStateAndUnknownDescendants(t *testing.T) {
 	assertNames("unprocessed", "unknown")
 	assertNames("processed", "completed")
 	assertNames("manual", "completed", "unknown")
-	file := entry(t, l, completed.ID, "clip.mp4")
+	file := entry(t, entryOptions{l: l, parent: completed.ID, name: "clip.mp4"})
 	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
 		return tx.ExecContext(t.Context(), `INSERT INTO runs(id,source,targets,recursive,status,created,request_key) VALUES(1,'manual',?,0,'scanning','2026-10-28T00:00:00.000Z','directory-filter')`, fmt.Sprintf("[%d]", file.ID))
 	}); err != nil {

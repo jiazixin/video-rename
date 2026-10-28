@@ -28,7 +28,6 @@ const sampleRun = () => ({
     retry_count: 3,
     fallback_model_title: '5060ti'
   },
-  error: '',
   token_count: 0
 })
 const sampleItems = () => [

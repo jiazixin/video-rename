@@ -47,6 +47,7 @@ video-rename combines a Go server, an embedded Vue 3 interface, and SQLite in a 
 | Item | Requirement |
 | --- | --- |
 | Operating system | Linux or macOS |
+| Browser | Chrome / Edge 124+, Firefox 124+, Safari 17.4+; native request cancellation APIs required |
 | FFmpeg | `ffmpeg` and `ffprobe` on PATH for frame extraction and automatic naming; not needed for browsing and manual renaming |
 | Model service (optional) | An image-capable OpenAI-compatible or Anthropic service; not needed without automatic naming |
 | Data directory | Local disk; media may reside on a network mount |

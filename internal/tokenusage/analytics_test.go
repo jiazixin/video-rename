@@ -25,8 +25,21 @@ func analyticsDB(t *testing.T) *storage.Store {
 	return db
 }
 
-func seedUsage(t *testing.T, db *storage.Store, run int64, source string, plan int64, summary string, profileID int64, title string, rows [][3]int64) {
+type seedUsageOptions struct {
+	db        *storage.Store
+	run       int64
+	source    string
+	plan      int64
+	summary   string
+	profileID int64
+	title     string
+	rows      [][3]int64
+}
+
+func seedUsage(t *testing.T, options seedUsageOptions) {
 	t.Helper()
+	db, run, source, plan, summary, profileID, title, rows := options.db, options.run, options.source, options.plan, options.summary, options.profileID, options.title, options.rows
+
 	if _, err := storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
 		return tx.ExecContext(t.Context(), `INSERT INTO runs(id,source,targets,recursive,status,created,started,finished,request_key,plan,config_summary,model_config_id,model_config_title) VALUES(?,?,'[]',1,'completed','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z','2026-09-01T01:00:00.000Z',?,?,?,?,?)`, run, source, fmt.Sprintf("usage-%d", run), plan, summary, profileID, title)
 	}); err != nil {
@@ -66,12 +79,12 @@ var hour = int64(time.Hour / time.Millisecond)
 func TestAnalyticsHalfOpenRangeAndEstimates(t *testing.T) {
 	db := analyticsDB(t)
 	base := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
-	seedUsage(t, db, 1, "manual", 0, `{"model":"vision-a","provider":"custom","protocol":"openai"}`, 1, "配置一", [][3]int64{
+	seedUsage(t, seedUsageOptions{db: db, run: 1, source: "manual", plan: 0, summary: `{"model":"vision-a","provider":"custom","protocol":"openai"}`, profileID: 1, title: "配置一", rows: [][3]int64{
 		{base.UnixMilli() + 2*hour, 100, 0},
-	})
-	seedUsage(t, db, 2, "schedule", 3, `{"model":"vision-b","provider":"zhipu","protocol":"openai"}`, 2, "配置二", [][3]int64{
+	}})
+	seedUsage(t, seedUsageOptions{db: db, run: 2, source: "schedule", plan: 3, summary: `{"model":"vision-b","provider":"zhipu","protocol":"openai"}`, profileID: 2, title: "配置二", rows: [][3]int64{
 		{base.UnixMilli() + 3*hour, 40, 1},
-	})
+	}})
 	from := base.Add(2 * time.Hour).UnixMilli()
 	to := base.Add(3 * time.Hour).UnixMilli() // exactly on the record: excluded
 	report, err := Analytics(t.Context(), db, AnalyticsQuery{From: from, To: to, Location: time.UTC})
@@ -111,9 +124,9 @@ func TestAnalyticsHalfOpenRangeAndEstimates(t *testing.T) {
 func TestAnalyticsFiltersAndInvariants(t *testing.T) {
 	db := analyticsDB(t)
 	base := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
-	seedUsage(t, db, 1, "manual", 0, `{"model":"a","provider":"p1","protocol":"openai"}`, 1, "一", [][3]int64{{base.UnixMilli(), 10, 0}})
-	seedUsage(t, db, 2, "manual", 0, `{"model":"b","provider":"p2","protocol":"openai"}`, 1, "一", [][3]int64{{base.UnixMilli(), 20, 0}})
-	seedUsage(t, db, 3, "schedule", 1, `{"model":"a","provider":"p1","protocol":"openai"}`, 2, "二", [][3]int64{{base.UnixMilli(), 30, 1}})
+	seedUsage(t, seedUsageOptions{db: db, run: 1, source: "manual", plan: 0, summary: `{"model":"a","provider":"p1","protocol":"openai"}`, profileID: 1, title: "一", rows: [][3]int64{{base.UnixMilli(), 10, 0}}})
+	seedUsage(t, seedUsageOptions{db: db, run: 2, source: "manual", plan: 0, summary: `{"model":"b","provider":"p2","protocol":"openai"}`, profileID: 1, title: "一", rows: [][3]int64{{base.UnixMilli(), 20, 0}}})
+	seedUsage(t, seedUsageOptions{db: db, run: 3, source: "schedule", plan: 1, summary: `{"model":"a","provider":"p1","protocol":"openai"}`, profileID: 2, title: "二", rows: [][3]int64{{base.UnixMilli(), 30, 1}}})
 	report, err := Analytics(t.Context(), db, AnalyticsQuery{From: 0, To: base.Add(24 * time.Hour).UnixMilli(), Location: time.UTC, Model: modelKey("p1", "openai", "a")})
 	if err != nil {
 		t.Fatal(err)
@@ -165,10 +178,10 @@ func TestAnalyticsPaginationSortingAndDayBoundaries(t *testing.T) {
 	local := time.Date(2026, 9, 23, 6, 0, 0, 0, shanghai)
 	for i := int64(1); i <= 60; i++ {
 		tokens := i * 10
-		seedUsage(t, db, i, "manual", 0, `{"model":"m","provider":"p","protocol":"openai"}`, 1, "一", [][3]int64{{local.UnixMilli(), tokens, 0}})
+		seedUsage(t, seedUsageOptions{db: db, run: i, source: "manual", plan: 0, summary: `{"model":"m","provider":"p","protocol":"openai"}`, profileID: 1, title: "一", rows: [][3]int64{{local.UnixMilli(), tokens, 0}}})
 	}
 	// A seven-day window picks day buckets aligned to Shanghai midnights.
-	report, err := Analytics(t.Context(), db, AnalyticsQuery{From: time.Date(2026, 9, 20, 0, 0, 0, 0, shanghai).UnixMilli(), To: time.Date(2026, 9, 27, 0, 0, 0, 0, shanghai).UnixMilli(), Location: shanghai, Size: 20})
+	report, err := Analytics(t.Context(), db, AnalyticsQuery{From: time.Date(2026, 9, 20, 0, 0, 0, 0, shanghai).UnixMilli(), To: time.Date(2026, 9, 27, 0, 0, 0, 0, shanghai).UnixMilli(), Location: shanghai, Limit: 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +217,7 @@ func TestAnalyticsPaginationSortingAndDayBoundaries(t *testing.T) {
 	if report.Range.Interval != "hour" || len(report.Trend) != 24 {
 		t.Fatal("all-history interval", report.Range.Interval, len(report.Trend))
 	}
-	report, err = Analytics(t.Context(), db, AnalyticsQuery{From: 0, To: time.Date(2026, 9, 27, 0, 0, 0, 0, shanghai).UnixMilli(), Location: shanghai, Sort: "recent", Page: 3, Size: 20})
+	report, err = Analytics(t.Context(), db, AnalyticsQuery{From: 0, To: time.Date(2026, 9, 27, 0, 0, 0, 0, shanghai).UnixMilli(), Location: shanghai, Sort: "recent", Offset: 40, Limit: 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,16 +249,16 @@ func TestAnalyticsEmptyRangeKeepsFrame(t *testing.T) {
 
 func TestTopUsageIndependentOfPageSortAndHugePage(t *testing.T) {
 	db := analyticsDB(t)
-	seedUsage(t, db, 1, "manual", 0, `{}`, 1, "高消耗", [][3]int64{{1000, 900, 0}})
-	seedUsage(t, db, 2, "manual", 0, `{}`, 1, "较新", [][3]int64{{2000, 10, 0}})
-	report, err := Analytics(t.Context(), db, AnalyticsQuery{To: 3000, Sort: "recent", Page: int(^uint(0) >> 1), Size: 20})
+	seedUsage(t, seedUsageOptions{db: db, run: 1, source: "manual", plan: 0, summary: `{}`, profileID: 1, title: "高消耗", rows: [][3]int64{{1000, 900, 0}}})
+	seedUsage(t, seedUsageOptions{db: db, run: 2, source: "manual", plan: 0, summary: `{}`, profileID: 1, title: "较新", rows: [][3]int64{{2000, 10, 0}}})
+	report, err := Analytics(t.Context(), db, AnalyticsQuery{To: 3000, Sort: "recent", Offset: int(^uint(0) >> 1), Limit: 20})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if report.TopBatches[0].ID != 1 {
 		t.Fatal("ranking followed detail sort", report.TopBatches)
 	}
-	if report.Batches.Page != 1 || report.Batches.Items[0].ID != 2 {
+	if report.Batches.Offset != 0 || report.Batches.Items[0].ID != 2 {
 		t.Fatal("invalid detail pagination", report.Batches)
 	}
 }
@@ -264,8 +277,8 @@ func TestAnalyticsOptionsKeepConfigIdentityAndModelHistory(t *testing.T) {
 	}
 	a := `{"model":"a","provider":"p","protocol":"openai"}`
 	b := `{"model":"b","provider":"p","protocol":"openai"}`
-	seedUsage(t, db, 1, "manual", 0, a, 10, "旧名称", [][3]int64{{1000, 100, 0}})
-	seedUsage(t, db, 2, "manual", 0, a, 10, "共享配置", [][3]int64{{2000, 200, 0}})
+	seedUsage(t, seedUsageOptions{db: db, run: 1, source: "manual", plan: 0, summary: a, profileID: 10, title: "旧名称", rows: [][3]int64{{1000, 100, 0}}})
+	seedUsage(t, seedUsageOptions{db: db, run: 2, source: "manual", plan: 0, summary: a, profileID: 10, title: "共享配置", rows: [][3]int64{{2000, 200, 0}}})
 	if _, err := storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
 		return tx.ExecContext(t.Context(), `DELETE FROM model_configs WHERE id=10`)
 	}); err != nil {
@@ -281,11 +294,11 @@ func TestAnalyticsOptionsKeepConfigIdentityAndModelHistory(t *testing.T) {
 	if err != nil || newID == 10 {
 		t.Fatal("recreated config must have a new identity", newID, err)
 	}
-	seedUsage(t, db, 3, "manual", 0, b, newID, "共享配置", [][3]int64{{3000, 300, 0}})
+	seedUsage(t, seedUsageOptions{db: db, run: 3, source: "manual", plan: 0, summary: b, profileID: newID, title: "共享配置", rows: [][3]int64{{3000, 300, 0}}})
 	// The same configuration may have used multiple models and names over time.
-	seedUsage(t, db, 4, "manual", 0, a, newID, "改名前", [][3]int64{{1500, 400, 0}})
+	seedUsage(t, seedUsageOptions{db: db, run: 4, source: "manual", plan: 0, summary: a, profileID: newID, title: "改名前", rows: [][3]int64{{1500, 400, 0}}})
 	// Attempt-level identity may differ from the batch's primary config.
-	seedUsage(t, db, 5, "manual", 0, b, newID, "共享配置", [][3]int64{{3500, 500, 0}})
+	seedUsage(t, seedUsageOptions{db: db, run: 5, source: "manual", plan: 0, summary: b, profileID: newID, title: "共享配置", rows: [][3]int64{{3500, 500, 0}}})
 	if _, err := storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) {
 		return tx.ExecContext(t.Context(), `UPDATE token_usage_records SET model_config_id=10,model_config_title='共享配置',config_summary=? WHERE run=5`, b)
 	}); err != nil {

@@ -35,9 +35,9 @@ func TestExtractionHistoryGroupsFiltersPaginationAndClear(t *testing.T) {
 		t.Fatal(err)
 	}
 	type group struct {
-		Items []record.Extraction `json:"items"`
-		Total int                 `json:"total"`
-		Next  int64               `json:"next"`
+		Items  []record.Extraction `json:"items"`
+		Total  int                 `json:"total"`
+		Offset int                 `json:"offset"`
 	}
 	var result struct {
 		Success group `json:"success"`
@@ -62,8 +62,8 @@ func TestExtractionHistoryGroupsFiltersPaginationAndClear(t *testing.T) {
 	if result.Success.Total != 53 || result.Failure.Total != 53 || len(result.Success.Items) != 50 || len(result.Failure.Items) != 50 || result.Running != 53 {
 		t.Fatal(result)
 	}
-	get(fmt.Sprintf("run=7&limit=50&success_before=%d", result.Success.Next))
-	if len(result.Success.Items) != 3 || result.Success.Next != 0 || len(result.Failure.Items) != 50 {
+	get("run=7&limit=50&success_offset=50")
+	if len(result.Success.Items) != 3 || result.Success.Offset != 50 || result.Failure.Offset != 0 || len(result.Failure.Items) != 50 {
 		t.Fatal("pagination not independent", result)
 	}
 	get("q=unbatched")

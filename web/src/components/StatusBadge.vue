@@ -14,20 +14,20 @@
     --status-line: var(--palette-e1e4e8);
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-6);
     white-space: nowrap;
-    font-size: 11px;
-    line-height: 1.5;
-    padding: 4px 8px;
+    font-size: var(--font-size-11);
+    line-height: var(--line-height-1-5);
+    padding: var(--space-4) var(--space-8);
     border: 1px solid var(--status-line);
-    border-radius: 5px;
+    border-radius: var(--radius-5);
     background: var(--status-bg);
     color: var(--status-ink);
   }
   .status-dot {
     width: 5px;
     height: 5px;
-    border-radius: 50%;
+    border-radius: var(--radius-round);
     background: currentColor;
     flex: none;
   }

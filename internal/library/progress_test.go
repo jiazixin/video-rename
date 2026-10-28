@@ -33,12 +33,12 @@ func TestDirectoryProgressRequiresCompleteIndex(t *testing.T) {
 	if p := get(); p.Unknown != 1 || p.Total != 1 {
 		t.Fatalf("%+v", p)
 	}
-	a := entry(t, l, 1, "a.mp4")
+	a := entry(t, entryOptions{l: l, parent: 1, name: "a.mp4"})
 	l.SetProcessed(t.Context(), []int64{a.ID}, true)
 	if p := get(); p.Unknown != 1 || p.Processed != 1 {
 		t.Fatalf("%+v", p)
 	}
-	d := entry(t, l, 1, "nested")
+	d := entry(t, entryOptions{l: l, parent: 1, name: "nested"})
 	refresh(t, l, d.ID)
 	if p := get(); p.Unknown != 0 || p.Total != 2 || p.Processed != 1 {
 		t.Fatalf("%+v", p)
@@ -65,7 +65,7 @@ func TestDirectoryContentsUseLastCompleteDirectIndex(t *testing.T) {
 	put(t, filepath.Join(directory, "nested", "deeper.mp4"))
 	put(t, filepath.Join(directory, "nested", "deeper.mp3"))
 	refresh(t, l, 1)
-	album := entry(t, l, 1, "album")
+	album := entry(t, entryOptions{l: l, parent: 1, name: "album"})
 	get := func() *DirectoryContents {
 		t.Helper()
 		entries, err := l.WithProgressBatch(t.Context(), []Entry{album})
@@ -103,13 +103,13 @@ func TestProgressBatchOverlappingScopesAndFreshState(t *testing.T) {
 		put(t, filepath.Join(root, name))
 	}
 	refresh(t, l, 1)
-	a, b, empty := entry(t, l, 1, "a"), entry(t, l, 1, "b"), entry(t, l, 1, "empty")
+	a, b, empty := entry(t, entryOptions{l: l, parent: 1, name: "a"}), entry(t, entryOptions{l: l, parent: 1, name: "b"}), entry(t, entryOptions{l: l, parent: 1, name: "empty"})
 	refresh(t, l, a.ID)
 	refresh(t, l, b.ID)
 	refresh(t, l, empty.ID)
-	nested := entry(t, l, a.ID, "nested")
+	nested := entry(t, entryOptions{l: l, parent: a.ID, name: "nested"})
 	refresh(t, l, nested.ID)
-	file := entry(t, l, a.ID, "one.MP4")
+	file := entry(t, entryOptions{l: l, parent: a.ID, name: "one.MP4"})
 	rootEntry, err := l.Get(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)

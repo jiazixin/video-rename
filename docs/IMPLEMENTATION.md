@@ -16,11 +16,11 @@
 | internal/notification、tokenusage、runstat、timebucket | 通知队列、请求账本、运行分析及两类分析共用的趋势分桶 |
 | web/src | Vue 应用装配、业务页面、共享组件、技术模块及样式 |
 
-部署 Config 与处理 TaskConfig 分离，任务快照不包含登录、部署路径或监听设置。HTTP 入口只负责装配与契约，列表查询归属记录领域；每个领域通过私有存储依赖访问数据库。Web 的 API、契约与标签位于 app；日期、大小与剪贴板位于 lib；业务状态靠近所属 features。
+部署 Config 与处理 TaskConfig 分离，任务快照不包含登录、部署路径或监听设置。HTTP 入口只负责装配与契约，列表查询归属记录领域；每个领域通过私有存储依赖访问数据库。Web 的 API、契约与标签位于 app；日期、大小与剪贴板位于 lib；业务状态靠近所属 features。`app/use-api.ts` 绑定页面请求生命周期与写入失败反馈，`app/use-route-state.ts` 管理可恢复的 URL query，`app/form-errors.ts` 将字段校验关联到具名控件；所有设计变量集中在 `styles/`，组件与业务样式只引用变量。
 
 ## 数据库与文件安全
 
-- `internal/storage/schema.sql` 是唯一建表来源，当前结构号 **20261028**。空数据库事务创建完整结构；不支持的旧结构拒绝打开，不迁移、不自动重建。实体 ID 使用 AUTOINCREMENT。
+- `internal/storage/schema.sql` 是唯一建表来源，当前结构号 **2026102801**。空数据库事务创建完整结构；打开已有数据库前只读核对版本号及表、索引、触发器的定义，不支持的结构（包括同版本号的结构差异）拒绝打开，不迁移、不自动重建。实体 ID 使用 AUTOINCREMENT。
 - SQLite DSN 使用 WAL、FULL 同步、单写连接及 `_txlock=immediate`，最多四个只读连接。读池设置 `file:` 前缀、`mode=ro` 与 `query_only`；所有新连接启用外键和 5 秒 busy_timeout。连接不导出，Write/View 统一管理事务，CollectRows 统一处理重复的结果集消费、迭代和关闭错误。分页计数与数据使用同一快照，避免持有读连接时嵌套占满读池。
 - 数据库符号链接解析到真实路径后选择锁和密钥；多硬链接数据库拒绝打开。SQLite 不放在网络盘。密钥、数据库与辅助文件的权限有回归检查。
 - 请求读取及认证写入传播取消。有效会话续期最多等待写池 100 毫秒，失败不发新 Cookie；之后请求重试续期。登录失败计数与预算检查在同一锁内进行。
@@ -37,6 +37,8 @@
 目录扫描在文件操作全局锁外分两遍观测，每页最多 128 项、最多四个属性 worker；本地暂存 SQLite 复用于整轮扫描。完整观测后短锁发布 generation，失败保留旧完整代。发布核对直接子项和祖先的索引证据，其他目录变化不会单独导致本目录失败。观测不一致完整重试一次，普通读取错误和取消不重试。
 
 标记每批最多 128 个文件，先复核再提交短事务，进度只统计已提交记录。后台标记结果缓存最多 128 条、终态保留最多一小时；断线恢复只查询原键，结果回收后需重新选择。编号任务每次查询续租，超过 20 秒未查询时停止。
+
+编号预览、提交和恢复在文件操作全局锁内核对冻结状态。等待锁时响应取消；目录观测每批最多读取 128 项，并在批次和条目之间检查取消，诊断扫描也使用相同约束。快照继续按文件名排序并保存当前第 4 版格式。已经进入内核的文件系统调用仍须先返回，不能把此处的上下文检查当成对阻塞 NAS 调用的强制中断。
 
 目录进度缓存只保存直接子项计数，最多 8192 个目录，按事务触发器修订号失效后合并目录树。报告与选项共用 8 MiB / 32 项 LRU，按同一事务 report_revision 失效；大报告不缓存。统计由 SQL 筛选并流式汇总，精确分位数仍保留数值样本。
 
@@ -166,7 +168,7 @@ Web 私有包不独立发布。数据库结构号、缓存命名空间与编号�
 
 CI 使用 GitHub Actions，配置只在 `.github/workflows/` 维护，步骤与上文原生命令一致，Action 均按提交固定并在注释中标明已核对的 tag：
 
-- `ci.yml`：推送 `main` 和 Pull Request 时运行。`web` 检查 Prettier 格式并执行含严格类型检查的构建；`go` 先构建 Web，再依次执行 `go mod verify`、`go mod tidy -diff`、gofmt、goimports、全部 8 个发布目标的 `go vet`、带标签 vet、staticcheck、`go test -race`、govulncheck，再运行四类输入解析的短时 Fuzz 和安装 FFmpeg 后的 `-tags=integration` 媒体与构建版本测试；`e2e` 构建 `bin/video-rename` 后在 Chromium 中运行完整 Playwright，失败时上传 `web/test-results/`；`release-snapshot` 执行 `goreleaser check` 和快照构建。CI 中 macOS 只做交叉 vet 与交叉编译，未在 CI 中实机运行。
+- `ci.yml`：推送 `main` 和 Pull Request 时运行。`web` 依次执行 Prettier、ESLint / Stylelint、严格类型检查、Vitest、生产构建及生产依赖审计；`go` 先构建 Web，再依次执行 `go mod verify`、`go mod tidy -diff`、gofmt、goimports、全部 8 个发布目标的 `go vet`、带标签 vet、staticcheck、`go test -race`、govulncheck，再运行四类输入解析的短时 Fuzz 和安装 FFmpeg 后的 `-tags=integration` 媒体与构建版本测试；`e2e` 构建 `bin/video-rename` 后在 Chromium 中运行完整 Playwright，失败时上传 `web/test-results/`；`release-snapshot` 执行 `goreleaser check` 和快照构建。CI 中 macOS 只做交叉 vet 与交叉编译，未在 CI 中实机运行。
 - `release.yml`：推送 `v主.次.修订` 或 `v主.次.修订-预发布` tag 时运行，不使用依赖或构建缓存。先构建一次并核对 `--version` 精确等于 `video-rename <tag> (revision=<12位提交号>)`，再由 GoReleaser 构建并上传 Release。
 
 [.goreleaser.yaml](../.goreleaser.yaml) 先执行 `npm --prefix web ci --ignore-scripts` 与构建，再以 `CGO_ENABLED=0 -trimpath` 构建 linux amd64/arm64/ppc64le/s390x/riscv64/loong64 与 darwin amd64/arm64；32 位目标无法编译。不注入 `-X main.version`，版本由 Go 从检出的 tag 写入。输出在被忽略的 `bin/release/`，避免根 `dist/` 让工作区变脏。归档附带 LICENSE、中英文 README、配置示例及配置、运行、模型三份文档，并生成 SHA-256 `checksums.txt`。本地预演：

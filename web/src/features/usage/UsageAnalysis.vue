@@ -1,4 +1,6 @@
 <script setup lang="ts">
+  import { useRouteState, queryText, queryChoice, queryInteger } from '../../app/use-route-state';
+
   import './usage.css';
   import { formatCount, formatPercent } from '../../lib/format/number';
   import { errorText } from '../../app/errors';
@@ -31,6 +33,37 @@
     source = ref(''),
     sort = ref<'recent' | 'duration' | 'size'>('recent'),
     page = ref(1);
+  const routeState = useRouteState(
+    {
+      period: queryChoice(preset, [
+        '1h',
+        '3h',
+        '6h',
+        '12h',
+        '24h',
+        'today',
+        '7d',
+        '30d',
+        'all',
+        'custom'
+      ]),
+      from_date: queryText(fromDate),
+      from_time: queryText(fromTime),
+      to_date: queryText(toDate),
+      to_time: queryText(toTime),
+      profile: queryInteger(profile, { min: -1 }),
+      source: queryChoice(source, ['', 'manual', 'scheduled']),
+      sort: queryChoice(sort, ['recent', 'duration', 'size']),
+      page: queryInteger(page, { min: 1 })
+    },
+    {
+      exactPath: true,
+      onRestore: () => {
+        frozenRange = undefined;
+        void load();
+      }
+    }
+  );
   const report = ref<AnalysisReport>(),
     error = ref(''),
     loading = ref(false);
@@ -116,7 +149,7 @@
     if (profile.value >= 0) params.set('profile', String(profile.value));
     if (source.value) params.set('source', source.value);
     params.set('sort', sort.value);
-    params.set('page', String(page.value));
+    params.set('offset', String((page.value - 1) * 20));
     controller = new AbortController();
     loading.value = true;
     try {
@@ -125,7 +158,8 @@
       });
       if (mine === seq) {
         report.value = data;
-        if (page.value !== data.batches.page) page.value = data.batches.page;
+        if (page.value !== Math.floor(data.batches.offset / data.batches.limit) + 1)
+          page.value = Math.floor(data.batches.offset / data.batches.limit) + 1;
         error.value = '';
       }
     } catch (e) {
@@ -152,6 +186,7 @@
     reload.value++;
   }
   watch([preset, profile, source, sort, page, reload], (values, previous) => {
+    if (routeState.isRestoring.value) return;
     if (values.some((value, i) => i !== 4 && value !== previous[i])) {
       frozenRange = undefined;
       if (page.value !== 1) {
@@ -196,7 +231,7 @@
   ]);
   const totalPages = computed(() =>
     report.value
-      ? Math.max(1, Math.ceil(report.value.batches.total / report.value.batches.size))
+      ? Math.max(1, Math.ceil(report.value.batches.total / report.value.batches.limit))
       : 1
   );
   // Duration band codes sent by the server.
@@ -589,8 +624,7 @@
                 >{{ sortNames[sort] }}</button
               >
               <span class="subtle"
-                >共 {{ report.batches.total }} 个批次 · 第 {{ report.batches.page }} /
-                {{ totalPages }} 页</span
+                >共 {{ report.batches.total }} 个批次 · 第 {{ page }} / {{ totalPages }} 页</span
               >
               <PageNavigation
                 :page="page"

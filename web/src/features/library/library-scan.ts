@@ -1,6 +1,6 @@
 import { errorText } from '../../app/errors'
 import { computed, onScopeDispose, ref } from 'vue'
-import { api } from '../../app/api'
+import { useApi } from '../../app/use-api'
 import {
   type LibraryScanSettings,
   type LibraryScanState,
@@ -10,6 +10,7 @@ import {
 // Poll only while the owning page and browser tab are visible. GET is an index
 // status request; it must never trigger a filesystem scan.
 export function useLibraryScan(onPoll?: (signal: AbortSignal) => Promise<void>) {
+  const { api, formError } = useApi()
   const state = ref<LibraryScanState>(),
     error = ref(''),
     actionError = ref(''),
@@ -101,6 +102,7 @@ export function useLibraryScan(onPoll?: (signal: AbortSignal) => Promise<void>) 
   }
   onScopeDispose(stopPolling)
   return {
+    formError,
     state,
     error,
     actionError,

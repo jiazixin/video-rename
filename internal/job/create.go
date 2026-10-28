@@ -70,7 +70,7 @@ func (m *Manager) Create(ctx context.Context, r Request, source string, plan int
 			return 0, err
 		}
 		if e.kind != "directory" && (e.kind != "file" || !discovery.IsVideoExtension(e.name)) {
-			return 0, domain.Fail(domain.KindInvalid, domain.Record{Code: "target_not_runnable", Message: "only directories and video files can run"})
+			return 0, domain.Fail(domain.KindInvalid, domain.Failure{Reason: domain.ReasonTargetNotRunnable, Message: "only directories and video files can run"})
 		}
 	}
 	frames, err := (sampling.New(m.db)).Get(ctx)
@@ -117,7 +117,7 @@ func (m *Manager) Create(ctx context.Context, r Request, source string, plan int
 			return 0, err
 		}
 		if waiting >= limits.WaitingBatchLimit {
-			return 0, domain.Fail(domain.KindTooMany, domain.Record{Code: "waiting_runs_full", Message: "waiting run limit reached", Details: map[string]any{"limit": limits.WaitingBatchLimit}})
+			return 0, domain.Fail(domain.KindTooMany, domain.Failure{Reason: domain.ReasonWaitingRunsFull, Message: "waiting run limit reached", Details: map[string]any{"limit": limits.WaitingBatchLimit}})
 		}
 		res, err := tx.ExecContext(ctx, "INSERT INTO runs(source,targets,recursive,status,created,request_key,plan,config_summary,model_config_id,model_config_title,prompt_body,model_snapshot,sampling_snapshot,task,retry_snapshot) VALUES(?,?,?,'queued',?,?,?,?,?,?,?,?,?,?,?)", source, string(targets), r.Recursive, storage.Now(), r.Key, plan, summary, prompt.ID, prompt.Title, prompt.Body, modelSnapshot, string(frameSnapshot), r.Task, string(retryRaw))
 		if err != nil {
@@ -134,11 +134,11 @@ func validateRetryOperations(r Request, source string, plan int64) error {
 		return nil
 	}
 	if r.Task != "rename" || r.Recursive || source != "manual" || plan != 0 || len(r.RetryOperations) != len(r.Targets) {
-		return domain.Fail(domain.KindInvalid, domain.Record{Code: "retry_scope_invalid", Message: "success record retries only apply to chosen video files"})
+		return domain.Fail(domain.KindInvalid, domain.Failure{Reason: domain.ReasonRetryScopeInvalid, Message: "success record retries only apply to chosen video files"})
 	}
 	for _, entry := range r.Targets {
 		if r.RetryOperations[entry] <= 0 {
-			return domain.Fail(domain.KindInvalid, domain.Record{Code: "retry_operation_missing", Message: "success record retry lacks its naming operation"})
+			return domain.Fail(domain.KindInvalid, domain.Failure{Reason: domain.ReasonRetryOperationMissing, Message: "success record retry lacks its naming operation"})
 		}
 	}
 	return nil
@@ -170,7 +170,7 @@ func (m *Manager) existingRun(ctx context.Context, r Request) (id int64, found b
 		return 0, false, fmt.Errorf("encode run targets: %w", err)
 	}
 	if oldTargets != string(current) || oldRecursive != r.Recursive || oldModelConfigID != r.ModelConfigID || oldTask != r.Task || !maps.Equal(oldRetry.RetryOperations, r.RetryOperations) {
-		return 0, false, domain.Fail(domain.KindConflict, domain.Record{Code: "idempotency_key_reused", Message: "request key is used by a different request"})
+		return 0, false, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonIdempotencyKeyReused, Message: "request key is used by a different request"})
 	}
 	return id, true, nil
 }
@@ -181,7 +181,7 @@ func (m *Manager) freezeModel(ctx context.Context, id int64, cfg *config.TaskCon
 	prompt, err := (model.New(m.db)).Get(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return prompt, "", domain.Fail(domain.KindNotFound, domain.Record{Code: "model_config_not_found", Message: "model configuration does not exist"})
+			return prompt, "", domain.Fail(domain.KindNotFound, domain.Failure{Reason: domain.ReasonModelConfigNotFound, Message: "model configuration does not exist"})
 		}
 		return prompt, "", fmt.Errorf("load model configuration: %w", err)
 	}
@@ -197,7 +197,7 @@ func (m *Manager) freezeModel(ctx context.Context, id int64, cfg *config.TaskCon
 	// was sent, regardless of later edits to the library or the fixed part.
 	prompt.Body = strings.TrimRight(prompt.Body, "\n") + "\n\n" + strings.TrimRight(fixed, "\n")
 	if err = cfg.ApplyModel(prompt.ServerConfig, prompt.Body); err != nil {
-		return prompt, "", domain.Fail(domain.KindInvalid, domain.Record{Code: "model_config_incomplete", Message: "model configuration is incomplete"}).Wrap(err)
+		return prompt, "", domain.Fail(domain.KindInvalid, domain.Failure{Reason: domain.ReasonModelConfigIncomplete, Message: "model configuration is incomplete"}).Wrap(err)
 	}
 	snapshot, err := (model.New(m.db)).Snapshot(prompt)
 	return prompt, snapshot, err

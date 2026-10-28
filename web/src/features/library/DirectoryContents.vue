@@ -45,14 +45,14 @@
     display: inline-grid;
     grid-template-columns: repeat(2, max-content);
     align-items: center;
-    gap: 3px 12px;
+    gap: var(--space-3) var(--space-12);
     max-width: 100%;
     vertical-align: middle;
   }
   .directory-contents.contents-inline {
     display: inline-flex;
     flex-wrap: nowrap;
-    gap: 12px;
+    gap: var(--space-12);
   }
   .contents-inline .content-stat {
     flex-shrink: 0;
@@ -60,18 +60,18 @@
   .content-stat {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--space-4);
     white-space: nowrap;
-    font-size: 11px;
-    line-height: 18px;
+    font-size: var(--font-size-11);
+    line-height: var(--line-height-18);
     color: var(--steel);
   }
   .content-stat strong {
     margin-left: auto;
   }
   .content-stat strong {
-    font-size: 12px;
-    font-weight: 600;
+    font-size: var(--font-size-12);
+    font-weight: var(--font-weight-600);
     font-variant-numeric: tabular-nums;
     color: var(--palette-303940);
   }
@@ -88,13 +88,13 @@
     color: var(--palette-896018);
   }
   .contents-pending {
-    font-size: 11px;
+    font-size: var(--font-size-11);
     color: var(--steel);
     white-space: nowrap;
   }
   @media (max-width: 600px) {
     .directory-contents.contents-inline {
-      gap: 8px;
+      gap: var(--space-8);
     }
   }
 </style>

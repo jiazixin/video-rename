@@ -40,7 +40,7 @@ func TestAnthropicMultiImageSystemAndParameters(t *testing.T) {
 	}))
 	defer server.Close()
 	var cfg config.TaskConfig
-	err := cfg.ApplyModel(config.ServerConfig{Provider: "claude", BaseURL: server.URL + "/v1", APIKey: "claude-test-key", Model: "vision", Timeout: "2s", Temperature: 0.8, MaxTokens: 1024}, "标题要求")
+	err := cfg.ApplyModel(config.ServerConfig{Provider: "claude", BaseURL: server.URL + "/v1", APIKey: "claude-test-key", Model: "vision", TimeoutMS: 2000, Temperature: 0.8, MaxTokens: 1024}, "标题要求")
 	if err != nil {
 		t.Fatal(err)
 	}

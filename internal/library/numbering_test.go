@@ -228,8 +228,8 @@ func TestNumberingApplyRestoreAndIdempotence(t *testing.T) {
 		if err != nil || e.Name != i.New {
 			t.Fatal(e, err)
 		}
-		h, err := l.History(t.Context(), i.Entry, 0)
-		if err != nil || len(h) != 1 || h[0].Old != i.Old || h[0].New != i.New {
+		h, err := l.History(t.Context(), i.Entry, "")
+		if err != nil || len(h.Items) != 1 || h.Items[0].Old != i.Old || h.Items[0].New != i.New {
 			t.Fatal(h, err)
 		}
 	}
@@ -285,7 +285,7 @@ func TestNumberingCrossPageOrderAndSearch(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		p, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 200, Generation: 0, Query: "photo", Kind: "image", Status: "", Force: false, SortBy: sort})
+		p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 0, Limit: 200, Query: "photo", Kind: "image", Status: "", SortBy: sort})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -510,7 +510,7 @@ func TestNumberingPreviewChecksActualCaseSourceSnapshot(t *testing.T) {
 				t.Fatal(err)
 			}
 			refresh(t, l, 1)
-			e := entry(t, l, 1, name)
+			e := entry(t, entryOptions{l: l, parent: 1, name: name})
 			item := NumberingItem{Entry: e.ID, Old: name, New: "5.jpeg", Version: e.Version, Identity: e.Identity, Size: e.Size, ModifiedNS: e.ModifiedNS}
 			switch field {
 			case "identity":
@@ -679,7 +679,7 @@ func TestNumberingFingerprintIgnoresChildMetadataButRejectsReplacement(t *testin
 	if err := os.WriteFile(file, []byte("image"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	before, err := directoryFingerprint(root)
+	before, err := directoryFingerprint(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -692,7 +692,7 @@ func TestNumberingFingerprintIgnoresChildMetadataButRejectsReplacement(t *testin
 	if err := os.Chmod(file, 0o640); err != nil {
 		t.Fatal(err)
 	}
-	after, err := directoryFingerprint(root)
+	after, err := directoryFingerprint(t.Context(), root)
 	if err != nil || before != after {
 		t.Fatal("unrelated child metadata invalidated preview", before, after, err)
 	}
@@ -702,14 +702,14 @@ func TestNumberingFingerprintIgnoresChildMetadataButRejectsReplacement(t *testin
 	if err := os.Mkdir(child, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	replaced, err := directoryFingerprint(root)
+	replaced, err := directoryFingerprint(t.Context(), root)
 	if err != nil || replaced == after {
 		t.Fatal("directory replacement not detected", err)
 	}
 	if err := os.WriteFile(file, []byte("changed file content"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	changed, err := directoryFingerprint(root)
+	changed, err := directoryFingerprint(t.Context(), root)
 	if err != nil || changed == replaced {
 		t.Fatal("file changes not detected", err)
 	}

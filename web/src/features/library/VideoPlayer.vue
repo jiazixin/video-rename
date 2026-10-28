@@ -226,7 +226,7 @@
     flex: 1;
     min-height: 0;
     min-width: 0;
-    border-radius: 10px;
+    border-radius: var(--radius-10);
     overflow: hidden;
     background: var(--stage);
     color: var(--stage-ink);
@@ -252,9 +252,9 @@
     top: 50%;
     width: 64px;
     height: 64px;
-    padding: 0 0 0 4px;
+    padding: 0 0 0 var(--space-4);
     border: 0;
-    border-radius: 50%;
+    border-radius: var(--radius-round);
     transform: translate(-50%, -50%);
     background: var(--palette-rgba-255-255-255-0_92);
     color: var(--palette-0c1110);
@@ -301,29 +301,29 @@
   }
   .video-bar {
     flex-shrink: 0;
-    padding: 12px 14px 10px;
+    padding: var(--space-12) var(--space-14) var(--space-10);
     background: var(--stage-bar);
     border-top: 1px solid var(--stage-line);
   }
   .bar-row {
     display: flex;
     align-items: center;
-    gap: 10px;
-    margin-top: 8px;
+    gap: var(--space-10);
+    margin-top: var(--space-8);
   }
   .bar-row button {
     border: 0;
     background: transparent;
     color: var(--stage-ink);
-    padding: 7px;
-    border-radius: 8px;
+    padding: var(--space-7);
+    border-radius: var(--radius-8);
   }
   .bar-row button:hover:not(:disabled) {
     background: var(--stage-hover);
     border: 0;
   }
   .media-time {
-    font-size: 12px;
+    font-size: var(--font-size-12);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -337,8 +337,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 12px;
-    line-height: 1.5;
+    font-size: var(--font-size-12);
+    line-height: var(--line-height-1-5);
     color: var(--stage-ink);
   }
   .bar-hint {
@@ -349,9 +349,9 @@
   }
   .bar-row .speed {
     min-width: 46px;
-    padding: 4px 8px;
+    padding: var(--space-4) var(--space-8);
     border: 1px solid var(--stage-line);
-    font-size: 12px;
+    font-size: var(--font-size-12);
     font-variant-numeric: tabular-nums;
   }
   .bar-row .speed:hover:not(:disabled) {
@@ -360,14 +360,14 @@
   .media-volume {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: var(--space-5);
   }
   .video-theater input[type='range'] {
     display: block;
     appearance: none;
     -webkit-appearance: none;
     border: 0;
-    border-radius: 10px;
+    border-radius: var(--radius-10);
     height: 5px;
     min-height: 0;
     padding: 0;
@@ -385,7 +385,7 @@
   }
   .media-seek {
     width: 100%;
-    margin: 4px 0;
+    margin: var(--space-4) 0;
   }
   .media-volume input {
     width: 76px;
@@ -394,17 +394,17 @@
     appearance: none;
     width: 13px;
     height: 13px;
-    border-radius: 50%;
+    border-radius: var(--radius-round);
     background: var(--palette-ffffff);
-    box-shadow: 0 0 0 3px var(--stage-accent);
+    box-shadow: var(--shadow-15);
   }
   .video-theater input::-moz-range-thumb {
     width: 10px;
     height: 10px;
     border: 0;
-    border-radius: 50%;
+    border-radius: var(--radius-round);
     background: var(--palette-ffffff);
-    box-shadow: 0 0 0 3px var(--stage-accent);
+    box-shadow: var(--shadow-15);
   }
   .video-theater:fullscreen {
     border-radius: 0;
@@ -416,16 +416,16 @@
   }
   @media (max-width: 500px) {
     .video-bar {
-      padding: 10px;
+      padding: var(--space-10);
     }
     .bar-row {
-      gap: 4px;
+      gap: var(--space-4);
     }
     .media-volume input {
       width: 48px;
     }
     .media-time {
-      font-size: 11px;
+      font-size: var(--font-size-11);
     }
   }
   @media (pointer: coarse) {

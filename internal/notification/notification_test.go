@@ -123,8 +123,17 @@ func service(t *testing.T) *Service {
 	})
 	return New(db, slog.New(slog.DiscardHandler))
 }
-func addRun(t *testing.T, s *Service, status string, failed int) int64 {
+
+type addRunOptions struct {
+	s      *Service
+	status string
+	failed int
+}
+
+func addRun(t *testing.T, options addRunOptions) int64 {
 	t.Helper()
+	s, status, failed := options.s, options.status, options.failed
+
 	res, err := storage.WriteValue(t.Context(), s.db, func(tx *sql.Tx) (sql.Result, error) {
 		return tx.ExecContext(t.Context(), "INSERT INTO runs(source,targets,recursive,status,created,started,finished,discovered,done,failed,request_key) VALUES('manual','[1]',1,?,?,?, ?,3,2,?,?)", status, "2026-09-21T01:00:00.000Z", "2026-09-21T01:00:05.000Z", "2026-09-21T01:00:15.000Z", failed, fmt.Sprint(time.Now().UnixNano()))
 	})
@@ -139,7 +148,7 @@ func addRun(t *testing.T, s *Service, status string, failed int) int64 {
 }
 func TestQueueFilteringRetriesAndSecretPreservation(t *testing.T) {
 	s := service(t)
-	addRun(t, s, "completed", 0)
+	addRun(t, addRunOptions{s: s, status: "completed", failed: 0})
 	if err := s.Save(t.Context(), Input{Kind: "webhook", Enabled: true, Endpoint: "http://127.0.0.1/push?key=private"}); err != nil {
 		t.Fatal(err)
 	}
@@ -166,8 +175,8 @@ func TestQueueFilteringRetriesAndSecretPreservation(t *testing.T) {
 	if err = s.Save(t.Context(), Input{Kind: "webhook", Enabled: true, FailureOnly: true}); err != nil {
 		t.Fatal(err)
 	}
-	addRun(t, s, "completed", 0)
-	id := addRun(t, s, "partial_failure", 1)
+	addRun(t, addRunOptions{s: s, status: "completed", failed: 0})
+	id := addRun(t, addRunOptions{s: s, status: "partial_failure", failed: 1})
 	calls := 0
 	s.send = func(_ context.Context, m message) error {
 		c, title, body := m.credentials, m.title, m.body
@@ -190,8 +199,8 @@ func TestQueueFilteringRetriesAndSecretPreservation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	history, err := s.History(t.Context())
-	if err != nil || len(history) != 1 || history[0].Run != id || history[0].Status != "failed" || calls != 3 {
+	history, err := s.ListHistoryPage(t.Context(), 1, 50)
+	if err != nil || len(history.Items) != 1 || history.Items[0].Run != id || history.Items[0].Status != "failed" || calls != 3 {
 		t.Fatal(history, calls, err)
 	}
 	var status string
@@ -206,7 +215,7 @@ func TestQueueFilteringRetriesAndSecretPreservation(t *testing.T) {
 	if err = s.Save(t.Context(), Input{Kind: "webhook", Enabled: false}); err != nil {
 		t.Fatal(err)
 	}
-	addRun(t, s, "failed", 1)
+	addRun(t, addRunOptions{s: s, status: "failed", failed: 1})
 	if err := s.tick(t.Context()); err != nil {
 		t.Error(err)
 	}
@@ -219,7 +228,7 @@ func TestQueueSuccessIsDeduplicated(t *testing.T) {
 	if err := s.Save(t.Context(), Input{Kind: "bark", Enabled: true, Endpoint: "http://127.0.0.1/device"}); err != nil {
 		t.Fatal(err)
 	}
-	addRun(t, s, "completed", 0)
+	addRun(t, addRunOptions{s: s, status: "completed", failed: 0})
 	calls := 0
 	s.send = func(context.Context, message) error { calls++; return nil }
 	for range 3 {
@@ -237,7 +246,7 @@ func TestNotificationRejectsMalformedStoredTime(t *testing.T) {
 	if err := s.Save(t.Context(), Input{Kind: "webhook", Enabled: true, Endpoint: "http://127.0.0.1/push"}); err != nil {
 		t.Fatal(err)
 	}
-	id := addRun(t, s, "completed", 0)
+	id := addRun(t, addRunOptions{s: s, status: "completed", failed: 0})
 	if _, err := storage.WriteValue(t.Context(), s.db, func(tx *sql.Tx) (sql.Result, error) {
 		return tx.ExecContext(t.Context(), "UPDATE runs SET finished=? WHERE id=?", "2026-09-21T01:00:15Z", id)
 	}); err != nil {
@@ -246,8 +255,8 @@ func TestNotificationRejectsMalformedStoredTime(t *testing.T) {
 	if err := s.enqueue(t.Context()); err == nil {
 		t.Fatal("accepted a stored timestamp without canonical millisecond precision")
 	}
-	history, err := s.History(t.Context())
-	if err != nil || len(history) != 0 {
+	history, err := s.ListHistoryPage(t.Context(), 1, 50)
+	if err != nil || len(history.Items) != 0 {
 		t.Fatalf("got delivery history %v and error %v, want no delivery", history, err)
 	}
 }
@@ -257,7 +266,7 @@ func TestNotificationRecoveryAttemptLimit(t *testing.T) {
 	if err := s.Save(t.Context(), Input{Kind: "bark", Enabled: true, Endpoint: "http://127.0.0.1/device"}); err != nil {
 		t.Fatal(err)
 	}
-	addRun(t, s, "completed", 0)
+	addRun(t, addRunOptions{s: s, status: "completed", failed: 0})
 	if err := s.enqueue(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -271,8 +280,8 @@ func TestNotificationRecoveryAttemptLimit(t *testing.T) {
 	go func() { done <- s.Run(ctx) }()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		history, err := s.History(t.Context())
-		if err == nil && history[0].Status == "failed" && history[0].Attempts == 3 {
+		history, err := s.ListHistoryPage(t.Context(), 1, 50)
+		if err == nil && history.Items[0].Status == "failed" && history.Items[0].Attempts == 3 {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -317,12 +326,12 @@ func TestBarkBatchBodyThroughJSONEndpoint(t *testing.T) {
 	if err := s.Save(t.Context(), Input{Kind: "bark", Enabled: true, Endpoint: secret.Value(server.URL + "/bark/test-key/")}); err != nil {
 		t.Fatal(err)
 	}
-	addRun(t, s, "partial_failure", 1)
+	addRun(t, addRunOptions{s: s, status: "partial_failure", failed: 1})
 	if err := s.tick(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	history, err := s.History(t.Context())
-	if err != nil || len(history) != 1 || history[0].Status != "sent" {
+	history, err := s.ListHistoryPage(t.Context(), 1, 50)
+	if err != nil || len(history.Items) != 1 || history.Items[0].Status != "sent" {
 		t.Fatalf("delivery: %v %v", history, err)
 	}
 }
@@ -341,7 +350,7 @@ func TestNotificationTimezoneUsesDST(t *testing.T) {
 		{"2026-01-21T01:00:00.000Z", "2026-01-20 20:00:00 -05:00 (America/New_York)"},
 		{"2026-07-21T01:00:00.000Z", "2026-07-20 21:00:00 -04:00 (America/New_York)"},
 	} {
-		id := addRun(t, s, "completed", 0)
+		id := addRun(t, addRunOptions{s: s, status: "completed", failed: 0})
 		if _, err := storage.WriteValue(t.Context(), s.db, func(tx *sql.Tx) (sql.Result, error) {
 			return tx.ExecContext(t.Context(), "UPDATE runs SET started=? WHERE id=?", tc.date, id)
 		}); err != nil {

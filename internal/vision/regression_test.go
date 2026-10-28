@@ -3,6 +3,7 @@ package vision
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -183,9 +184,6 @@ func TestResponseBodyCancellationDoesNotRetry(t *testing.T) {
 		cancel()
 		// Keep the body open until transport cancellation reaches the server.
 		// Returning now would race cancellation with a completed empty response.
-		if _, err := io.Copy(io.Discard, r.Body); err != nil {
-			return
-		}
 		ctx, cancel := context.WithTimeout(r.Context(), time.Second)
 		defer cancel()
 		<-ctx.Done()
@@ -194,6 +192,45 @@ func TestResponseBodyCancellationDoesNotRetry(t *testing.T) {
 	res, err := newTestClient(testConfig(t, srv.URL)).Title(ctx, "p", frameSet(1))
 	if err == nil || err.Code != domain.CodeCancelled || res.Attempts != 1 || calls.Load() != 1 {
 		t.Fatalf("unexpected cancellation: %+v %v calls=%d", res, err, calls.Load())
+	}
+}
+
+type cancelOnEOFResponse struct {
+	reader *strings.Reader
+	cancel context.CancelFunc
+	calls  int
+}
+
+func (r *cancelOnEOFResponse) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if errors.Is(err, io.EOF) {
+		r.cancel()
+	}
+	return n, err
+}
+
+func (r *cancelOnEOFResponse) RoundTrip(request *http.Request) (*http.Response, error) {
+	r.calls++
+	if err := request.Body.Close(); err != nil {
+		return nil, err
+	}
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(r), Header: make(http.Header), Request: request}, nil
+}
+
+func TestResponseCompletionHonorsCancellation(t *testing.T) {
+	for _, body := range []string{"", okResponse("ignored title")} {
+		t.Run(fmt.Sprint(len(body)), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			response := &cancelOnEOFResponse{reader: strings.NewReader(body), cancel: cancel}
+			client := newTestClient(testConfig(t, "http://model.test"))
+			client.http.Transport = response
+			defer client.Close()
+			result, err := client.Title(ctx, "prompt", frameSet(1))
+			if err == nil || err.Code != domain.CodeCancelled || result.Title != "" || result.Attempts != 1 || response.calls != 1 {
+				t.Fatalf("got result=%+v error=%v calls=%d, want cancellation without parsing or retry", result, err, response.calls)
+			}
+		})
 	}
 }
 

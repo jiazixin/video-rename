@@ -63,13 +63,13 @@ func (l *Library) PreviewNumbering(ctx context.Context, req NumberingRequest) (N
 		return Numbering{}, errNotDirectory
 	}
 	if l.Busy != nil && l.Busy(ctx, parent) {
-		return Numbering{}, domain.Fail(domain.KindConflict, domain.Record{Code: "descendant_busy", Message: "a descendant has an active job"})
+		return Numbering{}, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonDescendantBusy, Message: "a descendant has an active job"})
 	}
 	path, err := l.Path(ctx, parent)
 	if err != nil {
 		return Numbering{}, err
 	}
-	before, err := directoryFingerprint(path)
+	before, err := directoryFingerprint(ctx, path)
 	if err != nil {
 		return Numbering{}, err
 	}
@@ -115,7 +115,7 @@ func (l *Library) PreviewNumbering(ctx context.Context, req NumberingRequest) (N
 		if sameClass {
 			item := NumberingItem{Identity: e.Identity, Size: e.Size, ModifiedNS: e.ModifiedNS}
 			if !numberingMatch(filepath.Join(path, e.Name), item) {
-				return Numbering{}, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_media_changed", Message: "a file changed; refresh the directory", Details: map[string]any{"media": m.value}})
+				return Numbering{}, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingMediaChanged, Message: "a file changed; refresh the directory", Details: map[string]any{"media": m.value}})
 			}
 		}
 		indexed[e.Name] = true
@@ -128,27 +128,27 @@ func (l *Library) PreviewNumbering(ctx context.Context, req NumberingRequest) (N
 			outside = append(outside, e)
 		}
 	}
-	disk, err := os.ReadDir(path)
+	err = scanNumberingDirectory(ctx, path, func(e os.DirEntry) error {
+		if !e.Type().IsRegular() || indexed[e.Name()] {
+			return nil
+		}
+		if m.match(e.Name()) || (settings.Shared && peer.match(e.Name())) {
+			return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingIndexIncomplete, Message: "the index is incomplete; refresh the directory", Details: map[string]any{"media": m.value}})
+		}
+		return nil
+	})
 	if err != nil {
 		return Numbering{}, err
 	}
-	for _, e := range disk {
-		if !e.Type().IsRegular() || indexed[e.Name()] {
-			continue
-		}
-		if m.match(e.Name()) || (settings.Shared && peer.match(e.Name())) {
-			return Numbering{}, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_index_incomplete", Message: "the index is incomplete; refresh the directory", Details: map[string]any{"media": m.value}})
-		}
-	}
-	after, err := directoryFingerprint(path)
+	after, err := directoryFingerprint(ctx, path)
 	if err != nil {
 		return Numbering{}, err
 	}
 	if before != after {
-		return Numbering{}, domain.Fail(domain.KindConflict, domain.Record{Code: "directory_changed", Message: "directory changed; preview again"})
+		return Numbering{}, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonDirectoryChanged, Message: "directory changed; preview again"})
 	}
 	if len(selected) == 0 {
-		return Numbering{}, domain.Fail(domain.KindInvalid, domain.Record{Code: "numbering_nothing_selected", Message: "no file to number in the current filter", Details: map[string]any{"media": m.value}})
+		return Numbering{}, domain.Fail(domain.KindInvalid, domain.Failure{Reason: domain.ReasonNumberingNothingSelected, Message: "no file to number in the current filter", Details: map[string]any{"media": m.value}})
 	}
 	items := numberingNames(numberingNamesOptions{Selected: selected, Outside: outside, Peers: peers, Rules: rules, PeerPrefix: peerRules.Prefix})
 	if media == "mixed" {
@@ -231,11 +231,14 @@ func (l *Library) saveNumberingPreview(ctx context.Context, b Numbering, path st
 	changed := map[string]NumberingItem{}
 	identities := map[string]bool{}
 	for _, i := range b.Items {
+		if err := ctx.Err(); err != nil {
+			return Numbering{}, err
+		}
 		if err := ValidName(i.New); err != nil {
 			return Numbering{}, err
 		}
 		if identities[i.Identity] {
-			return Numbering{}, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_hard_link", Message: "files with hard links cannot be numbered safely", Details: map[string]any{"media": b.Media}})
+			return Numbering{}, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingHardLink, Message: "files with hard links cannot be numbered safely", Details: map[string]any{"media": b.Media}})
 		}
 		identities[i.Identity] = true
 		if i.Old != i.New {
@@ -243,14 +246,20 @@ func (l *Library) saveNumberingPreview(ctx context.Context, b Numbering, path st
 			b.Changed++
 		}
 	}
-	disk, err := os.ReadDir(path)
+	names := map[string][]string{}
+	err := scanNumberingDirectory(ctx, path, func(entry os.DirEntry) error {
+		key := strings.ToLower(entry.Name())
+		names[key] = append(names[key], entry.Name())
+		return nil
+	})
 	if err != nil {
 		return Numbering{}, err
 	}
-	names := make(map[string][]string, len(disk))
-	for _, entry := range disk {
-		key := strings.ToLower(entry.Name())
-		names[key] = append(names[key], entry.Name())
+	for _, candidates := range names {
+		if err := ctx.Err(); err != nil {
+			return Numbering{}, err
+		}
+		slices.Sort(candidates)
 	}
 	for idx := range b.Items {
 		if err := ctx.Err(); err != nil {
@@ -260,7 +269,7 @@ func (l *Library) saveNumberingPreview(ctx context.Context, b Numbering, path st
 		i.Current = i.Old
 		i.Temp = ".video-rename-" + b.ID + fmt.Sprintf("-%d.tmp", idx)
 		if _, err := os.Lstat(filepath.Join(path, i.Temp)); !errors.Is(err, fs.ErrNotExist) {
-			return Numbering{}, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_temp_conflict", Message: "temporary name conflict; preview again"})
+			return Numbering{}, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingTempConflict, Message: "temporary name conflict; preview again"})
 		}
 		if i.Old == i.New {
 			continue

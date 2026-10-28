@@ -20,7 +20,7 @@ import (
 
 // ErrDirectoryScanChanged asks the caller to retry instead of publishing stale evidence.
 // A mismatch alone does not prove that a user or program changed the directory.
-var ErrDirectoryScanChanged = domain.Fail(domain.KindConflict, domain.Record{Code: "scan_changed", Message: "directory scan check mismatch; retry later"})
+var ErrDirectoryScanChanged = domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonScanChanged, Message: "directory scan check mismatch; retry later"})
 
 // ScanDirectoryResult summarizes a directory scan. Counts refer to indexed
 // entries; Files counts regular files of every media type.

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"video-rename/internal/domain"
+	"video-rename/internal/pagination"
 	"video-rename/internal/storage"
 	"video-rename/internal/timefmt"
 )
@@ -24,14 +25,14 @@ import (
 // Entry is one indexed file or directory.
 type Entry struct {
 	Progress   *DirectoryProgress `json:"progress,omitzero"`
-	Contents   *DirectoryContents `json:"contents"`
+	Contents   *DirectoryContents `json:"contents,omitzero"`
 	TaskStatus string             `json:"task_status"`
 	ID         int64              `json:"id"`
 	Parent     int64              `json:"parent"`
 	Name       string             `json:"name"`
 	Kind       string             `json:"kind"`
 	Identity   string             `json:"-"`
-	Size       int64              `json:"size"`
+	Size       int64              `json:"size_bytes"`
 	RenamedAt  string             `json:"renamed_at"`
 	ModifiedNS int64              `json:"-"`
 	Version    int64              `json:"version"`
@@ -314,9 +315,9 @@ func (l *Library) StartRefresh(ctx context.Context, id int64) {
 // Page is a page of directory entries.
 type Page struct {
 	Total       int           `json:"total"`
-	Number      int           `json:"page,omitzero"`
+	Offset      int           `json:"offset"`
+	Limit       int           `json:"limit"`
 	Items       []Entry       `json:"items"`
-	Next        int           `json:"next"`
 	Generation  int64         `json:"generation,string"`
 	Refreshing  bool          `json:"refreshing"`
 	Refreshed   string        `json:"refreshed"`
@@ -325,30 +326,10 @@ type Page struct {
 	Breadcrumbs []Entry       `json:"breadcrumbs"`
 }
 
-// ListOrderedOptions groups the inputs for ListOrdered.
-type ListOrderedOptions struct {
-	ID         int64
-	Offset     int
-	Limit      int
-	Generation int64
-	Query      string
-	Kind       string
-	Status     string
-	Force      bool
-	SortBy     string
-}
-
-// ListOrdered continues a cursor listing; a cursor from an older generation is rejected.
-func (l *Library) ListOrdered(ctx context.Context, params ListOrderedOptions) (Page, error) {
-	id, offset, limit, generation, q, kind, status, force, sortBy := params.ID, params.Offset, params.Limit, params.Generation, params.Query, params.Kind, params.Status, params.Force, params.SortBy
-
-	return l.listOrdered(ctx, listOrderedOptions{ID: id, Offset: offset, Limit: limit, Generation: generation, Query: q, Kind: kind, Status: status, Force: force, SortBy: sortBy, PageNumber: 0})
-}
-
 // ListPageOptions groups the inputs for ListPage.
 type ListPageOptions struct {
 	ID     int64
-	Page   int
+	Offset int
 	Limit  int
 	Query  string
 	Kind   string
@@ -356,30 +337,16 @@ type ListPageOptions struct {
 	SortBy string
 }
 
-// ListPage reads a fresh page without carrying a cursor from an older index.
+// ListPage reads a row window from the current directory index.
 // Count and page boundaries come from one snapshot, even during a rescan.
 func (l *Library) ListPage(ctx context.Context, params ListPageOptions) (Page, error) {
-	id, page, limit, q, kind, status, sortBy := params.ID, params.Page, params.Limit, params.Query, params.Kind, params.Status, params.SortBy
-
-	return l.listOrdered(ctx, listOrderedOptions{ID: id, Offset: 0, Limit: limit, Generation: 0, Query: q, Kind: kind, Status: status, Force: false, SortBy: sortBy, PageNumber: max(1, page)})
-}
-
-// listOrderedOptions groups the inputs for listOrdered.
-type listOrderedOptions struct {
-	ID         int64
-	Offset     int
-	Limit      int
-	Generation int64
-	Query      string
-	Kind       string
-	Status     string
-	Force      bool
-	SortBy     string
-	PageNumber int
-}
-
-func (l *Library) listOrdered(ctx context.Context, params listOrderedOptions) (Page, error) {
-	id, offset, limit, generation, q, kind, status, force, sortBy, pageNumber := params.ID, params.Offset, params.Limit, params.Generation, params.Query, params.Kind, params.Status, params.Force, params.SortBy, params.PageNumber
+	id, offset, limit, q, kind, status, sortBy := params.ID, max(0, params.Offset), params.Limit, params.Query, params.Kind, params.Status, params.SortBy
+	if !slices.Contains([]string{"", "file", "directory", "video", "audio", "image", "other"}, kind) {
+		return Page{}, domain.InvalidField("kind", "invalid_choice")
+	}
+	if sortBy != "" && !slices.Contains([]string{"name_asc", "name_desc", "size_asc", "size_desc", "mtime_asc", "mtime_desc", "renamed_asc", "renamed_desc", "status_asc", "status_desc"}, sortBy) {
+		return Page{}, domain.InvalidField("sort", "invalid_choice")
+	}
 
 	return storage.ReadValue(ctx, l.db, func(tx *sql.Tx) (Page, error) {
 		p := Page{Items: []Entry{}, Breadcrumbs: []Entry{}}
@@ -402,26 +369,15 @@ func (l *Library) listOrdered(ctx context.Context, params listOrderedOptions) (P
 		p.Refreshed = refreshed.String
 		// Missing or malformed freshness evidence deliberately forces a refresh.
 		at, _ := time.Parse(timefmt.Layout, p.Refreshed)
-		if force || time.Since(at) > 30*time.Second {
+		if time.Since(at) > 30*time.Second {
 			l.StartRefresh(ctx, id)
 		}
 		l.refreshMu.Lock()
 		p.Refreshing = l.refreshing[id] != nil || l.scanning[id]
 		l.refreshMu.Unlock()
-		if generation != 0 && p.Generation != generation {
-			return p, errDirectoryRefresh
-		}
 		if limit != 50 && limit != 100 && limit != 200 {
 			limit = 100
 		}
-		if offset < 0 {
-			offset = 0
-		}
-
-		var anchorKind int
-		var anchorName string
-		var anchorValue any
-		var anchorID int64
 		value, sortBy := directoryOrder(sortBy)
 		queryPrefix := ""
 		queryArgs := []any{}
@@ -433,11 +389,6 @@ func (l *Library) listOrdered(ctx context.Context, params listOrderedOptions) (P
 			queryPrefix = `WITH directory_status_ranks AS MATERIALIZED (SELECT CAST(key AS INTEGER) AS status_entry,value AS rank FROM json_each(?)) `
 			queryArgs = append(queryArgs, ranks)
 			value = `CASE WHEN kind='directory' THEN COALESCE((SELECT rank FROM directory_status_ranks WHERE status_entry=directory_items.entry),0) ELSE ` + value + ` END`
-		}
-		if offset > 0 {
-			if err = tx.QueryRowContext(ctx, queryPrefix+"SELECT CASE WHEN kind='directory' THEN 0 ELSE 1 END,name,entry,"+value+" FROM directory_items WHERE dir=? AND generation=? AND entry=?", append(append([]any{}, queryArgs...), id, p.Generation, offset)...).Scan(&anchorKind, &anchorName, &anchorID, &anchorValue); err != nil {
-				return p, errDirectoryRefresh
-			}
 		}
 		filter := "(?='' OR kind=?)"
 		if kind == "video" || kind == "audio" || kind == "other" || kind == "image" {
@@ -475,20 +426,16 @@ func (l *Library) listOrdered(ctx context.Context, params listOrderedOptions) (P
 		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter, countArgs...).Scan(&p.Total); err != nil {
 			return p, err
 		}
-		order, comparison := "ASC", ">"
+		order := "ASC"
 		if strings.HasSuffix(sortBy, "_desc") {
-			order, comparison = "DESC", "<"
+			order = "DESC"
 		}
-		skip := 0
-		if pageNumber > 0 {
-			// Clamp before multiplying so arbitrary client page numbers cannot overflow.
-			p.Number = min(pageNumber, max(1, (p.Total+limit-1)/limit))
-			skip = (p.Number - 1) * limit
-		}
+		p.Offset = pagination.Offset(offset, p.Total, limit)
+		p.Limit = limit
 		pageArgs := append(append([]any{}, queryArgs...), id, p.Generation, q)
 		pageArgs = append(pageArgs, filterArgs...)
-		pageArgs = append(pageArgs, offset, anchorKind, anchorKind, anchorValue, anchorName, anchorID, limit+1, skip)
-		rows, err := tx.QueryContext(ctx, queryPrefix+`SELECT entry FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter+` AND (?=0 OR CASE WHEN kind='directory' THEN 0 ELSE 1 END>? OR (CASE WHEN kind='directory' THEN 0 ELSE 1 END=? AND (`+value+`,name COLLATE NATURAL_NAME,entry)`+comparison+`(?,?,?))) ORDER BY CASE WHEN kind='directory' THEN 0 ELSE 1 END,`+value+` `+order+`,name COLLATE NATURAL_NAME `+order+`,entry `+order+` LIMIT ? OFFSET ?`, pageArgs...)
+		pageArgs = append(pageArgs, limit, p.Offset)
+		rows, err := tx.QueryContext(ctx, queryPrefix+`SELECT entry FROM directory_items WHERE dir=? AND generation=? AND instr(lower(name),lower(?))>0 AND `+filter+` ORDER BY CASE WHEN kind='directory' THEN 0 ELSE 1 END,`+value+` `+order+`,name COLLATE NATURAL_NAME `+order+`,entry `+order+` LIMIT ? OFFSET ?`, pageArgs...)
 		if err != nil {
 			return p, err
 		}
@@ -502,10 +449,6 @@ func (l *Library) listOrdered(ctx context.Context, params listOrderedOptions) (P
 		}
 		// Entries and breadcrumbs use the same snapshot as the page boundaries.
 
-		if len(ids) > limit {
-			p.Next = int(ids[limit-1])
-			ids = ids[:limit]
-		}
 		p.Items, err = getEntries(ctx, tx, ids)
 		if err != nil {
 			return p, err

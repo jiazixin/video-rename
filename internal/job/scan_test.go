@@ -27,7 +27,7 @@ func TestQueueFilesAtomicCountersAndDeduplication(t *testing.T) {
 			if err := m.Library.Refresh(t.Context(), 1); err != nil {
 				t.Fatal(err)
 			}
-			page, err := m.Library.ListOrdered(t.Context(), library.ListOrderedOptions{ID: 1, Offset: 0, Limit: 100, Generation: 0, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"})
+			page, err := m.Library.ListPage(t.Context(), library.ListPageOptions{ID: 1, Offset: 0, Limit: 100, Query: "", Kind: "", Status: "", SortBy: "name_asc"})
 			if err != nil {
 				t.Fatal(err)
 			}

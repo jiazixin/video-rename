@@ -37,8 +37,17 @@ func refresh(t *testing.T, l *Library, id int64) {
 		t.Fatal(err)
 	}
 }
-func entry(t *testing.T, l *Library, parent int64, name string) Entry {
+
+type entryOptions struct {
+	l      *Library
+	parent int64
+	name   string
+}
+
+func entry(t *testing.T, options entryOptions) Entry {
 	t.Helper()
+	l, parent, name := options.l, options.parent, options.name
+
 	var id int64
 	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
 		return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE parent=? AND name=? AND present=1", parent, name).Scan(&id)
@@ -64,9 +73,9 @@ func TestRenameRestoreParentAndRestart(t *testing.T) {
 	}
 	put(t, filepath.Join(root, "folder", "a.mp4"))
 	refresh(t, l, 1)
-	dir := entry(t, l, 1, "folder")
+	dir := entry(t, entryOptions{l: l, parent: 1, name: "folder"})
 	refresh(t, l, dir.ID)
-	file := entry(t, l, dir.ID, "a.mp4")
+	file := entry(t, entryOptions{l: l, parent: dir.ID, name: "a.mp4"})
 	first, err := l.Rename(t.Context(), RenameRequest{ID: file.ID, Version: file.Version, Name: "b.mp4", Key: "manual-a"})
 	if err != nil {
 		t.Fatal(err)
@@ -113,7 +122,7 @@ func TestConflictTraversalReplacementAndIdempotency(t *testing.T) {
 	put(t, filepath.Join(root, "a.mp4"))
 	put(t, filepath.Join(root, "occupied.mp4"))
 	refresh(t, l, 1)
-	e := entry(t, l, 1, "a.mp4")
+	e := entry(t, entryOptions{l: l, parent: 1, name: "a.mp4"})
 	for _, name := range []string{"../escape.mp4", "bad/name.mp4", "occupied.mp4", "bad."} {
 		if _, err := l.Rename(t.Context(), RenameRequest{ID: e.ID, Version: e.Version, Name: name, Key: "bad:" + name}); err == nil {
 			t.Fatalf("accepted %q", name)
@@ -137,7 +146,7 @@ func TestConflictTraversalReplacementAndIdempotency(t *testing.T) {
 	}
 	put(t, filepath.Join(root, "b.mp4"))
 	refresh(t, l, 1)
-	replacement := entry(t, l, 1, "b.mp4")
+	replacement := entry(t, entryOptions{l: l, parent: 1, name: "b.mp4"})
 	if replacement.Processed != "" {
 		t.Fatal("replacement inherited protection")
 	}
@@ -150,7 +159,7 @@ func TestSymlinkBlocked(t *testing.T) {
 		t.Fatal(err)
 	}
 	refresh(t, l, 1)
-	e := entry(t, l, 1, "link")
+	e := entry(t, entryOptions{l: l, parent: 1, name: "link"})
 	if _, err := l.Path(t.Context(), e.ID); err == nil {
 		t.Fatal("symlink followed")
 	}
@@ -159,7 +168,7 @@ func TestPreparedRecovery(t *testing.T) {
 	l, root, dbpath := fixture(t)
 	put(t, filepath.Join(root, "a.mp4"))
 	refresh(t, l, 1)
-	e := entry(t, l, 1, "a.mp4")
+	e := entry(t, entryOptions{l: l, parent: 1, name: "a.mp4"})
 	res, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
 		return tx.ExecContext(t.Context(), "INSERT INTO operations(entry,parent,old_name,new_name,identity,size,mtime_ns,kind,source,status,request_key,created) VALUES(?,1,'a.mp4','b.mp4',?,?,?,'file','automatic','prepared','crash',?)", e.ID, e.Identity, e.Size, e.ModifiedNS, storage.Now())
 	})
@@ -199,7 +208,7 @@ func TestKindFilterAudioAndOther(t *testing.T) {
 	}
 	refresh(t, l, 1)
 	names := func(kind string) string {
-		p, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 100, Generation: 0, Query: "", Kind: kind, Status: "", Force: false, SortBy: "name_asc"})
+		p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 0, Limit: 100, Query: "", Kind: kind, Status: "", SortBy: "name_asc"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -233,11 +242,11 @@ func TestPagedDirectoryDoesNotRecurse(t *testing.T) {
 	}
 	put(t, filepath.Join(root, "nested", "hidden.mp4"))
 	refresh(t, l, 1)
-	p, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 100, Generation: 0, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"})
+	p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 0, Limit: 100, Query: "", Kind: "", Status: "", SortBy: "name_asc"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Items) != 100 || p.Next == 0 || p.Items[0].Kind != "directory" {
+	if len(p.Items) != 100 || p.Total != 261 || p.Offset != 0 || p.Items[0].Kind != "directory" {
 		t.Fatalf("pagination %+v", p)
 	}
 	var count int
@@ -249,8 +258,8 @@ func TestPagedDirectoryDoesNotRecurse(t *testing.T) {
 	if count != 262 {
 		t.Fatalf("unexpected recursive index %d", count)
 	}
-	next, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: p.Next, Limit: 100, Generation: p.Generation, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"})
-	if err != nil || len(next.Items) != 100 {
+	next, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 100, Limit: 100, Query: "", Kind: "", Status: "", SortBy: "name_asc"})
+	if err != nil || next.Offset != next.Limit || len(next.Items) != 100 || next.Items[0].Name != "099.mp4" {
 		t.Fatalf("next %v", err)
 	}
 }
@@ -259,7 +268,7 @@ func TestDatabaseFailureStopsUnrecordedRename(t *testing.T) {
 	l, root, _ := fixture(t)
 	put(t, filepath.Join(root, "a.mp4"))
 	refresh(t, l, 1)
-	e := entry(t, l, 1, "a.mp4")
+	e := entry(t, entryOptions{l: l, parent: 1, name: "a.mp4"})
 	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) { return tx.ExecContext(t.Context(), "PRAGMA query_only=ON") }); err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +284,7 @@ func TestPostRenameDatabaseFailureRecovers(t *testing.T) {
 	l, root, _ := fixture(t)
 	put(t, filepath.Join(root, "a.mp4"))
 	refresh(t, l, 1)
-	e := entry(t, l, 1, "a.mp4")
+	e := entry(t, entryOptions{l: l, parent: 1, name: "a.mp4"})
 	_, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
 		return tx.ExecContext(t.Context(), "CREATE TRIGGER reject_commit BEFORE UPDATE OF status ON operations WHEN NEW.status='committed' BEGIN SELECT RAISE(ABORT,'injected final commit failure'); END;")
 	})
@@ -308,9 +317,9 @@ func TestAmbiguousRecoveryBlocksRelatedDirectory(t *testing.T) {
 	put(t, filepath.Join(root, "dir", "a.mp4"))
 	put(t, filepath.Join(root, "dir", "b.mp4"))
 	refresh(t, l, 1)
-	d := entry(t, l, 1, "dir")
+	d := entry(t, entryOptions{l: l, parent: 1, name: "dir"})
 	refresh(t, l, d.ID)
-	e := entry(t, l, d.ID, "a.mp4")
+	e := entry(t, entryOptions{l: l, parent: d.ID, name: "a.mp4"})
 	_, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
 		return tx.ExecContext(t.Context(), "INSERT INTO operations(entry,parent,old_name,new_name,identity,size,mtime_ns,kind,source,status,request_key,created) VALUES(?,?,'a.mp4','b.mp4',?,?,?,'file','automatic','prepared','ambiguous',?)", e.ID, d.ID, e.Identity, e.Size, e.ModifiedNS, storage.Now())
 	})
@@ -370,7 +379,7 @@ func TestLowercaseExtensions(t *testing.T) {
 				l, root, _ := fixture(t)
 				put(t, filepath.Join(root, "Original.MP4"))
 				refresh(t, l, 1)
-				e := entry(t, l, 1, "Original.MP4")
+				e := entry(t, entryOptions{l: l, parent: 1, name: "Original.MP4"})
 				var op Operation
 				var err error
 				if automatic {
@@ -415,7 +424,7 @@ func TestAutomaticSuccessResolvesOnlyMatchingFailures(t *testing.T) {
 	path := filepath.Join(root, "retry.mp4")
 	put(t, path)
 	refresh(t, l, 1)
-	e := entry(t, l, 1, "retry.mp4")
+	e := entry(t, entryOptions{l: l, parent: 1, name: "retry.mp4"})
 	for _, record := range []struct {
 		action string
 		entry  int64
@@ -465,7 +474,7 @@ func TestManualExtensionChangeAndRestore(t *testing.T) {
 			l, root, _ := fixture(t)
 			put(t, filepath.Join(root, tc.old))
 			refresh(t, l, 1)
-			e := entry(t, l, 1, tc.old)
+			e := entry(t, entryOptions{l: l, parent: 1, name: tc.old})
 			// Changing only the extension must still reject an occupied target.
 			put(t, filepath.Join(root, tc.want))
 			if _, err := l.Rename(t.Context(), RenameRequest{ID: e.ID, Version: e.Version, Name: tc.requested, Key: "conflict"}); err == nil {

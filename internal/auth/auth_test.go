@@ -543,8 +543,14 @@ func testHandler(t *testing.T, a *Auth, next http.Handler) http.Handler {
 	}
 	writeErr := func(w http.ResponseWriter, err error) {
 		status, code := http.StatusInternalServerError, "internal"
+		if errors.Is(err, ErrUnauthenticated) {
+			status, code = http.StatusUnauthorized, "unauthenticated"
+		}
+		if errors.Is(err, ErrRateLimited) {
+			status, code = http.StatusTooManyRequests, "rate_limited"
+		}
 		if e, ok := domain.AsError(err); ok {
-			code = e.Code
+			code = "invalid_credentials"
 			switch e.Kind {
 			case domain.KindUnauthenticated:
 				status = http.StatusUnauthorized

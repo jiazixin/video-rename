@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http/httptest"
-	"strconv"
 	"testing"
 
 	"video-rename/internal/config"
@@ -33,7 +32,7 @@ func TestHistoryBatchFiltering(t *testing.T) {
 			t.Fatal(err)
 		}
 		w := httptest.NewRecorder()
-		a.logs(w, httptest.NewRequest("GET", "/api/logs?category="+category+"&run=7&q=clip&action=automatic&from=2026-09-20&to=2026-09-22", nil))
+		a.logs(w, httptest.NewRequest("GET", "/api/logs?category="+category+"&run=7&q=clip&action=automatic&from=2026-09-20T00:00:00.000Z&to=2026-09-22T00:00:00.000Z", nil))
 		var rows []struct {
 			ID  int64 `json:"id"`
 			Run int64 `json:"run"`
@@ -46,25 +45,25 @@ func TestHistoryBatchFiltering(t *testing.T) {
 		}
 		for _, limit := range []int{50, 100, 200} {
 			w := httptest.NewRecorder()
-			a.logs(w, httptest.NewRequest("GET", fmt.Sprintf("/api/logs?category=%s&run=7&limit=%d&paged=1", category, limit), nil))
+			a.logs(w, httptest.NewRequest("GET", fmt.Sprintf("/api/logs?category=%s&run=7&limit=%d&offset=0", category, limit), nil))
 			var page struct {
-				Items []map[string]any `json:"items"`
-				Total int              `json:"total"`
-				Next  int64            `json:"next"`
+				Items  []map[string]any `json:"items"`
+				Total  int              `json:"total"`
+				Offset int              `json:"offset"`
 			}
 			if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
 				t.Fatal(err)
 			}
-			if page.Total != 105 || len(page.Items) != min(limit, 105) || (page.Next > 0) != (limit < 105) {
+			if page.Total != 105 || len(page.Items) != min(limit, 105) || page.Offset != 0 {
 				t.Fatalf("bad page: %+v", page)
 			}
-			if page.Next > 0 {
+			if limit < 105 {
 				w = httptest.NewRecorder()
-				a.logs(w, httptest.NewRequest("GET", fmt.Sprintf("/api/logs?category=%s&run=7&limit=%d&paged=1&before=%d", category, limit, page.Next), nil))
+				a.logs(w, httptest.NewRequest("GET", fmt.Sprintf("/api/logs?category=%s&run=7&limit=%d&offset=%d", category, limit, limit), nil))
 				if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
 					t.Fatal(err)
 				}
-				if page.Total != 105 || len(page.Items) != min(limit, 105-limit) {
+				if page.Total != 105 || page.Offset != limit || len(page.Items) != min(limit, 105-limit) {
 					t.Fatalf("bad next page: %+v", page)
 				}
 			}
@@ -75,7 +74,7 @@ func TestHistoryBatchFiltering(t *testing.T) {
 			}
 		}
 		w = httptest.NewRecorder()
-		a.logs(w, httptest.NewRequest("GET", "/api/logs?category="+category+"&run=7&before="+strconv.FormatInt(rows[len(rows)-1].ID, 10), nil))
+		a.logs(w, httptest.NewRequest("GET", "/api/logs?category="+category+"&run=7&offset=100", nil))
 		if err := decodeItems(w.Body.Bytes(), &rows); err != nil {
 			t.Fatal(err)
 		}
@@ -84,7 +83,15 @@ func TestHistoryBatchFiltering(t *testing.T) {
 		}
 		w = httptest.NewRecorder()
 		a.logs(w, httptest.NewRequest("GET", "/api/logs?category="+category+"&run=8&q=clip", nil))
-		if w.Body.String() != `{"items":[]}` {
+		var filtered struct {
+			Items  []any `json:"items"`
+			Offset int   `json:"offset"`
+			Total  int   `json:"total"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &filtered); err != nil {
+			t.Fatal(err)
+		}
+		if filtered.Items == nil || len(filtered.Items) != 0 || filtered.Offset != 0 || filtered.Total != 0 {
 			t.Fatalf("combined filter: %s", w.Body.String())
 		}
 	}
@@ -231,26 +238,22 @@ func TestHistoryUsesActualModelAttempt(t *testing.T) {
 					want[path] = row
 				}
 			}
-			for _, suffix := range []string{"", "&paged=1", "&page=1"} {
+			for _, suffix := range []string{"", "&offset=0"} {
 				t.Run(category+source+suffix, func(t *testing.T) {
 					w := httptest.NewRecorder()
 					a.logs(w, httptest.NewRequest("GET", "/api/logs?category="+category+"&model_source="+source+suffix, nil))
 					if w.Code != 200 {
 						t.Fatal(w.Code, w.Body.String())
 					}
-					var rows []record
-					if suffix == "" {
-						err = decodeItems(w.Body.Bytes(), &rows)
-					} else {
-						var page struct {
-							Items []record `json:"items"`
-							Total int      `json:"total"`
-						}
-						err = json.Unmarshal(w.Body.Bytes(), &page)
-						rows = page.Items
-						if page.Total != len(want) {
-							t.Fatalf("total=%d, want %d", page.Total, len(want))
-						}
+					var page struct {
+						Items  []record `json:"items"`
+						Total  int      `json:"total"`
+						Offset int      `json:"offset"`
+					}
+					err = json.Unmarshal(w.Body.Bytes(), &page)
+					rows := page.Items
+					if page.Total != len(want) || page.Offset != 0 {
+						t.Fatalf("got total=%d offset=%d, want total=%d offset=0", page.Total, page.Offset, len(want))
 					}
 					if err != nil || len(rows) != len(want) {
 						t.Fatal(rows, err)

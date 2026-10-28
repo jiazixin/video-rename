@@ -201,7 +201,7 @@ func (l *Library) setFilesProcessed(ctx context.Context, ids []int64, marked boo
 		for i := range files {
 			if files[i].err == nil {
 				files[i].changed = 0
-				files[i].err = domain.Fail(domain.KindInternal, domain.Record{Code: "mark_batch_failed", Message: "mark batch not committed"}).Wrap(err)
+				files[i].err = domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonMarkBatchFailed, Message: "mark batch not committed"}).Wrap(err)
 			}
 		}
 	}

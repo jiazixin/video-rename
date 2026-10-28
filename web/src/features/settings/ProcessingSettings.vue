@@ -1,14 +1,16 @@
 <script setup lang="ts">
+  import { vFormErrors } from '../../app/form-errors';
   import { formatDecimal } from '../../lib/format/number';
   import { errorText } from '../../app/errors';
   import { useToast } from '../../app/use-toast';
   import { computed, onMounted, ref } from 'vue';
   import { RefreshCw, Save, Trash2, CircleHelp } from '@lucide/vue';
-  import { api, apiItems } from '../../app/api';
+  import { useApi } from '../../app/use-api';
   import { type ModelProfile } from '../../app/contracts';
   import ModalDialog from '../../components/ModalDialog.vue';
   import ModalTransition from '../../components/ModalTransition.vue';
   import SelectField from '../../components/SelectField.vue';
+  const { api, apiItems, formError } = useApi();
   const toast = useToast();
   type Settings = {
     running_batch_limit: number;
@@ -191,7 +193,7 @@
       >{{ error }}<button v-if="!form" @click="load">重新加载</button></div
     >
     <p v-if="loading" role="status">正在加载设置…</p>
-    <form v-else-if="form && state" @submit.prevent="save">
+    <form v-else-if="form && state" v-form-errors="formError" @submit.prevent="save">
       <fieldset :disabled="saving || clearing" class="processing-fieldset">
         <section class="panel processing-card"
           ><div
@@ -204,6 +206,7 @@
             ><label
               >同时运行批次上限<input
                 v-model.number="form.running_batch_limit"
+                name="running_batch_limit"
                 aria-label="同时运行批次上限"
                 type="number"
                 min="1"
@@ -216,6 +219,7 @@
             ><label
               >等待批次上限<input
                 v-model.number="form.waiting_batch_limit"
+                name="waiting_batch_limit"
                 aria-label="等待批次上限"
                 type="number"
                 min="1"
@@ -237,6 +241,7 @@
           ><label
             >同时抽帧的视频数<input
               v-model.number="form.extract_workers"
+              name="extract_workers"
               aria-label="同时抽帧的视频数"
               type="number"
               min="1"
@@ -259,6 +264,7 @@
             ><label class="processing-check"
               ><input
                 v-model="form.retry_enabled"
+                name="retry_enabled"
                 type="checkbox"
                 role="switch"
               />开启失败自动重试</label
@@ -293,6 +299,7 @@
                   ><input
                     id="retry-count"
                     v-model.number="form.retry_count"
+                    name="retry_count"
                     aria-label="最大重试次数"
                     type="number"
                     min="1"
@@ -327,6 +334,7 @@
                     ></div
                   ><SelectField
                     v-model="form.fallback_model_id"
+                    data-field="fallback_model_id"
                     label="兜底模型配置"
                     :options="fallbackOptions"
                 /></div> </div
@@ -344,6 +352,7 @@
           ><label
             >稳定性等待时长（秒）<input
               v-model.number="form.stability_seconds"
+              name="stability_seconds"
               aria-label="稳定性等待时长（秒）"
               type="number"
               min="0"
@@ -366,6 +375,7 @@
             ><label
               >临时目录容量（GB）<input
                 v-model.number="form.cache_gb"
+                name="cache_gb"
                 aria-label="临时目录容量（GB）"
                 type="number"
                 min="1"
@@ -395,6 +405,7 @@
                 ><label
                   >成功后保留时长<input
                     v-model.number="successTime"
+                    name="success_cache_hours"
                     aria-label="成功后保留时长"
                     type="number"
                     min="1"
@@ -419,6 +430,7 @@
               ><label class="processing-check"
                 ><input
                   v-model="idleEnabled"
+                  name="idle_cache_hours"
                   type="checkbox"
                   role="switch"
                 />按闲置时间自动清理</label
@@ -426,6 +438,7 @@
                 ><label
                   >连续未使用时长<input
                     v-model.number="idleTime"
+                    name="idle_cache_hours"
                     aria-label="连续未使用时长"
                     type="number"
                     min="1"
@@ -509,8 +522,8 @@
     color: var(--tone-red-ink);
     background: var(--tone-red-bg);
     border-color: var(--tone-red-line);
-    gap: 6px;
-    line-height: 20px;
+    gap: var(--space-6);
+    line-height: var(--line-height-20);
   }
   button.cache-clear:hover:not(:disabled) {
     color: var(--tone-red-ink);
@@ -522,7 +535,7 @@
   .retry-config-row {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
-    gap: 18px 16px;
+    gap: var(--space-18) var(--space-16);
     max-width: 496px;
     width: 100%;
     align-items: start;
@@ -534,15 +547,15 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: var(--space-10);
   }
   .retry-field-heading {
     position: relative;
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 13px;
-    font-weight: 500;
+    gap: var(--space-6);
+    font-size: var(--font-size-13);
+    font-weight: var(--font-weight-500);
   }
   .retry-field-heading label {
     margin: 0;
@@ -552,11 +565,11 @@
     align-items: center;
   }
   .retry-help button {
-    padding: 2px;
+    padding: var(--space-2);
     border: 0;
     background: transparent;
     color: var(--ash);
-    border-radius: 4px;
+    border-radius: var(--radius-4);
   }
   .retry-help button:hover,
   .retry-help button:focus-visible {
@@ -567,18 +580,18 @@
     position: absolute;
     left: 0;
     top: 100%;
-    margin-top: 6px;
+    margin-top: var(--space-6);
     z-index: 20;
     width: 100%;
-    padding: 12px 14px;
+    padding: var(--space-12) var(--space-14);
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: var(--radius-8);
     background: var(--palette-ffffff);
-    box-shadow: 0 6px 20px var(--palette-182c201a);
+    box-shadow: var(--shadow-22);
     color: var(--steel);
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 1.7;
+    font-size: var(--font-size-12);
+    font-weight: var(--font-weight-400);
+    line-height: var(--line-height-1-7);
     white-space: normal;
   }
   .retry-tooltip::before {
@@ -605,7 +618,7 @@
   .processing-fields {
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: var(--space-18);
     min-width: 0;
     padding: 0;
     margin: 0;
@@ -619,26 +632,26 @@
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 10px;
-    font-weight: 400;
+    gap: var(--space-10);
+    font-weight: var(--font-weight-400);
   }
   .processing-options {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: var(--space-14);
     border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 16px;
+    border-radius: var(--radius-8);
+    padding: var(--space-16);
     min-width: 0;
   }
   .processing-options legend {
-    padding: 0 6px;
-    font-weight: 600;
-    font-size: 13px;
+    padding: 0 var(--space-6);
+    font-weight: var(--font-weight-600);
+    font-size: var(--font-size-13);
   }
   .cache-duration {
     display: flex;
-    gap: 12px;
+    gap: var(--space-12);
     align-items: flex-end;
   }
   .cache-duration > label {
@@ -654,7 +667,7 @@
   }
   .cache-actions {
     display: flex;
-    gap: 10px;
+    gap: var(--space-10);
     flex-wrap: wrap;
   }
   @media (max-width: 760px) {

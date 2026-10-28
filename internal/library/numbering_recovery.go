@@ -13,21 +13,24 @@ import (
 
 // Resolve a crash between filesystem rename and journal completion without guessing.
 func (l *Library) reconcileNumbering(ctx context.Context, b *Numbering, path string) error {
-	names, err := os.ReadDir(path)
+	exact := map[string]bool{}
+	err := scanNumberingDirectory(ctx, path, func(entry os.DirEntry) error {
+		exact[entry.Name()] = true
+		return nil
+	})
 	if err != nil {
 		return err
 	}
-	exact := map[string]bool{}
-	for _, n := range names {
-		exact[n.Name()] = true
-	}
 	for idx := range b.Items {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		i := &b.Items[idx]
 		current := exact[i.Current] && numberingMatch(filepath.Join(path, i.Current), *i)
 		if i.Pending != "" {
 			pending := exact[i.Pending] && numberingMatch(filepath.Join(path, i.Pending), *i)
 			if current == pending {
-				return domain.Fail(domain.KindInternal, domain.Record{Code: "numbering_item_ambiguous", Message: "file location is ambiguous; manual review needed", Details: map[string]any{"media": b.Media, "name": i.Old}})
+				return domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonNumberingItemAmbiguous, Message: "file location is ambiguous; manual review needed", Details: map[string]any{"media": b.Media, "name": i.Old}})
 			}
 			if pending {
 				i.Current = i.Pending
@@ -39,7 +42,7 @@ func (l *Library) reconcileNumbering(ctx context.Context, b *Numbering, path str
 			}
 			i.Pending = ""
 		} else if !current {
-			return domain.Fail(domain.KindInternal, domain.Record{Code: "numbering_item_modified", Message: "file was modified externally; manual review needed", Details: map[string]any{"media": b.Media, "name": i.Old}})
+			return domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonNumberingItemModified, Message: "file was modified externally; manual review needed", Details: map[string]any{"media": b.Media, "name": i.Old}})
 		}
 	}
 	return syncNumberingDir(path)
@@ -100,7 +103,9 @@ func (l *Library) recoverNumberings(ctx context.Context) error {
 
 // RecoverNumbering resumes or rolls back the interrupted numbering id.
 func (l *Library) RecoverNumbering(ctx context.Context, id string) (Numbering, error) {
-	l.mu.Lock()
+	if err := l.lockNumbering(ctx); err != nil {
+		return Numbering{}, err
+	}
 	defer l.mu.Unlock()
 	return l.recoverNumbering(ctx, id)
 }

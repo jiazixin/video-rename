@@ -19,7 +19,7 @@ async function setupBatch(page: Page, name: string) {
   await expect
     .poll(async () => {
       const result = await (
-        await page.request.get('/api/directories/1/entries?page=1&limit=200')
+        await page.request.get('/api/directories/1/entries?offset=0&limit=200')
       ).json()
       return result.items.some((entry: Record<string, unknown>) => entry.name === name)
     })

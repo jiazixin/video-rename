@@ -87,7 +87,7 @@ func (a *App) startNumberingJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !reflect.DeepEqual(job.request, req) {
-			writeError(w, r, domain.Fail(domain.KindConflict, domain.Record{Code: "idempotency_key_reused", Message: "request key is used by a different request"}))
+			writeError(w, r, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonIdempotencyKeyReused, Message: "request key is used by a different request"}))
 			return
 		}
 		send(w, http.StatusOK, job.status)
@@ -95,19 +95,19 @@ func (a *App) startNumberingJob(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, job := range a.numberingJobs {
 		if job.finished.IsZero() {
-			writeError(w, r, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_running", Message: "another numbering job is running or stopping"}))
+			writeError(w, r, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingRunning, Message: "another numbering job is running or stopping"}))
 			return
 		}
 	}
 	if len(a.numberingJobs) >= 64 {
-		writeError(w, r, domain.Fail(domain.KindTooMany, domain.Record{Code: "numbering_jobs_full", Message: "too many recent numbering jobs"}))
+		writeError(w, r, domain.Fail(domain.KindTooMany, domain.Failure{Reason: domain.ReasonNumberingJobsFull, Message: "too many recent numbering jobs"}))
 		return
 	}
 	batchIDs := slices.Clone(req.Batches)
 	if req.Preview != "" {
 		source := a.numberingJobs[req.Preview]
 		if source == nil || source.status.Status != "completed" || source.request.Action != "preview" || source.request.Parent != req.Parent {
-			writeError(w, r, domain.Fail(domain.KindConflict, domain.Record{Code: "preview_stale", Message: "preview expired or belongs to another directory"}))
+			writeError(w, r, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonPreviewStale, Message: "preview expired or belongs to another directory"}))
 			return
 		}
 		for _, b := range source.result {
@@ -116,7 +116,7 @@ func (a *App) startNumberingJob(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if len(batchIDs) == 0 {
-			writeError(w, r, domain.Fail(domain.KindInvalid, domain.Record{Code: "nothing_to_number", Message: "no files need numbering"}))
+			writeError(w, r, domain.Fail(domain.KindInvalid, domain.Failure{Reason: domain.ReasonNothingToNumber, Message: "no files need numbering"}))
 			return
 		}
 	}
@@ -210,7 +210,7 @@ func (a *App) numberingJobStatus(w http.ResponseWriter, r *http.Request) {
 	defer a.numberingMu.Unlock()
 	job := a.numberingJobs[r.PathValue("key")]
 	if job == nil {
-		writeError(w, r, domain.Fail(domain.KindNotFound, domain.Record{Code: "numbering_job_gone", Message: "numbering job expired or the service restarted"}))
+		writeError(w, r, domain.Fail(domain.KindNotFound, domain.Failure{Reason: domain.ReasonNumberingJobGone, Message: "numbering job expired or the service restarted"}))
 		return
 	}
 	job.lease = time.Now()
@@ -258,7 +258,7 @@ func (a *App) numberingJobResult(w http.ResponseWriter, r *http.Request) {
 	job := a.numberingJobs[r.PathValue("key")]
 	if job == nil || job.status.Status != "completed" {
 		a.numberingMu.Unlock()
-		writeError(w, r, domain.Fail(domain.KindConflict, domain.Record{Code: "preview_not_ready", Message: "preview not completed or expired"}))
+		writeError(w, r, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonPreviewNotReady, Message: "preview not completed or expired"}))
 		return
 	}
 	batches := slices.Clone(job.result)

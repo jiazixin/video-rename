@@ -164,14 +164,14 @@ func TestTypeMismatchRejected(t *testing.T) {
 func TestRuleTableValidation(t *testing.T) {
 	base := minimalYAML + "sampling:\n"
 	cases := map[string]string{
-		"显式空表":    base + "  duration_rules: []\n",
-		"缺少兜底":    base + "  duration_rules:\n    - {max_duration: \"30s\", frames: 3}\n",
-		"非递增":     base + "  duration_rules:\n    - {max_duration: \"2m\", frames: 3}\n    - {max_duration: \"30s\", frames: 5}\n    - {max_duration: null, frames: 8}\n",
-		"null在中间": base + "  duration_rules:\n    - {max_duration: null, frames: 3}\n    - {max_duration: \"30s\", frames: 5}\n",
-		"帧数越界":    base + "  duration_rules:\n    - {max_duration: \"30s\", frames: 0}\n    - {max_duration: null, frames: 3}\n",
-		"大小表缺少兜底": base + "  size_rules:\n    - {max_mib: 50, frames: 3}\n",
-		"大小表负值":   base + "  size_rules:\n    - {max_mib: -1, frames: 3}\n    - {max_mib: null, frames: 5}\n",
-		"大小表非递增":  base + "  size_rules:\n    - {max_mib: 200, frames: 3}\n    - {max_mib: 50, frames: 5}\n    - {max_mib: null, frames: 8}\n",
+		"显式空表":             base + "  duration_rules: []\n",
+		"缺少兜底":             base + "  duration_rules:\n    - {max_duration_ms: 30000, frames: 3}\n",
+		"非递增":              base + "  duration_rules:\n    - {max_duration_ms: 120000, frames: 3}\n    - {max_duration_ms: 30000, frames: 5}\n    - {frames: 8}\n",
+		"unbounded_middle": base + "  duration_rules:\n    - {frames: 3}\n    - {max_duration_ms: 30000, frames: 5}\n",
+		"帧数越界":             base + "  duration_rules:\n    - {max_duration_ms: 30000, frames: 0}\n    - {frames: 3}\n",
+		"大小表缺少兜底":          base + "  size_rules:\n    - {max_mib: 50, frames: 3}\n",
+		"大小表负值":            base + "  size_rules:\n    - {max_mib: -1, frames: 3}\n    - {frames: 5}\n",
+		"大小表非递增":           base + "  size_rules:\n    - {max_mib: 200, frames: 3}\n    - {max_mib: 50, frames: 5}\n    - {frames: 8}\n",
 	}
 	for name, y := range cases {
 		if _, err := loadFrameSettings(t, y); err == nil {
@@ -179,7 +179,7 @@ func TestRuleTableValidation(t *testing.T) {
 		}
 	}
 	// unused tables must still be valid: size_rules is validated under the duration strategy
-	bad := base + "  strategy: \"duration\"\n  size_rules:\n    - {max_mib: 100, frames: 3}\n    - {max_mib: 50, frames: 5}\n    - {max_mib: null, frames: 8}\n"
+	bad := base + "  strategy: \"duration\"\n  size_rules:\n    - {max_mib: 100, frames: 3}\n    - {max_mib: 50, frames: 5}\n    - {frames: 8}\n"
 	if _, err := loadFrameSettings(t, bad); err == nil {
 		t.Error("invalid settings in unused tables must fail")
 	}
@@ -188,8 +188,8 @@ func TestRuleTableValidation(t *testing.T) {
 func TestRuleTableReplacesDefaults(t *testing.T) {
 	y := minimalYAML + `sampling:
   duration_rules:
-    - {max_duration: "1m", frames: 4}
-    - {max_duration: null, frames: 6}
+    - {max_duration_ms: 60000, frames: 4}
+    - {frames: 6}
 `
 	cfg, err := loadFrameSettings(t, y)
 	if err != nil {

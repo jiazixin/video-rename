@@ -54,9 +54,9 @@ func TestHistoryDateFiltersCompareInstants(t *testing.T) {
 	for _, bounds := range [][2]string{
 		{"2026-10-02T00:00:00.000Z", "2026-10-02T00:00:02.000Z"},
 		{"2026-10-02T08:00:00+08:00", "2026-10-02T08:00:02+08:00"},
-		{"2026-10-01", "2026-10-03"},
+		{"2026-10-01T00:00:00.000Z", "2026-10-03T00:00:00.000Z"},
 	} {
-		query := url.Values{"category": {"success"}, "page": {"1"}, "from": {bounds[0]}, "to": {bounds[1]}}
+		query := url.Values{"category": {"success"}, "offset": {"0"}, "from": {bounds[0]}, "to": {bounds[1]}}
 		w := httptest.NewRecorder()
 		a.logs(w, httptest.NewRequest("GET", "/api/logs?"+query.Encode(), nil))
 		var result struct {
@@ -70,10 +70,12 @@ func TestHistoryDateFiltersCompareInstants(t *testing.T) {
 		}
 	}
 	for _, key := range []string{"from", "to"} {
-		w := httptest.NewRecorder()
-		a.logs(w, httptest.NewRequest("GET", "/api/logs?category=success&"+key+"=invalid", nil))
-		if w.Code != 400 {
-			t.Fatalf("invalid %s: status=%d body=%s", key, w.Code, w.Body.String())
+		for _, value := range []string{"invalid", "2026-10-28"} {
+			w := httptest.NewRecorder()
+			a.logs(w, httptest.NewRequest("GET", "/api/logs?category=success&"+key+"="+value, nil))
+			if w.Code != 400 {
+				t.Fatalf("invalid %s %q: status=%d body=%s", key, value, w.Code, w.Body.String())
+			}
 		}
 	}
 }

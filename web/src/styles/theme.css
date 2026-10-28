@@ -1,6 +1,8 @@
+@import './tokens.css';
+
 :root {
   color-scheme: light;
-  font-family: Inter, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-family: var(--font-sans);
   color: #1b1b1b;
   background: #f8f9fa;
   font-synthesis: none;
@@ -40,8 +42,8 @@
   --motion-enter: 0.2s;
   --motion-hover: 0.15s;
   --toast-duration: 5s;
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: var(--font-size-14);
+  line-height: var(--line-height-1-5);
   --palette-92959b: #92959b;
   --palette-00000003: #00000003;
   --palette-e7e9ed: #e7e9ed;
@@ -165,17 +167,17 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-6);
   border: 1px solid var(--control-line);
-  border-radius: 8px;
-  padding: 8px 14px;
-  line-height: 20px;
+  border-radius: var(--radius-8);
+  padding: var(--space-8) var(--space-14);
+  line-height: var(--line-height-20);
   background: var(--palette-ffffff);
   color: var(--ink);
   cursor: pointer;
   white-space: nowrap;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--font-size-13);
+  font-weight: var(--font-weight-500);
   transition:
     background var(--motion-hover) linear,
     border-color var(--motion-hover) linear,
@@ -195,7 +197,7 @@ button.primary {
   background: var(--tone-green-bg);
   color: var(--tone-green-ink);
   border-color: var(--tone-green-line);
-  font-weight: 600;
+  font-weight: var(--font-weight-600);
 }
 button.primary:hover:not(:disabled),
 button.primary:active:not(:disabled) {
@@ -213,10 +215,10 @@ select:focus-visible {
 input,
 select {
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--radius-6);
   background: var(--palette-ffffff);
   min-height: 39px;
-  padding: 9px 11px;
+  padding: var(--space-9) var(--space-11);
   min-width: 0;
   color: var(--ink);
 }
@@ -251,7 +253,7 @@ button.switch {
   margin: 0;
   padding: 0;
   border: 1px solid var(--control-line);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--palette-f3f5f4);
   cursor: pointer;
   transition:
@@ -266,9 +268,9 @@ button.switch::before {
   left: 2px;
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--palette-ffffff);
-  box-shadow: 0 1px 2px var(--palette-rgba-18-26-21-0-25);
+  box-shadow: var(--shadow-25);
   transition: transform var(--motion-hover) linear;
 }
 input[type='checkbox'][role='switch']:not(:checked):hover:not(:disabled),
@@ -302,10 +304,10 @@ input[type='checkbox'][role='switch']:disabled {
 label {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  font-weight: 500;
-  font-size: 13px;
-  margin-bottom: 20px;
+  gap: var(--space-8);
+  font-weight: var(--font-weight-500);
+  font-size: var(--font-size-13);
+  margin-bottom: var(--space-20);
 }
 label input,
 label select {
@@ -318,48 +320,48 @@ p {
   margin: 0;
 }
 h1 {
-  font-size: 32px;
-  font-weight: 600;
-  letter-spacing: -1.2px;
-  line-height: 1.3;
+  font-size: var(--font-size-32);
+  font-weight: var(--font-weight-600);
+  letter-spacing: var(--tracking-negative-1-2);
+  line-height: var(--line-height-1-3);
 }
 h2 {
-  font-size: 18px;
-  font-weight: 600;
-  letter-spacing: -0.4px;
+  font-size: var(--font-size-18);
+  font-weight: var(--font-weight-600);
+  letter-spacing: var(--tracking-negative-0-4);
 }
 h3 {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: var(--font-size-16);
+  font-weight: var(--font-weight-600);
 }
 p {
   color: var(--steel);
-  line-height: 1.8;
+  line-height: var(--line-height-1-8);
 }
 a {
   color: inherit;
   text-decoration: none;
 }
 small {
-  font-size: 12px;
+  font-size: var(--font-size-12);
 }
 svg {
   flex-shrink: 0;
   stroke-width: 1.6;
 }
 .eyebrow {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 1.6px;
+  font-size: var(--font-size-10);
+  font-weight: var(--font-weight-600);
+  letter-spacing: var(--tracking-1-6);
   color: var(--ash);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-8);
 }
 .signal {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--palette-219374);
   display: inline-block;
   flex-shrink: 0;
@@ -367,16 +369,16 @@ svg {
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-weight: 600;
-  font-size: 17px;
-  letter-spacing: -0.6px;
+  gap: var(--space-10);
+  font-weight: var(--font-weight-600);
+  font-size: var(--font-size-17);
+  letter-spacing: var(--tracking-negative-0-6);
   white-space: nowrap;
 }
 .brand-mark {
   width: 32px;
   height: 32px;
-  border-radius: 8px;
+  border-radius: var(--radius-8);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -385,44 +387,44 @@ svg {
 }
 .subtle {
   color: var(--ash);
-  font-size: 12px;
+  font-size: var(--font-size-12);
 }
 .mono,
 code {
-  font-family: Inter, monospace;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 .icon-btn {
   border: 0;
   background: transparent;
-  padding: 7px;
+  padding: var(--space-7);
 }
 .text-button {
   border: 0;
   padding: 0;
   background: transparent;
   color: var(--steel);
-  font-size: 12px;
+  font-size: var(--font-size-12);
 }
 .text-button:hover:not(:disabled) {
   background: transparent;
   color: var(--ink);
 }
 .notice {
-  padding: 13px 16px;
+  padding: var(--space-13) var(--space-16);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  font-size: 13px;
-  margin: 16px 0;
+  border-radius: var(--radius-8);
+  font-size: var(--font-size-13);
+  margin: var(--space-16) 0;
   display: flex;
-  gap: 16px;
+  gap: var(--space-16);
   align-items: center;
   justify-content: space-between;
   overflow-wrap: anywhere;
 }
 .notice button {
-  padding: 3px 8px;
-  font-size: 12px;
+  padding: var(--space-3) var(--space-8);
+  font-size: var(--font-size-12);
   background: transparent;
 }
 .notice.success {
@@ -439,13 +441,13 @@ code {
   color: var(--palette-a34c3b);
 }
 .help {
-  font-size: 12px;
+  font-size: var(--font-size-12);
   color: var(--ash);
-  margin: 12px 0;
-  line-height: 1.8;
+  margin: var(--space-12) 0;
+  line-height: var(--line-height-1-8);
 }
 .spin {
-  animation: spin 1.2s linear infinite;
+  animation: spin var(--duration-1200) linear infinite;
 }
 @keyframes spin {
   to {
@@ -456,32 +458,32 @@ code {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 30px;
+  gap: var(--space-24);
+  margin-bottom: var(--space-30);
 }
 .page-heading .eyebrow {
-  margin-bottom: 12px;
-  font-size: 9px;
+  margin-bottom: var(--space-12);
+  font-size: var(--font-size-9);
 }
 .page-heading h1 {
-  margin-bottom: 9px;
+  margin-bottom: var(--space-9);
 }
 .title-dot {
   color: var(--palette-258c70);
-  margin-left: 2px;
+  margin-left: var(--space-2);
 }
 .page-heading p {
-  font-size: 13px;
+  font-size: var(--font-size-13);
   color: var(--ash);
 }
 .heading-actions {
   display: flex;
-  gap: 10px;
-  margin-top: 20px;
+  gap: var(--space-10);
+  margin-top: var(--space-20);
 }
 .panel {
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius-12);
   background: var(--palette-ffffff);
   overflow: hidden;
 }
@@ -489,14 +491,14 @@ code {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 15px;
-  padding: 19px 20px;
+  gap: var(--space-15);
+  padding: var(--space-19) var(--space-20);
   border-bottom: 1px solid var(--line);
 }
 .breadcrumbs {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--space-7);
   flex-wrap: wrap;
 }
 .breadcrumbs button {
@@ -504,7 +506,7 @@ code {
   background: transparent;
   padding: 0;
   color: var(--steel);
-  font-size: 12px;
+  font-size: var(--font-size-12);
 }
 .breadcrumbs button:last-child {
   color: var(--ink);
@@ -515,29 +517,29 @@ code {
 .filterbar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 16px 20px;
+  gap: var(--space-12);
+  padding: var(--space-16) var(--space-20);
   border-bottom: 1px solid var(--line);
   background: var(--palette-fdfdfd);
 }
 .search-input {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--space-9);
   border: 1px solid var(--line);
   background: var(--palette-ffffff);
-  border-radius: 6px;
-  padding: 0 11px;
+  border-radius: var(--radius-6);
+  padding: 0 var(--space-11);
   min-width: 180px;
   width: 290px;
   color: var(--palette-999ca2);
 }
 .search-input input {
   border: 0;
-  padding: 8px 0;
+  padding: var(--space-8) 0;
   min-height: 35px;
   width: 100%;
-  font-size: 12px;
+  font-size: var(--font-size-12);
   background: transparent;
 }
 .search-input:focus-within {
@@ -547,9 +549,9 @@ code {
   outline: 0;
 }
 .filterbar select {
-  font-size: 12px;
+  font-size: var(--font-size-12);
   min-height: 36px;
-  padding: 7px 25px 7px 10px;
+  padding: var(--space-7) var(--space-25) var(--space-7) var(--space-10);
 }
 .filter-spacer {
   flex: 1;
@@ -560,20 +562,20 @@ code {
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--font-size-12);
   text-align: center;
 }
 th {
   color: var(--palette-6e727a);
-  font-size: 11px;
-  font-weight: 500;
+  font-size: var(--font-size-11);
+  font-weight: var(--font-weight-500);
   background: var(--palette-fafbfc);
-  padding: 13px 20px;
+  padding: var(--space-13) var(--space-20);
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
 }
 td {
-  padding: 17px 20px;
+  padding: var(--space-17) var(--space-20);
   border-bottom: 1px solid var(--palette-eff0f3);
   vertical-align: middle;
 }
@@ -584,13 +586,13 @@ tbody tr:hover {
   background: var(--palette-fcfdfd);
 }
 .badge {
-  font-size: 10px;
-  font-weight: 400;
+  font-size: var(--font-size-10);
+  font-weight: var(--font-weight-400);
   color: var(--palette-8c9096);
   border: 1px solid var(--palette-e7e9ec);
-  border-radius: 4px;
+  border-radius: var(--radius-4);
   background: var(--palette-fafbfc);
-  padding: 3px 7px;
+  padding: var(--space-3) var(--space-7);
   white-space: nowrap;
   display: inline-block;
 }
@@ -600,7 +602,7 @@ tbody tr:hover {
   border-color: var(--palette-dfeae3);
 }
 .date-cell {
-  font-size: 11px;
+  font-size: var(--font-size-11);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -608,15 +610,15 @@ tbody tr:hover {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-8);
 }
 .row-actions button {
-  padding: 3px;
+  padding: var(--space-3);
   border: 0;
   background: transparent;
-  font-size: 11px;
+  font-size: var(--font-size-11);
   color: var(--palette-737780);
-  gap: 5px;
+  gap: var(--space-5);
 }
 .row-actions button:hover:not(:disabled) {
   color: var(--ink);
@@ -624,46 +626,46 @@ tbody tr:hover {
 }
 .pagination {
   border-top: 1px solid var(--line);
-  padding: 13px 20px;
+  padding: var(--space-13) var(--space-20);
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 12px;
+  gap: var(--space-10);
+  font-size: var(--font-size-12);
 }
 .pagination > .subtle {
   margin-right: auto;
-  font-size: 10px;
+  font-size: var(--font-size-10);
 }
 .pagination select {
   min-height: 28px;
-  padding: 3px 7px;
-  font-size: 11px;
+  padding: var(--space-3) var(--space-7);
+  font-size: var(--font-size-11);
 }
 .pagination button {
-  padding: 5px;
+  padding: var(--space-5);
 }
 .empty {
-  padding: 62px 24px;
+  padding: var(--space-62) var(--space-24);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-direction: column;
   text-align: center;
   color: var(--palette-67736d);
-  gap: 10px;
+  gap: var(--space-10);
 }
 .empty h3 {
-  font-size: 14px;
+  font-size: var(--font-size-14);
   color: var(--steel);
-  margin-top: 5px;
+  margin-top: var(--space-5);
 }
 .empty p {
-  font-size: 12px;
+  font-size: var(--font-size-12);
   color: var(--ash);
 }
 .empty.compact {
-  padding: 30px 20px;
-  font-size: 12px;
+  padding: var(--space-30) var(--space-20);
+  font-size: var(--font-size-12);
 }
 /* Tab panels only animate in; the old panel leaves at once so content never doubles up. */
 .panel-enter-active {
@@ -688,18 +690,18 @@ tbody tr:hover {
 .modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: var(--space-10);
   border-top: 1px solid var(--line);
-  padding-top: 20px;
-  margin-top: 22px;
+  padding-top: var(--space-20);
+  margin-top: var(--space-22);
 }
 .check-label {
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 9px;
-  margin: 17px 0 !important;
-  font-size: 12px;
+  gap: var(--space-9);
+  margin: var(--space-17) 0 !important;
+  font-size: var(--font-size-12);
 }
 .check-label input {
   width: 16px;
@@ -707,22 +709,22 @@ tbody tr:hover {
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: var(--space-16);
 }
 .form-grid label {
   min-width: 0;
 }
 .log-tabs {
   display: flex;
-  gap: 24px;
+  gap: var(--space-24);
   border-bottom: 1px solid var(--line);
-  margin-bottom: 24px;
+  margin-bottom: var(--space-24);
 }
 .log-tabs button {
   border: 0;
   background: transparent;
   border-radius: 0;
-  padding: 0 2px 15px;
+  padding: 0 var(--space-2) var(--space-15);
   color: var(--palette-70757d);
   position: relative;
 }
@@ -766,8 +768,8 @@ tbody tr:hover {
 }
 .log-tabs.tab-indicator-ready::after {
   transition:
-    transform 0.25s linear,
-    width 0.25s linear;
+    transform var(--duration-250) linear,
+    width var(--duration-250) linear;
 }
 .log-tabs button.active svg {
   color: var(--palette-45866c);
@@ -777,8 +779,8 @@ tbody tr:hover {
 }
 .log-filters input[type='date'] {
   min-height: 35px;
-  font-size: 11px;
-  padding: 7px;
+  font-size: var(--font-size-11);
+  padding: var(--space-7);
   max-width: 140px;
 }
 @media (max-width: 1150px) {
@@ -786,36 +788,36 @@ tbody tr:hover {
     width: 240px;
   }
   .row-actions {
-    gap: 7px;
+    gap: var(--space-7);
   }
   .date-cell {
-    font-size: 10px;
+    font-size: var(--font-size-10);
   }
   td,
   th {
-    padding-left: 15px;
-    padding-right: 15px;
+    padding-left: var(--space-15);
+    padding-right: var(--space-15);
   }
 }
 @media (max-width: 800px) {
   .page-heading {
     align-items: flex-start;
     flex-wrap: wrap;
-    gap: 10px;
-    margin-bottom: 23px;
+    gap: var(--space-10);
+    margin-bottom: var(--space-23);
   }
   .page-heading h1 {
-    font-size: 28px;
+    font-size: var(--font-size-28);
   }
   .heading-actions {
-    margin-top: 8px;
+    margin-top: var(--space-8);
   }
   .page-heading p {
-    font-size: 12px;
+    font-size: var(--font-size-12);
   }
   .filterbar {
     flex-wrap: wrap;
-    padding: 13px;
+    padding: var(--space-13);
   }
   .filter-spacer {
     display: none;
@@ -825,16 +827,16 @@ tbody tr:hover {
     min-width: 180px;
   }
   .pagination {
-    padding: 12px;
+    padding: var(--space-12);
   }
   .pagination > .subtle {
     max-width: 170px;
   }
   .form-grid {
-    gap: 12px;
+    gap: var(--space-12);
   }
   .log-tabs {
-    gap: 26px;
+    gap: var(--space-26);
   }
   .log-filters input[type='date'] {
     flex: 1;
@@ -855,10 +857,10 @@ tbody tr:hover {
   border: 0;
   background: transparent;
   padding: 0;
-  font-size: 11px;
-  font-weight: 500;
+  font-size: var(--font-size-11);
+  font-weight: var(--font-weight-500);
   color: var(--palette-6e727a);
-  gap: 6px;
+  gap: var(--space-6);
 }
 .table-sort:hover:not(:disabled) {
   background: transparent;
@@ -869,12 +871,12 @@ textarea {
   min-width: 0;
   resize: vertical;
   border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: 12px;
+  border-radius: var(--radius-7);
+  padding: var(--space-12);
   color: var(--ink);
   background: var(--palette-ffffff);
-  line-height: 1.8;
-  font-size: 13px;
+  line-height: var(--line-height-1-8);
+  font-size: var(--font-size-13);
 }
 textarea:focus-visible {
   outline: 3px solid var(--palette-a8d9cb);
@@ -886,11 +888,11 @@ textarea:focus-visible {
   border: 1px solid var(--palette-e7c6bd);
   background: var(--palette-fff7f4);
   color: var(--palette-a54e39);
-  border-radius: 6px;
-  padding: 6px 10px;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 500;
+  border-radius: var(--radius-6);
+  padding: var(--space-6) var(--space-10);
+  gap: var(--space-6);
+  font-size: var(--font-size-12);
+  font-weight: var(--font-weight-500);
 }
 .row-actions button.cancel-run:hover:not(:disabled),
 .cancel-run:hover:not(:disabled) {
@@ -927,15 +929,15 @@ button.detail-button,
   align-items: center;
   justify-content: center;
   min-height: 34px;
-  padding: 6px 12px;
-  gap: 6px;
+  padding: var(--space-6) var(--space-12);
+  gap: var(--space-6);
   border: 1px solid var(--control-line);
-  border-radius: 8px;
+  border-radius: var(--radius-8);
   background: var(--palette-ffffff);
   color: var(--steel);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 20px;
+  font-size: var(--font-size-12);
+  font-weight: var(--font-weight-500);
+  line-height: var(--line-height-20);
 }
 button.detail-button:hover:not(:disabled),
 .row-actions button:hover:not(:disabled) {
@@ -963,8 +965,8 @@ button.delete-confirm {
   color: var(--tone-red-ink);
   background: var(--tone-red-bg);
   border-color: var(--tone-red-line);
-  gap: 6px;
-  line-height: 20px;
+  gap: var(--space-6);
+  line-height: var(--line-height-20);
 }
 button.cancel-run:hover:not(:disabled),
 .row-actions button.cancel-run:hover:not(:disabled),
@@ -977,10 +979,10 @@ button.delete-confirm:hover:not(:disabled) {
 }
 .modal-actions > button {
   min-height: 38px;
-  padding: 8px 14px;
-  font-size: 13px;
-  border-radius: 8px;
-  gap: 6px;
+  padding: var(--space-8) var(--space-14);
+  font-size: var(--font-size-13);
+  border-radius: var(--radius-8);
+  gap: var(--space-6);
 }
 :root {
   --date-time-gap: 4px;
@@ -997,7 +999,7 @@ button.delete-confirm:hover:not(:disabled) {
 
 .pagination {
   flex-wrap: wrap;
-  gap: 12px;
+  gap: var(--space-12);
   justify-content: flex-end;
 }
 .pagination > .page-navigation {
@@ -1243,4 +1245,17 @@ button.delete-confirm:hover:not(:disabled) {
   --palette-rgba-255-255-255-0_55: rgba(255, 255, 255, 0.55);
   --palette-rgba-255-255-255-0_92: rgba(255, 255, 255, 0.92);
   --palette-rgba-6-9-8-0_78: rgba(6, 9, 8, 0.78);
+}
+
+/* Shared form validation, with control association managed by v-form-errors. */
+.field-error {
+  display: block;
+  color: var(--tone-red-ink);
+  font-size: var(--font-size-12);
+  font-weight: var(--font-weight-400);
+  line-height: var(--line-height-1-5);
+  overflow-wrap: anywhere;
+}
+[aria-invalid='true'] {
+  border-color: var(--tone-red-ink);
 }

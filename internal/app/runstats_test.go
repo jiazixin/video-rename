@@ -95,8 +95,8 @@ func TestRunsAnalyticsRejectsInvalidParameters(t *testing.T) {
 		"source=whenever",
 		"sort=random",
 		"profile=-1",
-		"page=0",
-		"size=101",
+		"offset=-1",
+		"limit=101",
 	} {
 		w := httptest.NewRecorder()
 		a.runsAnalytics(w, httptest.NewRequest("GET", "/api/runs/analytics?"+query, nil))

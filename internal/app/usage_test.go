@@ -99,8 +99,8 @@ func TestUsageAnalyticsRejectsInvalidParameters(t *testing.T) {
 		"sort=random",
 		"profile=-1",
 		"run=0x2",
-		"page=0",
-		"size=101",
+		"offset=-1",
+		"limit=101",
 	} {
 		w := httptest.NewRecorder()
 		a.usageAnalytics(w, httptest.NewRequest("GET", "/api/usage/analytics?"+query, nil))

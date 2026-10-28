@@ -34,9 +34,9 @@ type ProbeResult struct {
 // seconds.
 func Probe(ctx context.Context, s config.ServerConfig, timeout time.Duration) (out ProbeResult, err error) {
 	if timeout != 5*time.Second && timeout != 10*time.Second && timeout != 15*time.Second {
-		return out, domain.InvalidField("timeout", "invalid_choice")
+		return out, domain.InvalidField("probe_timeout_seconds", "invalid_choice")
 	}
-	s.Timeout = timeout.String()
+	s.TimeoutMS = timeout.Milliseconds()
 	var cfg config.TaskConfig
 	if err = cfg.ApplyModel(s, ""); err != nil {
 		return

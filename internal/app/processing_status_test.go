@@ -61,7 +61,7 @@ func TestDirectoryProcessingStatusAPI(t *testing.T) {
 		return w
 	}
 	for _, path := range []string{
-		"/api/directories/1/entries?page=1&kind=image&status=manual&sort=status_desc",
+		"/api/directories/1/entries?offset=0&kind=image&status=manual&sort=status_desc",
 		"/api/directories/1/entries?kind=image&status=manual&sort=status_desc",
 	} {
 		w := request("GET", path, "")
@@ -70,7 +70,7 @@ func TestDirectoryProcessingStatusAPI(t *testing.T) {
 			t.Fatalf("%s: %d %s", path, w.Code, w.Body.String())
 		}
 	}
-	w := request("GET", "/api/directories/1/entries?page=1&kind=image&status=processed&sort=status_asc", "")
+	w := request("GET", "/api/directories/1/entries?offset=0&kind=image&status=processed&sort=status_asc", "")
 	var page library.Page
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &page) != nil || page.Total != 3 || page.Items[0].Name != "2.jpg" {
 		t.Fatalf("aggregate filter: %d %s", w.Code, w.Body.String())
@@ -81,7 +81,7 @@ func TestDirectoryProcessingStatusAPI(t *testing.T) {
 		t.Fatalf("filtered numbering request: %d %s", w.Code, w.Body.String())
 	}
 	for _, endpoint := range []struct{ method, path, body string }{
-		{"GET", "/api/directories/1/entries?page=1&status=invalid", ""},
+		{"GET", "/api/directories/1/entries?offset=0&status=invalid", ""},
 		{"POST", "/api/directories/1/numberings/preview", `{"media":"image","status":"invalid","sort":"status_asc"}`},
 	} {
 		w := request(endpoint.method, endpoint.path, endpoint.body)
@@ -136,10 +136,10 @@ func TestDirectoryStatusAPIFiltersCompletedSubtrees(t *testing.T) {
 		path  string
 		names []string
 	}{
-		{"/api/directories/1/entries?page=99&limit=50&status=unprocessed", []string{"partial", "unknown"}},
+		{"/api/directories/1/entries?offset=99&limit=50&status=unprocessed", []string{"partial", "unknown"}},
 		{"/api/directories/1/entries?limit=50&status=unprocessed", []string{"partial", "unknown"}},
-		{"/api/directories/1/entries?page=1&status=processed", []string{"completed"}},
-		{"/api/directories/1/entries?page=1&q=completed&status=unprocessed", nil},
+		{"/api/directories/1/entries?offset=0&status=processed", []string{"completed"}},
+		{"/api/directories/1/entries?offset=0&q=completed&status=unprocessed", nil},
 	} {
 		r := httptest.NewRequest("GET", test.path, nil)
 		for _, cookie := range login.Result().Cookies() {

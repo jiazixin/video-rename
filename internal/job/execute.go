@@ -84,7 +84,7 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 	}
 	fail := func(e error) { failAt(e, 0) }
 	if r.Task != "extract" && r.PromptBody == "" {
-		fail(domain.Fail(domain.KindInvalid, domain.Record{Code: "model_snapshot_missing", Message: "run has no model configuration snapshot; create the run again"}))
+		fail(domain.Fail(domain.KindInvalid, domain.Failure{Reason: domain.ReasonModelSnapshotMissing, Message: "run has no model configuration snapshot; create the run again"}))
 		return
 	}
 	var runConfig config.TaskConfig
@@ -97,7 +97,7 @@ func (m *Manager) Execute(parent context.Context, id int64) {
 	}
 	frames, err := sampling.Parse(frameSnapshot)
 	if err != nil {
-		fail(domain.Fail(domain.KindInvalid, domain.Record{Code: "sampling_snapshot_invalid", Message: "sampling snapshot is invalid"}).Wrap(err))
+		fail(domain.Fail(domain.KindInvalid, domain.Failure{Reason: domain.ReasonSamplingSnapshotInvalid, Message: "sampling snapshot is invalid"}).Wrap(err))
 		return
 	}
 	runConfig.Sampling, runConfig.Images = frames.Sampling, frames.Images

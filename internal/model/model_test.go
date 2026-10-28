@@ -97,8 +97,16 @@ func TestModelReadsWhileWriterBusy(t *testing.T) {
 }
 
 // newPrompt creates a library entry so profiles have a reference to carry.
-func newPrompt(t *testing.T, s Store, title, body string) prompt.Profile {
+type newPromptOptions struct {
+	s     Store
+	title string
+	body  string
+}
+
+func newPrompt(t *testing.T, options newPromptOptions) prompt.Profile {
 	t.Helper()
+	s, title, body := options.s, options.title, options.body
+
 	p, err := prompt.New(s.db).Save(t.Context(), prompt.Profile{Title: title, Body: body})
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +128,7 @@ func TestDefaultSaveConflictAndRestart(t *testing.T) {
 	if err != nil || p.Body != DefaultBody {
 		t.Fatal(p, err)
 	}
-	p.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}
+	p.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", TimeoutMS: 2000, Temperature: 0.2, MaxTokens: 128}
 	old := p
 	lib := prompt.New(db)
 	seedPrompt, err := lib.Get(t.Context(), p.PromptID)
@@ -138,13 +146,13 @@ func TestDefaultSaveConflictAndRestart(t *testing.T) {
 	if _, err = s.Save(t.Context(), old); err == nil {
 		t.Fatal("stale edit accepted")
 	}
-	if _, err = s.Save(t.Context(), Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: " ", Body: "x"}); err == nil {
+	if _, err = s.Save(t.Context(), Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", TimeoutMS: 2000, Temperature: 0.2, MaxTokens: 128, Title: " ", Body: "x"}); err == nil {
 		t.Fatal("blank title accepted")
 	}
-	if _, err = s.Save(t.Context(), Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: "x"}); err == nil {
+	if _, err = s.Save(t.Context(), Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", TimeoutMS: 2000, Temperature: 0.2, MaxTokens: 128, Title: "x"}); err == nil {
 		t.Fatal("missing prompt accepted")
 	}
-	second, err := s.Save(t.Context(), Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: "旅行", PromptID: newPrompt(t, s, "风景提示词", "描述风景").ID})
+	second, err := s.Save(t.Context(), Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", TimeoutMS: 2000, Temperature: 0.2, MaxTokens: 128, Title: "旅行", PromptID: newPrompt(t, newPromptOptions{s: s, title: "风景提示词", body: "描述风景"}).ID})
 	if err != nil || second.ID == 1 {
 		t.Fatal(second, err)
 	}
@@ -285,7 +293,7 @@ func TestCopyAndDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://localhost/v1", APIKey: "secret", Model: "test", Timeout: "2s", MaxTokens: 1024, Workers: 4, Thinking: "disabled", ThinkingAdapter: "template"}
+	p.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://localhost/v1", APIKey: "secret", Model: "test", TimeoutMS: 2000, MaxTokens: 1024, Workers: 4, Thinking: "disabled", ThinkingAdapter: "template"}
 	p, err = s.Save(t.Context(), p)
 	if err != nil {
 		t.Fatal(err)

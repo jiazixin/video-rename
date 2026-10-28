@@ -1,10 +1,19 @@
 <script setup lang="ts">
+  import {
+    useRouteState,
+    queryText,
+    queryChoice,
+    queryInteger,
+    queryIDs,
+    queryBoolean
+  } from '../../app/use-route-state';
+
   import './history.css';
   import { formatCompact } from '../../lib/format/number';
   import { errorText } from '../../app/errors';
   import PageNavigation from '../../components/PageNavigation.vue';
   import { useToast } from '../../app/use-toast';
-  import { computed, ref, onMounted, onUnmounted } from 'vue';
+  import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
   import {
     CheckCircle2,
     AlertCircle,
@@ -16,7 +25,8 @@
     Undo2,
     Trash2
   } from '@lucide/vue';
-  import { api, newRequestKey, apiItems } from '../../app/api';
+  import { useApi } from '../../app/use-api';
+  import { newRequestKey } from '../../app/api';
   import { displayPath } from '../../lib/format/path';
   import {
     isActiveRunStatus,
@@ -35,6 +45,7 @@
   import SelectField from '../../components/SelectField.vue';
   import FailureDiagnostics from './FailureDiagnostics.vue';
   import { ModelPicker } from '../models';
+  const { api, apiItems } = useApi();
   const toast = useToast();
   const category = ref('success'),
     rows = ref<LogRecord[]>([]),
@@ -72,6 +83,38 @@
     clearAll = ref(false),
     clearing = ref(false),
     clearError = ref('');
+  const selectedID = ref(0);
+  const routeState = useRouteState(
+    {
+      category: queryChoice(category, ['success', 'failure']),
+      q: queryText(q),
+      action: queryChoice(action, [
+        '',
+        'automatic',
+        'manual',
+        'restore',
+        'numbering',
+        'numbering_restore'
+      ]),
+      model_source: queryChoice(source, ['', 'primary', 'fallback', 'unknown']),
+      from: queryText(from, (value) => !Number.isNaN(Date.parse(value))),
+      to: queryText(to, (value) => !Number.isNaN(Date.parse(value))),
+      run: queryText(run, (value) => /^\d*$/.test(value)),
+      page: queryInteger(pageNumber, { min: 1 }),
+      limit: queryInteger(limit, { choices: [50, 100, 200] }),
+      selected: queryIDs(chosen),
+      multi: queryBoolean(multi),
+      detail: queryInteger(selectedID)
+    },
+    {
+      onRestore: () => {
+        void load(true);
+      }
+    }
+  );
+  watch(selected, (value) => {
+    selectedID.value = value?.id ?? 0;
+  });
   function clearSelection() {
     chosen.value.clear();
     selectionAnchor = undefined;
@@ -137,34 +180,39 @@
   }
   let seq = 0,
     debounce: ReturnType<typeof setTimeout> | undefined;
+  let loadController: AbortController | undefined;
   async function load(preserve = false) {
+    loadController?.abort();
     if (category.value === 'extraction') return;
+    const controller = new AbortController();
+    loadController = controller;
     if (!preserve) clearSelection();
     const n = ++seq;
     busy.value = true;
     if (!preserve) error.value = '';
     try {
       const params = new URLSearchParams({
-        paged: '1',
         limit: String(limit.value),
         category: category.value,
         q: q.value,
         action: action.value,
         model_source: source.value,
-        page: String(pageNumber.value),
+        offset: String((pageNumber.value - 1) * limit.value),
         from: from.value ? new Date(from.value + 'T00:00:00').toISOString() : '',
         to: to.value ? new Date(to.value + 'T23:59:59.999').toISOString() : ''
       });
       if (run.value) params.set('run', run.value);
       const [data, available] = await Promise.all([
-        api<LogPage>(`/logs?${params}`),
-        apiItems<number>('/logs/batches')
+        api<LogPage>(`/logs?${params}`, { signal: controller.signal }),
+        apiItems<number>('/logs/batches', { signal: controller.signal })
       ]);
       if (n === seq) {
         error.value = '';
         rows.value = data.items;
+        selected.value = rows.value.find((row) => row.id === selectedID.value);
+        if (chosen.value.size) multi.value = true;
         total.value = data.total;
-        pageNumber.value = data.page;
+        pageNumber.value = Math.floor(data.offset / data.limit) + 1;
         chosen.value = new Set(
           [...chosen.value].filter((id) => rows.value.some((r) => r.id === id))
         );
@@ -223,10 +271,13 @@
       : `最后一次模型请求使用${modelSource(row)}`;
   }
   function reset() {
+    if (routeState.isRestoring.value) return;
     pageNumber.value = 1;
     void load();
   }
   function search() {
+    loadController?.abort();
+    seq++;
     clearTimeout(debounce);
     debounce = setTimeout(reset, 250);
   }
@@ -347,7 +398,7 @@
       polling = false;
     }
   }
-  onMounted(() => load());
+  onMounted(() => load(true));
   onUnmounted(() => {
     seq++;
     clearTimeout(debounce);
@@ -716,16 +767,16 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 5px;
+    gap: var(--space-5);
     min-width: 0;
   }
   .history-model-source {
     display: inline-flex;
     align-items: center;
-    border-radius: 4px;
-    padding: 2px 6px;
-    font-size: 10px;
-    line-height: 1.5;
+    border-radius: var(--radius-4);
+    padding: var(--space-2) var(--space-6);
+    font-size: var(--font-size-10);
+    line-height: var(--line-height-1-5);
     white-space: nowrap;
     color: var(--palette-656d77);
     background: var(--palette-f0f1f4);

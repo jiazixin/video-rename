@@ -31,6 +31,8 @@ test('顶部编号不依赖视图，递归索引并按文件夹编号，刷新�
   await expect(toasts(page).first()).toContainText('已编号 8 个文件，完成 4 个目录。')
   await dialog.getByRole('button', { name: '关闭', exact: true }).last().click()
   await page.reload()
+  await expect(page.getByLabel('搜索当前目录')).toHaveValue('clip')
+  await page.getByLabel('搜索当前目录').fill('')
   await actions.getByRole('button', { name: '编号', exact: true }).click()
   await expect(page.getByRole('dialog')).toContainText('0 个需要修改，8 个保持不变')
   await page.getByRole('dialog').getByRole('button', { name: '编号记录', exact: true }).click()
@@ -227,7 +229,10 @@ test('编号历史刷新后可展开并复制执行失败现场', async ({ page,
             status: 'rolled_back',
             created: '2026-09-30T12:00:00.000Z',
             undo_of: '',
-            error: '操作失败，已恢复原名：目标已存在',
+            error: {
+              code: 'numbering_rolled_back',
+              details: { cause: { code: 'rename_conflict' } }
+            },
             processing_log: diagnostic,
             total: 3,
             changed: 3

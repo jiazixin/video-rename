@@ -1,32 +1,32 @@
 .prompt-preview p {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: 13px;
-  line-height: 1.9;
+  font-size: var(--font-size-13);
+  line-height: var(--line-height-1-9);
 }
 .prompt-picker {
-  margin: 20px 0;
+  margin: var(--space-20) 0;
 }
 .prompt-picker .select-field {
   width: 100%;
 }
 .prompt-picker label {
-  margin-bottom: 10px;
+  margin-bottom: var(--space-10);
 }
 .prompt-preview {
   border: 1px solid var(--palette-e4eae6);
-  border-radius: 7px;
+  border-radius: var(--radius-7);
   background: var(--palette-f8faf9);
-  margin: 10px 0 18px;
-  padding: 10px 12px;
+  margin: var(--space-10) 0 var(--space-18);
+  padding: var(--space-10) var(--space-12);
 }
 .prompt-preview summary {
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-12);
   color: var(--palette-4d7864);
 }
 .prompt-preview p {
-  margin-top: 12px;
+  margin-top: var(--space-12);
   max-height: 220px;
   overflow: auto;
 }
@@ -35,15 +35,15 @@
   align-items: center;
   justify-content: center;
   min-height: 34px;
-  padding: 6px 12px;
-  gap: 6px;
+  padding: var(--space-6) var(--space-12);
+  gap: var(--space-6);
   border: 1px solid var(--control-line);
-  border-radius: 8px;
+  border-radius: var(--radius-8);
   background: var(--palette-ffffff);
   color: var(--steel);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 20px;
+  font-size: var(--font-size-12);
+  font-weight: var(--font-weight-500);
+  line-height: var(--line-height-20);
 }
 .model-card-actions button:hover:not(:disabled) {
   background: var(--control-hover);
@@ -58,8 +58,8 @@
   color: var(--tone-red-ink);
   background: var(--tone-red-bg);
   border-color: var(--tone-red-line);
-  gap: 6px;
-  line-height: 20px;
+  gap: var(--space-6);
+  line-height: var(--line-height-20);
 }
 .model-card-actions button.model-delete:hover:not(:disabled) {
   color: var(--tone-red-ink);
@@ -71,78 +71,78 @@
 .model-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 390px), 1fr));
-  gap: 18px;
+  gap: var(--space-18);
 }
 .model-card {
-  padding: 24px;
+  padding: var(--space-24);
   min-width: 0;
   display: flex;
   flex-direction: column;
 }
 .model-card header {
   display: flex;
-  gap: 15px;
+  gap: var(--space-15);
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin-bottom: var(--space-16);
 }
 .model-title {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: var(--space-12);
   min-width: 0;
 }
 .model-title input {
   width: 16px;
   height: 16px;
   min-height: 0;
-  margin: 4px 0 0;
+  margin: var(--space-4) 0 0;
 }
 .model-title h2 {
-  font-size: 16px;
+  font-size: var(--font-size-16);
   overflow-wrap: anywhere;
 }
 .model-labels {
   display: flex;
-  gap: 8px;
+  gap: var(--space-8);
   align-items: center;
   flex-wrap: wrap;
-  margin-top: 8px;
+  margin-top: var(--space-8);
 }
 .model-provider {
-  font-size: 11px;
+  font-size: var(--font-size-11);
   color: var(--palette-6e7774);
 }
 .model-incomplete {
-  font-size: 11px;
+  font-size: var(--font-size-11);
   background: var(--palette-fff4df);
   color: var(--palette-98661c);
-  padding: 3px 8px;
-  border-radius: 4px;
+  padding: var(--space-3) var(--space-8);
+  border-radius: var(--radius-4);
 }
 .model-endpoint {
   display: flex;
-  gap: 12px;
-  padding: 17px;
+  gap: var(--space-12);
+  padding: var(--space-17);
   background: var(--palette-f7f9f8);
   border: 1px solid var(--palette-e6ebe8);
-  border-radius: 8px;
+  border-radius: var(--radius-8);
   color: var(--palette-6c8479);
-  margin-bottom: 18px;
+  margin-bottom: var(--space-18);
 }
 .model-endpoint > div {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-6);
 }
 .model-endpoint strong {
-  font-size: 14px;
+  font-size: var(--font-size-14);
   color: var(--palette-283c33);
   overflow-wrap: anywhere;
 }
 .model-endpoint span {
-  font-size: 12px;
+  font-size: var(--font-size-12);
   color: var(--palette-6a736d);
   white-space: nowrap;
   overflow: hidden;
@@ -151,57 +151,57 @@
 .model-metrics {
   display: flex;
   flex-wrap: wrap;
-  gap: 22px;
-  margin: 0 0 21px;
-  font-size: 11px;
+  gap: var(--space-22);
+  margin: 0 0 var(--space-21);
+  font-size: var(--font-size-11);
   color: var(--palette-6a726d);
 }
 .model-metrics b {
   color: var(--palette-48534c);
-  font-weight: 500;
-  margin-left: 6px;
+  font-weight: var(--font-weight-500);
+  margin-left: var(--space-6);
 }
 .model-prompt summary {
-  font-size: 12px;
+  font-size: var(--font-size-12);
   color: var(--palette-65756c);
   cursor: pointer;
 }
 .model-prompt p {
-  margin-top: 12px;
-  font-size: 12px;
+  margin-top: var(--space-12);
+  font-size: var(--font-size-12);
   white-space: pre-wrap;
   max-height: 200px;
   overflow: auto;
 }
 .model-card footer {
   margin-top: auto;
-  padding-top: 16px;
+  padding-top: var(--space-16);
   border-top: 1px solid var(--palette-edf0ee);
-  font-size: 10px;
+  font-size: var(--font-size-10);
   color: var(--palette-6e7770);
 }
 .model-detect {
   display: flex;
   align-items: flex-end;
-  gap: 10px;
+  gap: var(--space-10);
 }
 .model-detect label {
   flex: 1;
   min-width: 0;
 }
 .model-detect > button {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-16);
   height: 39px;
 }
 .detected-models .select-field {
   width: 100%;
-  margin-bottom: 10px;
+  margin-bottom: var(--space-10);
 }
 .model-detect-note {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px !important;
+  gap: var(--space-6);
+  font-size: var(--font-size-12) !important;
   color: var(--palette-327a5b);
 }
 .model-form > .help {
@@ -212,7 +212,7 @@
 }
 @media (max-width: 500px) {
   .model-card {
-    padding: 18px;
+    padding: var(--space-18);
   }
   .model-detect {
     flex-wrap: wrap;
@@ -226,27 +226,27 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-12);
   flex-wrap: wrap;
 }
 .model-card-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-8);
 }
 .vision-probe {
-  margin-bottom: 20px;
-  padding: 14px;
+  margin-bottom: var(--space-20);
+  padding: var(--space-14);
   border: 1px solid var(--palette-e3e9e5);
-  border-radius: 8px;
+  border-radius: var(--radius-8);
   background: var(--palette-fafcfb);
 }
 .vision-probe .help {
   margin-bottom: 0;
 }
 .probe-result {
-  margin-top: 12px;
-  padding: 12px;
-  border-radius: 6px;
+  margin-top: var(--space-12);
+  padding: var(--space-12);
+  border-radius: var(--radius-6);
   background: var(--palette-fff4df);
   color: var(--palette-805d2a);
   overflow-wrap: anywhere;
@@ -260,7 +260,7 @@
   color: var(--palette-934f3e);
 }
 .probe-result p {
-  font-size: 12px;
+  font-size: var(--font-size-12);
   color: inherit;
   white-space: pre-wrap;
 }
@@ -268,17 +268,17 @@
 .vision-probe-controls {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-10);
   flex-wrap: wrap;
-  margin-bottom: 10px;
+  margin-bottom: var(--space-10);
 }
 .probe-timeout {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-8);
 }
 .probe-timeout-text {
-  font-size: 12px;
+  font-size: var(--font-size-12);
   color: var(--palette-65706c);
 }
 .probe-timeout .select-field {
@@ -295,7 +295,7 @@
 .model-toolbar {
   display: flex;
   justify-content: flex-end;
-  margin-bottom: 20px;
+  margin-bottom: var(--space-20);
 }
 
 .model-parameters {
@@ -303,9 +303,9 @@
 }
 .model-parameters small {
   display: block;
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 1.6;
+  font-size: var(--font-size-12);
+  font-weight: var(--font-weight-400);
+  line-height: var(--line-height-1-6);
   color: var(--palette-78827d);
 }
 .model-form .form-grid {

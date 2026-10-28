@@ -109,11 +109,11 @@ func (s *Store) Unseal(value string) (string, error) {
 	}
 	data, err := base64.StdEncoding.DecodeString(value)
 	if err != nil || len(data) < s.secret.NonceSize() {
-		return "", domain.Fail(domain.KindInternal, domain.Record{Code: "secret_invalid", Message: "stored secret is malformed"})
+		return "", domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonSecretInvalid, Message: "stored secret is malformed"})
 	}
 	plain, err := s.secret.Open(nil, data[:s.secret.NonceSize()], data[s.secret.NonceSize():], []byte("video-rename-model-v1"))
 	if err != nil {
-		return "", domain.Fail(domain.KindInternal, domain.Record{Code: "secret_unreadable", Message: "stored secret cannot be decrypted; check the database .key file"})
+		return "", domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonSecretUnreadable, Message: "stored secret cannot be decrypted; check the database .key file"})
 	}
 	return string(plain), nil
 }

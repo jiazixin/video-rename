@@ -1,7 +1,8 @@
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import { useApi } from '../../app/use-api'
 import { errorText } from '../../app/errors'
 import type { Entry } from '../../app/contracts'
-import { restoreRequest, type RunTask } from './entry-dialog'
+import type { RunTask } from './entry-dialog'
 
 export type BatchAction = 'auto' | 'extract' | 'restore'
 
@@ -27,6 +28,7 @@ type BatchOptions = {
 // Runs or restores for the selected entries. Restores go one at a time and keep
 // the dialog open with the failures.
 export function useBatchActions(options: BatchOptions) {
+  const { api } = useApi()
   const { saving, chosen, autoEntries, extractEntries, restoreEntries } = options
   const batchAction = ref<BatchAction | ''>(''),
     batchError = ref(''),
@@ -51,9 +53,10 @@ export function useBatchActions(options: BatchOptions) {
     for (const e of entries) {
       batchProgress.value = `正在还原 ${++done} / ${entries.length}`
       try {
-        await restoreRequest(e)
+        await api<unknown>(`/operations/${e.restore_id}/restore`, { method: 'POST', body: {} })
         chosen.value.delete(e.id)
       } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') throw err
         failures.push(`${e.name}：${errorText(err)}`)
       }
     }

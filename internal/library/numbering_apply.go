@@ -28,7 +28,7 @@ func (l *Library) ApplyNumbering(ctx context.Context, id string, progress func(i
 		return b, nil
 	}
 	if b.Status != "preview" {
-		return b, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_not_preview", Message: "numbering batch is not a preview", Details: map[string]any{"status": b.Status}})
+		return b, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingNotPreview, Message: "numbering batch is not a preview", Details: map[string]any{"status": b.Status}})
 	}
 	if l.broken != nil {
 		return b, errHalted
@@ -37,13 +37,13 @@ func (l *Library) ApplyNumbering(ctx context.Context, id string, progress func(i
 		return b, err
 	}
 	if l.Busy != nil && l.Busy(ctx, b.Parent) {
-		return b, domain.Fail(domain.KindConflict, domain.Record{Code: "descendant_busy", Message: "a descendant has an active job"})
+		return b, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonDescendantBusy, Message: "a descendant has an active job"})
 	}
 	path, err := l.Path(ctx, b.Parent)
 	if err != nil {
 		return b, err
 	}
-	fingerprint, err := directoryFingerprint(path)
+	fingerprint, err := directoryFingerprint(ctx, path)
 	if err != nil {
 		return b, err
 	}
@@ -56,7 +56,7 @@ func (l *Library) ApplyNumbering(ctx context.Context, id string, progress func(i
 			return b, err
 		}
 		if original.Status != "committed" {
-			return b, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_original_unavailable", Message: "original batch is restored or unavailable"})
+			return b, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingOriginalUnavailable, Message: "original batch is restored or unavailable"})
 		}
 	}
 	for _, i := range b.Items {
@@ -68,19 +68,19 @@ func (l *Library) ApplyNumbering(ctx context.Context, id string, progress func(i
 			return b, err
 		}
 		if b.UndoOf == "" && e.Processed == "marked" {
-			return b, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_item_marked", Message: "file is marked to skip numbering; preview again", Details: map[string]any{"media": b.Media, "name": e.Name}})
+			return b, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingItemMarked, Message: "file is marked to skip numbering; preview again", Details: map[string]any{"media": b.Media, "name": e.Name}})
 		}
 		if e.Parent != b.Parent || e.Version != i.Version || e.Name != i.Old || !numberingMatch(filepath.Join(path, i.Old), i) {
-			return b, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_item_changed", Message: "file changed; preview again", Details: map[string]any{"media": b.Media, "name": i.Old}})
+			return b, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingItemChanged, Message: "file changed; preview again", Details: map[string]any{"media": b.Media, "name": i.Old}})
 		}
 		if err = l.CheckAvailable(ctx, i.Entry); err != nil {
 			return b, err
 		}
 		if e.TaskStatus != "" || (l.Busy != nil && l.Busy(ctx, i.Entry)) {
-			return b, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_item_busy", Message: "a file has an active job", Details: map[string]any{"media": b.Media}})
+			return b, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingItemBusy, Message: "a file has an active job", Details: map[string]any{"media": b.Media}})
 		}
 		if i.UndoOf != 0 && e.RestoreID != i.UndoOf {
-			return b, domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_item_renamed", Message: "a file was renamed later; the batch cannot be restored", Details: map[string]any{"media": b.Media}})
+			return b, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingItemRenamed, Message: "a file was renamed later; the batch cannot be restored", Details: map[string]any{"media": b.Media}})
 		}
 	}
 	if _, err = storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
@@ -99,7 +99,7 @@ func (l *Library) ApplyNumbering(ctx context.Context, id string, progress func(i
 		persisted, readErr := l.Numbering(ctx, id)
 		if readErr != nil {
 			l.broken = readErr
-			return b, domain.Fail(domain.KindInternal, domain.Record{Code: "numbering_unconfirmed", Message: "numbering result needs review; restart to recover"}).Wrap(readErr)
+			return b, domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonNumberingUnconfirmed, Message: "numbering result needs review; restart to recover"}).Wrap(readErr)
 		}
 		if persisted.Status == "committed" {
 			return persisted, nil
@@ -115,7 +115,7 @@ func (l *Library) ApplyNumbering(ctx context.Context, id string, progress func(i
 			return tx.ExecContext(ctx, "UPDATE image_numberings SET error=? WHERE id=?", b.numberingErrorRecord(), id)
 		}); saveErr != nil {
 			l.broken = saveErr
-			return b, domain.Fail(domain.KindInternal, domain.Record{Code: "numbering_evidence_unsaved", Message: "saving the numbering failure failed; restart to review"}).Wrap(saveErr)
+			return b, domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonNumberingEvidenceUnsaved, Message: "saving the numbering failure failed; restart to review"}).Wrap(saveErr)
 		}
 		if recovery := l.rollbackNumbering(ctx, &b, path); recovery != nil {
 			b.Status = "review"
@@ -168,7 +168,7 @@ func (l *Library) moveNumbering(ctx context.Context, params moveNumberingOptions
 	defer dir.Close()
 	snap, err := directorySnapshot(dir, i.Current)
 	if err != nil || Identity(snap) != i.Identity || snap.Size != i.Size || stamp(snap) != i.ModifiedNS {
-		return domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_item_changed", Message: "file identity or content changed", Details: map[string]any{"media": b.Media, "name": i.Current}})
+		return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingItemChanged, Message: "file identity or content changed", Details: map[string]any{"media": b.Media, "name": i.Current}})
 	}
 	l.indexEpoch.Add(1)
 	if _, err := storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
@@ -178,7 +178,7 @@ func (l *Library) moveNumbering(ctx context.Context, params moveNumberingOptions
 	}
 	i.Pending = target
 	if err := rename.NoReplaceAt(int(dir.Fd()), i.Current, target); err != nil {
-		return numberingMoveFailure(numberingMoveFailureOptions{Batch: b, Item: i, Path: path, Target: target, Cause: err})
+		return numberingMoveFailure(ctx, numberingMoveFailureOptions{Batch: b, Item: i, Path: path, Target: target, Cause: err})
 	}
 	if err := dir.Sync(); err != nil {
 		return err
@@ -301,7 +301,7 @@ func (l *Library) verifyNumberingCommit(ctx context.Context, b *Numbering) (err 
 		}
 		operation := Operation{Kind: "file", Identity: item.Identity, Size: item.Size, ModifiedNS: item.ModifiedNS}
 		if err := verifyOperationFile(dir, item.New, operation); err != nil {
-			return domain.Fail(domain.KindConflict, domain.Record{Code: "numbering_item_changed", Message: "file changed before commit", Details: map[string]any{"media": b.Media, "name": item.New}}).Wrap(err)
+			return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingItemChanged, Message: "file changed before commit", Details: map[string]any{"media": b.Media, "name": item.New}}).Wrap(err)
 		}
 	}
 	_, err = l.Path(ctx, b.Parent)

@@ -69,14 +69,14 @@
   .delete-targets {
     max-height: 220px;
     overflow: auto;
-    padding-left: 24px;
+    padding-left: var(--space-24);
     overflow-wrap: anywhere;
   }
   .delete-targets li {
-    margin: 6px 0;
+    margin: var(--space-6) 0;
   }
   .delete-path {
     overflow-wrap: anywhere;
-    font-weight: 600;
+    font-weight: var(--font-weight-600);
   }
 </style>

@@ -30,10 +30,10 @@ func TestScaleDirectoryScanCleanupWithLargeIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	refresh(t, l, 1)
-	bulk := entry(t, l, 1, "bulk").ID
+	bulk := entry(t, entryOptions{l: l, parent: 1, name: "bulk"}).ID
 	parents := make([]int64, directories)
 	for n := range directories {
-		parents[n] = entry(t, l, 1, fmt.Sprintf("empty-%03d", n)).ID
+		parents[n] = entry(t, entryOptions{l: l, parent: 1, name: fmt.Sprintf("empty-%03d", n)}).ID
 	}
 	start := time.Now()
 	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {

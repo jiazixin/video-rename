@@ -54,7 +54,7 @@ func setup(t *testing.T) (*Manager, string) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	profile.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128}
+	profile.ServerConfig = config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", TimeoutMS: 2000, Temperature: 0.2, MaxTokens: 128}
 	if _, e = (model.New(db)).Save(t.Context(), profile); e != nil {
 		t.Fatal(e)
 	}
@@ -171,8 +171,8 @@ func TestRunTokenCountAccumulatesAndSurvivesHistoryDeletion(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	listed, err := m.List(t.Context(), 0)
-	if err != nil || len(listed) != 1 || listed[0].TokenCount != 195 {
+	listed, err := m.ListPage(t.Context(), ListPageOptions{Category: "all"})
+	if err != nil || len(listed.Items) != 1 || listed.Items[0].TokenCount != 195 {
 		t.Fatalf("persisted token totals after history deletion: %+v, %v", listed, err)
 	}
 }
@@ -328,7 +328,7 @@ func TestPromptSnapshotAndIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prompt, err := store.Save(t.Context(), model.Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Workers: 1, Title: "独立提示词", PromptID: libraryPrompt.ID})
+	prompt, err := store.Save(t.Context(), model.Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", TimeoutMS: 2000, Temperature: 0.2, MaxTokens: 128, Workers: 1, Title: "独立提示词", PromptID: libraryPrompt.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +399,7 @@ func TestGlobalDefaultUsedByNewRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := store.Save(t.Context(), model.Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", Timeout: "2s", Temperature: 0.2, MaxTokens: 128, Title: "全局默认测试", PromptID: libraryPrompt.ID})
+	p, err := store.Save(t.Context(), model.Profile{Provider: "custom", Protocol: "openai", BaseURL: "http://127.0.0.1:8080/v1", Model: "test-model", TimeoutMS: 2000, Temperature: 0.2, MaxTokens: 128, Title: "全局默认测试", PromptID: libraryPrompt.ID})
 	if err != nil {
 		t.Fatal(err)
 	}

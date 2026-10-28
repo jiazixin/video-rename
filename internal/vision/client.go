@@ -359,6 +359,11 @@ func (c *Client) doOnce(ctx context.Context, body []byte, capture ...*domain.Mod
 	limited := io.LimitReader(resp.Body, c.responseLimit+1)
 	var rerr error
 	raw, rerr = io.ReadAll(limited)
+	// EOF can win the transport race with cancellation. Do not parse or accept
+	// a response after its caller has already abandoned the request.
+	if err := ctx.Err(); err != nil {
+		return "", resp.StatusCode, transportError(ctx, err, resp.StatusCode)
+	}
 	if rerr != nil {
 		if ctx.Err() != nil || (resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices) {
 			return "", resp.StatusCode, transportError(ctx, rerr, resp.StatusCode)

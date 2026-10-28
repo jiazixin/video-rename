@@ -166,11 +166,11 @@ func replayResponse(w http.ResponseWriter, response storage.IdempotencyResponse)
 func idempotencyError(err error) error {
 	switch {
 	case errors.Is(err, storage.ErrIdempotencyReused):
-		return domain.Fail(domain.KindConflict, domain.Record{Code: "idempotency_key_reused", Message: "idempotency key belongs to a different request"})
+		return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonIdempotencyKeyReused, Message: "idempotency key belongs to a different request"})
 	case errors.Is(err, storage.ErrIdempotencyPending):
-		return domain.Fail(domain.KindConflict, domain.Record{Code: "idempotency_pending", Message: "request outcome is pending; inspect the resource before submitting new work"})
+		return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonIdempotencyPending, Message: "request outcome is pending; inspect the resource before submitting new work"})
 	case errors.Is(err, storage.ErrIdempotencyCapacity):
-		return domain.Fail(domain.KindConflict, domain.Record{Code: "idempotency_capacity", Message: "request result retention capacity is full"})
+		return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonIdempotencyCapacity, Message: "request result retention capacity is full"})
 	default:
 		return err
 	}

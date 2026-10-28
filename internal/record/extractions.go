@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"video-rename/internal/domain"
+	"video-rename/internal/pagination"
 	"video-rename/internal/storage"
 	"video-rename/internal/timefmt"
 )
@@ -66,41 +67,20 @@ func (s *Store) Extractions(ctx context.Context, q Query) (any, error) {
 				result[status] = total
 				continue
 			}
-			before := number(q.Get(status + "_before"))
-			if before <= 0 {
-				before = 1 << 62
-			}
-			page, offset := int64(1), int64(0)
-			if q.Has(status + "_page") {
-				page = min(max(1, number(q.Get(status+"_page"))), max(1, (total+limit-1)/limit))
-				offset = (page - 1) * limit
-				before = 1 << 62
-			}
-			rows, err := tx.QueryContext(ctx, `SELECT id,run,entry,path,source,status,started,finished,duration_ms,cached,frames,message`+where+` AND status=? AND id<? ORDER BY id DESC LIMIT ? OFFSET ?`, append(groupArgs, before, limit+1, offset)...)
+			offset := pagination.Offset(number(q.Get(status+"_offset")), total, limit)
+			rows, err := tx.QueryContext(ctx, `SELECT id,run,entry,path,source,status,started,finished,duration_ms,cached,frames,message`+where+` AND status=? ORDER BY id DESC LIMIT ? OFFSET ?`, append(groupArgs, limit, offset)...)
 			if err != nil {
 				return nil, err
 			}
-			items := []Extraction{}
-			for rows.Next() {
+			items, err := storage.CollectRows(rows, func(rows *sql.Rows) (Extraction, error) {
 				var item Extraction
-				if err = rows.Scan(&item.ID, &item.Run, &item.Entry, &item.Path, &item.Source, &item.Status, &item.Started, &item.Finished, &item.DurationMS, &item.Cached, &item.Frames, &item.Error); err != nil {
-					break
-				}
-				items = append(items, item)
-			}
-			if err == nil {
-				err = rows.Err()
-			}
-			rows.Close()
+				err := rows.Scan(&item.ID, &item.Run, &item.Entry, &item.Path, &item.Source, &item.Status, &item.Started, &item.Finished, &item.DurationMS, &item.Cached, &item.Frames, &item.Error)
+				return item, err
+			})
 			if err != nil {
 				return nil, err
 			}
-			next := int64(0)
-			if int64(len(items)) > limit {
-				items = items[:limit]
-				next = items[len(items)-1].ID
-			}
-			result[status] = map[string]any{"items": items, "total": total, "next": next, "page": page}
+			result[status] = map[string]any{"items": items, "total": total, "offset": offset, "limit": limit}
 		}
 
 		return result, nil

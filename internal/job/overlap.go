@@ -51,7 +51,7 @@ func (s *scopeIndex) parents(ctx context.Context, id int64) (map[int64]bool, err
 	parents := map[int64]bool{}
 	for current := id; current > 0; {
 		if parents[current] || len(parents) >= 1024 {
-			return nil, domain.Fail(domain.KindConflict, domain.Record{Code: "invalid_hierarchy", Message: "directory hierarchy is invalid"})
+			return nil, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonInvalidHierarchy, Message: "directory hierarchy is invalid"})
 		}
 		parents[current] = true
 		e, err := s.get(ctx, current)
@@ -150,7 +150,7 @@ func (m *Manager) checkOverlap(ctx context.Context, request Request, index *scop
 		if _, err := index.get(ctx, id); err != nil {
 			for _, s := range scopes {
 				if slices.Contains(s.targets, id) {
-					return domain.Fail(domain.KindConflict, domain.Record{Code: "run_targets_unavailable", Message: "targets of an unfinished run are unavailable", Details: map[string]any{"run": s.id}})
+					return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonRunTargetsUnavailable, Message: "targets of an unfinished run are unavailable", Details: map[string]any{"run": s.id}})
 				}
 			}
 			return err
@@ -171,7 +171,7 @@ func (m *Manager) checkOverlap(ctx context.Context, request Request, index *scop
 					}
 				}
 				if covered {
-					return domain.Fail(domain.KindConflict, domain.Record{Code: "run_overlap", Message: "selection overlaps an unfinished run", Details: map[string]any{"run": s.id}})
+					return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonRunOverlap, Message: "selection overlaps an unfinished run", Details: map[string]any{"run": s.id}})
 				}
 			}
 		}

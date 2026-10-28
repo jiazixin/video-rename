@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
 
 	"video-rename/internal/domain"
+	"video-rename/internal/pagination"
 	"video-rename/internal/storage"
 	"video-rename/internal/timefmt"
 )
@@ -31,7 +33,7 @@ const historyTokenFrom = ` FROM run_items i INDEXED BY item_entry
 
 // History returns a filtered page of rename outcomes.
 func (s *Store) History(ctx context.Context, q Query) (any, error) {
-	return storage.ReadValue(ctx, s.db, func(tx *sql.Tx) (any, error) {
+	return storage.ReadValue(ctx, s.db, func(tx *sql.Tx) (_ any, err error) {
 		category := q.Get("category")
 		if category != "success" && category != "failure" {
 			return nil, domain.InvalidField("category", "invalid_choice")
@@ -43,9 +45,6 @@ func (s *Store) History(ctx context.Context, q Query) (any, error) {
 		for _, key := range []string{"from", "to"} {
 			if value := q.Get(key); value != "" {
 				stamp, err := time.Parse(time.RFC3339Nano, value)
-				if err != nil {
-					stamp, err = time.Parse(time.DateOnly, value)
-				}
 				if err != nil {
 					return nil, domain.InvalidField(key, "invalid_date")
 				}
@@ -59,10 +58,6 @@ func (s *Store) History(ctx context.Context, q Query) (any, error) {
 			if err != nil || run <= 0 {
 				return nil, domain.InvalidField("run", "invalid_number")
 			}
-		}
-		before := number(q.Get("before"))
-		if before <= 0 {
-			before = 1 << 62
 		}
 		limit := number(q.Get("limit"))
 		if limit != 50 && limit != 100 && limit != 200 {
@@ -100,22 +95,16 @@ func (s *Store) History(ctx context.Context, q Query) (any, error) {
 				args = append(args, modelSource == "fallback")
 			}
 		}
-		var err error
 		var total int64
 		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*)"+countFrom+where, args...).Scan(&total); err != nil {
 			return nil, err
 		}
-		page, offset := int64(1), int64(0)
-		if q.Has("page") {
-			page = min(max(1, number(q.Get("page"))), max(1, (total+limit-1)/limit))
-			offset = (page - 1) * limit
-			before = 1 << 62
-		}
-		rows, err := tx.QueryContext(ctx, "SELECT e.id,e.category,e.action,e.entry,e.operation,e.run,e.old_path,e.new_path,e.message,e.created,COALESCE(r.config_summary,''),COALESCE(a.model_config_title,r.model_config_title,''),COALESCE(a.model,''),a.fallback,COALESCE((SELECT SUM(t.tokens)"+historyTokenFrom+"),0),COALESCE((SELECT MAX(t.estimated_records)"+historyTokenFrom+"),0)"+from+historyAttemptJoin+where+" AND e.id<? ORDER BY e.id DESC LIMIT ? OFFSET ?", append(args, before, limit+1, offset)...)
+		offset := pagination.Offset(number(q.Get("offset")), total, limit)
+		rows, err := tx.QueryContext(ctx, "SELECT e.id,e.category,e.action,e.entry,e.operation,e.run,e.old_path,e.new_path,e.message,e.created,COALESCE(r.config_summary,''),COALESCE(a.model_config_title,r.model_config_title,''),COALESCE(a.model,''),a.fallback,COALESCE((SELECT SUM(t.tokens)"+historyTokenFrom+"),0),COALESCE((SELECT MAX(t.estimated_records)"+historyTokenFrom+"),0)"+from+historyAttemptJoin+where+" ORDER BY e.id DESC LIMIT ? OFFSET ?", append(args, limit, offset)...)
 		if err != nil {
 			return nil, err
 		}
-		defer rows.Close()
+		defer func() { err = errors.Join(err, rows.Close()) }()
 		out := []map[string]any{}
 		for rows.Next() {
 			var id, entry, op, run int64
@@ -145,20 +134,15 @@ func (s *Store) History(ctx context.Context, q Query) (any, error) {
 					}
 				}
 			}
-			out = append(out, map[string]any{"id": id, "category": cat, "action": action, "entry": entry, "operation": op, "run": run, "old_path": old, "new_path": new, "error": msg, "created": created, "model": snapshot.Model, "model_config_title": modelTitle, "model_source": modelSource, "tokens": tokens, "token_estimated": tokenEstimated > 0})
+			item := map[string]any{"id": id, "category": cat, "action": action, "entry": entry, "operation": op, "run": run, "old_path": old, "new_path": new, "created": created, "model": snapshot.Model, "model_config_title": modelTitle, "model_source": modelSource, "tokens": tokens, "token_estimated": tokenEstimated > 0}
+			if !msg.IsZero() {
+				item["error"] = msg
+			}
+			out = append(out, item)
 		}
 		if err := rows.Err(); err != nil {
 			return nil, err
 		}
-		next := int64(0)
-		if int64(len(out)) > limit {
-			out = out[:limit]
-			next = out[len(out)-1]["id"].(int64)
-		}
-		rows.Close()
-		if q.Get("paged") == "1" || q.Has("page") {
-			return map[string]any{"items": out, "total": total, "next": next, "page": page}, nil
-		}
-		return out, nil
+		return map[string]any{"items": out, "total": total, "offset": offset, "limit": limit}, nil
 	})
 }

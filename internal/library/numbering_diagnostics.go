@@ -1,6 +1,7 @@
 package library
 
 import (
+	"context"
 	"encoding/json/v2"
 	"fmt"
 	"os"
@@ -60,7 +61,7 @@ type numberingMoveFailureOptions struct {
 
 // Capture after the failed syscall and before any rollback. These are subsequent
 // observations, not an assertion about the filesystem at syscall time.
-func numberingMoveFailure(params numberingMoveFailureOptions) error {
+func numberingMoveFailure(ctx context.Context, params numberingMoveFailureOptions) error {
 	b, item, path, target, cause := params.Batch, params.Item, params.Path, params.Target, params.Cause
 
 	phase := "final_rename"
@@ -73,6 +74,10 @@ func numberingMoveFailure(params numberingMoveFailureOptions) error {
 	var detail strings.Builder
 	fmt.Fprintf(&detail, "numbering failure\ncaptured: %s\nbatch: %s\ndirectory: %q\nphase: %s\noriginal name: %q\ncurrent name: %q\ntarget name: %q\nfinal name: %q\nsystem error: %v\npreview identity: %s; size: %d; mtime_ns: %d\n", timefmt.Format(time.Now()), b.ID, path, phase, item.Old, item.Current, target, item.New, cause, item.Identity, item.Size, item.ModifiedNS)
 	inspect := func(label, name string) {
+		if err := ctx.Err(); err != nil {
+			fmt.Fprintf(&detail, "%s %q: %v\n", label, name, err)
+			return
+		}
 		info, err := os.Lstat(filepath.Join(path, name))
 		if err != nil {
 			fmt.Fprintf(&detail, "%s %q: %v\n", label, name, err)
@@ -90,29 +95,32 @@ func numberingMoveFailure(params numberingMoveFailureOptions) error {
 	}
 	inspect("source", item.Current)
 	inspect("target", target)
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		fmt.Fprintf(&detail, "read directory: %v\n", err)
-	} else {
-		count := 0
-		for _, entry := range entries {
-			if !strings.EqualFold(entry.Name(), target) {
-				continue
-			}
-			count++
-			if count > 20 {
-				continue
-			}
-			inspect("entry matching the target (case-insensitive)", entry.Name())
-			participation := "not part of this numbering"
-			for _, planned := range b.Items {
-				if entry.Name() == planned.Current || entry.Name() == planned.Old || entry.Name() == planned.New {
-					participation = fmt.Sprintf("planned %q -> %q; recorded at %q", planned.Old, planned.New, planned.Current)
-					break
-				}
-			}
-			fmt.Fprintln(&detail, participation)
+	count := 0
+	err := scanNumberingDirectory(ctx, path, func(entry os.DirEntry) error {
+		if !strings.EqualFold(entry.Name(), target) {
+			return nil
 		}
+		count++
+		if count > 20 {
+			return nil
+		}
+		inspect("entry matching the target (case-insensitive)", entry.Name())
+		participation := "not part of this numbering"
+		for _, planned := range b.Items {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if entry.Name() == planned.Current || entry.Name() == planned.Old || entry.Name() == planned.New {
+				participation = fmt.Sprintf("planned %q -> %q; recorded at %q", planned.Old, planned.New, planned.Current)
+				break
+			}
+		}
+		fmt.Fprintln(&detail, participation)
+		return nil
+	})
+	if err != nil {
+		fmt.Fprintf(&detail, "directory scan incomplete after %d matching entries: %v\n", count, err)
+	} else {
 		fmt.Fprintf(&detail, "entries matching the target: %d (at most 20 shown)\n", count)
 	}
 	fmt.Fprintln(&detail, "These reads happened after the failed rename call and before recovery; they do not establish a cache fault or external change.")

@@ -12,8 +12,8 @@ import (
 	"net/http"
 	"reflect"
 	"strconv"
-	"strings"
 
+	"video-rename/internal/auth"
 	"video-rename/internal/domain"
 )
 
@@ -96,7 +96,7 @@ var statusOf = map[domain.Kind]int{
 	domain.KindInvalid:         http.StatusBadRequest,
 	domain.KindNotFound:        http.StatusNotFound,
 	domain.KindConflict:        http.StatusConflict,
-	domain.KindTooMany:         http.StatusTooManyRequests,
+	domain.KindTooMany:         http.StatusConflict,
 	domain.KindUnavailable:     http.StatusServiceUnavailable,
 	domain.KindInternal:        http.StatusInternalServerError,
 	domain.KindUnauthenticated: http.StatusUnauthorized,
@@ -110,20 +110,26 @@ type errorBody struct {
 	Details map[string]any `json:"details,omitzero"`
 }
 
-// Failures of the HTTP layer itself.
+// httpFailure is owned by the transport, including its wire code and status.
+type httpFailure struct {
+	status int
+	body   errorBody
+}
+
+func (e *httpFailure) Error() string { return e.body.Message }
+
 var (
-	errShuttingDown     = domain.Fail(domain.KindUnavailable, domain.Record{Code: "shutting_down", Message: "service is shutting down"})
-	errNotFound         = domain.Fail(domain.KindNotFound, domain.Record{Code: domain.CodeNotFound, Message: "no such API endpoint"})
-	errMethodNotAllowed = &domain.Error{Kind: domain.KindConflict, Code: "method_not_allowed", Message: "method not allowed"}
-	errOriginRejected   = domain.Fail(domain.KindForbidden, domain.Record{Code: "permission_denied", Message: "cross-site request rejected"})
-	errNotJSON          = &domain.Error{Kind: domain.KindInvalid, Code: "unsupported_media_type", Message: "request body must be application/json"}
-	errTooLarge         = &domain.Error{Kind: domain.KindInvalid, Code: "payload_too_large", Message: "request body too large"}
+	errShuttingDown     = &httpFailure{http.StatusServiceUnavailable, errorBody{Code: "shutting_down", Message: "service is shutting down"}}
+	errNotFound         = &httpFailure{http.StatusNotFound, errorBody{Code: "not_found", Message: "no such API endpoint"}}
+	errMethodNotAllowed = &httpFailure{http.StatusMethodNotAllowed, errorBody{Code: "method_not_allowed", Message: "method not allowed"}}
+	errOriginRejected   = &httpFailure{http.StatusForbidden, errorBody{Code: "permission_denied", Message: "cross-site request rejected"}}
+	errNotJSON          = &httpFailure{http.StatusUnsupportedMediaType, errorBody{Code: "unsupported_media_type", Message: "request body must be application/json"}}
+	errTooLarge         = &httpFailure{http.StatusRequestEntityTooLarge, errorBody{Code: "payload_too_large", Message: "request body too large"}}
 )
 
-// writeError writes err as the error response of docs/API.md. Expected
-// failures carry their own code and details; job errors use their code; any
-// other error is logged with the request ID and answered with 500 internal
-// without its text.
+// writeError maps typed failures to the wire contract of docs/API.md. Unknown
+// failures are logged with the request ID and answered with 500 internal
+// without exposing their text.
 func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	status, body := errorResponse(r, err)
 	if status == http.StatusTooManyRequests {
@@ -134,38 +140,44 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 
 // errorResponse returns the status and error member of err for writeError.
 func errorResponse(r *http.Request, err error) (int, errorBody) {
-	switch {
-	case errors.Is(err, errPrecondition):
-		return http.StatusPreconditionFailed, errorBody{Code: "precondition_failed", Message: errPrecondition.Message}
-	case errors.Is(err, errMethodNotAllowed):
-		return http.StatusMethodNotAllowed, errorBody{Code: errMethodNotAllowed.Code, Message: errMethodNotAllowed.Message}
-	case errors.Is(err, errNotJSON):
-		return http.StatusUnsupportedMediaType, errorBody{Code: errNotJSON.Code, Message: errNotJSON.Message}
-	case errors.Is(err, errTooLarge):
-		return http.StatusRequestEntityTooLarge, errorBody{Code: errTooLarge.Code, Message: errTooLarge.Message}
+	if failure, ok := errors.AsType[*httpFailure](err); ok {
+		return failure.status, failure.body
 	}
-	if e, ok := domain.AsError(err); ok {
-		status := statusOf[e.Kind]
-		if strings.HasSuffix(e.Code, "_changed") && (e.Code == "prompt_changed" || e.Code == "model_config_changed" || e.Code == "schedule_changed" || e.Code == "entry_changed") {
-			return http.StatusPreconditionFailed, errorBody{Code: "precondition_failed", Message: errPrecondition.Message}
+	if errors.Is(err, auth.ErrUnauthenticated) {
+		return http.StatusUnauthorized, errorBody{Code: "unauthenticated", Message: "login required"}
+	}
+	if errors.Is(err, auth.ErrRateLimited) {
+		return http.StatusTooManyRequests, errorBody{Code: "rate_limited", Message: "too many login attempts"}
+	}
+	if validation, ok := errors.AsType[*domain.ValidationError](err); ok {
+		fields := make([]fieldIssue, len(validation.Fields))
+		for i, field := range validation.Fields {
+			fields[i] = fieldIssue{Path: field.Path, Reason: field.Reason}
 		}
-		if e.Kind == domain.KindTooMany && e.Code != "rate_limited" {
-			status = http.StatusConflict
+		return http.StatusBadRequest, errorBody{Code: "invalid_argument", Message: "invalid request fields", Details: map[string]any{"fields": fields}}
+	}
+	if failure, ok := domain.AsError(err); ok {
+		if code, known := failureCodes[failure.Reason]; known {
+			switch failure.Reason {
+			case domain.ReasonPromptChanged, domain.ReasonModelConfigChanged, domain.ReasonScheduleChanged, domain.ReasonEntryChanged:
+				return http.StatusPreconditionFailed, errPrecondition.body
+			}
+			if status := statusOf[failure.Kind]; status != 0 {
+				return status, errorBody{Code: code, Message: failure.Message, Details: failure.Details}
+			}
 		}
-		if status == 0 {
-			status = http.StatusInternalServerError
-		}
-		return status, errorBody{Code: e.Code, Message: e.Error(), Details: e.ClientDetails()}
 	}
 	if je, ok := errors.AsType[*domain.JobError](err); ok {
 		record := je.Record()
-		return http.StatusConflict, errorBody{Code: record.Code, Message: err.Error(), Details: record.Details}
+		if code, known := jobFailureCodes[je.Code]; known {
+			return http.StatusConflict, errorBody{Code: code, Message: err.Error(), Details: record.Details}
+		}
 	}
 	if errors.Is(err, sql.ErrNoRows) {
-		return http.StatusNotFound, errorBody{Code: domain.CodeNotFound, Message: "record not found"}
+		return http.StatusNotFound, errorBody{Code: "not_found", Message: "record not found"}
 	}
 	requestLogger(r).Error("request_failed", "method", r.Method, "path", r.URL.Path, "error", err)
-	return http.StatusInternalServerError, errorBody{Code: domain.CodeInternal, Message: "internal error"}
+	return http.StatusInternalServerError, errorBody{Code: "internal", Message: "internal error"}
 }
 
 // decode reads one JSON object of at most 64 KiB, rejecting other media types,
@@ -225,4 +237,10 @@ func creationOrUpdateID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 		return 0, false
 	}
 	return id, true
+}
+
+// fieldIssue is the HTTP representation of one domain validation issue.
+type fieldIssue struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
 }

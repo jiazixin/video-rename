@@ -81,7 +81,7 @@ func TestDeleteGuardedByModelConfigs(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Delete(t.Context(), p.ID, p.Version); err == nil || !errors.Is(err, domain.Fail(domain.KindConflict, domain.Record{Code: "prompt_in_use", Message: ""})) {
+	if err = s.Delete(t.Context(), p.ID, p.Version); err == nil || !errors.Is(err, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonPromptInUse, Message: ""})) {
 		t.Fatal("referenced prompt deleted", err)
 	}
 	if _, err = storage.WriteValue(t.Context(), db, func(tx *sql.Tx) (sql.Result, error) { return tx.ExecContext(t.Context(), "DELETE FROM model_configs") }); err != nil {

@@ -1,11 +1,13 @@
 <script setup lang="ts">
+  import { useRouteState, queryText, queryChoice, queryInteger } from '../../app/use-route-state';
+
   import './history.css';
   import { errorText } from '../../app/errors';
   import PageNavigation from '../../components/PageNavigation.vue';
   import { useToast } from '../../app/use-toast';
-  import { computed, onMounted, onUnmounted, ref } from 'vue';
+  import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
   import { AlertCircle, CheckCircle2, Copy, Search, RefreshCw, Trash2 } from '@lucide/vue';
-  import { api, apiItems } from '../../app/api';
+  import { useApi } from '../../app/use-api';
   import type { ServerRecord } from '../../app/contracts';
   import { displayPath } from '../../lib/format/path';
   import { copyText } from '../../lib/clipboard/clipboard';
@@ -15,6 +17,7 @@
   import SelectField from '../../components/SelectField.vue';
   import ModalDialog from '../../components/ModalDialog.vue';
   import ModalTransition from '../../components/ModalTransition.vue';
+  const { api, apiItems } = useApi();
 
   type RecordItem = {
     id: number;
@@ -30,7 +33,7 @@
     frames: number;
     error?: ServerRecord;
   };
-  type Group = { items: RecordItem[]; total: number; next: number; page?: number };
+  type Group = { items: RecordItem[]; total: number; offset: number; limit: number };
   type Report = { success: Group; failure: Group; running: number };
   type Category = 'success' | 'failure';
   const toast = useToast();
@@ -40,8 +43,8 @@
   ];
   const category = ref<Category>('success');
   const report = ref<Report>({
-    success: { items: [], total: 0, next: 0 },
-    failure: { items: [], total: 0, next: 0 },
+    success: { items: [], total: 0, offset: 0, limit: 50 },
+    failure: { items: [], total: 0, offset: 0, limit: 50 },
     running: 0
   });
   const busy = ref(false),
@@ -53,6 +56,37 @@
     limit = ref(50),
     batches = ref<number[]>([]);
   const pages = ref({ success: 1, failure: 1 });
+  const successPage = computed({
+    get: () => pages.value.success,
+    set: (value) => {
+      pages.value.success = value;
+    }
+  });
+  const failurePage = computed({
+    get: () => pages.value.failure,
+    set: (value) => {
+      pages.value.failure = value;
+    }
+  });
+  const selectedID = ref(0);
+  const routeState = useRouteState(
+    {
+      detail: queryInteger(selectedID),
+      category: queryChoice(category, ['success', 'failure']),
+      q: queryText(q),
+      run: queryText(run, (value) => /^\d*$/.test(value)),
+      from: queryText(from, (value) => !Number.isNaN(Date.parse(value))),
+      to: queryText(to, (value) => !Number.isNaN(Date.parse(value))),
+      limit: queryInteger(limit, { choices: [50, 100, 200] }),
+      success_page: queryInteger(successPage, { min: 1 }),
+      failure_page: queryInteger(failurePage, { min: 1 })
+    },
+    {
+      onRestore: () => {
+        void load();
+      }
+    }
+  );
   const batchOptions = computed(() => [
     { value: '', label: '全部批次' },
     ...batches.value.map((id) => ({ value: String(id), label: `批次 #${id}` }))
@@ -63,6 +97,9 @@
     detailBusy = ref(false),
     copying = ref(false),
     copyError = ref('');
+  watch(selected, (value) => {
+    selectedID.value = value?.id ?? 0;
+  });
   const clearOpen = ref(false),
     clearing = ref(false),
     clearError = ref('');
@@ -98,8 +135,8 @@
       const params = new URLSearchParams({
         limit: String(limit.value),
         q: q.value,
-        success_page: String(pages.value.success),
-        failure_page: String(pages.value.failure),
+        success_offset: String((pages.value.success - 1) * limit.value),
+        failure_offset: String((pages.value.failure - 1) * limit.value),
         from: from.value ? new Date(from.value + 'T00:00:00').toISOString() : '',
         to: to.value ? new Date(to.value + 'T23:59:59.999').toISOString() : ''
       });
@@ -110,9 +147,12 @@
       ]);
       if (n === seq) {
         report.value = data;
+        const selectedRow = data[category.value].items.find((row) => row.id === selectedID.value);
+        if (selectedRow && selected.value?.id !== selectedRow.id) void inspect(selectedRow);
+        else if (!selectedID.value) selected.value = undefined;
         pages.value = {
-          success: data.success.page ?? pages.value.success,
-          failure: data.failure.page ?? pages.value.failure
+          success: Math.floor(data.success.offset / data.success.limit) + 1,
+          failure: Math.floor(data.failure.offset / data.failure.limit) + 1
         };
         batches.value = ids;
         if (run.value && !ids.includes(Number(run.value)))
@@ -125,6 +165,7 @@
     }
   }
   function reset() {
+    if (routeState.isRestoring.value) return;
     clearTimeout(debounce);
     pages.value = { success: 1, failure: 1 };
     void load();
@@ -383,18 +424,18 @@
 <style scoped>
   .extraction-history {
     display: grid;
-    gap: 18px;
+    gap: var(--space-18);
     min-width: 0;
   }
   .extraction-filters {
     flex-wrap: wrap;
-    gap: 12px;
+    gap: var(--space-12);
   }
   .extraction-hint {
     margin: 0;
   }
   .extraction-hint span {
-    margin-left: 8px;
+    margin-left: var(--space-8);
     color: var(--ink);
   }
   .extraction-group[aria-label='抽帧成功'] h2 {
@@ -406,7 +447,7 @@
   .extraction-table {
     min-width: 1080px;
     width: 100%;
-    font-size: 12px;
+    font-size: var(--font-size-12);
   }
   .extraction-table th {
     white-space: nowrap;
@@ -420,7 +461,7 @@
     max-width: 330px;
   }
   .extraction-reason p {
-    margin: 0 0 6px;
+    margin: 0 0 var(--space-6);
     overflow-wrap: anywhere;
     white-space: pre-wrap;
   }
@@ -430,10 +471,10 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     background: var(--surface);
-    padding: 16px;
+    padding: var(--space-16);
     border: 1px solid var(--line);
-    border-radius: 8px;
-    font-size: 12px;
+    border-radius: var(--radius-8);
+    font-size: var(--font-size-12);
   }
   @media (max-width: 700px) {
     .extraction-filters > * {

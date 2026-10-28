@@ -1,7 +1,15 @@
 import { bodyRows, defined, pageReadout } from './support'
 import { test, expect, type Page } from '@playwright/test'
 
-async function openHistory(page: Page, longContent = false, modelSources = false) {
+async function openHistory({
+  page,
+  longContent = false,
+  modelSources = false
+}: {
+  page: Page
+  longContent?: boolean
+  modelSources?: boolean
+}) {
   await page.route('**/api/model-configs', (route) =>
     route.fulfill({
       json: {
@@ -15,8 +23,9 @@ async function openHistory(page: Page, longContent = false, modelSources = false
   await page.route('**/api/logs/batches', (route) => route.fulfill({ json: { items: [7] } }))
   await page.route('**/api/logs?*', (route) => {
     const params = new URL(route.request().url()).searchParams
+    const limit = Number(params.get('limit')) || 50
     const category = params.get('category'),
-      index = Number(params.get('page')) || 1
+      index = Math.floor(Number(params.get('offset') || 0) / limit) + 1 || 1
     const items = Array.from({ length: 4 }, (_, i) => ({
       id: 10 - i,
       entry: 10 - i,
@@ -33,7 +42,10 @@ async function openHistory(page: Page, longContent = false, modelSources = false
       model: 'vision-test',
       tokens: 123456,
       token_estimated: true,
-      message: 'title_invalid: 模型返回了多行标题，需要重试生成符合命名规则的标题。',
+      error:
+        category === 'failure'
+          ? { code: 'title_invalid', details: { reason: 'multiline' } }
+          : undefined,
       created: '2026-09-30T08:00:00.000Z'
     }))
     if (modelSources) {
@@ -52,7 +64,12 @@ async function openHistory(page: Page, longContent = false, modelSources = false
       ? items.filter((item) => 'model_source' in item && item.model_source === source)
       : items
     return route.fulfill({
-      json: { items: filtered, total: source ? filtered.length : 251, page: index }
+      json: {
+        items: filtered,
+        total: source ? filtered.length : 251,
+        offset: (index - 1) * limit,
+        limit
+      }
     })
   })
   await page.request.post('/api/auth/login', {
@@ -66,7 +83,7 @@ async function openHistory(page: Page, longContent = false, modelSources = false
 test('模型配置列直接区分主模型和兜底模型，详情说明来源，缺失记录和手动操作不误判', async ({
   page
 }) => {
-  await openHistory(page, false, true)
+  await openHistory({ page: page, longContent: false, modelSources: true })
   const table = page.getByRole('table')
   for (const category of ['成功记录', '失败记录']) {
     await page.getByRole('button', { name: category, exact: true }).click()
@@ -107,7 +124,7 @@ test('模型配置列直接区分主模型和兜底模型，详情说明来源�
 })
 
 test('成功记录按实际模型来源筛选，换筛选清空选择并回到第一页', async ({ page }) => {
-  await openHistory(page, false, true)
+  await openHistory({ page: page, longContent: false, modelSources: true })
   await page.getByRole('button', { name: '下一页运行记录', exact: true }).click()
   await expect(pageReadout(page.getByLabel('分页导航'))).toHaveText(/^2\//)
   await page.getByRole('button', { name: '多选', exact: true }).click()
@@ -128,7 +145,7 @@ test('成功记录按实际模型来源筛选，换筛选清空选择并回到�
     await page.getByRole('option', { name: label, exact: true }).click()
     const params = new URL((await response).url()).searchParams
     expect(params.get('category')).toBe('success')
-    expect(params.get('page')).toBe('1')
+    expect(String(Math.floor(Number(params.get('offset') || 0) / 100) + 1)).toBe('1')
     await expect(pageReadout(page.getByLabel('分页导航'))).toHaveText(/^1\//)
     await expect(page.getByRole('group', { name: '批量操作' })).toContainText('已选 0 项')
     await expect(page.getByRole('button', { name: '重试选中', exact: true })).toBeDisabled()
@@ -138,7 +155,7 @@ test('成功记录按实际模型来源筛选，换筛选清空选择并回到�
 })
 
 test('成功记录仅重试所选结果，确认说明保护标记和历史保留，取消不提交', async ({ page }) => {
-  await openHistory(page, false, true)
+  await openHistory({ page: page, longContent: false, modelSources: true })
   await page.getByRole('combobox', { name: '模型来源', exact: true }).click()
   await page.getByRole('option', { name: '兜底模型', exact: true }).click()
   await expect(page.getByRole('note')).toHaveText(['兜底模型'])
@@ -184,7 +201,7 @@ test('宽屏成功和失败记录及诊断行占满表格，多选和窄屏保�
   await page.route('**/api/logs/*/diagnostics', (route) =>
     route.fulfill({ json: { request: '长请求内容'.repeat(600), response: '模型响应' } })
   )
-  await openHistory(page, true)
+  await openHistory({ page: page, longContent: true })
   const table = page.getByRole('table')
   async function expectAligned() {
     const edges = await table.evaluate((element) => {
@@ -256,7 +273,7 @@ test('宽屏成功和失败记录及诊断行占满表格，多选和窄屏保�
 })
 
 test('成功失败记录按需开启多选，支持全选反选清空与 Shift 连选', async ({ page }) => {
-  await openHistory(page)
+  await openHistory({ page: page })
   await expect(
     page.getByRole('group', { name: '记录操作' }).getByRole('button', { name: '重试', exact: true })
   ).toHaveCount(0)
@@ -304,7 +321,7 @@ test('成功失败记录按需开启多选，支持全选反选清空与 Shift �
 })
 
 test('右上角重试全部失败不带筛选或选中 ID，提交时防重复点击', async ({ page }) => {
-  await openHistory(page)
+  await openHistory({ page: page })
   await page.getByRole('button', { name: '失败记录', exact: true }).click()
   await page.getByRole('button', { name: '多选', exact: true }).click()
   await page.getByRole('checkbox', { name: '选择记录 10', exact: true }).check()
@@ -360,7 +377,7 @@ test('右上角重试全部失败不带筛选或选中 ID，提交时防重复�
 
 for (const mode of ['单条', '详情', '多选'])
   test(`${mode}重试确认后使用所选模型，取消不提交`, async ({ page }) => {
-    await openHistory(page)
+    await openHistory({ page: page })
     await page.getByRole('button', { name: '失败记录', exact: true }).click()
     const requests: unknown[] = []
     await page.route('**/api/logs/retry', async (route) => {
@@ -410,7 +427,7 @@ for (const mode of ['单条', '详情', '多选'])
   })
 
 test('重试提交失败保留弹窗、选择和模型，修正后可重试', async ({ page }) => {
-  await openHistory(page)
+  await openHistory({ page: page })
   await page.getByRole('button', { name: '失败记录', exact: true }).click()
   let calls = 0
   await page.route('**/api/logs/retry', async (route) => {

@@ -1,7 +1,8 @@
 import { errorText } from '../../app/errors'
-import { onScopeDispose, reactive, ref, watch } from 'vue'
+import { onScopeDispose, reactive, ref, toRef, watch } from 'vue'
 import { api } from '../../app/api'
 import type { ServerRecord } from '../../app/contracts'
+import { queryChoice, queryInteger, queryText, useRouteState } from '../../app/use-route-state'
 
 export type Attempt = {
   number: number
@@ -74,12 +75,21 @@ type RecordPage = {
   running_total: number
   skipped_total: number
   failed_total: number
-  page: number
+  offset: number
+  limit: number
   recent?: RecentItem[]
   skip_reasons?: SkipReason[]
 }
 
-export function useRunRecords(runID: () => number, enabled: () => boolean, active: () => boolean) {
+type RunRecordsOptions = {
+  runID: () => number
+  enabled: () => boolean
+  active: () => boolean
+  shareInRoute?: boolean
+}
+
+/** Reads one batch's file records and keeps its current view during polling. */
+export function useRunRecords({ runID, enabled, active, shareInRoute = false }: RunRecordsOptions) {
   // An active batch opens on the files being processed right now.
   const filter = ref<RecordFilter>(active() ? 'running' : 'all')
   const directory = ref('all')
@@ -94,6 +104,8 @@ export function useRunRecords(runID: () => number, enabled: () => boolean, activ
     failed_total: 0,
     recent: [] as RecentItem[],
     skip_reasons: [] as SkipReason[],
+    offset: 0,
+    limit: 100,
     page: 1,
     busy: false,
     loaded: false,
@@ -103,6 +115,20 @@ export function useRunRecords(runID: () => number, enabled: () => boolean, activ
   let controller: AbortController | undefined
   let sequence = 0
   let alive = true
+  let previousRunID = runID()
+  const routeState = shareInRoute
+    ? useRouteState(
+        {
+          record_status: queryChoice(filter, ['all', 'running', 'done', 'skipped', 'failed']),
+          record_directory: queryText(
+            directory,
+            (value) => value === 'all' || value.startsWith('path:')
+          ),
+          record_page: queryInteger(toRef(state, 'page'), { min: 1 })
+        },
+        { onRestore: () => void refresh() }
+      )
+    : undefined
   function cancel() {
     clearTimeout(timer)
     controller?.abort()
@@ -124,13 +150,17 @@ export function useRunRecords(runID: () => number, enabled: () => boolean, activ
     const abort = new AbortController()
     controller = abort
     state.busy = true
-    const query = new URLSearchParams({ page: String(requested) })
+    const query = new URLSearchParams({ offset: String((requested - 1) * 100) })
     if (filter.value !== 'all') query.set('status', filter.value)
     if (directory.value !== 'all') query.set('directory', directory.value.slice(5))
     try {
       const page = await api<RecordPage>(`/runs/${id}/items?${query}`, { signal: abort.signal })
       if (!alive || request !== sequence || id !== runID() || !enabled()) return
-      Object.assign(state, { recent: [], skip_reasons: [] }, page, { loaded: true, error: '' })
+      Object.assign(state, { recent: [], skip_reasons: [] }, page, {
+        loaded: true,
+        error: '',
+        page: Math.floor(page.offset / page.limit) + 1
+      })
     } catch (error) {
       if (!abort.signal.aborted && alive && request === sequence) state.error = errorText(error)
     } finally {
@@ -141,6 +171,7 @@ export function useRunRecords(runID: () => number, enabled: () => boolean, activ
     }
   }
   watch([filter, directory], () => {
+    if (routeState?.isRestoring.value) return
     cancel()
     state.items = []
     state.page = 1
@@ -153,10 +184,10 @@ export function useRunRecords(runID: () => number, enabled: () => boolean, activ
   })
   watch(
     [runID, enabled, active],
-    ([id, open], previous) => {
+    ([id, open]) => {
       cancel()
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- previous is undefined on the first watcher run despite its type
-      if (previous && id !== previous[0]) {
+      if (id !== previousRunID) {
+        previousRunID = id
         filter.value = active() ? 'running' : 'all'
         state.items = []
         state.recent = []

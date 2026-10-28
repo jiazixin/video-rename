@@ -308,22 +308,22 @@ func TestProcessedMarksRecursiveAndPersistent(t *testing.T) {
 		t.Fatal(err)
 	}
 	refresh(t, l, 1)
-	d := entry(t, l, 1, "dir")
+	d := entry(t, entryOptions{l: l, parent: 1, name: "dir"})
 	r := l.SetProcessed(t.Context(), []int64{d.ID, d.ID}, true)
 	if r.Changed != 4 || r.Failed != 0 {
 		t.Fatalf("%+v", r)
 	}
-	a := entry(t, l, d.ID, "a.mp4")
+	a := entry(t, entryOptions{l: l, parent: d.ID, name: "a.mp4"})
 	if a.Processed != "marked" || a.RestoreID != 0 {
 		t.Fatalf("%+v", a)
 	}
-	history, err := l.History(t.Context(), a.ID, 0)
-	if err != nil || len(history) != 0 {
+	history, err := l.History(t.Context(), a.ID, "")
+	if err != nil || len(history.Items) != 0 {
 		t.Fatal(history, err)
 	}
 	put(t, filepath.Join(root, "dir", "new.mp4"))
 	refresh(t, l, d.ID)
-	if e := entry(t, l, d.ID, "new.mp4"); e.Processed != "" {
+	if e := entry(t, entryOptions{l: l, parent: d.ID, name: "new.mp4"}); e.Processed != "" {
 		t.Fatal("new file inherited mark")
 	}
 	l.db.Close()
@@ -340,11 +340,11 @@ func TestProcessedMarksRecursiveAndPersistent(t *testing.T) {
 	if a.Processed != "marked" {
 		t.Fatal("mark lost on restart")
 	}
-	image := entry(t, l, d.ID, "image.jpg")
+	image := entry(t, entryOptions{l: l, parent: d.ID, name: "image.jpg"})
 	if image.Processed != "marked" || image.RestoreID != 0 {
 		t.Fatalf("image protection lost on restart: %+v", image)
 	}
-	if notes := entry(t, l, d.ID, "notes.txt"); notes.Processed != "" {
+	if notes := entry(t, entryOptions{l: l, parent: d.ID, name: "notes.txt"}); notes.Processed != "" {
 		t.Fatal("marked unsupported file")
 	}
 	r = l.SetProcessed(t.Context(), []int64{d.ID}, false)
@@ -360,7 +360,7 @@ func TestMediaMarksProtectManualNamesAndNumberedFiles(t *testing.T) {
 			name := "original." + ext
 			put(t, filepath.Join(root, name))
 			refresh(t, l, 1)
-			e := entry(t, l, 1, name)
+			e := entry(t, entryOptions{l: l, parent: 1, name: name})
 			if r := l.SetProcessed(t.Context(), []int64{e.ID}, true); r.Changed != 1 || r.Failed != 0 {
 				t.Fatal(r)
 			}
@@ -402,7 +402,7 @@ func TestProcessedMarksPreserveHistoryAndValidateIdentity(t *testing.T) {
 	l, root, _ := fixture(t)
 	put(t, filepath.Join(root, "a.mp4"))
 	refresh(t, l, 1)
-	a := entry(t, l, 1, "a.mp4")
+	a := entry(t, entryOptions{l: l, parent: 1, name: "a.mp4"})
 	op, err := l.Rename(t.Context(), RenameRequest{ID: a.ID, Version: a.Version, Name: "b.mp4", Key: "mark-history"})
 	if err != nil {
 		t.Fatal(err)
@@ -440,15 +440,15 @@ func TestRenameKeepsDirectoryPageAvailable(t *testing.T) {
 	put(t, filepath.Join(root, "a.mp4"))
 	put(t, filepath.Join(root, "b.mp4"))
 	refresh(t, l, 1)
-	before, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 100, Generation: 0, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"})
+	before, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 0, Limit: 100, Query: "", Kind: "", Status: "", SortBy: "name_asc"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := entry(t, l, 1, "a.mp4")
+	e := entry(t, entryOptions{l: l, parent: 1, name: "a.mp4"})
 	if _, err = l.Rename(t.Context(), RenameRequest{ID: e.ID, Version: e.Version, Name: "z.mp4", Key: "keep-index"}); err != nil {
 		t.Fatal(err)
 	}
-	after, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 100, Generation: before.Generation, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"})
+	after, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 0, Limit: 100, Query: "", Kind: "", Status: "", SortBy: "name_asc"})
 	if err != nil || len(after.Items) != 2 || after.Generation != before.Generation || after.Items[1].Name != "z.mp4" {
 		t.Fatalf("%+v %v", after, err)
 	}
@@ -461,8 +461,8 @@ func TestProcessedMarksHardLinksAndChangedContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	refresh(t, l, 1)
-	a := entry(t, l, 1, "a.mp4")
-	alias := entry(t, l, 1, "alias.mp4")
+	a := entry(t, entryOptions{l: l, parent: 1, name: "a.mp4"})
+	alias := entry(t, entryOptions{l: l, parent: 1, name: "alias.mp4"})
 	r := l.SetProcessed(t.Context(), []int64{a.ID, alias.ID, a.ID}, true)
 	if r.Changed != 1 || r.Unchanged != 1 || r.Failed != 0 {
 		t.Fatalf("%+v", r)
@@ -485,7 +485,7 @@ func TestAutomaticSuccessDiagnosticsPersistWithHistory(t *testing.T) {
 	l, root, _ := fixture(t)
 	put(t, filepath.Join(root, "a.mp4"))
 	refresh(t, l, 1)
-	e := entry(t, l, 1, "a.mp4")
+	e := entry(t, entryOptions{l: l, parent: 1, name: "a.mp4"})
 	snap, err := domain.StatSnapshot(filepath.Join(root, "a.mp4"))
 	if err != nil {
 		t.Fatal(err)

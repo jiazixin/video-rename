@@ -102,7 +102,7 @@ func TestRunDirectoryRecords(t *testing.T) {
 		Items       []record `json:"items"`
 		Directories []dir    `json:"directories"`
 		Total       int      `json:"total"`
-		Page        int      `json:"page"`
+		Offset      int      `json:"offset"`
 		AllTotal    int      `json:"all_total"`
 		FailedTotal int      `json:"failed_total"`
 	}
@@ -122,14 +122,14 @@ func TestRunDirectoryRecords(t *testing.T) {
 		}
 		return p
 	}
-	first := read("page=1")
+	first := read("offset=0")
 	if first.Total != 205 || first.AllTotal != 205 || first.FailedTotal != 68 || len(first.Directories) != 3 || len(first.Items) != 100 || first.Items[0].Status != "queued" {
 		t.Fatalf("whole batch: %+v", first)
 	}
 	seen := map[int64]bool{}
 	previous := ""
 	for page := 1; page <= 3; page++ {
-		p := read(fmt.Sprintf("page=%d", page))
+		p := read(fmt.Sprintf("offset=%d", (page-1)*100))
 		for _, item := range p.Items {
 			if seen[item.ID] || item.ID > 205 || item.Directory < previous {
 				t.Fatalf("duplicate, other batch, or split directory order: %+v", item)
@@ -141,11 +141,11 @@ func TestRunDirectoryRecords(t *testing.T) {
 	if len(seen) != 205 {
 		t.Fatal("missing files", len(seen))
 	}
-	last := read("page=9223372036854775807")
-	if last.Page != 3 || len(last.Items) != 5 {
+	last := read("offset=9223372036854775807")
+	if last.Offset != 200 || len(last.Items) != 5 {
 		t.Fatalf("last page: %+v", last)
 	}
-	selected := read("page=2&directory=" + url.QueryEscape("上海"))
+	selected := read("offset=100&directory=" + url.QueryEscape("上海"))
 	if selected.Total != 102 || len(selected.Items) != 2 || len(selected.Directories) != 3 {
 		t.Fatalf("directory page: %+v", selected)
 	}
@@ -171,7 +171,7 @@ func TestRunDirectoryRecords(t *testing.T) {
 		t.Fatal(failed)
 	}
 	for _, directory := range []string{"上", "上海 / 子目录", "%", "' OR 1=1 --"} {
-		if p := read("directory=" + url.QueryEscape(directory)); p.Total != 0 || p.Page != 1 {
+		if p := read("directory=" + url.QueryEscape(directory)); p.Total != 0 || p.Offset != 0 {
 			t.Fatal("inexact directory filter", p)
 		}
 	}
@@ -258,8 +258,8 @@ UPDATE run_items SET finished_ms=100 WHERE id=8`)
 	}); err != nil {
 		t.Fatal(err)
 	}
-	empty := read("status=failed&page=99")
-	if empty.Total != 0 || empty.Page != 1 || len(empty.Items) != 0 || len(empty.Directories) != 0 {
+	empty := read("status=failed&offset=99")
+	if empty.Total != 0 || empty.Offset != 0 || len(empty.Items) != 0 || len(empty.Directories) != 0 {
 		t.Fatal(empty)
 	}
 	for _, query := range []string{"status=invalid", "view=logs"} {
@@ -318,7 +318,7 @@ func TestRunRecordsAfterAutomaticRenameAndRestore(t *testing.T) {
 	check := func(undone bool, current string) {
 		t.Helper()
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest("GET", fmt.Sprintf("/api/runs/%d/items?page=1", run), nil)
+		r := httptest.NewRequest("GET", fmt.Sprintf("/api/runs/%d/items?offset=0", run), nil)
 		r.SetPathValue("id", fmt.Sprint(run))
 		a.items(w, r)
 		var result struct {

@@ -11,26 +11,26 @@
 .sampling-grid {
   display: grid;
   grid-template-columns: 1.2fr 1fr;
-  gap: 20px;
+  gap: var(--space-20);
 }
 .sampling-card {
-  padding: 24px;
-  margin-bottom: 20px;
+  padding: var(--space-24);
+  margin-bottom: var(--space-20);
   min-width: 0;
 }
 .sampling-card header {
-  margin-bottom: 20px;
+  margin-bottom: var(--space-20);
 }
 .sampling-card h2 {
-  margin: 8px 0;
-  font-size: 18px;
+  margin: var(--space-8) 0;
+  font-size: var(--font-size-18);
 }
 .sampling-card label {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 18px;
-  font-weight: 500;
+  gap: var(--space-8);
+  margin-top: var(--space-18);
+  font-weight: var(--font-weight-500);
 }
 .sampling-card input {
   width: 100%;
@@ -38,52 +38,52 @@
   box-sizing: border-box;
 }
 .sampling-card .help {
-  line-height: 1.7;
+  line-height: var(--line-height-1-7);
 }
 .sampling-pair {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  margin-bottom: 10px;
+  gap: var(--space-16);
+  margin-bottom: var(--space-10);
 }
 .sampling-rules header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-12);
 }
 .sampling-rule-head,
 .sampling-rule-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 110px 36px;
-  gap: 14px;
+  gap: var(--space-14);
   align-items: center;
 }
 .sampling-rule-head {
-  font-size: 12px;
+  font-size: var(--font-size-12);
   color: var(--steel);
-  padding: 10px 0;
+  padding: var(--space-10) 0;
 }
 .sampling-rule-row {
-  padding: 8px 0;
+  padding: var(--space-8) 0;
   border-top: 1px solid var(--line);
 }
 .sampling-fallback {
-  font-size: 13px;
+  font-size: var(--font-size-13);
   color: var(--steel);
 }
 .sampling-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
-  padding: 10px 0 24px;
+  gap: var(--space-20);
+  padding: var(--space-10) 0 var(--space-24);
 }
 .sampling-footer strong {
-  font-size: 13px;
+  font-size: var(--font-size-13);
 }
 .sampling-footer p {
-  margin: 6px 0 0;
+  margin: var(--space-6) 0 0;
 }
 .sampling-footer button {
   white-space: nowrap;
@@ -94,12 +94,12 @@
     gap: 0;
   }
   .sampling-card {
-    padding: 18px;
+    padding: var(--space-18);
   }
   .sampling-rule-head,
   .sampling-rule-row {
     grid-template-columns: minmax(0, 1fr) 76px 30px;
-    gap: 8px;
+    gap: var(--space-8);
   }
   .sampling-footer {
     align-items: stretch;
@@ -109,6 +109,6 @@
     flex-wrap: wrap;
   }
   .sampling-pair {
-    gap: 10px;
+    gap: var(--space-10);
   }
 }

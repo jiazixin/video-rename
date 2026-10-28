@@ -168,7 +168,7 @@ func (s *Scheduler) Save(ctx context.Context, p Plan) (Plan, error) {
 		if profile, err := (model.New(s.db)).Get(ctx, p.ModelConfigID); err != nil {
 			return p, domain.InvalidField("model_config_id", "invalid").Wrap(err)
 		} else if err = profile.Validate(); err != nil {
-			return p, domain.Fail(domain.KindInvalid, domain.Record{Code: "model_config_incomplete", Message: "model configuration is incomplete"}).Wrap(err)
+			return p, domain.Fail(domain.KindInvalid, domain.Failure{Reason: domain.ReasonModelConfigIncomplete, Message: "model configuration is incomplete"}).Wrap(err)
 		}
 	}
 	switch p.Kind {
@@ -201,7 +201,7 @@ func (s *Scheduler) Save(ctx context.Context, p Plan) (Plan, error) {
 				return p, err
 			}
 			if !exists {
-				return p, domain.Fail(domain.KindNotFound, domain.Record{Code: "model_config_not_found", Message: "model configuration does not exist"})
+				return p, domain.Fail(domain.KindNotFound, domain.Failure{Reason: domain.ReasonModelConfigNotFound, Message: "model configuration does not exist"})
 			}
 		}
 		if p.ID == 0 {
@@ -210,7 +210,7 @@ func (s *Scheduler) Save(ctx context.Context, p Plan) (Plan, error) {
 				return p, err
 			}
 			if n >= 100 {
-				return p, domain.Fail(domain.KindTooMany, domain.Record{Code: "schedules_full", Message: "at most 100 schedules"})
+				return p, domain.Fail(domain.KindTooMany, domain.Failure{Reason: domain.ReasonSchedulesFull, Message: "at most 100 schedules"})
 			}
 			res, err := tx.ExecContext(ctx, "INSERT INTO schedules(name,targets,recursive,kind,expression,timezone,enabled,next,model_config_id,task) VALUES(?,?,?,?,?,?,?,?,?,?)", p.Name, string(raw), p.Recursive, p.Kind, p.Expression, p.Timezone, p.Enabled, p.Next, p.ModelConfigID, p.Task)
 			if err != nil {
@@ -230,7 +230,7 @@ func (s *Scheduler) Save(ctx context.Context, p Plan) (Plan, error) {
 				return p, err
 			}
 			if n == 0 {
-				return p, domain.Fail(domain.KindConflict, domain.Record{Code: "schedule_changed", Message: "schedule was modified; refresh"})
+				return p, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonScheduleChanged, Message: "schedule was modified; refresh"})
 			}
 		}
 		return p, nil
@@ -255,7 +255,7 @@ func (s *Scheduler) Delete(ctx context.Context, id, version int64) error {
 			return err
 		}
 		if count == 0 {
-			return domain.Fail(domain.KindConflict, domain.Record{Code: "schedule_changed", Message: "schedule was modified; refresh"})
+			return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonScheduleChanged, Message: "schedule was modified; refresh"})
 		}
 		return nil
 	})

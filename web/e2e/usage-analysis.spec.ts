@@ -17,14 +17,21 @@ async function login(page: Page) {
 function fixture() {
   const hour = 3600_000,
     now = Date.now()
-  const bucket = (
-    i: number,
-    finished: number,
-    avg: number,
-    done: number,
-    skipped: number,
+  const bucket = ({
+    i,
+    finished,
+    avg,
+    done,
+    skipped,
+    failed
+  }: {
+    i: number
+    finished: number
+    avg: number
+    done: number
+    skipped: number
     failed: number
-  ) => ({
+  }) => ({
     from: new Date(now - (6 - i) * hour).toISOString(),
     to: new Date(now - (5 - i) * hour).toISOString(),
     finished_batches: finished,
@@ -33,16 +40,25 @@ function fixture() {
     skipped,
     failed
   })
-  const batch = (
-    id: number,
-    status: string,
-    source: string,
-    discovered: number,
-    done: number,
-    skipped: number,
-    failed: number,
+  const batch = ({
+    id,
+    status,
+    source,
+    discovered,
+    done,
+    skipped,
+    failed,
+    duration
+  }: {
+    id: number
+    status: string
+    source: string
+    discovered: number
+    done: number
+    skipped: number
+    failed: number
     duration: number
-  ) => ({
+  }) => ({
     id,
     task: 'rename',
     status,
@@ -63,9 +79,36 @@ function fixture() {
     avg_item_ms: Math.round(duration / Math.max(done, 1))
   })
   const rows = [
-    batch(31, 'completed', 'manual', 10, 8, 2, 0, 3_600_000),
-    batch(12, 'partial_failure', 'scheduled', 4, 3, 0, 1, 1_800_000),
-    batch(7, 'cancelled', 'manual', 2, 0, 0, 0, 600_000)
+    batch({
+      id: 31,
+      status: 'completed',
+      source: 'manual',
+      discovered: 10,
+      done: 8,
+      skipped: 2,
+      failed: 0,
+      duration: 3_600_000
+    }),
+    batch({
+      id: 12,
+      status: 'partial_failure',
+      source: 'scheduled',
+      discovered: 4,
+      done: 3,
+      skipped: 0,
+      failed: 1,
+      duration: 1_800_000
+    }),
+    batch({
+      id: 7,
+      status: 'cancelled',
+      source: 'manual',
+      discovered: 2,
+      done: 0,
+      skipped: 0,
+      failed: 0,
+      duration: 600_000
+    })
   ]
   const scatterRows = rows.map((b) => ({
     run: b.id,
@@ -102,12 +145,12 @@ function fixture() {
       throughput_per_hour: 0.46
     },
     trend: [
-      bucket(0, 0, 0, 0, 0, 0),
-      bucket(1, 1, 600_000, 2, 1, 0),
-      bucket(2, 0, 0, 1, 0, 0),
-      bucket(3, 1, 1_800_000, 3, 0, 1),
-      bucket(4, 1, 3_600_000, 2, 1, 0),
-      bucket(5, 0, 0, 0, 0, 0)
+      bucket({ i: 0, finished: 0, avg: 0, done: 0, skipped: 0, failed: 0 }),
+      bucket({ i: 1, finished: 1, avg: 600_000, done: 2, skipped: 1, failed: 0 }),
+      bucket({ i: 2, finished: 0, avg: 0, done: 1, skipped: 0, failed: 0 }),
+      bucket({ i: 3, finished: 1, avg: 1_800_000, done: 3, skipped: 0, failed: 1 }),
+      bucket({ i: 4, finished: 1, avg: 3_600_000, done: 2, skipped: 1, failed: 0 }),
+      bucket({ i: 5, finished: 0, avg: 0, done: 0, skipped: 0, failed: 0 })
     ],
     distribution: [
       { label: 'under_5s', count: 1 },
@@ -160,7 +203,7 @@ function fixture() {
       }
     ],
     batch_failures: [],
-    batches: { items: rows, total: 3, page: 1, size: 20 },
+    batches: { items: rows, total: 3, offset: 0, limit: 20 },
     options: {
       profiles: [
         { id: 1, title: '默认视频命名' },
@@ -356,7 +399,7 @@ test('空区间显示无数据而不是伪造零值', async ({ page }) => {
         scatter: [],
         failures: [],
         batch_failures: [],
-        batches: { items: [], total: 0, page: 1, size: 20 },
+        batches: { items: [], total: 0, offset: 0, limit: 20 },
         options: { profiles: [] }
       }
     })
@@ -401,7 +444,7 @@ test('接口错误显示重试而不是空数据', async ({ page }) => {
     })
   )
   await page.goto('/usage/analysis')
-  await expect(page.getByRole('alert')).toContainText('数据库暂时不可用')
+  await expect(page.getByRole('alert')).toContainText('服务暂时无法完成请求')
   let recovered = false
   await page.unroute('**/api/runs/analytics*')
   await page.route('**/api/runs/analytics*', (route) => {

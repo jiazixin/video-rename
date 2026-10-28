@@ -121,7 +121,7 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: var(--space-10);
   }
   .image-stage {
     position: relative;
@@ -130,7 +130,7 @@
     display: grid;
     place-items: center;
     overflow: hidden;
-    border-radius: 10px;
+    border-radius: var(--radius-10);
     background: radial-gradient(circle at 50% 42%, var(--palette-1a2421), var(--stage));
     touch-action: none;
   }
@@ -145,7 +145,7 @@
     max-height: calc(100% - 24px);
     object-fit: contain;
     user-select: none;
-    box-shadow: 0 12px 40px var(--palette-rgba-0-0-0-0_5);
+    box-shadow: var(--shadow-11);
     transition: transform var(--motion-enter) linear;
   }
   .dragging .image-preview {
@@ -153,8 +153,8 @@
   }
   .stage-error {
     color: var(--palette-ffc9c9);
-    font-size: 13px;
-    padding: 0 72px;
+    font-size: var(--font-size-13);
+    padding: 0 var(--space-72);
     text-align: center;
   }
   .image-nav {
@@ -164,7 +164,7 @@
     height: 44px;
     padding: 0;
     border: 0;
-    border-radius: 50%;
+    border-radius: var(--radius-round);
     transform: translateY(-50%);
     background: var(--palette-rgba-255-255-255-0_1);
     color: var(--stage-ink);
@@ -181,7 +181,7 @@
   }
   .stage-notice {
     margin: 0;
-    font-size: 12px;
+    font-size: var(--font-size-12);
     color: var(--palette-ffc9c9);
     text-align: center;
   }
@@ -189,9 +189,9 @@
     flex-shrink: 0;
     display: flex;
     justify-content: center;
-    gap: 8px;
+    gap: var(--space-8);
     overflow-x: auto;
-    padding: 2px;
+    padding: var(--space-2);
   }
   .image-strip button {
     flex: 0 0 auto;
@@ -199,7 +199,7 @@
     height: 46px;
     padding: 0;
     border: 2px solid transparent;
-    border-radius: 6px;
+    border-radius: var(--radius-6);
     overflow: hidden;
     background: var(--palette-000000);
     opacity: 0.5;
@@ -225,7 +225,7 @@
   }
   .image-hint {
     margin: 0;
-    font-size: 11px;
+    font-size: var(--font-size-11);
     color: var(--stage-dim);
     text-align: center;
   }

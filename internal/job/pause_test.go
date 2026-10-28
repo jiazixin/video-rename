@@ -134,7 +134,7 @@ func TestPauseReleasesQueuedFramesAndLetsOtherBatchFinish(t *testing.T) {
 		t.Fatalf("paused batch dispatched more work: %+v calls=%d", r, inferred.Load())
 	}
 	waitPauseTest(t, func() bool { return m.Cache.Stats().Reserved == 0 })
-	page, err := m.ListPage(ctx, ListPageOptions{Category: "all", Task: "", Page: 1, Size: 50, Filters: []url.Values{url.Values{"status": {"paused"}}}})
+	page, err := m.ListPage(ctx, ListPageOptions{Category: "all", Task: "", Offset: 0, Limit: 50, Filters: url.Values{"status": {"paused"}}})
 	if err != nil || page.Total != 1 || page.Items[0].ID != first {
 		t.Fatal(page, err)
 	}

@@ -17,21 +17,23 @@ test('通知渠道顺序、发送记录分页、刷新、条数和窄屏', async
     kind: 'dingtalk',
     status: 'sent',
     attempts: 1,
-    error: '',
     updated: '2026-10-01T01:00:00.000Z'
   }))
   let requests = 0
   await page.route('**/api/notifications/history?*', (route) => {
     requests++
     const query = new URL(route.request().url()).searchParams
-    const size = Number(query.get('size')),
-      current = Math.min(Number(query.get('page')), Math.max(1, Math.ceil(rows.length / size)))
+    const size = Number(query.get('limit')),
+      current = Math.min(
+        Math.floor(Number(query.get('offset') || 0) / size) + 1,
+        Math.max(1, Math.ceil(rows.length / size))
+      )
     return route.fulfill({
       json: {
         items: rows.slice((current - 1) * size, current * size),
         total: rows.length,
-        page: current,
-        size
+        offset: (current - 1) * size,
+        limit: size
       }
     })
   })
@@ -47,6 +49,7 @@ test('通知渠道顺序、发送记录分页、刷新、条数和窄屏', async
     table = page.getByRole('table')
   await expect(pager).toContainText('共 123 条记录 · 第 1 / 3 页 · 当前页 50 条')
   await expect(bodyRows(table)).toHaveCount(50)
+  await expect(bodyRows(table).first().getByRole('cell').last()).toHaveText('—')
   await expect(pager.getByRole('button', { name: '上一页发送记录' })).toBeDisabled()
   await pager.getByRole('button', { name: '下一页发送记录' }).click()
   await expect(pager).toContainText('第 2 / 3 页')
@@ -87,7 +90,7 @@ test('发送记录迟到响应不会覆盖新的每页条数', async ({ page }) 
   const delayed = new Promise<void>((resolve) => (release = resolve))
   await page.route('**/api/notifications/history?*', async (route) => {
     const query = new URL(route.request().url()).searchParams,
-      size = Number(query.get('size'))
+      size = Number(query.get('limit'))
     if (size === 50) await delayed
     const rows = Array.from({ length: size }, (_, i) => ({
       id: size - i,
@@ -95,21 +98,20 @@ test('发送记录迟到响应不会覆盖新的每页条数', async ({ page }) 
       kind: 'bark',
       status: 'sent',
       attempts: 1,
-      error: '',
       updated: '2026-10-01T01:00:00.000Z'
     }))
-    await route.fulfill({ json: { items: rows, total: 123, page: 1, size } })
+    await route.fulfill({ json: { items: rows, total: 123, offset: 0, limit: 100, size } })
   })
   await openNotifications(page)
   const pager = page.getByLabel('通知发送记录分页', { exact: true })
+  const cancelled = page.waitForEvent('requestfailed', {
+    predicate: (request) => request.url().includes('/api/notifications/history?offset=0&limit=50')
+  })
   await pager.getByRole('combobox', { name: '每页发送记录数' }).click()
   await page.getByRole('option', { name: '100 条 / 页', exact: true }).click()
+  await cancelled
   await expect(pager).toContainText('第 1 / 2 页 · 当前页 100 条')
-  const response = page.waitForResponse((r) =>
-    r.url().includes('/api/notifications/history?page=1&size=50')
-  )
   release()
-  await response
   await expect(bodyRows(page.getByRole('table'))).toHaveCount(100)
   await expect(pager.getByRole('combobox', { name: '每页发送记录数' })).toContainText('100 条 / 页')
 })

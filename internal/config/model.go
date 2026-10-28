@@ -22,7 +22,7 @@ type ServerConfig struct {
 	BaseURL         string       `json:"base_url"`
 	APIKey          secret.Value `json:"-"`
 	Model           string       `json:"model"`
-	Timeout         string       `json:"timeout"`
+	TimeoutMS       int64        `json:"timeout_ms"`
 	Temperature     float64      `json:"temperature"`
 	MaxTokens       int          `json:"max_tokens"`
 	OmitTemperature bool         `json:"omit_temperature"`
@@ -71,10 +71,10 @@ func (c *TaskConfig) ApplyModel(s ServerConfig, prompt string) error {
 	if s.Model == "" || len(s.Model) > 256 {
 		return domain.InvalidField("model", "required")
 	}
-	d, err := time.ParseDuration(s.Timeout)
-	if err != nil || d < time.Second || d > 30*time.Minute {
-		return domain.InvalidField("timeout", "out_of_range")
+	if s.TimeoutMS < time.Second.Milliseconds() || s.TimeoutMS > (30*time.Minute).Milliseconds() {
+		return domain.InvalidField("timeout_ms", "out_of_range")
 	}
+	d := time.Duration(s.TimeoutMS) * time.Millisecond
 	maxTemperature := 2.0
 	if s.Protocol == "anthropic" {
 		maxTemperature = 1

@@ -28,8 +28,17 @@ func lookTool(t *testing.T, name string) string {
 }
 
 // genVideo generates a test video from a lavfi source.
-func genVideo(t *testing.T, path, size string, d time.Duration, extra ...string) {
+type genVideoOptions struct {
+	path  string
+	size  string
+	d     time.Duration
+	extra []string
+}
+
+func genVideo(t *testing.T, options genVideoOptions) {
 	t.Helper()
+	path, size, d, extra := options.path, options.size, options.d, options.extra
+
 	ff := lookTool(t, "ffmpeg")
 	args := []string{"-y", "-nostdin", "-hide_banner", "-loglevel", "error",
 		"-f", "lavfi", "-i", "testsrc=duration=" + fmtSecs(d) + ":size=" + size + ":rate=10",
@@ -52,7 +61,7 @@ func fmtSecs(d time.Duration) string {
 func TestIntegrationProbeAndExtractLandscape(t *testing.T) {
 	dir := t.TempDir()
 	video := filepath.Join(dir, "land.mp4")
-	genVideo(t, video, "640x360", 5*time.Second)
+	genVideo(t, genVideoOptions{path: video, size: "640x360", d: 5 * time.Second, extra: []string{}})
 
 	prober := &Prober{FFprobePath: lookTool(t, "ffprobe")}
 	job, _ := fakeJob(t, 1)
@@ -110,7 +119,7 @@ func TestIntegrationProbeAndExtractLandscape(t *testing.T) {
 func TestIntegrationExtractPortrait4K(t *testing.T) {
 	dir := t.TempDir()
 	video := filepath.Join(dir, "port.mp4")
-	genVideo(t, video, "2160x3840", 2*time.Second)
+	genVideo(t, genVideoOptions{path: video, size: "2160x3840", d: 2 * time.Second, extra: []string{}})
 
 	prober := &Prober{FFprobePath: lookTool(t, "ffprobe")}
 	st, _ := domain.StatSnapshot(video)
@@ -142,7 +151,7 @@ func TestIntegrationExtractSAR(t *testing.T) {
 	dir := t.TempDir()
 	video := filepath.Join(dir, "sar.mp4")
 	// 640x360 + SAR 2:1 → display 1280x360, scaled to 768x216
-	genVideo(t, video, "640x360", 3*time.Second, "-vf", "setsar=2/1")
+	genVideo(t, genVideoOptions{path: video, size: "640x360", d: 3 * time.Second, extra: []string{"-vf", "setsar=2/1"}})
 
 	prober := &Prober{FFprobePath: lookTool(t, "ffprobe")}
 	st, _ := domain.StatSnapshot(video)
@@ -176,7 +185,7 @@ func TestIntegrationExtractSAR(t *testing.T) {
 func TestIntegrationVeryShortVideo(t *testing.T) {
 	dir := t.TempDir()
 	video := filepath.Join(dir, "tiny.mp4")
-	genVideo(t, video, "320x180", 400*time.Millisecond)
+	genVideo(t, genVideoOptions{path: video, size: "320x180", d: 400 * time.Millisecond, extra: []string{}})
 
 	prober := &Prober{FFprobePath: lookTool(t, "ffprobe")}
 	st, _ := domain.StatSnapshot(video)

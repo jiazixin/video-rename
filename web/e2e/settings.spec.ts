@@ -140,7 +140,7 @@ test('重试与缓存保留设置、清空确认和失败反馈', async ({ page 
   )
   await clear.click()
   await dialog.getByRole('button', { name: '清空缓存', exact: true }).click()
-  await expect(dialog.getByRole('alert')).toContainText('清理失败测试')
+  await expect(dialog.getByRole('alert')).toContainText('服务暂时无法完成请求')
   await dialog.getByRole('button', { name: '清空缓存', exact: true }).click()
   await expect(dialog).toHaveCount(0)
   await expect(toasts(page).first()).toContainText('已清理')

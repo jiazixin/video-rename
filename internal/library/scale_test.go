@@ -33,16 +33,14 @@ func TestScaleDirectoryPagination(t *testing.T) {
 	start := time.Now()
 	refresh(t, l, 1)
 	t.Logf("5,001 direct directories index: %s", time.Since(start))
-	dir := entry(t, l, 1, "large-directory")
+	dir := entry(t, entryOptions{l: l, parent: 1, name: "large-directory"})
 	start = time.Now()
 	refresh(t, l, dir.ID)
 	t.Logf("50,000 direct files index: %s", time.Since(start))
 	durations := []time.Duration{}
-	cursor := 0
-	var generation int64
-	for range 30 {
+	for page := 1; page <= 30; page++ {
 		start = time.Now()
-		p, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: dir.ID, Offset: cursor, Limit: 100, Generation: generation, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"})
+		p, err := l.ListPage(t.Context(), ListPageOptions{ID: dir.ID, Offset: max(0, (page)-1) * (100), Limit: 100, Query: "", Kind: "", Status: "", SortBy: "name_asc"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -50,8 +48,6 @@ func TestScaleDirectoryPagination(t *testing.T) {
 		if len(p.Items) != 100 {
 			t.Fatal("unexpected page size")
 		}
-		cursor = p.Next
-		generation = p.Generation
 	}
 	slices.Sort(durations)
 	p95 := durations[28]
@@ -61,10 +57,10 @@ func TestScaleDirectoryPagination(t *testing.T) {
 	}
 	for _, page := range []int{1, 250, 500} {
 		start = time.Now()
-		p, err := l.ListPage(t.Context(), ListPageOptions{ID: dir.ID, Page: page, Limit: 100, Query: "", Kind: "video", Status: "", SortBy: "name_asc"})
+		p, err := l.ListPage(t.Context(), ListPageOptions{ID: dir.ID, Offset: max(0, (page)-1) * (100), Limit: 100, Query: "", Kind: "video", Status: "", SortBy: "name_asc"})
 		elapsed := time.Since(start)
 		t.Logf("50,000-file numbered page %d: %s", page, elapsed)
-		if err != nil || p.Number != page || p.Total != 50000 || len(p.Items) != 100 || p.Items[0].Name != fmt.Sprintf("clip-%05d.mp4", (page-1)*100) {
+		if err != nil || p.Offset != (page-1)*p.Limit || p.Total != 50000 || len(p.Items) != 100 || p.Items[0].Name != fmt.Sprintf("clip-%05d.mp4", (page-1)*100) {
 			t.Fatalf("unexpected numbered page %d: %v", page, err)
 		}
 		if elapsed > 300*time.Millisecond {
@@ -85,7 +81,7 @@ func TestScaleProcessedMarks(t *testing.T) {
 		}
 	}
 	refresh(t, l, 1)
-	targets := []int64{entry(t, l, 1, "mark-0").ID, entry(t, l, 1, "mark-1").ID}
+	targets := []int64{entry(t, entryOptions{l: l, parent: 1, name: "mark-0"}).ID, entry(t, entryOptions{l: l, parent: 1, name: "mark-1"}).ID}
 	for _, marked := range []bool{true, true, false} {
 		start := time.Now()
 		result := l.SetProcessed(t.Context(), targets, marked)

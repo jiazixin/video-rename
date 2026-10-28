@@ -22,9 +22,9 @@ func TestAncestorIdentityDiagnostic(t *testing.T) {
 		t.Fatal(err)
 	}
 	refresh(t, l, 1)
-	parent := entry(t, l, 1, "folder")
+	parent := entry(t, entryOptions{l: l, parent: 1, name: "folder"})
 	refresh(t, l, parent.ID)
-	file := entry(t, l, parent.ID, "a.mp4")
+	file := entry(t, entryOptions{l: l, parent: parent.ID, name: "a.mp4"})
 	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
 		return tx.ExecContext(t.Context(), "UPDATE entries SET identity='999:888' WHERE id=?", parent.ID)
 	}); err != nil {

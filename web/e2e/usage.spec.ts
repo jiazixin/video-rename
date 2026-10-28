@@ -12,14 +12,36 @@ async function login(page: Page) {
 function fixture() {
   const hour = 3600_000,
     now = Date.now()
-  const bucket = (i: number, tokens: number, records: number, estimated: number) => ({
+  const bucket = ({
+    i,
+    tokens,
+    records,
+    estimated
+  }: {
+    i: number
+    tokens: number
+    records: number
+    estimated: number
+  }) => ({
     from: new Date(now - (5 - i) * hour).toISOString(),
     to: new Date(now - (4 - i) * hour).toISOString(),
     tokens,
     records,
     estimated_records: estimated
   })
-  const batch = (id: number, tokens: number, records: number, model: string, source: string) => ({
+  const batch = ({
+    id,
+    tokens,
+    records,
+    model,
+    source
+  }: {
+    id: number
+    tokens: number
+    records: number
+    model: string
+    source: string
+  }) => ({
     id,
     model,
     provider: 'custom',
@@ -46,7 +68,12 @@ function fixture() {
       interval: 'hour'
     },
     totals: { tokens: 4700, records: 5, estimated_records: 1, batches: 2 },
-    trend: [bucket(0, 0, 0, 0), bucket(1, 1200, 1, 0), bucket(2, 0, 0, 0), bucket(3, 3500, 4, 1)],
+    trend: [
+      bucket({ i: 0, tokens: 0, records: 0, estimated: 0 }),
+      bucket({ i: 1, tokens: 1200, records: 1, estimated: 0 }),
+      bucket({ i: 2, tokens: 0, records: 0, estimated: 0 }),
+      bucket({ i: 3, tokens: 3500, records: 4, estimated: 1 })
+    ],
     models: [
       {
         key: 'custom|openai|vision-a',
@@ -77,17 +104,17 @@ function fixture() {
       { key: 'scheduled', tokens: 1200, records: 1, estimated_records: 0, batches: 1 }
     ],
     top_batches: [
-      batch(31, 3500, 4, 'vision-a', 'manual'),
-      batch(12, 1200, 1, 'vision-b', 'scheduled')
+      batch({ id: 31, tokens: 3500, records: 4, model: 'vision-a', source: 'manual' }),
+      batch({ id: 12, tokens: 1200, records: 1, model: 'vision-b', source: 'scheduled' })
     ],
     batches: {
       items: [
-        batch(31, 3500, 4, 'vision-a', 'manual'),
-        batch(12, 1200, 1, 'vision-b', 'scheduled')
+        batch({ id: 31, tokens: 3500, records: 4, model: 'vision-a', source: 'manual' }),
+        batch({ id: 12, tokens: 1200, records: 1, model: 'vision-b', source: 'scheduled' })
       ],
       total: 2,
-      page: 1,
-      size: 20
+      offset: 0,
+      limit: 20
     },
     options: {
       models: [
@@ -134,7 +161,7 @@ test('分组导航独立入口、刷新与前进后退', async ({ page }) => {
   expect((await page.getByRole('main').boundingBox())?.y).toBe(0)
   await page.route('**/api/system', (route) =>
     route.fulfill({
-      json: { model: '/models/Qwen3-VL-8B-Instruct-long-model-name.gguf', ready: true, message: '' }
+      json: { model: '/models/Qwen3-VL-8B-Instruct-long-model-name.gguf', ready: true }
     })
   )
   await page.reload()
@@ -297,8 +324,8 @@ test('高消耗批次、明细、筛选与分页请求', async ({ page }) => {
       filtered.top_batches = filtered.top_batches.filter((b) => b.id === run)
       filtered.batches.total = filtered.batches.items.length
     }
-    if (url.searchParams.get('page') === '2') {
-      filtered.batches = { items: [], total: 41, page: 2, size: 20 }
+    if (String(Math.floor(Number(url.searchParams.get('offset') || 0) / 20) + 1) === '2') {
+      filtered.batches = { items: [], total: 41, offset: 20, limit: 20 }
       filtered.top_batches = []
     }
     await route.fulfill({ json: filtered })
@@ -362,7 +389,7 @@ test('空区间显示无数据而不是伪造零值', async ({ page }) => {
         profiles: [],
         sources: [],
         top_batches: [],
-        batches: { items: [], total: 0, page: 1, size: 20 },
+        batches: { items: [], total: 0, offset: 0, limit: 20 },
         options: { models: [], profiles: [] }
       }
     })
@@ -405,7 +432,7 @@ test('接口错误显示重试而不是空数据', async ({ page }) => {
     })
   )
   await page.goto('/usage')
-  await expect(page.getByRole('alert')).toContainText('数据库暂时不可用')
+  await expect(page.getByRole('alert')).toContainText('服务暂时无法完成请求')
   let recovered = false
   await page.unroute('**/api/usage/analytics*')
   await page.route('**/api/usage/analytics*', (route) => {

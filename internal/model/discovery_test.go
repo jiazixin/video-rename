@@ -71,7 +71,7 @@ func TestDiscoverTimeout(t *testing.T) {
 			defer server.Close()
 			started := time.Now()
 			_, err := Discover(t.Context(), config.ServerConfig{Provider: "custom", BaseURL: server.URL}, 5*time.Second)
-			if err == nil || !errors.Is(err, domain.Fail(domain.KindUnavailable, domain.Record{Code: "discovery_timeout", Message: ""})) {
+			if err == nil || !errors.Is(err, domain.Fail(domain.KindUnavailable, domain.Failure{Reason: domain.ReasonDiscoveryTimeout, Message: ""})) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if elapsed := time.Since(started); elapsed < 4*time.Second || elapsed > 7*time.Second {

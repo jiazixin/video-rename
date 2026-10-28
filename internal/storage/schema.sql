@@ -365,7 +365,7 @@ CREATE INDEX extraction_run ON extraction_records(run,id DESC);
 
 INSERT INTO notification_preferences VALUES(1,'UTC');
 
-PRAGMA user_version=20261028;
+PRAGMA user_version=2026102801;
 
 CREATE INDEX run_analysis_start ON runs(analysis_start_ms,id);
 

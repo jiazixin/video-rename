@@ -39,7 +39,7 @@ const extractionItem = {
 
 async function mockPages(page: Page) {
   await page.route('**/api/logs?*', (route) =>
-    route.fulfill({ json: { items: [historyItem], total: 1, page: 1 } })
+    route.fulfill({ json: { items: [historyItem], total: 1, offset: 0, limit: 100 } })
   )
   await page.route('**/api/logs/batches*', (route) => route.fulfill({ json: { items: [] } }))
   await page.route('**/api/logs/9301/diagnostics', (route) =>
@@ -50,8 +50,8 @@ async function mockPages(page: Page) {
   await page.route('**/api/extractions?*', (route) =>
     route.fulfill({
       json: {
-        success: { items: [], total: 0, next: 0, page: 1 },
-        failure: { items: [extractionItem], total: 1, next: 0, page: 1 },
+        success: { items: [], total: 0, offset: 0, limit: 100 },
+        failure: { items: [extractionItem], total: 1, offset: 0, limit: 100 },
         running: 0
       }
     })

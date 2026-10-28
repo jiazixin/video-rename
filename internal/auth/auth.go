@@ -71,11 +71,11 @@ func passwordKey(password string, salt []byte) []byte {
 
 var (
 	// ErrUnauthenticated reports a missing or expired session.
-	ErrUnauthenticated = domain.Fail(domain.KindUnauthenticated, domain.Record{Code: "unauthenticated", Message: "login required"})
+	ErrUnauthenticated = errors.New("login required")
 	// ErrBadCredentials reports a username or password mismatch.
-	ErrBadCredentials = domain.Fail(domain.KindUnauthenticated, domain.Record{Code: "invalid_credentials", Message: "invalid username or password"})
+	ErrBadCredentials = domain.Fail(domain.KindUnauthenticated, domain.Failure{Reason: domain.ReasonInvalidCredentials, Message: "invalid username or password"})
 	// ErrRateLimited reports that the login failure budget is exhausted.
-	ErrRateLimited = domain.Fail(domain.KindTooMany, domain.Record{Code: "rate_limited", Message: "too many login attempts"})
+	ErrRateLimited = errors.New("too many login attempts")
 )
 
 // pruneLocked drops failure records older than one minute; caller holds mu.

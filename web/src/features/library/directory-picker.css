@@ -3,8 +3,8 @@
 }
 .directory-picker .picker-breadcrumb {
   min-width: 0;
-  gap: 6px;
-  padding: 10px 14px;
+  gap: var(--space-6);
+  padding: var(--space-10) var(--space-14);
   background: var(--palette-f8faf9);
 }
 .directory-picker .picker-breadcrumb button {
@@ -17,28 +17,28 @@
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-10);
   min-height: 51px;
-  padding: 12px 14px;
+  padding: var(--space-12) var(--space-14);
   background: var(--palette-fcfdfc);
 }
 .picker-current-name {
   display: flex;
   align-items: baseline;
   min-width: 0;
-  gap: 8px;
+  gap: var(--space-8);
 }
 .picker-current-name > span {
   flex: none;
   color: var(--ash);
-  font-size: 11px;
+  font-size: var(--font-size-11);
 }
 .directory-picker .picker-current-name strong {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: var(--font-size-12);
 }
 .directory-picker .picker-list {
   min-height: 90px;
@@ -46,8 +46,8 @@
 }
 .directory-picker .picker-row {
   min-height: 47px;
-  gap: 10px;
-  padding: 0 14px;
+  gap: var(--space-10);
+  padding: 0 var(--space-14);
   border-bottom: 1px solid var(--palette-f0f2f1);
 }
 .directory-picker .picker-row:last-child {
@@ -60,8 +60,8 @@
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) auto 15px;
   align-items: center;
-  gap: 9px;
-  padding: 10px 0;
+  gap: var(--space-9);
+  padding: var(--space-10) 0;
 }
 .directory-picker .picker-entry-name {
   min-width: 0;
@@ -71,27 +71,27 @@
   flex-direction: row;
   justify-content: flex-end;
   margin: 0;
-  gap: 4px 8px;
+  gap: var(--space-4) var(--space-8);
   overflow: visible;
   text-overflow: clip;
   white-space: normal;
 }
 .directory-picker .directory-progress .status-badge {
-  padding: 2px 0;
+  padding: var(--space-2) 0;
   border: 0;
   background: transparent;
-  font-size: 10px;
+  font-size: var(--font-size-10);
 }
 .directory-picker .directory-progress small {
-  font-size: 10px;
+  font-size: var(--font-size-10);
 }
 .directory-picker .picker-row button > svg:last-child {
   margin: 0;
 }
 .directory-picker .picker-bottom {
   flex-wrap: wrap;
-  gap: 10px 14px;
-  padding: 11px 14px;
+  gap: var(--space-10) var(--space-14);
+  padding: var(--space-11) var(--space-14);
   background: var(--palette-fcfdfc);
 }
 .directory-picker .picker-bottom span {
@@ -103,12 +103,12 @@
 .picker-selection {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-6);
   margin-right: auto;
 }
 .directory-picker .picker-selection button {
-  padding: 4px 7px;
-  font-size: 11px;
+  padding: var(--space-4) var(--space-7);
+  font-size: var(--font-size-11);
 }
 .directory-picker .picker-bottom > .page-navigation {
   margin-left: auto;
@@ -121,7 +121,7 @@
 @media (max-width: 600px) {
   .directory-picker .picker-current {
     grid-template-columns: 16px minmax(0, 1fr);
-    gap: 5px 10px;
+    gap: var(--space-5) var(--space-10);
   }
   .directory-picker .picker-current > .directory-progress {
     grid-column: 2;
@@ -129,12 +129,12 @@
   }
   .picker-current-name {
     flex-wrap: wrap;
-    gap: 2px 8px;
+    gap: var(--space-2) var(--space-8);
   }
   .directory-picker .picker-row button {
     grid-template-columns: 18px minmax(0, 1fr) 15px;
-    gap: 4px 9px;
-    padding: 11px 0;
+    gap: var(--space-4) var(--space-9);
+    padding: var(--space-11) 0;
   }
   .directory-picker .picker-row .directory-progress {
     grid-column: 2 / -1;
@@ -146,7 +146,7 @@
     grid-row: 1;
   }
   .directory-picker .picker-bottom {
-    gap: 10px;
+    gap: var(--space-10);
   }
   .picker-selection {
     width: 100%;

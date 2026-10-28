@@ -18,7 +18,8 @@ const page = (total: number) => ({
   running_total: 0,
   skipped_total: 0,
   failed_total: 0,
-  page: 1
+  offset: 0,
+  limit: 100
 })
 
 afterEach(() => {
@@ -33,11 +34,7 @@ describe('useRunRecords', () => {
     vi.mocked(api).mockReturnValue(pending.promise)
     const scope = effectScope()
     const records = scope.run(() =>
-      useRunRecords(
-        () => 1,
-        () => true,
-        () => true
-      )
+      useRunRecords({ runID: () => 1, enabled: () => true, active: () => true })
     )
     if (!records) throw new Error('scope did not create records')
     const signal = vi.mocked(api).mock.calls[0]?.[1]?.signal
@@ -57,11 +54,7 @@ describe('useRunRecords', () => {
     const active = ref(true)
     const scope = effectScope()
     const records = scope.run(() =>
-      useRunRecords(
-        () => 1,
-        () => true,
-        () => active.value
-      )
+      useRunRecords({ runID: () => 1, enabled: () => true, active: () => active.value })
     )
     if (!records) throw new Error('scope did not create records')
     records.filter.value = 'failed'
@@ -86,11 +79,7 @@ describe('useRunRecords', () => {
     vi.mocked(api).mockResolvedValueOnce(page(4))
     const scope = effectScope()
     const records = scope.run(() =>
-      useRunRecords(
-        () => 1,
-        () => true,
-        () => false
-      )
+      useRunRecords({ runID: () => 1, enabled: () => true, active: () => false })
     )
     if (!records) throw new Error('scope did not create records')
     await nextTick()

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"video-rename/internal/domain"
+	"video-rename/internal/pagination"
 	"video-rename/internal/storage"
 	"video-rename/internal/timefmt"
 )
@@ -17,8 +18,8 @@ type RunPage struct {
 	Profiles []RunProfile `json:"profiles"`
 	Items    []Run        `json:"items"`
 	Total    int          `json:"total"`
-	Page     int          `json:"page"`
-	Size     int          `json:"size"`
+	Offset   int          `json:"offset"`
+	Limit    int          `json:"limit"`
 }
 
 // RunProfile names a model profile used by a batch.
@@ -31,19 +32,19 @@ type RunProfile struct {
 type ListPageOptions struct {
 	Category string
 	Task     string
-	Page     int
-	Size     int
-	Filters  []url.Values
+	Offset   int
+	Limit    int
+	Filters  url.Values
 }
 
 // ListPage counts and reads matching runs in a single database snapshot.
 func (m *Manager) ListPage(ctx context.Context, params ListPageOptions) (RunPage, error) {
-	category, task, page, size, filters := params.Category, params.Task, params.Page, params.Size, params.Filters
+	category, task, page, size, filters := params.Category, params.Task, params.Offset, params.Limit, params.Filters
 
 	return storage.ReadValue(ctx, m.db, func(tx *sql.Tx) (RunPage, error) {
-		out := RunPage{Items: []Run{}, Page: max(page, 1), Size: size}
+		out := RunPage{Items: []Run{}, Offset: max(page, 0), Limit: size}
 		if size != 50 && size != 100 && size != 200 {
-			out.Size = 50
+			out.Limit = 50
 		}
 		var where string
 		switch category {
@@ -66,7 +67,7 @@ func (m *Manager) ListPage(ctx context.Context, params ListPageOptions) (RunPage
 			return out, domain.InvalidField("task", "invalid_choice")
 		}
 		if len(filters) > 0 {
-			q := filters[0]
+			q := filters
 			if status := q.Get("status"); status != "" {
 				switch status {
 				case "queued", "scanning", "running", "paused", "cancelling", "completed", "partial_failure", "failed", "cancelled", "interrupted":
@@ -136,8 +137,8 @@ func (m *Manager) ListPage(ctx context.Context, params ListPageOptions) (RunPage
 		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM runs r WHERE "+where, args...).Scan(&out.Total); err != nil {
 			return out, err
 		}
-		out.Page = min(out.Page, max(1, (out.Total+out.Size-1)/out.Size))
-		args = append(args, out.Size, (out.Page-1)*out.Size)
+		out.Offset = pagination.Offset(out.Offset, out.Total, out.Limit)
+		args = append(args, out.Limit, out.Offset)
 		rows, err := tx.QueryContext(ctx, "SELECT "+runColumns+" FROM runs r LEFT JOIN run_token_usage u ON u.run=r.id WHERE "+where+" ORDER BY r.id DESC LIMIT ? OFFSET ?", args...)
 		if err != nil {
 			return out, err

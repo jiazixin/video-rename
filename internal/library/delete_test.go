@@ -22,12 +22,12 @@ func TestDeleteFileAndDirectory(t *testing.T) {
 	}
 	put(t, filepath.Join(root, "single.txt"))
 	refresh(t, l, 1)
-	dir := entry(t, l, 1, "folder")
+	dir := entry(t, entryOptions{l: l, parent: 1, name: "folder"})
 	refresh(t, l, dir.ID)
-	nested := entry(t, l, dir.ID, "nested")
+	nested := entry(t, entryOptions{l: l, parent: dir.ID, name: "nested"})
 	refresh(t, l, nested.ID)
-	child := entry(t, l, nested.ID, "video.mp4")
-	for _, e := range []Entry{entry(t, l, 1, "single.txt"), dir} {
+	child := entry(t, entryOptions{l: l, parent: nested.ID, name: "video.mp4"})
+	for _, e := range []Entry{entry(t, entryOptions{l: l, parent: 1, name: "single.txt"}), dir} {
 		if err := l.Delete(t.Context(), e.ID, e.Version); err != nil {
 			t.Fatal(err)
 		}
@@ -53,7 +53,7 @@ func TestDeleteRejectsChangedAndProtectedEntries(t *testing.T) {
 	l, root, _ := fixture(t)
 	put(t, filepath.Join(root, "video.mp4"))
 	refresh(t, l, 1)
-	e := entry(t, l, 1, "video.mp4")
+	e := entry(t, entryOptions{l: l, parent: 1, name: "video.mp4"})
 	if err := l.Delete(t.Context(), 1, 1); err == nil {
 		t.Fatal("allowed root deletion")
 	}

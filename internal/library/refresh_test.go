@@ -94,7 +94,7 @@ func TestRefreshMetadataFailureKeepsCompleteGeneration(t *testing.T) {
 			// A normal retry replaces the old generation and includes all entries.
 			refresh(t, l, 1)
 			for _, name := range []string{"old.mp4", "a.mp4", "b.mp4", "c.mp4"} {
-				entry(t, l, 1, name)
+				entry(t, entryOptions{l: l, parent: 1, name: name})
 			}
 		})
 	}
@@ -127,7 +127,7 @@ func TestRefreshMetadataChangesPublishNewGeneration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			old := entry(t, l, 1, "a.mp4")
+			old := entry(t, entryOptions{l: l, parent: 1, name: "a.mp4"})
 			if change == "size" {
 				if err := os.WriteFile(path, []byte("changed video fixture"), 0o600); err != nil {
 					t.Fatal(err)
@@ -143,12 +143,13 @@ func TestRefreshMetadataChangesPublishNewGeneration(t *testing.T) {
 			if err != nil || after.Generation == before.Generation {
 				t.Fatalf("%s change retained old generation: before=%+v after=%+v error=%v", change, before, after, err)
 			}
-			current := entry(t, l, 1, old.Name)
+			current := entry(t, entryOptions{l: l, parent: 1, name: old.Name})
 			if current.ID != old.ID || current.Identity != old.Identity || current.Version != old.Version+1 {
 				t.Fatalf("content change lost identity or version: before=%+v after=%+v", old, current)
 			}
-			if _, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 50, Generation: before.Generation, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"}); err == nil {
-				t.Fatal("metadata change accepted an old-generation cursor")
+			page, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 0, Limit: 50, SortBy: "name_asc"})
+			if err != nil || page.Generation != after.Generation || len(page.Items) != 1 || page.Items[0].Version != current.Version {
+				t.Fatalf("got stale metadata page %+v, error %v", page, err)
 			}
 		})
 	}
@@ -164,7 +165,7 @@ func TestRefreshRetryPreservesEntriesUntilCompleteObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := entry(t, l, 1, "a.mp4")
+	old := entry(t, entryOptions{l: l, parent: 1, name: "a.mp4"})
 	if err := os.WriteFile(path, []byte("changed video fixture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +189,7 @@ func TestRefreshRetryPreservesEntriesUntilCompleteObservation(t *testing.T) {
 	if err != nil || partial.Generation != before.Generation || partial.Error.Message == "" {
 		t.Fatalf("partial refresh lost published state: %+v %v", partial, err)
 	}
-	updated := entry(t, l, 1, old.Name)
+	updated := entry(t, entryOptions{l: l, parent: 1, name: old.Name})
 	if updated.Size != old.Size || updated.Version != old.Version {
 		t.Fatalf("partial refresh changed published entry metadata: before=%+v after=%+v", old, updated)
 	}
@@ -197,7 +198,7 @@ func TestRefreshRetryPreservesEntriesUntilCompleteObservation(t *testing.T) {
 	if err != nil || after.Generation == before.Generation || after.Error.Message != "" {
 		t.Fatalf("retry mistook live entries for the published generation: before=%+v after=%+v error=%v", before, after, err)
 	}
-	current := entry(t, l, 1, old.Name)
+	current := entry(t, entryOptions{l: l, parent: 1, name: old.Name})
 	if current.Version != updated.Version+1 {
 		t.Fatalf("retry failed to publish the changed entry version: before=%+v after=%+v", updated, current)
 	}

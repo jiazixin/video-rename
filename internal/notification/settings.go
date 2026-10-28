@@ -74,11 +74,11 @@ func (s *Service) get(ctx context.Context, kind string) (Channel, Credentials, e
 	}
 	raw, err := s.db.Unseal(encrypted)
 	if err != nil {
-		return c, Credentials{}, domain.Fail(domain.KindInternal, domain.Record{Code: "notification_credentials_unreadable", Message: "notification credentials cannot be decrypted; check the database key"})
+		return c, Credentials{}, domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonNotificationCredentialsUnreadable, Message: "notification credentials cannot be decrypted; check the database key"})
 	}
 	var credentials Credentials
 	if err = json.Unmarshal([]byte(raw), &credentials); err != nil {
-		return c, credentials, domain.Fail(domain.KindInternal, domain.Record{Code: "notification_config_invalid", Message: "stored notification configuration is invalid"})
+		return c, credentials, domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonNotificationConfigInvalid, Message: "stored notification configuration is invalid"})
 	}
 	c.ChatID = credentials.ChatID
 	c.HasEndpoint = credentials.Endpoint != ""
@@ -212,14 +212,14 @@ func (s *Service) Save(ctx context.Context, v Input) error {
 }
 
 // errUnsupportedChannel rejects an unknown notification channel.
-var errUnsupportedChannel = domain.Fail(domain.KindInvalid, domain.Record{Code: "unsupported_channel", Message: "unsupported notification channel"})
+var errUnsupportedChannel = domain.Fail(domain.KindInvalid, domain.Failure{Reason: domain.ReasonUnsupportedChannel, Message: "unsupported notification channel"})
 
 // Test sends a test message through the channel of kind. The message is
 // notification content, a recorded exception to the error-code rule.
 func (s *Service) Test(ctx context.Context, kind string) error {
 	_, c, err := s.get(ctx, kind)
 	if errors.Is(err, sql.ErrNoRows) {
-		return domain.Fail(domain.KindConflict, domain.Record{Code: "notification_not_configured", Message: "save this channel first"})
+		return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNotificationNotConfigured, Message: "save this channel first"})
 	}
 	if err != nil {
 		return err

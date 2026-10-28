@@ -1,49 +1,49 @@
 .prompt-list {
   display: grid;
-  gap: 16px;
+  gap: var(--space-16);
 }
 .prompt-card {
-  padding: 23px 25px;
+  padding: var(--space-23) var(--space-25);
 }
 .prompt-card header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 16px;
-  margin-bottom: 18px;
+  gap: var(--space-16);
+  margin-bottom: var(--space-18);
 }
 .prompt-card h2 {
-  font-size: 16px;
-  margin-bottom: 7px;
+  font-size: var(--font-size-16);
+  margin-bottom: var(--space-7);
 }
 .prompt-card header .subtle {
-  font-size: 10px;
+  font-size: var(--font-size-10);
 }
 .prompt-body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: 13px;
-  line-height: 1.9;
+  font-size: var(--font-size-13);
+  line-height: var(--line-height-1-9);
 }
 .prompt-body {
   max-height: 220px;
   overflow: auto;
-  padding-right: 10px;
+  padding-right: var(--space-10);
 }
 .prompt-card-actions button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-height: 34px;
-  padding: 6px 12px;
-  gap: 6px;
+  padding: var(--space-6) var(--space-12);
+  gap: var(--space-6);
   border: 1px solid var(--control-line);
-  border-radius: 8px;
+  border-radius: var(--radius-8);
   background: var(--palette-ffffff);
   color: var(--steel);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 20px;
+  font-size: var(--font-size-12);
+  font-weight: var(--font-weight-500);
+  line-height: var(--line-height-20);
 }
 .prompt-card-actions button:hover:not(:disabled) {
   background: var(--control-hover);
@@ -68,7 +68,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  gap: 16px;
+  gap: var(--space-16);
 }
 .prompts-fixed-controls .processing-footer,
 .prompts-failure-controls .processing-footer {
@@ -77,31 +77,31 @@
 .prompts-fixed-actions,
 .prompts-failure-actions {
   display: flex;
-  gap: 10px;
+  gap: var(--space-10);
   flex-shrink: 0;
 }
 .prompts-failure-card {
-  margin-top: 20px;
+  margin-top: var(--space-20);
 }
 .prompts-failure-controls {
-  gap: 12px;
+  gap: var(--space-12);
 }
 .failure-keyword-summary {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 6px 12px;
+  gap: var(--space-6) var(--space-12);
 }
 .failure-keywords-dirty {
   color: var(--palette-976126);
-  font-size: 12px;
+  font-size: var(--font-size-12);
 }
 .failure-keywords-list {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--space-8);
   padding: 0;
   margin: 0;
   list-style: none;
@@ -109,14 +109,14 @@
 .failure-keyword {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-8);
   max-width: 100%;
   border: 1px solid var(--palette-dfe6e1);
-  border-radius: 7px;
-  padding: 3px 4px 3px 10px;
+  border-radius: var(--radius-7);
+  padding: var(--space-3) var(--space-4) var(--space-3) var(--space-10);
   color: var(--palette-43554b);
   background: var(--palette-f5f8f6);
-  font-size: 13px;
+  font-size: var(--font-size-13);
 }
 .failure-keyword > span {
   min-width: 0;
@@ -126,7 +126,7 @@
   flex-shrink: 0;
   min-width: 30px;
   min-height: 30px;
-  padding: 6px;
+  padding: var(--space-6);
   background: transparent;
   border-color: transparent;
   color: var(--palette-63766b);
@@ -134,7 +134,7 @@
 .failure-keyword-add {
   display: flex;
   align-items: flex-end;
-  gap: 10px;
+  gap: var(--space-10);
 }
 .failure-keyword-add label {
   min-width: 0;
@@ -154,44 +154,44 @@
   margin: 0;
 }
 .failure-keyword-input-error {
-  font-size: 12px;
+  font-size: var(--font-size-12);
   overflow-wrap: anywhere;
 }
 .prompts-failure-controls .processing-footer {
   flex-wrap: wrap;
-  gap: 12px;
+  gap: var(--space-12);
 }
 .prompts-failure-controls .processing-footer > .help {
   flex: 1 1 240px;
   margin: 0;
 }
 .prompts-library {
-  padding: 26px;
+  padding: var(--space-26);
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  margin-top: 20px;
+  gap: var(--space-18);
+  margin-top: var(--space-20);
 }
 .prompts-library-head {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 20px;
+  gap: var(--space-20);
 }
 .prompts-library-head h2 {
-  font-size: 17px;
-  line-height: 1.5;
-  letter-spacing: -0.2px;
-  margin: 6px 0;
+  font-size: var(--font-size-17);
+  line-height: var(--line-height-1-5);
+  letter-spacing: var(--tracking-negative-0-2);
+  margin: var(--space-6) 0;
 }
 .prompts-library-head .eyebrow {
   color: var(--palette-547e68);
-  letter-spacing: 1.5px;
-  font-size: 10px;
+  letter-spacing: var(--tracking-1-5);
+  font-size: var(--font-size-10);
 }
 .prompts-library-head .help {
-  font-size: 12px;
-  line-height: 1.75;
+  font-size: var(--font-size-12);
+  line-height: var(--line-height-1-75);
   color: var(--palette-6a726d);
   margin: 0;
 }
@@ -210,20 +210,20 @@
 }
 .prompt-card-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-8);
   flex-shrink: 0;
 }
 .prompt-form {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-16);
 }
 @media (max-width: 760px) {
   .prompts-fixed-card,
   .prompts-failure-card {
     grid-template-columns: minmax(0, 1fr);
-    gap: 16px;
-    padding: 20px;
+    gap: var(--space-16);
+    padding: var(--space-20);
   }
   .prompts-fixed-actions,
   .prompts-failure-actions {
@@ -231,7 +231,7 @@
   }
   .prompts-fixed-actions button,
   .prompts-failure-actions button {
-    padding-inline: 10px;
+    padding-inline: var(--space-10);
   }
   .failure-keyword-add {
     flex-wrap: wrap;
@@ -249,17 +249,17 @@
     flex-wrap: wrap;
   }
   .prompts-library {
-    padding: 20px;
+    padding: var(--space-20);
   }
   .prompts-library-head {
     flex-direction: column;
   }
   .prompt-card {
-    padding: 18px 16px;
+    padding: var(--space-18) var(--space-16);
   }
   .prompt-card header {
     flex-direction: column;
-    gap: 12px;
+    gap: var(--space-12);
   }
   .prompt-card-heading {
     width: 100%;
@@ -271,6 +271,6 @@
     max-width: 100%;
   }
   .prompt-card-actions button {
-    padding-inline: 8px;
+    padding-inline: var(--space-8);
   }
 }

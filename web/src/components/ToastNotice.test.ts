@@ -10,8 +10,8 @@ describe('ToastNotice', () => {
     render(ToastNotice, {
       props: {
         notices: [
-          { id: 7, message: '已保存设置' },
-          { id: 8, message: '已完成编号' }
+          { id: 7, message: '已保存设置', tone: 'success' },
+          { id: 8, message: '设置保存失败', tone: 'error' }
         ],
         animated: false,
         onClose: close

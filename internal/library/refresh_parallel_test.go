@@ -215,7 +215,7 @@ func TestRefreshParallelCancellationJoinsMetadataWorkers(t *testing.T) {
 	if calls.Load() != 4 || active.Load() != 0 {
 		t.Fatalf("cancelled scan started later reads or leaked workers: calls=%d active=%d", calls.Load(), active.Load())
 	}
-	assertFailedRefreshPreservedGeneration(t, l, generation, 1)
+	assertFailedRefreshPreservedGeneration(t, assertFailedRefreshPreservedGenerationOptions{l: l, generation: generation, indexed: 1})
 }
 
 func TestRefreshParallelMetadataErrorDiscardsWholePage(t *testing.T) {
@@ -243,7 +243,7 @@ func TestRefreshParallelMetadataErrorDiscardsWholePage(t *testing.T) {
 	if err := waitTestDirectoryRefresh(t, done); !errors.Is(err, wantErr) {
 		t.Fatalf("refresh error=%v, want metadata failure", err)
 	}
-	assertFailedRefreshPreservedGeneration(t, l, generation, 1)
+	assertFailedRefreshPreservedGeneration(t, assertFailedRefreshPreservedGenerationOptions{l: l, generation: generation, indexed: 1})
 }
 
 func TestRefreshParallelMetadataReportsEarlierInputError(t *testing.T) {
@@ -329,7 +329,7 @@ func TestRefreshIndexPageFailureRollsBackEntriesAndItems(t *testing.T) {
 	l, root, _ := fixture(t)
 	put(t, filepath.Join(root, "00-old.mp4"))
 	refresh(t, l, 1)
-	old := entry(t, l, 1, "00-old.mp4")
+	old := entry(t, entryOptions{l: l, parent: 1, name: "00-old.mp4"})
 	var generation int64
 	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
 		return tx.QueryRowContext(t.Context(), "SELECT generation FROM directory_state WHERE dir=1").Scan(&generation)
@@ -353,8 +353,8 @@ WHEN NEW.dir=1 AND NEW.name='new-02.mp4' BEGIN SELECT RAISE(ABORT,'injected dire
 	if err := l.Refresh(t.Context(), 1); err == nil {
 		t.Fatal("injected directory item insertion failure was ignored")
 	}
-	assertFailedRefreshPreservedGeneration(t, l, generation, 1)
-	current := entry(t, l, 1, old.Name)
+	assertFailedRefreshPreservedGeneration(t, assertFailedRefreshPreservedGenerationOptions{l: l, generation: generation, indexed: 1})
+	current := entry(t, entryOptions{l: l, parent: 1, name: old.Name})
 	var observed string
 	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
 		return tx.QueryRowContext(t.Context(), "SELECT observed FROM entries WHERE id=?", old.ID).Scan(&observed)
@@ -370,14 +370,22 @@ WHEN NEW.dir=1 AND NEW.name='new-02.mp4' BEGIN SELECT RAISE(ABORT,'injected dire
 		t.Fatal(err)
 	}
 	refresh(t, l, 1)
-	page, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 50, Generation: 0, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"})
+	page, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 0, Limit: 50, Query: "", Kind: "", Status: "", SortBy: "name_asc"})
 	if err != nil || len(page.Items) != 5 || page.Error.Message != "" || page.Generation == generation {
 		t.Fatalf("retry did not publish rolled-back page: %+v %v", page, err)
 	}
 }
 
-func assertFailedRefreshPreservedGeneration(t *testing.T, l *Library, generation int64, indexed int) {
+type assertFailedRefreshPreservedGenerationOptions struct {
+	l          *Library
+	generation int64
+	indexed    int
+}
+
+func assertFailedRefreshPreservedGeneration(t *testing.T, options assertFailedRefreshPreservedGenerationOptions) {
 	t.Helper()
+	l, generation, indexed := options.l, options.generation, options.indexed
+
 	var published int64
 	var scanError string
 	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
@@ -417,7 +425,7 @@ func TestRefreshUnchangedEntriesKeepObservationAndVersion(t *testing.T) {
 	}
 	before := make([]Entry, 0, len(names))
 	for _, name := range names {
-		before = append(before, entry(t, l, 1, name))
+		before = append(before, entry(t, entryOptions{l: l, parent: 1, name: name}))
 	}
 	const oldObservation = "2000-01-01T00:00:00Z"
 	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
@@ -442,7 +450,7 @@ func TestRefreshUnchangedEntriesKeepObservationAndVersion(t *testing.T) {
 		t.Fatalf("unchanged refresh left staging items: %d %v", unpublished, err)
 	}
 	for _, old := range before {
-		current := entry(t, l, 1, old.Name)
+		current := entry(t, entryOptions{l: l, parent: 1, name: old.Name})
 		if current.ID != old.ID || current.Version != old.Version || current.Identity != old.Identity || current.Kind != old.Kind || current.Size != old.Size || current.ModifiedNS != old.ModifiedNS {
 			t.Fatalf("unchanged file received a new snapshot/version: before=%+v after=%+v", old, current)
 		}
@@ -458,13 +466,13 @@ func TestRefreshUnchangedEntriesKeepObservationAndVersion(t *testing.T) {
 	}
 }
 
-func TestRefreshReplacementAllocatesEntryAndRejectsOldGeneration(t *testing.T) {
+func TestRefreshReplacementAllocatesEntryAndPublishesNewGeneration(t *testing.T) {
 	l, root, _ := fixture(t)
 	put(t, filepath.Join(root, "a.mp4"))
 	put(t, filepath.Join(root, "keep.mp4"))
 	refresh(t, l, 1)
-	old := entry(t, l, 1, "a.mp4")
-	page, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 50, Generation: 0, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"})
+	old := entry(t, entryOptions{l: l, parent: 1, name: "a.mp4"})
+	page, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 0, Limit: 50, Query: "", Kind: "", Status: "", SortBy: "name_asc"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +482,7 @@ func TestRefreshReplacementAllocatesEntryAndRejectsOldGeneration(t *testing.T) {
 	}
 	put(t, filepath.Join(root, "a.mp4"))
 	refresh(t, l, 1)
-	current := entry(t, l, 1, "a.mp4")
+	current := entry(t, entryOptions{l: l, parent: 1, name: "a.mp4"})
 	if current.ID == old.ID || current.Identity == old.Identity {
 		t.Fatalf("replacement reused the old indexed identity: before=%+v after=%+v", old, current)
 	}
@@ -484,8 +492,9 @@ func TestRefreshReplacementAllocatesEntryAndRejectsOldGeneration(t *testing.T) {
 	}); err != nil || present != 0 {
 		t.Fatalf("replaced entry remains present: %d %v", present, err)
 	}
-	if _, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 1, Limit: 50, Generation: page.Generation, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"}); err == nil {
-		t.Fatal("old generation accepted after replacement scan")
+	after, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 0, Limit: 50, SortBy: "name_asc"})
+	if err != nil || after.Generation == page.Generation || len(after.Items) != 2 || after.Items[0].ID != current.ID {
+		t.Fatalf("got stale replacement page %+v, error %v", after, err)
 	}
 }
 
@@ -495,7 +504,7 @@ func TestRefreshPublishFailureRollsBackAndRecordsError(t *testing.T) {
 			l, root, _ := fixture(t)
 			put(t, filepath.Join(root, "old.mp4"))
 			refresh(t, l, 1)
-			old := entry(t, l, 1, "old.mp4")
+			old := entry(t, entryOptions{l: l, parent: 1, name: "old.mp4"})
 			var generation int64
 			if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
 				return tx.QueryRowContext(t.Context(), "SELECT generation FROM directory_state WHERE dir=1").Scan(&generation)
@@ -538,7 +547,7 @@ WHEN OLD.dir=1 BEGIN SELECT RAISE(ABORT,'injected generation publication failure
 			if present != 1 || oldItems != 1 {
 				t.Fatalf("failed publication kept partial mutations: old present=%d old items=%d", present, oldItems)
 			}
-			page, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 50, Generation: generation, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"})
+			page, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 0, Limit: 50, Query: "", Kind: "", Status: "", SortBy: "name_asc"})
 			if err != nil || len(page.Items) != 1 || page.Items[0].Name != "old.mp4" || page.Error.Message == "" {
 				t.Fatalf("previous complete generation is unavailable: %+v %v", page, err)
 			}
@@ -548,7 +557,7 @@ WHEN OLD.dir=1 BEGIN SELECT RAISE(ABORT,'injected generation publication failure
 				t.Fatal(err)
 			}
 			refresh(t, l, 1)
-			page, err = l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 50, Generation: 0, Query: "", Kind: "", Status: "", Force: false, SortBy: "name_asc"})
+			page, err = l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 0, Limit: 50, Query: "", Kind: "", Status: "", SortBy: "name_asc"})
 			if err != nil || page.Generation == generation || page.Error.Message != "" || len(page.Items) != 1 || page.Items[0].Name != "new.mp4" {
 				t.Fatalf("retry did not publish complete replacement generation: %+v %v", page, err)
 			}

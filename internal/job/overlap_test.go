@@ -165,7 +165,7 @@ func TestSubmissionScopeOverlapSemantics(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err := m.Create(t.Context(), Request{Targets: []int64{ids[tt.second]}, Recursive: tt.secondRecursive, Key: "second-scope-test"}, "manual", 0)
-			if tt.overlap && (err == nil || !errors.Is(err, domain.Fail(domain.KindConflict, domain.Record{Code: "run_overlap", Message: ""}))) || !tt.overlap && err != nil {
+			if tt.overlap && (err == nil || !errors.Is(err, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonRunOverlap, Message: ""}))) || !tt.overlap && err != nil {
 				t.Fatalf("overlap=%v, err=%v", tt.overlap, err)
 			}
 		})
@@ -213,7 +213,7 @@ func TestQueuedScopeVisibleAndRejectsOtherBatch(t *testing.T) {
 	if err != nil || e.TaskStatus != "queued" {
 		t.Fatalf("queued state lost: %+v %v", e, err)
 	}
-	if _, err = m.Create(t.Context(), Request{Targets: []int64{b}, Key: "duplicate-file"}, "manual", 0); err == nil || !errors.Is(err, domain.Fail(domain.KindConflict, domain.Record{Code: "run_overlap", Message: ""})) {
+	if _, err = m.Create(t.Context(), Request{Targets: []int64{b}, Key: "duplicate-file"}, "manual", 0); err == nil || !errors.Is(err, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonRunOverlap, Message: ""})) {
 		t.Fatalf("duplicate allowed: %v", err)
 	}
 	if _, err = m.Create(t.Context(), Request{Targets: []int64{1}, Recursive: true, Key: "duplicate-parent"}, "manual", 0); err == nil {

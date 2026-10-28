@@ -68,8 +68,16 @@ func put(t *testing.T, path string) {
 	}
 }
 
-func entryID(t *testing.T, l *testLibrary, parent int64, name string) int64 {
+type entryIDOptions struct {
+	l      *testLibrary
+	parent int64
+	name   string
+}
+
+func entryID(t *testing.T, options entryIDOptions) int64 {
 	t.Helper()
+	l, parent, name := options.l, options.parent, options.name
+
 	var id int64
 	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
 		return tx.QueryRowContext(t.Context(), "SELECT id FROM entries WHERE parent=? AND name=? AND present=1", parent, name).Scan(&id)
@@ -114,11 +122,11 @@ func TestRecursiveDiscoveryFindsNewDirectoriesAndFiles(t *testing.T) {
 	if s.Status != "completed" || s.Directories != 4 || s.Files != 2 || s.Added < 2 {
 		t.Fatalf("initial scan: %+v", s)
 	}
-	a := entryID(t, l, 1, "a")
-	b := entryID(t, l, 1, "b")
-	entryID(t, l, a, "one.mp4")
-	nested := entryID(t, l, b, "nested")
-	entryID(t, l, nested, "two.mp4")
+	a := entryID(t, entryIDOptions{l: l, parent: 1, name: "a"})
+	b := entryID(t, entryIDOptions{l: l, parent: 1, name: "b"})
+	entryID(t, entryIDOptions{l: l, parent: a, name: "one.mp4"})
+	nested := entryID(t, entryIDOptions{l: l, parent: b, name: "nested"})
+	entryID(t, entryIDOptions{l: l, parent: nested, name: "two.mp4"})
 	put(t, filepath.Join(root, "b", "new", "three.mp4"))
 	put(t, filepath.Join(root, "a", "four.mp4"))
 	if _, err := m.Start(t.Context(), nil, "manual"); err != nil {
@@ -128,9 +136,9 @@ func TestRecursiveDiscoveryFindsNewDirectoriesAndFiles(t *testing.T) {
 	if s.Status != "completed" || s.Directories != 5 || s.Files != 4 || s.Added < 2 {
 		t.Fatalf("second scan: %+v", s)
 	}
-	entryID(t, l, a, "four.mp4")
-	newDir := entryID(t, l, b, "new")
-	entryID(t, l, newDir, "three.mp4")
+	entryID(t, entryIDOptions{l: l, parent: a, name: "four.mp4"})
+	newDir := entryID(t, entryIDOptions{l: l, parent: b, name: "new"})
+	entryID(t, entryIDOptions{l: l, parent: newDir, name: "three.mp4"})
 	var runs int
 	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
 		return tx.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM runs").Scan(&runs)
@@ -176,9 +184,9 @@ func TestValidateTargetsNormalizesOverlapsAndRejectsInvalidScopes(t *testing.T) 
 		t.Fatal(err)
 	}
 	finished(t, m)
-	parent := entryID(t, l, 1, "parent")
-	child := entryID(t, l, parent, "child")
-	file := entryID(t, l, child, "one.mp4")
+	parent := entryID(t, entryIDOptions{l: l, parent: 1, name: "parent"})
+	child := entryID(t, entryIDOptions{l: l, parent: parent, name: "child"})
+	file := entryID(t, entryIDOptions{l: l, parent: child, name: "one.mp4"})
 	targets, err := m.ValidateTargets(t.Context(), []int64{child, parent, child})
 	if err != nil || !slices.Equal(targets, []int64{parent}) {
 		t.Fatalf("normalized=%v err=%v", targets, err)
@@ -245,8 +253,8 @@ func TestDirectoryScanChangedRetriesOnceAndCountsOnlySuccessfulScan(t *testing.T
 	if calls.Load() != 2 || s.Status != "completed" || s.Directories != 1 || s.Files != 2 || s.Added != 2 || s.Changed != 0 || s.Removed != 0 || len(s.Errors) != 0 {
 		t.Fatalf("retry did not publish/count exactly one successful scan: calls=%d status=%+v", calls.Load(), s)
 	}
-	entryID(t, l, 1, "one.mp4")
-	entryID(t, l, 1, "two.mp4")
+	entryID(t, entryIDOptions{l: l, parent: 1, name: "one.mp4"})
+	entryID(t, entryIDOptions{l: l, parent: 1, name: "two.mp4"})
 }
 
 func TestDirectoryScanChangedPersistentFailureRetriesOnlyOnce(t *testing.T) {
@@ -408,7 +416,7 @@ func TestDirectoryFailurePreservesOldIndexAndContinuesIndependentRange(t *testin
 		t.Fatal(err)
 	}
 	finished(t, m)
-	bad, good := entryID(t, l, 1, "bad"), entryID(t, l, 1, "good")
+	bad, good := entryID(t, entryIDOptions{l: l, parent: 1, name: "bad"}), entryID(t, entryIDOptions{l: l, parent: 1, name: "good"})
 	put(t, filepath.Join(root, "bad", "new.mp4"))
 	put(t, filepath.Join(root, "good", "new.mp4"))
 	actual := m.library.ScanDirectory
@@ -425,8 +433,8 @@ func TestDirectoryFailurePreservesOldIndexAndContinuesIndependentRange(t *testin
 	if s.Status != "partial_failure" || s.Directories != 1 || s.Files != 2 || len(s.Errors) != 1 || s.Errors[0].Path != "bad" {
 		t.Fatalf("scan=%+v", s)
 	}
-	entryID(t, l, bad, "old.mp4")
-	entryID(t, l, good, "new.mp4")
+	entryID(t, entryIDOptions{l: l, parent: bad, name: "old.mp4"})
+	entryID(t, entryIDOptions{l: l, parent: good, name: "new.mp4"})
 	var badNew int
 	if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
 		return tx.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM entries WHERE parent=? AND name='new.mp4' AND present=1", bad).Scan(&badNew)
@@ -443,7 +451,7 @@ func TestRootReplacementStopsRoundBeforeOtherDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 	finished(t, m)
-	one, two := entryID(t, l, 1, "one"), entryID(t, l, 1, "two")
+	one, two := entryID(t, entryIDOptions{l: l, parent: 1, name: "one"}), entryID(t, entryIDOptions{l: l, parent: 1, name: "two"})
 	var calls atomic.Int64
 	m.scan = func(ctx context.Context, id int64) (library.ScanDirectoryResult, error) {
 		calls.Add(1)
@@ -632,9 +640,9 @@ func TestExcludedDirectoriesApplyToManualAndAutomaticScans(t *testing.T) {
 				t.Fatal(err)
 			}
 			finished(t, m)
-			skip := entryID(t, l, 1, "skip")
-			nested := entryID(t, l, skip, "nested")
-			keep := entryID(t, l, 1, "keep")
+			skip := entryID(t, entryIDOptions{l: l, parent: 1, name: "skip"})
+			nested := entryID(t, entryIDOptions{l: l, parent: skip, name: "nested"})
+			keep := entryID(t, entryIDOptions{l: l, parent: 1, name: "keep"})
 			settings := systemsetting.DefaultScanSettings()
 			settings.ExcludedTargets = []int64{skip}
 			if err := store.SaveScan(t.Context(), settings); err != nil {
@@ -650,8 +658,8 @@ func TestExcludedDirectoriesApplyToManualAndAutomaticScans(t *testing.T) {
 			if status.Status != "completed" || status.Directories != 2 {
 				t.Fatalf("scan: %+v", status)
 			}
-			entryID(t, l, keep, "new.mp4")
-			entryID(t, l, nested, "old.mp4") // Existing index is preserved.
+			entryID(t, entryIDOptions{l: l, parent: keep, name: "new.mp4"})
+			entryID(t, entryIDOptions{l: l, parent: nested, name: "old.mp4"}) // Existing index is preserved.
 			var count int
 			if err := l.db.View(t.Context(), func(tx *sql.Tx) error {
 				return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM entries WHERE parent IN (?,?) AND name='new.mp4'", skip, nested).Scan(&count)
@@ -676,7 +684,7 @@ func TestExcludedDirectoriesApplyToManualAndAutomaticScans(t *testing.T) {
 			if status := finished(t, m); status.Status != "completed" || status.Directories != 2 {
 				t.Fatalf("removed exclusion: %+v", status)
 			}
-			entryID(t, l, nested, "new.mp4")
+			entryID(t, entryIDOptions{l: l, parent: nested, name: "new.mp4"})
 		})
 	}
 }
@@ -688,7 +696,7 @@ func TestScanExclusionsFrozenUntilNextRound(t *testing.T) {
 		t.Fatal(err)
 	}
 	finished(t, m)
-	skip := entryID(t, l, 1, "skip")
+	skip := entryID(t, entryIDOptions{l: l, parent: 1, name: "skip"})
 	entered, release := make(chan struct{}), make(chan struct{})
 	m.scan = func(ctx context.Context, id int64) (library.ScanDirectoryResult, error) {
 		if id == 1 {

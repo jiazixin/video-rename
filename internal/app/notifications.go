@@ -59,18 +59,12 @@ func (a *App) notificationRoutes(mux *router) {
 		send(w, http.StatusOK, struct{}{})
 	})
 	mux.HandleFunc("GET /api/notifications/history", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Has("page") || r.URL.Query().Has("size") {
-			page := int(number(r.URL.Query().Get("page")))
-			size := int(number(r.URL.Query().Get("size")))
-			v, err := a.Notifications.ListHistoryPage(r.Context(), page, size)
-			if err != nil {
-				writeError(w, r, err)
-				return
-			}
-			send(w, http.StatusOK, v)
+		q := r.URL.Query()
+		if err := queryFields(q, "offset", "limit"); err != nil {
+			writeError(w, r, err)
 			return
 		}
-		v, err := a.Notifications.History(r.Context())
+		v, err := a.Notifications.ListHistoryPage(r.Context(), int(number(q.Get("offset"))), int(number(q.Get("limit"))))
 		if err != nil {
 			writeError(w, r, err)
 			return

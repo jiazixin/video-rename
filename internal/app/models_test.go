@@ -48,7 +48,7 @@ func TestModelAPISecretsAndCrossOrigin(t *testing.T) {
 	}
 	var created map[string]any
 	json.Unmarshal(w.Body.Bytes(), &created)
-	data := map[string]any{"title": "private profile", "prompt_id": created["id"], "provider": "custom", "protocol": "openai", "base_url": "http://localhost:8080/v1", "model": "vision", "temperature": 0, "max_tokens": 1024, "timeout": "10s", "api_key": "api-private-test-key"}
+	data := map[string]any{"title": "private profile", "prompt_id": created["id"], "provider": "custom", "protocol": "openai", "base_url": "http://localhost:8080/v1", "model": "vision", "temperature": 0, "max_tokens": 1024, "timeout_ms": 10000, "api_key": "api-private-test-key"}
 	if w = call("POST", "/api/model-configs", data, false); w.Code != 403 {
 		t.Fatal("cross-site write accepted", w.Code)
 	}

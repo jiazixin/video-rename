@@ -5,7 +5,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"slices"
 	"sync"
 	"testing"
 )
@@ -16,17 +15,14 @@ func TestListPageAfterRefreshAndRemoval(t *testing.T) {
 		put(t, filepath.Join(root, fmt.Sprintf("clip%d.mp4", i)))
 	}
 	refresh(t, l, 1)
-	first, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: 2, Limit: 50, Query: "", Kind: "video", Status: "", SortBy: "name_asc"})
-	if err != nil || first.Number != 2 || first.Items[0].Name != "clip50.mp4" {
+	first, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 50, Limit: 50, Query: "", Kind: "video", Status: "", SortBy: "name_asc"})
+	if err != nil || first.Offset != first.Limit || first.Items[0].Name != "clip50.mp4" {
 		t.Fatalf("initial page: %+v, %v", first, err)
 	}
 	refresh(t, l, 1)
-	after, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: 2, Limit: 50, Query: "", Kind: "video", Status: "", SortBy: "name_asc"})
-	if err != nil || after.Generation != first.Generation || after.Number != 2 || after.Items[0].ID != first.Items[0].ID {
+	after, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 50, Limit: 50, Query: "", Kind: "video", Status: "", SortBy: "name_asc"})
+	if err != nil || after.Generation != first.Generation || after.Offset != after.Limit || after.Items[0].ID != first.Items[0].ID {
 		t.Fatalf("refreshed page: %+v, %v", after, err)
-	}
-	if _, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: first.Next, Limit: 50, Generation: first.Generation, Query: "", Kind: "video", Status: "", Force: false, SortBy: "name_asc"}); err != nil {
-		t.Fatalf("unchanged refresh invalidated the cursor: %v", err)
 	}
 	for i := 60; i < 121; i++ {
 		if err := os.Remove(filepath.Join(root, fmt.Sprintf("clip%d.mp4", i))); err != nil {
@@ -34,23 +30,19 @@ func TestListPageAfterRefreshAndRemoval(t *testing.T) {
 		}
 	}
 	refresh(t, l, 1)
-	// Real listing changes must still invalidate cursors from the old generation.
-	if _, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: first.Next, Limit: 50, Generation: first.Generation, Query: "", Kind: "video", Status: "", Force: false, SortBy: "name_asc"}); err == nil {
-		t.Fatal("stale cursor was accepted after removal")
-	}
-	for _, page := range []int{3, math.MaxInt} {
-		p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: page, Limit: 50, Query: "", Kind: "video", Status: "", SortBy: "name_asc"})
-		if err != nil || p.Number != 2 || p.Total != 60 || len(p.Items) != 10 || p.Next != 0 {
-			t.Fatalf("clamped page %d: %+v, %v", page, p, err)
+	for _, offset := range []int{100, math.MaxInt} {
+		p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: offset, Limit: 50, Query: "", Kind: "video", Status: "", SortBy: "name_asc"})
+		if err != nil || p.Offset != p.Limit || p.Total != 60 || len(p.Items) != 10 || p.Generation == first.Generation {
+			t.Fatalf("clamped offset %d: %+v, %v", offset, p, err)
 		}
 	}
-	p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: math.MaxInt, Limit: 50, Query: "missing", Kind: "video", Status: "", SortBy: "name_asc"})
-	if err != nil || p.Number != 1 || p.Total != 0 || len(p.Items) != 0 {
+	p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: math.MaxInt, Limit: 50, Query: "missing", Kind: "video", Status: "", SortBy: "name_asc"})
+	if err != nil || p.Offset != 0 || p.Total != 0 || len(p.Items) != 0 {
 		t.Fatalf("empty filter: %+v, %v", p, err)
 	}
 }
 
-func TestListPageMatchesCursorSortingAndFilters(t *testing.T) {
+func TestListPageSortingAndFilters(t *testing.T) {
 	l, root, _ := fixture(t)
 	for i := range 105 {
 		put(t, filepath.Join(root, fmt.Sprintf("clip%d.mp4", i)))
@@ -62,25 +54,38 @@ func TestListPageMatchesCursorSortingAndFilters(t *testing.T) {
 	refresh(t, l, 1)
 	for _, sort := range []string{"name_asc", "name_desc", "size_asc", "size_desc", "mtime_asc", "mtime_desc", "renamed_asc", "renamed_desc"} {
 		t.Run(sort, func(t *testing.T) {
-			// Keep the static cursor comparison inside the index freshness window,
-			// including under -race. Concurrent rebuilds are tested separately.
 			refresh(t, l, 1)
 			for _, filter := range []struct{ query, kind string }{{"", ""}, {"", "image"}, {"clip", "video"}} {
-				cursor := 0
-				var generation int64
+				want := map[string]bool{"clip-folder": true}
+				for i := range 105 {
+					if filter.kind != "image" {
+						want[fmt.Sprintf("clip%d.mp4", i)] = true
+					}
+					if filter.kind != "video" {
+						want[fmt.Sprintf("photo%d.jpg", i)] = true
+					}
+				}
+				seen := map[string]bool{}
 				for page := 1; ; page++ {
-					a, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: cursor, Limit: 50, Generation: generation, Query: filter.query, Kind: filter.kind, Status: "", Force: false, SortBy: sort})
-					if err != nil {
-						t.Fatal(err)
+					p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: max(0, (page)-1) * (50), Limit: 50, Query: filter.query, Kind: filter.kind, SortBy: sort})
+					if err != nil || p.Offset != (page-1)*p.Limit || p.Total != len(want) || len(p.Items) != min(50, len(want)-(page-1)*50) {
+						t.Fatalf("got page %+v, error %v, want page %d and total %d", p, err, page, len(want))
 					}
-					b, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: page, Limit: 50, Query: filter.query, Kind: filter.kind, Status: "", SortBy: sort})
-					if err != nil || b.Number != page || b.Total != a.Total || b.Next != a.Next || !slices.EqualFunc(a.Items, b.Items, func(a, b Entry) bool { return a.ID == b.ID }) {
-						t.Fatalf("page %d filter %+v differs from cursor: %v", page, filter, err)
+					if page == 1 && p.Items[0].Name != "clip-folder" {
+						t.Fatal("directory did not sort first")
 					}
-					if a.Next == 0 {
+					for _, item := range p.Items {
+						if !want[item.Name] || seen[item.Name] {
+							t.Fatalf("got unexpected or repeated item %q", item.Name)
+						}
+						seen[item.Name] = true
+					}
+					if page*50 >= p.Total {
 						break
 					}
-					cursor, generation = a.Next, a.Generation
+				}
+				if len(seen) != len(want) {
+					t.Fatalf("got %d unique items, want %d", len(seen), len(want))
 				}
 			}
 		})
@@ -104,7 +109,7 @@ func TestListPageDuringRescans(t *testing.T) {
 	})
 	defer wg.Wait()
 	for range 20 {
-		p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: 2, Limit: 50, Query: "", Kind: "", Status: "", SortBy: "name_asc"})
+		p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 50, Limit: 50, Query: "", Kind: "", Status: "", SortBy: "name_asc"})
 		if err != nil || p.Total != 130 || len(p.Items) != 50 || p.Items[0].Name != "clip50.mp4" || p.Items[49].Name != "clip99.mp4" {
 			t.Fatalf("inconsistent page during rescan: %+v, %v", p, err)
 		}

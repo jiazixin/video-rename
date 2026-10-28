@@ -1,19 +1,11 @@
 import { computed, ref, type Ref } from 'vue'
-import { api, apiItems } from '../../app/api'
+import { useApi } from '../../app/use-api'
 import { errorText } from '../../app/errors'
 import type { Entry, Operation } from '../../app/contracts'
 import { nameWithoutExtension, normalizedExtension } from './entry-types'
 
 export type EntryDialogMode = 'rename' | 'auto' | 'extract' | 'restore' | 'history'
 export type RunTask = 'rename' | 'extract'
-
-/** Restores the latest rename of e. */
-export function restoreRequest(e: Entry) {
-  return api(`/operations/${e.restore_id}/restore`, {
-    method: 'POST',
-    body: {}
-  })
-}
 
 type EntryDialogOptions = {
   /** Shared with the page so a submission never overlaps another write. */
@@ -31,38 +23,66 @@ type EntryDialogOptions = {
 
 // One entry's rename, restore, run submission or naming history.
 export function useEntryDialog(options: EntryDialogOptions) {
+  const { api, formError } = useApi()
   const { saving, notify } = options
   const dialogEntry = ref<Entry>(),
     dialogMode = ref<EntryDialogMode | ''>(''),
     newName = ref(''),
     dialogError = ref(''),
     history = ref<Operation[]>([])
+  const nextHistoryCursor = ref(''),
+    loadingHistory = ref(false)
   // A history response applies only while its request is the latest one.
   let historyRequest = 0
+  let historyController: AbortController | undefined
   const extension = computed(() =>
     dialogEntry.value?.kind === 'file' ? normalizedExtension(dialogEntry.value.name) : ''
   )
   async function openEntryDialog(e: Entry, nextMode: EntryDialogMode) {
     if (saving.value) return
+    historyController?.abort()
     const request = ++historyRequest
     if (nextMode === 'auto') options.modelConfigID.value = 0
     if (nextMode === 'extract') options.recursive.value = true
     dialogEntry.value = e
     dialogMode.value = nextMode
     dialogError.value = ''
+    formError.value = undefined
+    loadingHistory.value = false
+    nextHistoryCursor.value = ''
     newName.value = e.kind === 'file' ? nameWithoutExtension(e.name) : e.name
     history.value = []
     if (nextMode !== 'restore' && nextMode !== 'history') return
-    const current = () =>
-      request === historyRequest && dialogMode.value === nextMode && dialogEntry.value?.id === e.id
+    await loadHistory(request)
+  }
+  async function loadHistory(request = historyRequest) {
+    const entry = dialogEntry.value
+    if (!entry || loadingHistory.value) return
+    const controller = new AbortController()
+    historyController = controller
+    loadingHistory.value = true
+    const current = () => request === historyRequest && !controller.signal.aborted
     try {
-      const records = await apiItems<Operation>(`/entries/${e.id}/history`)
-      if (current()) history.value = records
+      const query = nextHistoryCursor.value
+        ? `?cursor=${encodeURIComponent(nextHistoryCursor.value)}`
+        : ''
+      const records = await api<{ items: Operation[]; next_cursor?: string }>(
+        `/entries/${entry.id}/history${query}`,
+        { signal: controller.signal }
+      )
+      if (current()) {
+        history.value.push(...records.items)
+        nextHistoryCursor.value = records.next_cursor ?? ''
+        dialogError.value = ''
+      }
     } catch (err) {
       if (current()) dialogError.value = errorText(err)
+    } finally {
+      if (current()) loadingHistory.value = false
     }
   }
   function closeDialog() {
+    historyController?.abort()
     historyRequest++
     dialogMode.value = ''
   }
@@ -83,7 +103,7 @@ export function useEntryDialog(options: EntryDialogOptions) {
         })
         notify('名称已更新，历史已保存')
       } else if (dialogMode.value === 'restore') {
-        await restoreRequest(e)
+        await api<unknown>(`/operations/${e.restore_id}/restore`, { method: 'POST', body: {} })
         notify('名称已还原，可以再次自动命名')
       } else {
         await options.queueRun(dialogMode.value === 'extract' ? 'extract' : 'rename', [e])
@@ -97,11 +117,15 @@ export function useEntryDialog(options: EntryDialogOptions) {
     }
   }
   return {
+    formError,
     dialogEntry,
     dialogMode,
     newName,
     dialogError,
     history,
+    hasMoreHistory: computed(() => !!nextHistoryCursor.value),
+    loadingHistory,
+    loadHistory,
     extension,
     openEntryDialog,
     closeDialog,

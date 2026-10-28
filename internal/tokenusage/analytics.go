@@ -10,6 +10,7 @@ import (
 	"slices"
 	"time"
 
+	"video-rename/internal/pagination"
 	"video-rename/internal/storage"
 	"video-rename/internal/timebucket"
 	"video-rename/internal/timefmt"
@@ -27,8 +28,8 @@ type AnalyticsQuery struct {
 	Source   string // "", manual or scheduled
 	Run      int64
 	Sort     string // tokens (default) or recent
-	Page     int
-	Size     int
+	Offset   int
+	Limit    int
 }
 
 // Report is the token usage report.
@@ -123,10 +124,10 @@ type Batch struct {
 
 // PagedBatches is a page of batches.
 type PagedBatches struct {
-	Items []Batch `json:"items"`
-	Total int     `json:"total"`
-	Page  int     `json:"page"`
-	Size  int     `json:"size"`
+	Items  []Batch `json:"items"`
+	Total  int     `json:"total"`
+	Offset int     `json:"offset"`
+	Limit  int     `json:"limit"`
 }
 
 // ReportOptions lists the values available as report filters.
@@ -207,14 +208,14 @@ func Analytics(ctx context.Context, db *storage.Store, q AnalyticsQuery) (*Repor
 		if q.Location == nil {
 			q.Location = time.UTC
 		}
-		if q.Page < 1 {
-			q.Page = 1
+		if q.Offset < 0 {
+			q.Offset = 0
 		}
-		if q.Size < 1 || q.Size > 100 {
-			if q.Size < 1 {
-				q.Size = 20
+		if q.Limit < 1 || q.Limit > 100 {
+			if q.Limit < 1 {
+				q.Limit = 20
 			} else {
-				q.Size = 100
+				q.Limit = 100
 			}
 		}
 		var err error
@@ -223,7 +224,7 @@ func Analytics(ctx context.Context, db *storage.Store, q AnalyticsQuery) (*Repor
 			return nil, err
 		}
 		cacheQuery := q
-		cacheQuery.Page, cacheQuery.Size, cacheQuery.Location = 0, 0, nil
+		cacheQuery.Offset, cacheQuery.Limit, cacheQuery.Location = 0, 0, nil
 		keyRaw, err := json.Marshal(struct {
 			Query    AnalyticsQuery
 			Timezone string
@@ -235,7 +236,7 @@ func Analytics(ctx context.Context, db *storage.Store, q AnalyticsQuery) (*Repor
 		var cached Report
 		if db.CachedReport(cacheKey, revision, &cached) {
 
-			return pageReport(ctx, &cached, q.Page, q.Size)
+			return pageReport(ctx, &cached, q.Offset, q.Limit)
 		}
 		where := "r.recorded_at>=? AND r.recorded_at<?"
 		args := []any{q.From, q.To}
@@ -373,7 +374,7 @@ WHERE `+where+` ORDER BY r.recorded_at,r.id`, args...)
 			Profiles:   sortedProfiles(profiles),
 			Sources:    sortedSources(sources),
 			TopBatches: []Batch{},
-			Batches:    PagedBatches{Items: []Batch{}, Page: q.Page, Size: q.Size},
+			Batches:    PagedBatches{Items: []Batch{}, Offset: q.Offset, Limit: q.Limit},
 			Options:    options,
 		}
 		ordered := sortedBatches(batches, q.Sort)
@@ -409,7 +410,7 @@ WHERE `+where+` ORDER BY r.recorded_at,r.id`, args...)
 			return nil, err
 		}
 		db.CacheReport(cacheKey, revision, report)
-		return pageReport(ctx, report, q.Page, q.Size)
+		return pageReport(ctx, report, q.Offset, q.Limit)
 	})
 }
 
@@ -597,9 +598,9 @@ func pageReport(ctx context.Context, report *Report, page, size int) (*Report, e
 		return nil, err
 	}
 	rows := report.Batches.Items
-	report.Batches.Page = min(page, max(1, (len(rows)+size-1)/size))
-	report.Batches.Size = size
-	start := (report.Batches.Page - 1) * size
+	report.Batches.Offset = pagination.Offset(page, len(rows), size)
+	report.Batches.Limit = size
+	start := report.Batches.Offset
 	report.Batches.Items = rows[min(start, len(rows)):min(start+size, len(rows))]
 	return report, nil
 }

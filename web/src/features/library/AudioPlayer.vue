@@ -204,7 +204,7 @@
             ><span class="n">{{ String(index + 1).padStart(2, '0') }}</span
             ><span class="t" :title="item.name">{{ item.name }}</span
             ><span v-if="item.id === entry.id" class="eq" aria-hidden="true"><i /><i /><i /></span
-            ><span v-else class="d">{{ formatSize(item.size) }}</span></button
+            ><span v-else class="d">{{ formatSize(item.size_bytes) }}</span></button
           ></li
         ></ol
       >
@@ -221,7 +221,7 @@
     min-height: 0;
     height: min(460px, 70vh);
     border: 1px solid var(--line);
-    border-radius: 12px;
+    border-radius: var(--radius-12);
     overflow: hidden;
   }
   .now-playing {
@@ -229,8 +229,8 @@
     flex-direction: column;
     align-items: stretch;
     justify-content: center;
-    gap: 12px;
-    padding: 22px 20px;
+    gap: var(--space-12);
+    padding: var(--space-22) var(--space-20);
     background: var(--tone-green-bg);
     min-width: 0;
   }
@@ -240,10 +240,10 @@
     aspect-ratio: 1;
     display: grid;
     place-items: center;
-    border-radius: 16px;
+    border-radius: var(--radius-16);
     color: var(--palette-rgba-255-255-255-0_92);
     background: linear-gradient(135deg, var(--audio-cover-0-start), var(--audio-cover-0-end));
-    box-shadow: 0 12px 26px var(--palette-rgba-20-40-30-0_18);
+    box-shadow: var(--shadow-9);
   }
   .cover[data-tone='1'] {
     background: linear-gradient(135deg, var(--audio-cover-1-start), var(--audio-cover-1-end));
@@ -261,7 +261,7 @@
     background: linear-gradient(135deg, var(--audio-cover-5-start), var(--audio-cover-5-end));
   }
   .cover .pulsing {
-    animation: cover-pulse 1.6s linear infinite;
+    animation: cover-pulse var(--duration-1600) linear infinite;
   }
   @keyframes cover-pulse {
     50% {
@@ -271,18 +271,18 @@
   .track-position {
     margin: 0;
     text-align: center;
-    font-size: 12px;
+    font-size: var(--font-size-12);
     color: var(--steel);
     font-variant-numeric: tabular-nums;
   }
   .seek {
     display: grid;
-    gap: 4px;
+    gap: var(--space-4);
   }
   .media-time {
     display: flex;
     justify-content: space-between;
-    font-size: 11px;
+    font-size: var(--font-size-11);
     color: var(--ash);
     font-variant-numeric: tabular-nums;
   }
@@ -290,15 +290,15 @@
     display: flex;
     justify-content: center;
     align-items: center;
-    gap: 14px;
+    gap: var(--space-14);
   }
   .transport button,
   .media-volume button {
     border: 0;
     background: transparent;
     color: var(--steel);
-    padding: 8px;
-    border-radius: 50%;
+    padding: var(--space-8);
+    border-radius: var(--radius-round);
   }
   .transport button:hover:not(:disabled),
   .media-volume button:hover:not(:disabled) {
@@ -320,7 +320,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: var(--space-6);
   }
   .media-volume input {
     width: 110px;
@@ -330,7 +330,7 @@
     appearance: none;
     -webkit-appearance: none;
     border: 0;
-    border-radius: 10px;
+    border-radius: var(--radius-10);
     height: 5px;
     min-height: 0;
     padding: 0;
@@ -349,22 +349,22 @@
     appearance: none;
     width: 13px;
     height: 13px;
-    border-radius: 50%;
+    border-radius: var(--radius-round);
     background: var(--palette-ffffff);
-    box-shadow: 0 0 0 3px var(--tone-green-ink);
+    box-shadow: var(--shadow-10);
   }
   .audio-deck input::-moz-range-thumb {
     width: 10px;
     height: 10px;
     border: 0;
-    border-radius: 50%;
+    border-radius: var(--radius-round);
     background: var(--palette-ffffff);
-    box-shadow: 0 0 0 3px var(--tone-green-ink);
+    box-shadow: var(--shadow-10);
   }
   .deck-status {
     margin: 0;
-    font-size: 12px;
-    line-height: 1.6;
+    font-size: var(--font-size-12);
+    line-height: var(--line-height-1-6);
     text-align: center;
     color: var(--steel);
   }
@@ -380,13 +380,13 @@
   .track-list header {
     display: flex;
     align-items: baseline;
-    gap: 8px;
-    padding: 14px 16px 10px;
+    gap: var(--space-8);
+    padding: var(--space-14) var(--space-16) var(--space-10);
     border-bottom: 1px solid var(--line);
-    font-size: 13px;
+    font-size: var(--font-size-13);
   }
   .track-list header span {
-    font-size: 12px;
+    font-size: var(--font-size-12);
     color: var(--ash);
   }
   ol {
@@ -395,22 +395,22 @@
     overflow: auto;
     list-style: none;
     margin: 0;
-    padding: 6px;
+    padding: var(--space-6);
     position: relative;
   }
   ol button {
     width: 100%;
     display: grid;
     grid-template-columns: 24px minmax(0, 1fr) auto;
-    gap: 10px;
+    gap: var(--space-10);
     align-items: center;
-    padding: 8px 10px;
+    padding: var(--space-8) var(--space-10);
     border: 0;
-    border-radius: 8px;
+    border-radius: var(--radius-8);
     background: transparent;
     text-align: left;
-    font-size: 13px;
-    font-weight: 400;
+    font-size: var(--font-size-13);
+    font-weight: var(--font-weight-400);
     color: var(--ink);
   }
   ol button:hover:not(:disabled) {
@@ -421,11 +421,11 @@
   ol button[aria-current='true']:hover:not(:disabled) {
     background: var(--tone-green-bg);
     color: var(--tone-green-ink);
-    font-weight: 600;
+    font-weight: var(--font-weight-600);
   }
   .n,
   .d {
-    font-size: 11px;
+    font-size: var(--font-size-11);
     color: var(--ash);
     font-variant-numeric: tabular-nums;
   }
@@ -437,23 +437,23 @@
   .eq {
     display: inline-flex;
     align-items: flex-end;
-    gap: 2px;
+    gap: var(--space-2);
     height: 12px;
   }
   .eq i {
     width: 2px;
     height: 40%;
-    border-radius: 1px;
+    border-radius: var(--radius-1);
     background: currentColor;
   }
   .playing .eq i {
-    animation: eq 0.9s linear infinite;
+    animation: eq var(--duration-900) linear infinite;
   }
   .playing .eq i:nth-child(2) {
-    animation-delay: -0.3s;
+    animation-delay: -0var (--duration-3000);
   }
   .playing .eq i:nth-child(3) {
-    animation-delay: -0.6s;
+    animation-delay: -0var (--duration-6000);
   }
   @keyframes eq {
     0%,
@@ -467,16 +467,16 @@
   .list-empty {
     flex: 1;
     margin: 0;
-    padding: 24px 16px;
-    font-size: 12px;
+    padding: var(--space-24) var(--space-16);
+    font-size: var(--font-size-12);
     color: var(--ash);
     text-align: center;
   }
   .list-hint {
     margin: 0;
-    padding: 8px 16px 10px;
+    padding: var(--space-8) var(--space-16) var(--space-10);
     border-top: 1px solid var(--line);
-    font-size: 11px;
+    font-size: var(--font-size-11);
     color: var(--ash);
   }
   @media (max-width: 700px) {

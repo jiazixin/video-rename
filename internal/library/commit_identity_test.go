@@ -45,7 +45,7 @@ func TestCommitRejectsChangedFile(t *testing.T) {
 					l, root, _ := fixture(t)
 					put(t, filepath.Join(root, "original.mp4"))
 					refresh(t, l, 1)
-					e := entry(t, l, 1, "original.mp4")
+					e := entry(t, entryOptions{l: l, parent: 1, name: "original.mp4"})
 					var undo int64
 					target := "renamed.mp4"
 					if operation == "restore" {
@@ -54,7 +54,7 @@ func TestCommitRejectsChangedFile(t *testing.T) {
 							t.Fatal(err)
 						}
 						undo, target = o.ID, "original.mp4"
-						e = entry(t, l, 1, "renamed.mp4")
+						e = entry(t, entryOptions{l: l, parent: 1, name: "renamed.mp4"})
 					} else if operation == "automatic_same_name" {
 						target = e.Name
 					}

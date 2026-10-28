@@ -1,4 +1,6 @@
 <script setup lang="ts">
+  import { useRouteState, queryText, queryChoice, queryInteger } from '../../app/use-route-state';
+
   import { RouterLink } from 'vue-router';
   import { formatCount, formatCompact } from '../../lib/format/number';
   import { errorText } from '../../app/errors';
@@ -24,7 +26,7 @@
     Undo2,
     Images
   } from '@lucide/vue';
-  import { api, apiItems } from '../../app/api';
+  import { useApi } from '../../app/use-api';
   import { displayPath } from '../../lib/format/path';
   import { formatClock, formatLongDate, formatTime } from '../../lib/format/date';
   import { statusNames } from '../../app/labels';
@@ -39,6 +41,7 @@
   import { processed, progress, useRunTiming } from './run-timing';
   import PlanDialog from './PlanDialog.vue';
   import type { PlanMode } from './plan-form';
+  const { api, apiItems } = useApi();
   const toast = useToast();
   const {
     category,
@@ -56,8 +59,8 @@
   type RunPage = {
     items: Run[];
     total: number;
-    page: number;
-    size: number;
+    offset: number;
+    limit: number;
     profiles?: { id: number; title: string }[];
   };
   const profiles = ref<{ id: number; title: string }[]>([]);
@@ -70,6 +73,51 @@
   const pageCount = computed(() =>
     Math.max(1, Math.ceil(currentPage.value.total / currentPage.value.size))
   );
+  const routePage = computed({
+    get: () => currentPage.value.page,
+    set: (value) => {
+      currentPage.value.page = value;
+    }
+  });
+  const routeLimit = computed({
+    get: () => currentPage.value.size,
+    set: (value) => {
+      currentPage.value.size = value;
+    }
+  });
+  const detailID = ref(0);
+  const routeState = useRouteState(
+    {
+      detail: queryInteger(detailID),
+      category: queryChoice(category, ['all', 'manual', 'automatic']),
+      task: queryChoice(task, ['', 'rename', 'extract']),
+      status: queryChoice(status, [
+        '',
+        'queued',
+        'scanning',
+        'running',
+        'paused',
+        'cancelling',
+        'completed',
+        'partial_failure',
+        'failed',
+        'cancelled',
+        'interrupted'
+      ]),
+      profile: queryText(profile, (value) => /^\d*$/.test(value)),
+      duration: queryChoice(duration, ['', 'under1', '1to5', '5to30', '30to60', 'over60']),
+      period: queryChoice(period, ['all', 'today', '1', '7', '30', 'custom']),
+      from: queryText(from, (value) => !Number.isNaN(Date.parse(value))),
+      to: queryText(to, (value) => !Number.isNaN(Date.parse(value))),
+      page: queryInteger(routePage, { min: 1 }),
+      limit: queryInteger(routeLimit, { choices: [50, 100, 200] })
+    },
+    {
+      onRestore: () => {
+        void load();
+      }
+    }
+  );
   const loading = ref(false);
   let loadSequence = 0;
   function changePage(page: number) {
@@ -80,10 +128,12 @@
     void load();
   }
   watch(category, () => {
+    if (routeState.isRestoring.value) return;
     runs.value = [];
     void load();
   });
   watch([task, status, profile, duration, period, from, to], () => {
+    if (routeState.isRestoring.value) return;
     for (const value of Object.values(pagination.value)) value.page = 1;
     runs.value = [];
     void load();
@@ -136,6 +186,9 @@
     cancelError = ref('');
   const detail = ref<Run>(),
     deletePlan = ref<Plan>();
+  watch(detail, (value) => {
+    detailID.value = value?.id ?? 0;
+  });
   let timer: ReturnType<typeof setTimeout> | undefined,
     alive = true;
   const sourceLabel = (r: Run) => {
@@ -187,7 +240,11 @@
     const stamp = r.started || r.created;
     return stamp ? formatClock(stamp).slice(0, 5) : '—';
   };
+  let loadController: AbortController | undefined;
   async function load(requestedPage?: number) {
+    loadController?.abort();
+    const controller = new AbortController();
+    loadController = controller;
     const sequence = ++loadSequence,
       selected = category.value,
       { size } = currentPage.value,
@@ -195,7 +252,7 @@
     loading.value = true;
     try {
       if (view === 'plans') {
-        const p = await apiItems<Plan>('/schedules');
+        const p = await apiItems<Plan>('/schedules', { signal: controller.signal });
         if (alive && sequence === loadSequence) {
           plans.value = p;
           error.value = '';
@@ -203,19 +260,25 @@
         return;
       }
       const r = await api<RunPage>(
-        `/runs?category=${selected}&task=${task.value}&page=${page}&size=${size}&${filterQuery()}`
+        `/runs?category=${selected}&task=${task.value}&offset=${(page - 1) * size}&limit=${size}&${filterQuery()}`,
+        { signal: controller.signal }
       );
       if (!alive || sequence !== loadSequence) return;
       runs.value = r.items;
       profiles.value = r.profiles || [];
-      pagination.value[selected] = { page: r.page, size: r.size, total: r.total };
+      pagination.value[selected] = {
+        page: Math.floor(r.offset / r.limit) + 1,
+        size: r.limit,
+        total: r.total
+      };
       trackEta(r.items);
       error.value = '';
-      if (detail.value) {
-        const id = detail.value.id;
-        const run = await api<Run>(`/runs/${id}`);
+      if (!detailID.value) detail.value = undefined;
+      if (detailID.value) {
+        const id = detailID.value;
+        const run = await api<Run>(`/runs/${id}`, { signal: controller.signal });
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- the compared state can change while awaiting
-        if (alive && sequence === loadSequence && detail.value?.id === id) detail.value = run;
+        if (alive && sequence === loadSequence && detailID.value === id) detail.value = run;
       }
     } catch (e) {
       if (alive && sequence === loadSequence) error.value = errorText(e);
@@ -244,6 +307,7 @@
         headers: { 'If-Match': p.etag },
         body: { enabled: !p.enabled }
       });
+      toast.show(p.enabled ? '计划已停用' : '计划已启用');
       await load();
     } catch (e) {
       error.value = errorText(e);
@@ -270,6 +334,7 @@
         body: {}
       });
       deletePlan.value = undefined;
+      toast.show('计划已删除');
       await load();
     } catch (e) {
       error.value = errorText(e);

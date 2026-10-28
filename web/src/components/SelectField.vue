@@ -177,13 +177,13 @@
     width: 100%;
     min-height: 38px;
     justify-content: space-between;
-    gap: 20px;
-    padding: 8px 11px;
-    border-radius: 7px;
-    font-size: 12px;
-    font-weight: 400;
+    gap: var(--space-20);
+    padding: var(--space-8) var(--space-11);
+    border-radius: var(--radius-7);
+    font-size: var(--font-size-12);
+    font-weight: var(--font-weight-400);
     text-align: left;
-    box-shadow: 0 1px 2px var(--palette-182c2005);
+    box-shadow: var(--shadow-4);
   }
   .select-trigger > span {
     overflow: hidden;
@@ -198,7 +198,7 @@
   }
   .select-trigger[aria-expanded='true'] {
     border-color: var(--palette-8eb6a5);
-    box-shadow: 0 0 0 3px var(--palette-19896d0d);
+    box-shadow: var(--shadow-5);
     background: var(--palette-ffffff);
   }
   .select-menu {
@@ -207,25 +207,23 @@
     display: flex;
     flex-direction: column;
     overflow-y: auto;
-    padding: 5px;
+    padding: var(--space-5);
     border: 1px solid var(--palette-dce4df);
-    border-radius: 9px;
+    border-radius: var(--radius-9);
     background: var(--palette-ffffff);
-    box-shadow:
-      0 8px 28px var(--palette-182c201a),
-      0 2px 6px var(--palette-182c2008);
+    box-shadow: var(--shadow-6);
   }
   .select-option {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 18px;
+    gap: var(--space-18);
     min-height: 36px;
-    padding: 8px 10px;
-    border-radius: 5px;
+    padding: var(--space-8) var(--space-10);
+    border-radius: var(--radius-5);
     color: var(--steel);
-    font-size: 12px;
-    font-weight: 400;
+    font-size: var(--font-size-12);
+    font-weight: var(--font-weight-400);
     cursor: pointer;
     white-space: nowrap;
   }
@@ -246,16 +244,16 @@
     min-width: 125px;
   }
   .pagination .select-trigger {
-    padding: 5px 9px;
+    padding: var(--space-5) var(--space-9);
     min-height: 31px;
-    font-size: 11px;
+    font-size: var(--font-size-11);
   }
   .pagination .select-trigger {
     position: relative;
     min-height: 32px;
-    padding: 5px 26px;
+    padding: var(--space-5) var(--space-26);
     justify-content: center;
-    line-height: 20px;
+    line-height: var(--line-height-20);
     text-align: center;
   }
   .pagination .select-trigger > span {
@@ -280,7 +278,7 @@
     position: relative;
     justify-content: center;
     text-align: center;
-    padding-inline: 28px;
+    padding-inline: var(--space-28);
     gap: 0;
   }
   .select-trigger > span {
@@ -302,7 +300,7 @@
   .select-option {
     position: relative;
     justify-content: center;
-    padding-inline: 28px;
+    padding-inline: var(--space-28);
     text-align: center;
   }
   .select-option > span {

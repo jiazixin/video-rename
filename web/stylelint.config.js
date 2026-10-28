@@ -2,6 +2,13 @@
 export default {
   overrides: [{ files: ['**/*.vue'], customSyntax: 'postcss-html' }],
   rules: {
+    'declaration-property-value-disallowed-list': {
+      '/^(margin|padding|gap|row-gap|column-gap|border.*radius|font-size|letter-spacing|line-height)/':
+        [/(?<![\w-])-?(?:\d+\.?\d*|\.\d+)(?:px|rem|em|%)/],
+      '/^(animation|transition)(-|$)/': [/(?<![\w-])(?:\d+\.?\d*|\.\d+)m?s\b/],
+      'box-shadow': [/^(?!var\(|none$)/],
+      'text-shadow': [/^(?!var\(|none$)/]
+    },
     'color-no-hex': true,
     'color-named': 'never',
     'function-disallowed-list': [

@@ -10,13 +10,11 @@ import (
 func (a *App) libraryRoutes(api *router) {
 	api.HandleFunc("GET /api/directories/{id}/entries", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		var p library.Page
-		var err error
-		if q.Has("page") {
-			p, err = a.Library.ListPage(r.Context(), library.ListPageOptions{ID: number(r.PathValue("id")), Page: int(number(q.Get("page"))), Limit: int(number(q.Get("limit"))), Query: q.Get("q"), Kind: q.Get("kind"), Status: q.Get("status"), SortBy: q.Get("sort")})
-		} else {
-			p, err = a.Library.ListOrdered(r.Context(), library.ListOrderedOptions{ID: number(r.PathValue("id")), Offset: int(number(q.Get("offset"))), Limit: int(number(q.Get("limit"))), Generation: number(q.Get("generation")), Query: q.Get("q"), Kind: q.Get("kind"), Status: q.Get("status"), Force: false, SortBy: q.Get("sort")})
+		if err := queryFields(q, "offset", "limit", "q", "kind", "status", "sort"); err != nil {
+			writeError(w, r, err)
+			return
 		}
+		p, err := a.Library.ListPage(r.Context(), library.ListPageOptions{ID: number(r.PathValue("id")), Offset: int(number(q.Get("offset"))), Limit: int(number(q.Get("limit"))), Query: q.Get("q"), Kind: q.Get("kind"), Status: q.Get("status"), SortBy: q.Get("sort")})
 		if err != nil {
 			writeError(w, r, err)
 			return
@@ -87,7 +85,11 @@ func (a *App) libraryRoutes(api *router) {
 		send(w, http.StatusCreated, o)
 	})
 	api.HandleFunc("GET /api/entries/{id}/history", func(w http.ResponseWriter, r *http.Request) {
-		v, err := a.Library.History(r.Context(), number(r.PathValue("id")), number(r.URL.Query().Get("before")))
+		if err := queryFields(r.URL.Query(), "cursor"); err != nil {
+			writeError(w, r, err)
+			return
+		}
+		v, err := a.Library.History(r.Context(), number(r.PathValue("id")), r.URL.Query().Get("cursor"))
 		if err != nil {
 			writeError(w, r, err)
 			return

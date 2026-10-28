@@ -1,10 +1,11 @@
 import { errorText } from '../../app/errors'
 import { ref, nextTick } from 'vue'
-import { api } from '../../app/api'
+import { useApi } from '../../app/use-api'
 import type { Entry } from '../../app/contracts'
 import { nameWithoutExtension, normalizedExtension } from './entry-types'
 
 export function useInlineRename(options: { beforeSave: () => void; onSaved: () => Promise<void> }) {
+  const { api } = useApi()
   const inlineFullName = ref(false)
   const inlineEntry = ref<Entry>(),
     inlineInput = ref<HTMLInputElement>(),

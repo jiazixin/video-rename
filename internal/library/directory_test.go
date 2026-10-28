@@ -44,9 +44,9 @@ func TestRenameParentReplacementDoesNotRedirectCommit(t *testing.T) {
 			put(t, filepath.Join(parent, name))
 			put(t, filepath.Join(outside, name))
 			refresh(t, l, 1)
-			dir := entry(t, l, 1, "folder")
+			dir := entry(t, entryOptions{l: l, parent: 1, name: "folder"})
 			refresh(t, l, dir.ID)
-			e := entry(t, l, dir.ID, name)
+			e := entry(t, entryOptions{l: l, parent: dir.ID, name: name})
 			var batch Numbering
 			var err error
 			trigger := "BEFORE INSERT ON operations"
@@ -95,7 +95,7 @@ func TestAutoCommitAllocatesSuffixForHardLink(t *testing.T) {
 				t.Fatal(err)
 			}
 			refresh(t, l, 1)
-			e := entry(t, l, 1, "source.mp4")
+			e := entry(t, entryOptions{l: l, parent: 1, name: "source.mp4"})
 			snap, err := domain.StatSnapshot(source)
 			if err != nil {
 				t.Fatal(err)

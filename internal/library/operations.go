@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -54,17 +56,39 @@ func (l *Library) Operation(ctx context.Context, id int64) (Operation, error) {
 	})
 }
 
-// History returns the operations of entry id older than before.
-func (l *Library) History(ctx context.Context, id int64, before int64) ([]Operation, error) {
-	return storage.ReadValue(ctx, l.db, func(tx *sql.Tx) ([]Operation, error) {
-		if before <= 0 {
-			before = 1 << 62
+// OperationPage is a stable descending cursor page of one entry's operations.
+type OperationPage struct {
+	Items      []Operation `json:"items"`
+	NextCursor string      `json:"next_cursor,omitzero"`
+}
+
+const operationPageSize = 100
+
+// History returns operations older than the exclusive cursor, preserving append-only ordering.
+func (l *Library) History(ctx context.Context, id int64, cursor string) (OperationPage, error) {
+	bound := int64(math.MaxInt64)
+	if cursor != "" {
+		var err error
+		bound, err = strconv.ParseInt(cursor, 10, 64)
+		if err != nil || bound <= 0 {
+			return OperationPage{}, domain.InvalidField("cursor", "invalid")
 		}
-		rows, err := tx.QueryContext(ctx, "SELECT "+operationColumns+" FROM operations WHERE entry=? AND id<? ORDER BY id DESC LIMIT 100", id, before)
+	}
+	return storage.ReadValue(ctx, l.db, func(tx *sql.Tx) (OperationPage, error) {
+		rows, err := tx.QueryContext(ctx, "SELECT "+operationColumns+" FROM operations WHERE entry=? AND id<? ORDER BY id DESC LIMIT ?", id, bound, operationPageSize+1)
 		if err != nil {
-			return nil, err
+			return OperationPage{}, err
 		}
-		return storage.CollectRows(rows, func(rows *sql.Rows) (Operation, error) { return scanOp(rows) })
+		items, err := storage.CollectRows(rows, func(rows *sql.Rows) (Operation, error) { return scanOp(rows) })
+		if err != nil {
+			return OperationPage{}, err
+		}
+		page := OperationPage{Items: items}
+		if len(items) > operationPageSize {
+			page.Items = items[:operationPageSize]
+			page.NextCursor = strconv.FormatInt(page.Items[len(page.Items)-1].ID, 10)
+		}
+		return page, nil
 	})
 }
 
@@ -147,7 +171,7 @@ func (l *Library) Restore(ctx context.Context, id int64, key string) (Operation,
 		return Operation{}, err
 	}
 	if e.RestoreID != id || e.Name != old.New {
-		return Operation{}, domain.Fail(domain.KindConflict, domain.Record{Code: "restore_not_latest", Message: "only the latest rename that is not undone can be restored"})
+		return Operation{}, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonRestoreNotLatest, Message: "only the latest rename that is not undone can be restored"})
 	}
 	p, err := l.Path(ctx, e.ID)
 	if err != nil {
@@ -158,7 +182,7 @@ func (l *Library) Restore(ctx context.Context, id int64, key string) (Operation,
 		return Operation{}, err
 	}
 	if Identity(s) != old.Identity || (e.Kind != "directory" && (s.Size != old.Size || stamp(s) != old.ModifiedNS)) {
-		return Operation{}, domain.Fail(domain.KindConflict, domain.Record{Code: "restore_source_changed", Message: "file identity or content changed; cannot restore"})
+		return Operation{}, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonRestoreSourceChanged, Message: "file identity or content changed; cannot restore"})
 	}
 	return l.commit(ctx, commitOptions{Entry: e, Name: old.Old, Source: "restore", Key: key, Undo: id, Run: 0})
 }
@@ -211,7 +235,7 @@ func (l *Library) CheckAutomaticRetry(ctx context.Context, id, operation int64) 
 	e, err := l.Get(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Fail(domain.KindNotFound, domain.Record{Code: "entry_not_indexed", Message: "file is no longer indexed"})
+			return domain.Fail(domain.KindNotFound, domain.Failure{Reason: domain.ReasonEntryNotIndexed, Message: "file is no longer indexed"})
 		}
 		return err
 	}
@@ -220,19 +244,19 @@ func (l *Library) CheckAutomaticRetry(ctx context.Context, id, operation int64) 
 
 func (l *Library) checkAutomaticRetry(ctx context.Context, e Entry, operation int64) error {
 	if operation <= 0 {
-		return domain.Fail(domain.KindConflict, domain.Record{Code: "retry_operation_missing", Message: "record has no automatic rename to retry"})
+		return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonRetryOperationMissing, Message: "record has no automatic rename to retry"})
 	}
 	o, err := l.Operation(ctx, operation)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Fail(domain.KindConflict, domain.Record{Code: "retry_operation_missing", Message: "automatic rename operation does not exist"})
+			return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonRetryOperationMissing, Message: "automatic rename operation does not exist"})
 		}
 		return err
 	}
 	if e.Kind != "file" || e.Processed != "automatic" || e.RestoreID != operation ||
 		o.Entry != e.ID || o.Source != "automatic" || o.Status != "committed" || o.Undone ||
 		o.New != e.Name || o.Identity != e.Identity || o.Size != e.Size || o.ModifiedNS != e.ModifiedNS {
-		return domain.Fail(domain.KindConflict, domain.Record{Code: "retry_operation_stale", Message: "only the current automatic rename can be retried"})
+		return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonRetryOperationStale, Message: "only the current automatic rename can be retried"})
 	}
 	return l.CheckAvailable(ctx, e.ID)
 }
@@ -262,7 +286,7 @@ func (l *Library) autoCommit(ctx context.Context, params autoCommitOptions) (Ope
 			return Operation{}, err
 		}
 	} else if e.Processed != "" {
-		return Operation{}, domain.Fail(domain.KindConflict, domain.Record{Code: "already_processed", Message: "file is already processed"})
+		return Operation{}, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonAlreadyProcessed, Message: "file is already processed"})
 	}
 	p, err := l.Path(ctx, id)
 	if err != nil {
@@ -270,7 +294,7 @@ func (l *Library) autoCommit(ctx context.Context, params autoCommitOptions) (Ope
 	}
 	cur, err := domain.StatSnapshot(p)
 	if err != nil {
-		return Operation{}, domain.Fail(domain.KindConflict, domain.Record{Code: "source_unreadable", Message: "source file cannot be read after analysis"}).Wrap(err)
+		return Operation{}, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonSourceUnreadable, Message: "source file cannot be read after analysis"}).Wrap(err)
 	}
 	if !cur.Same(snap) {
 		return Operation{}, domain.SourceChangedError(domain.SourceChange{Message: "source file changed during analysis", Stage: domain.StageBeforeRename, Path: p, Before: snap, After: cur})
@@ -292,7 +316,7 @@ func (l *Library) autoCommit(ctx context.Context, params autoCommitOptions) (Ope
 		}
 		return o, err
 	}
-	return Operation{}, domain.Fail(domain.KindConflict, domain.Record{Code: "too_many_conflicts", Message: "too many name conflicts"})
+	return Operation{}, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonTooManyConflicts, Message: "too many name conflicts"})
 }
 
 // commitOptions groups the inputs for commit.
@@ -324,7 +348,7 @@ func (l *Library) commit(ctx context.Context, params commitOptions) (Operation, 
 			return Operation{}, errOperationKey
 		}
 		if existing.Status != "committed" {
-			return existing, domain.Fail(domain.KindConflict, domain.Record{Code: "operation_not_committed", Message: "previous operation is not committed", Details: map[string]any{"status": existing.Status}})
+			return existing, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonOperationNotCommitted, Message: "previous operation is not committed", Details: map[string]any{"status": existing.Status}})
 		}
 		return existing, nil
 	}
@@ -402,7 +426,7 @@ func (l *Library) commit(ctx context.Context, params commitOptions) (Operation, 
 	// Retain prepared evidence on any mismatch; recovery must inspect both names.
 	if err = verifyOperationFile(dir, e.Name, o); err != nil {
 		l.broken = err
-		return o, domain.Fail(domain.KindInternal, domain.Record{Code: "journal_source_changed", Message: "source changed after journaling; restart to review"}).Wrap(err)
+		return o, domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonJournalSourceChanged, Message: "source changed after journaling; restart to review"}).Wrap(err)
 	}
 	if name != e.Name {
 		if je := rename.NoReplaceAt(int(dir.Fd()), e.Name, name); je != nil {
@@ -418,20 +442,20 @@ func (l *Library) commit(ctx context.Context, params commitOptions) (Operation, 
 		de := dir.Sync()
 		if de != nil {
 			l.broken = de
-			return o, domain.Fail(domain.KindInternal, domain.Record{Code: "rename_sync_failed", Message: "renamed, but syncing the directory failed; restart to review"}).Wrap(de)
+			return o, domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonRenameSyncFailed, Message: "renamed, but syncing the directory failed; restart to review"}).Wrap(de)
 		}
 	}
 	if _, err = l.Path(ctx, e.Parent); err != nil {
 		l.broken = err
-		return o, domain.Fail(domain.KindInternal, domain.Record{Code: "rename_parent_changed", Message: "renamed, but the parent directory changed; restart to review"}).Wrap(err)
+		return o, domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonRenameParentChanged, Message: "renamed, but the parent directory changed; restart to review"}).Wrap(err)
 	}
 	if err = verifyOperationFile(dir, name, o); err != nil {
 		l.broken = err
-		return o, domain.Fail(domain.KindInternal, domain.Record{Code: "rename_result_changed", Message: "renamed file identity or content changed; restart to review"}).Wrap(err)
+		return o, domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonRenameResultChanged, Message: "renamed file identity or content changed; restart to review"}).Wrap(err)
 	}
 	if err = l.finish(ctx, o, oldrel, newrel); err != nil {
 		l.broken = err
-		return o, domain.Fail(domain.KindInternal, domain.Record{Code: "rename_unconfirmed", Message: "file may be renamed but the result is unconfirmed; restart to recover"}).Wrap(err)
+		return o, domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonRenameUnconfirmed, Message: "file may be renamed but the result is unconfirmed; restart to recover"}).Wrap(err)
 	}
 	o.Status = "committed"
 	return o, nil
@@ -512,7 +536,7 @@ func (l *Library) finishTx(ctx context.Context, params finishTxOptions) error {
 			return err
 		}
 	}
-	// Preserve the generation and cursor anchors while updating the sorted index.
+	// Preserve the generation while updating the sorted index.
 	// Clients displaying an existing page patch entries by ID without reordering.
 	if _, err = tx.ExecContext(ctx, "UPDATE directory_items SET name=? WHERE dir=? AND entry=?", o.New, o.Parent, o.Entry); err != nil {
 		return err

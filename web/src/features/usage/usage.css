@@ -1,19 +1,19 @@
 .run-source {
   display: block;
-  font-size: 10px;
+  font-size: var(--font-size-10);
   color: var(--ash);
-  margin-top: 4px;
+  margin-top: var(--space-4);
 }
 .date-time-range {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-12);
   white-space: nowrap;
 }
 
 /* Usage filters stay unboxed; statistics and panels share the application spacing. */
 .usage-filters {
-  margin-bottom: 26px;
+  margin-bottom: var(--space-26);
 }
 .usage-filters .filterbar {
   border: 0;
@@ -23,27 +23,27 @@
 .usage-filters input[type='time'] {
   max-width: 110px;
   min-height: 38px;
-  font-size: 12px;
-  padding: 7px 9px;
+  font-size: var(--font-size-12);
+  padding: var(--space-7) var(--space-9);
 }
 .usage-run-chip {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  font-size: 12px;
+  gap: var(--space-7);
+  font-size: var(--font-size-12);
   color: var(--palette-2c6e56);
   background: var(--palette-eef6f1);
   border: 1px solid var(--palette-d4e6db);
-  border-radius: 6px;
-  padding: 7px 8px 7px 11px;
+  border-radius: var(--radius-6);
+  padding: var(--space-7) var(--space-8) var(--space-7) var(--space-11);
   white-space: nowrap;
 }
 .usage-run-chip button {
   border: 0;
   background: transparent;
-  padding: 0 2px;
-  font-size: 14px;
-  line-height: 1;
+  padding: 0 var(--space-2);
+  font-size: var(--font-size-14);
+  line-height: var(--line-height-1);
   color: var(--palette-4d7864);
 }
 .usage-run-chip button:hover:not(:disabled) {
@@ -53,43 +53,43 @@
 .usage-stack {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--space-18);
 }
 .usage-kpis {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 16px;
-  margin-bottom: 16px;
+  gap: var(--space-16);
+  margin-bottom: var(--space-16);
 }
 .usage-kpi {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  padding: 18px 20px;
+  gap: var(--space-7);
+  padding: var(--space-18) var(--space-20);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius-12);
   background: var(--palette-fcfdfd);
 }
 .usage-kpi span {
-  font-size: 11px;
+  font-size: var(--font-size-11);
   color: var(--ash);
 }
 .usage-kpi strong {
-  font-size: 26px;
-  font-weight: 500;
-  letter-spacing: -0.5px;
+  font-size: var(--font-size-26);
+  font-weight: var(--font-weight-500);
+  letter-spacing: var(--tracking-negative-0-5);
   font-variant-numeric: tabular-nums;
 }
 .usage-kpi small {
-  font-size: 11px;
+  font-size: var(--font-size-11);
   color: var(--ash);
   font-variant-numeric: tabular-nums;
 }
 .usage-notes {
-  margin: 0 0 20px;
+  margin: 0 0 var(--space-20);
 }
 .usage-trend-wrap {
-  padding: 14px 18px 6px;
+  padding: var(--space-14) var(--space-18) var(--space-6);
   position: relative;
   transition: opacity var(--motion-hover) linear;
 }
@@ -106,14 +106,14 @@
 .usage-trend svg:focus-visible {
   outline: 3px solid var(--palette-a8d9cb);
   outline-offset: 2px;
-  border-radius: 6px;
+  border-radius: var(--radius-6);
 }
 .usage-trend .gridline {
   stroke: var(--palette-eff0f3);
   stroke-width: 1;
 }
 .usage-trend .axis-text {
-  font-size: 10px;
+  font-size: var(--font-size-10);
   fill: var(--palette-94979e);
   font-variant-numeric: tabular-nums;
 }
@@ -147,22 +147,22 @@
   pointer-events: none;
   background: var(--palette-ffffff);
   border: 1px solid var(--palette-dce4df);
-  border-radius: 8px;
-  box-shadow: 0 6px 22px var(--palette-182c2018);
-  padding: 9px 12px;
+  border-radius: var(--radius-8);
+  box-shadow: var(--shadow-23);
+  padding: var(--space-9) var(--space-12);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-4);
   min-width: 170px;
   z-index: 5;
 }
 .trend-tooltip strong {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--font-size-13);
+  font-weight: var(--font-weight-600);
   font-variant-numeric: tabular-nums;
 }
 .trend-tooltip span {
-  font-size: 11px;
+  font-size: var(--font-size-11);
   color: var(--ash);
   font-variant-numeric: tabular-nums;
 }
@@ -172,15 +172,15 @@
   left: 0;
   right: 0;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--font-size-12);
   color: var(--ash);
   margin: 0;
   pointer-events: none;
 }
 .trend-hint {
-  font-size: 10px;
+  font-size: var(--font-size-10);
   color: var(--palette-70747e);
-  margin: 2px 0 10px;
+  margin: var(--space-2) 0 var(--space-10);
   text-align: right;
 }
 .usage-table-toggle {
@@ -188,77 +188,77 @@
 }
 .usage-table-toggle summary {
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-12);
   color: var(--palette-4d7864);
-  padding: 13px 20px;
+  padding: var(--space-13) var(--space-20);
 }
 .usage-trend-table th,
 .usage-trend-table td {
   white-space: nowrap;
 }
 .usage-models {
-  padding: 18px 20px;
+  padding: var(--space-18) var(--space-20);
   display: flex;
   flex-direction: column;
-  gap: 17px;
+  gap: var(--space-17);
 }
 .usage-model {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-6);
 }
 .usage-model-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 14px;
+  gap: var(--space-14);
   flex-wrap: wrap;
 }
 .usage-model-head strong {
-  font-size: 12.5px;
-  font-weight: 500;
+  font-size: var(--font-size-12-5);
+  font-weight: var(--font-weight-500);
   overflow-wrap: anywhere;
 }
 .usage-model-head span {
-  font-size: 11px;
+  font-size: var(--font-size-11);
   color: var(--steel);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .usage-bar-track {
   height: 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-4);
   background: var(--palette-f0f2f1);
   overflow: hidden;
 }
 .usage-bar {
   height: 100%;
-  border-radius: 4px;
+  border-radius: var(--radius-4);
   background: var(--palette-0c7f52);
   min-width: 2px;
 }
 .usage-model small {
-  font-size: 10px;
+  font-size: var(--font-size-10);
 }
 .usage-detail-tools {
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: var(--space-11);
   flex-wrap: wrap;
 }
 .usage-detail-tools .table-sort.active {
   color: var(--palette-285e47);
 }
 .usage-detail-tools button {
-  font-size: 11px;
-  padding: 5px 10px;
+  font-size: var(--font-size-11);
+  padding: var(--space-5) var(--space-10);
 }
 @media (max-width: 800px) {
   .usage-kpis {
     grid-template-columns: 1fr 1fr;
   }
   .usage-filters .filterbar {
-    gap: 9px;
+    gap: var(--space-9);
   }
   .usage-filters input[type='time'] {
     max-width: 96px;

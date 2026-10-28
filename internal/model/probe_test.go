@@ -81,7 +81,7 @@ func TestVisionProbe(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			out, err := Probe(t.Context(), config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: server.URL, Model: "test", Timeout: "1s", MaxTokens: 1024}, 5*time.Second)
+			out, err := Probe(t.Context(), config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: server.URL, Model: "test", TimeoutMS: 1000, MaxTokens: 1024}, 5*time.Second)
 			if err != nil || out.Status != mode || calls != 1 {
 				t.Fatalf("%+v %v calls=%d", out, err, calls)
 			}
@@ -96,7 +96,7 @@ func TestVisionProbeTimeout(t *testing.T) {
 	}))
 	defer server.Close()
 	started := time.Now()
-	out, err := Probe(t.Context(), config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: server.URL, Model: "test", Timeout: "180s", MaxTokens: 1024}, 5*time.Second)
+	out, err := Probe(t.Context(), config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: server.URL, Model: "test", TimeoutMS: 180000, MaxTokens: 1024}, 5*time.Second)
 	if err != nil || out.Status != "error" || out.Error.Code != "api_timeout" {
 		t.Fatalf("unexpected result: %+v %v", out, err)
 	}
@@ -117,7 +117,7 @@ func TestVisionProbeIgnoresSavedRequestTimeout(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	out, err := Probe(t.Context(), config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: server.URL, Model: "test", Timeout: "1s", MaxTokens: 1024}, 5*time.Second)
+	out, err := Probe(t.Context(), config.ServerConfig{Provider: "custom", Protocol: "openai", BaseURL: server.URL, Model: "test", TimeoutMS: 1000, MaxTokens: 1024}, 5*time.Second)
 	if err != nil || out.Status != "mismatch" {
 		t.Fatalf("probe should use its own timeout: %+v %v", out, err)
 	}

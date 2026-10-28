@@ -61,13 +61,13 @@
   .theater-tools {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: var(--space-2);
     margin-left: auto;
   }
   .theater-tools button {
-    padding: 7px;
+    padding: var(--space-7);
     border: 0;
-    border-radius: 8px;
+    border-radius: var(--radius-8);
     background: transparent;
     color: var(--stage-ink);
   }
@@ -78,7 +78,7 @@
   .theater-zoom {
     min-width: 44px;
     text-align: center;
-    font-size: 12px;
+    font-size: var(--font-size-12);
     color: var(--stage-dim);
     font-variant-numeric: tabular-nums;
   }

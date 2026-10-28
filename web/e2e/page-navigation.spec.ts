@@ -17,7 +17,8 @@ test('运行记录和抽帧记录直接请求指定页，筛选重置页码', as
     failurePage = 1
   await page.route('**/api/logs?*', (route) => {
     const q = new URL(route.request().url()).searchParams
-    logPage = Number(q.get('page'))
+    const limit = Number(q.get('limit')) || 50
+    logPage = Math.floor(Number(q.get('offset') || 0) / limit) + 1
     return route.fulfill({
       json: {
         items: [
@@ -31,19 +32,20 @@ test('运行记录和抽帧记录直接请求指定页，筛选重置页码', as
           }
         ],
         total: q.get('q') ? 1 : 501,
-        page: q.get('q') ? 1 : logPage,
-        next: 0
+        offset: ((q.get('q') ? 1 : logPage) - 1) * limit,
+        limit
       }
     })
   })
   await page.route('**/api/extractions?*', (route) => {
     const q = new URL(route.request().url()).searchParams
-    successPage = Number(q.get('success_page'))
-    failurePage = Number(q.get('failure_page'))
+    const limit = Number(q.get('limit')) || 50
+    successPage = Math.floor(Number(q.get('success_offset') || 0) / limit) + 1
+    failurePage = Math.floor(Number(q.get('failure_offset') || 0) / limit) + 1
     const group = (status: string, index: number) => ({
-      page: index,
+      offset: (index - 1) * limit,
+      limit,
       total: 501,
-      next: 0,
       items: [
         {
           id: index,

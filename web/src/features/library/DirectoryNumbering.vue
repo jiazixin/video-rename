@@ -4,7 +4,8 @@
   import { computed, ref, onDeactivated, watch, nextTick } from 'vue';
   import { useNumberingTask } from './numbering-task';
   import { Hash, History, Undo2 } from '@lucide/vue';
-  import { api, ApiError, apiItems } from '../../app/api';
+  import { useApi } from '../../app/use-api';
+  import { ApiError } from '../../app/api';
   import type { ServerRecord } from '../../app/contracts';
   import { displayPath } from '../../lib/format/path';
   import DateTime from '../../components/DateTime.vue';
@@ -12,6 +13,7 @@
   import ModalTransition from '../../components/ModalTransition.vue';
   import NumberingDiagnostics from './NumberingDiagnostics.vue';
   import './media-numbering.css';
+  const { api, apiItems } = useApi();
 
   type Batch = {
     id: string;
@@ -375,15 +377,15 @@
     overflow: auto;
   }
   .numbering-body > .pagination {
-    padding: 10px 0;
+    padding: var(--space-10) 0;
   }
   .cancel-confirmation {
-    padding: 8px 0;
+    padding: var(--space-8) 0;
   }
   .numbering-tools {
     display: flex;
-    gap: 8px;
-    margin-bottom: 16px;
+    gap: var(--space-8);
+    margin-bottom: var(--space-16);
   }
   .numbering-preview th:first-child {
     width: 30%;

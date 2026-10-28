@@ -23,18 +23,16 @@ func TestNaturalSortingAcrossPages(t *testing.T) {
 	refresh(t, l, 1)
 	for _, sortBy := range []string{"name_asc", "name_desc"} {
 		desc := sortBy == "name_desc"
-		cursor := 0
-		var generation int64
 		var files []string
-		for {
-			p, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: cursor, Limit: 50, Generation: generation, Query: "", Kind: "", Status: "", Force: false, SortBy: sortBy})
+		for page := 1; ; page++ {
+			p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: max(0, (page)-1) * (50), Limit: 50, Query: "", Kind: "", Status: "", SortBy: sortBy})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if p.Total != 121 {
 				t.Fatalf("total = %d", p.Total)
 			}
-			if cursor == 0 && p.Items[0].Kind != "directory" {
+			if page == 1 && p.Items[0].Kind != "directory" {
 				t.Fatal("directory must stay first")
 			}
 			for _, e := range p.Items {
@@ -42,11 +40,9 @@ func TestNaturalSortingAcrossPages(t *testing.T) {
 					files = append(files, e.Name)
 				}
 			}
-			if p.Next == 0 {
+			if page*50 >= p.Total {
 				break
 			}
-			cursor = p.Next
-			generation = p.Generation
 		}
 		if len(files) != 120 {
 			t.Fatalf("got %d files", len(files))
@@ -79,7 +75,7 @@ func TestMetadataSortingAndRenameTime(t *testing.T) {
 	}
 	for _, field := range []string{"size", "mtime"} {
 		for _, direction := range []string{"asc", "desc"} {
-			p, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 50, Generation: 0, Query: "", Kind: "", Status: "", Force: false, SortBy: field + "_" + direction})
+			p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 0, Limit: 50, Query: "", Kind: "", Status: "", SortBy: field + "_" + direction})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -92,7 +88,7 @@ func TestMetadataSortingAndRenameTime(t *testing.T) {
 			}
 		}
 	}
-	before := entry(t, l, 1, "2.mp4")
+	before := entry(t, entryOptions{l: l, parent: 1, name: "2.mp4"})
 	if before.RenamedAt != "" {
 		t.Fatal("unexpected rename time")
 	}
@@ -107,7 +103,7 @@ func TestMetadataSortingAndRenameTime(t *testing.T) {
 	if after.RenamedAt != op.Created || after.ModifiedNS != before.ModifiedNS {
 		t.Fatalf("bad timestamps: %+v", after)
 	}
-	p, err := l.ListOrdered(t.Context(), ListOrderedOptions{ID: 1, Offset: 0, Limit: 50, Generation: 0, Query: "", Kind: "", Status: "", Force: false, SortBy: "renamed_desc"})
+	p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 0, Limit: 50, Query: "", Kind: "", Status: "", SortBy: "renamed_desc"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,13 +128,13 @@ func TestDirectoryStatusSorting(t *testing.T) {
 	refresh(t, l, 1)
 	for group, names := range groups {
 		for _, name := range names {
-			dir := entry(t, l, 1, name)
+			dir := entry(t, entryOptions{l: l, parent: 1, name: name})
 			refresh(t, l, dir.ID)
-			nested := entry(t, l, dir.ID, "nested")
+			nested := entry(t, entryOptions{l: l, parent: dir.ID, name: "nested"})
 			refresh(t, l, nested.ID)
-			setTestProcessingSource(t, l, nested.ID, "a.mp4", "manual")
+			setTestProcessingSource(t, setTestProcessingSourceOptions{l: l, parent: nested.ID, name: "a.mp4", source: "manual"})
 			if group != 1 {
-				setTestProcessingSource(t, l, nested.ID, "b.mp4", "automatic")
+				setTestProcessingSource(t, setTestProcessingSourceOptions{l: l, parent: nested.ID, name: "b.mp4", source: "automatic"})
 			}
 			if group == 0 {
 				if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
@@ -150,7 +146,7 @@ func TestDirectoryStatusSorting(t *testing.T) {
 		}
 	}
 	for _, direction := range []string{"asc", "desc"} {
-		p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Page: 1, Limit: 50, Query: "", Kind: "", Status: "", SortBy: "status_" + direction})
+		p, err := l.ListPage(t.Context(), ListPageOptions{ID: 1, Offset: 0, Limit: 50, Query: "", Kind: "", Status: "", SortBy: "status_" + direction})
 		if err != nil {
 			t.Fatal(err)
 		}

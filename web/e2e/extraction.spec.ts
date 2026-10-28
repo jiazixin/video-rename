@@ -195,7 +195,7 @@ test('三个独立抽帧入口、真实缓存复用及统一成功失败记录',
         protocol: 'openai',
         base_url: modelURL,
         model: '视觉模型 · 本地测试',
-        timeout: '10s',
+        timeout_ms: 10000,
         workers: 1,
         max_tokens: 1024,
         temperature: 0.7
@@ -296,19 +296,19 @@ test('抽帧历史独立分页、无批次、窄屏与清除', async ({ page }) 
     finished: '2026-09-26T01:00:02.000Z',
     duration_ms: 2000,
     cached: false,
-    frames: 5,
-    message: ''
+    frames: 5
   }
   let cleared = false
   await page.route('**/api/extractions?*', (route) => {
     const params = new URL(route.request().url()).searchParams
-    const second = params.get('success_page') === '2'
+    const second = String(Math.floor(Number(params.get('success_offset') || 0) / 50) + 1) === '2'
     return route.fulfill({
       json: {
         success: {
           items: cleared ? [] : [{ ...item, path: second ? '目录/第二页.mp4' : item.path }],
           total: cleared ? 0 : 51,
-          next: cleared || second ? 0 : 10
+          offset: ((!cleared && second ? 2 : 1) - 1) * 50,
+          limit: 50
         },
         failure: {
           items: cleared
@@ -327,7 +327,8 @@ test('抽帧历史独立分页、无批次、窄屏与清除', async ({ page }) 
                 }
               ],
           total: cleared ? 0 : 1,
-          next: 0
+          offset: 0,
+          limit: 50
         },
         running: 0
       }

@@ -12,7 +12,17 @@ type Entry = {
   restore_id: number
 }
 
-async function fixture(page: Page, name: string, files: string[], directories: string[] = []) {
+async function fixture({
+  page,
+  name,
+  files,
+  directories = []
+}: {
+  page: Page
+  name: string
+  files: string[]
+  directories?: string[]
+}) {
   const { mediaPath } = JSON.parse(readFileSync('test-results/fixture.json', 'utf8'))
   const path = join(mediaPath, name)
   mkdirSync(path, { recursive: true })
@@ -27,7 +37,7 @@ async function fixture(page: Page, name: string, files: string[], directories: s
   await expect
     .poll(async () => {
       const result = await (
-        await page.request.get('/api/directories/1/entries?page=1&limit=200')
+        await page.request.get('/api/directories/1/entries?offset=0&limit=200')
       ).json()
       directory = result.items.find((entry: Entry) => entry.name === name)
       return !!directory && !result.refreshing
@@ -38,7 +48,7 @@ async function fixture(page: Page, name: string, files: string[], directories: s
   await expect
     .poll(async () => {
       const result = await (
-        await page.request.get(`/api/directories/${id}/entries?page=1&limit=200`)
+        await page.request.get(`/api/directories/${id}/entries?offset=0&limit=200`)
       ).json()
       return !result.refreshing && result.total === files.length + directories.length
     })
@@ -46,7 +56,9 @@ async function fixture(page: Page, name: string, files: string[], directories: s
   const entries = new Map<string, Entry>()
   for (let number = 1; number <= Math.ceil((files.length + directories.length) / 200); number++) {
     const result = await (
-      await page.request.get(`/api/directories/${id}/entries?page=${number}&limit=200`)
+      await page.request.get(
+        `/api/directories/${id}/entries?offset=${(number - 1) * 200}&limit=200`
+      )
     ).json()
     for (const entry of result.items as Entry[]) entries.set(entry.name, entry)
   }
@@ -102,7 +114,7 @@ async function fixture(page: Page, name: string, files: string[], directories: s
     await expect
       .poll(async () => {
         const result = await (
-          await page.request.get(`/api/directories/${child.id}/entries?page=1&limit=200`)
+          await page.request.get(`/api/directories/${child.id}/entries?offset=0&limit=200`)
         ).json()
         items = result.items
         return !result.refreshing && result.total === files.length
@@ -126,12 +138,12 @@ test('处理状态与搜索、类型共同筛选，翻页只显示匹配文件�
     { length: 230 },
     (_, index) => `clip${String(index).padStart(3, '0')}.mp4`
   )
-  const setup = await fixture(
-    page,
-    '状态筛选-分页',
-    [...clips, 'marked.png', 'pending.png'],
-    ['clip-folder']
-  )
+  const setup = await fixture({
+    page: page,
+    name: '状态筛选-分页',
+    files: [...clips, 'marked.png', 'pending.png'],
+    directories: ['clip-folder']
+  })
   await setup.mark([...clips.slice(0, 125), 'marked.png'])
   await setup.open()
   await select(page, '类型筛选', '视频')
@@ -167,12 +179,12 @@ test('处理状态与搜索、类型共同筛选，翻页只显示匹配文件�
 })
 
 test('处理状态表头按状态分组及自然名称双向排序，进入目录后返回保留筛选和排序', async ({ page }) => {
-  const setup = await fixture(
-    page,
-    '状态筛选-排序',
-    ['a-z2.mp4', 'a-z10.mp4', 'a-m2.mp4', 'a-m10.mp4', 'raw2.mp4', 'raw10.mp4'],
-    ['a-folder2', 'a-folder10']
-  )
+  const setup = await fixture({
+    page: page,
+    name: '状态筛选-排序',
+    files: ['a-z2.mp4', 'a-z10.mp4', 'a-m2.mp4', 'a-m10.mp4', 'raw2.mp4', 'raw10.mp4'],
+    directories: ['a-folder2', 'a-folder10']
+  })
   await setup.mark(['a-m2.mp4', 'a-m10.mp4'])
   await setup.rename('raw2.mp4', 'a-a2.mp4')
   await setup.rename('raw10.mp4', 'a-a10.mp4')
@@ -264,16 +276,20 @@ test('处理状态表头按状态分组及自然名称双向排序，进入目�
 })
 
 test('图片和音频一键编号预览遵循处理状态筛选，还原后的文件重新归入未处理', async ({ page }) => {
-  const setup = await fixture(page, '状态筛选-编号', [
-    'marked.png',
-    'pending2.png',
-    'pending10.png',
-    'raw.png',
-    'marked.mp3',
-    'pending2.mp3',
-    'pending10.mp3',
-    'raw.mp3'
-  ])
+  const setup = await fixture({
+    page: page,
+    name: '状态筛选-编号',
+    files: [
+      'marked.png',
+      'pending2.png',
+      'pending10.png',
+      'raw.png',
+      'marked.mp3',
+      'pending2.mp3',
+      'pending10.mp3',
+      'raw.mp3'
+    ]
+  })
   await setup.mark(['marked.png', 'marked.mp3'])
   await setup.rename('raw.png', 'manual.png')
   await setup.rename('raw.mp3', 'manual.mp3')
@@ -318,7 +334,11 @@ test('图片和音频一键编号预览遵循处理状态筛选，还原后的�
 })
 
 test('未处理筛选中的标记和手动改名立即移除行，并保留其他勾选', async ({ page }) => {
-  const setup = await fixture(page, '状态筛选-变更', ['clip1.mp4', 'clip2.mp4', 'clip3.mp4'])
+  const setup = await fixture({
+    page: page,
+    name: '状态筛选-变更',
+    files: ['clip1.mp4', 'clip2.mp4', 'clip3.mp4']
+  })
   await setup.open()
   await select(page, '处理状态筛选', '未处理')
   await page.getByRole('button', { name: '多选', exact: true }).click()
@@ -351,12 +371,12 @@ test('未处理筛选中的标记和手动改名立即移除行，并保留其�
 })
 
 test('未处理隐藏全部处理目录，递归标记后即时移除目录并保留其他选择', async ({ page }) => {
-  const setup = await fixture(
-    page,
-    '目录状态真实筛选',
-    [],
-    ['已完成', '部分完成', '待处理', '待统计', '空目录']
-  )
+  const setup = await fixture({
+    page: page,
+    name: '目录状态真实筛选',
+    files: [],
+    directories: ['已完成', '部分完成', '待处理', '待统计', '空目录']
+  })
   const completed = await setup.populateDirectory('已完成', ['done.mp4'])
   const partial = await setup.populateDirectory('部分完成', ['done.mp4', 'pending.mp4'])
   await setup.populateDirectory('待处理', ['pending.mp4'])
@@ -401,7 +421,11 @@ test('未处理隐藏全部处理目录，递归标记后即时移除目录并�
 })
 
 test('保序更新不会保留改名后不匹配搜索或媒体类型的文件', async ({ page }) => {
-  const setup = await fixture(page, '筛选保序-改名', ['clip.mp4', 'photo.png'])
+  const setup = await fixture({
+    page: page,
+    name: '筛选保序-改名',
+    files: ['clip.mp4', 'photo.png']
+  })
   await setup.open()
   await page.getByLabel('搜索当前目录', { exact: true }).fill('clip')
   await expect(names(page)).toHaveText(['clip.mp4'])
@@ -431,7 +455,12 @@ test('保序更新不会保留改名后不匹配搜索或媒体类型的文件',
 for (const width of [1440, 390]) {
   test(`目录处理状态排序按显示状态分组（${width}px）`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 })
-    const setup = await fixture(page, `目录状态排序-${width}`, [], ['dir1', 'dir2', 'dir3', 'dir4'])
+    const setup = await fixture({
+      page: page,
+      name: `目录状态排序-${width}`,
+      files: [],
+      directories: ['dir1', 'dir2', 'dir3', 'dir4']
+    })
     const targets: number[] = []
     for (const name of ['dir1', 'dir2', 'dir3', 'dir4']) {
       const files = await setup.populateDirectory(name, ['a.mp4', 'b.mp4'])

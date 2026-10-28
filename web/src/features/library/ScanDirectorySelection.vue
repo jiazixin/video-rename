@@ -72,25 +72,25 @@
 <style scoped>
   .scan-directory-selection {
     min-width: 0;
-    margin-bottom: 22px;
+    margin-bottom: var(--space-22);
   }
   header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: var(--space-12);
   }
   h3 {
     margin: 0;
-    font-size: 13px;
+    font-size: var(--font-size-13);
   }
   h3 span {
     color: var(--ash);
-    font-weight: 400;
-    margin-left: 8px;
+    font-weight: var(--font-weight-400);
+    margin-left: var(--space-8);
   }
   .help {
-    margin: 6px 0 12px;
+    margin: var(--space-6) 0 var(--space-12);
   }
   ul {
     margin: 0;
@@ -99,13 +99,13 @@
     max-height: 320px;
     overflow-y: auto;
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: var(--radius-8);
   }
   li {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
+    gap: var(--space-10);
+    padding: var(--space-10) var(--space-12);
   }
   li + li {
     border-top: 1px solid var(--line);
@@ -128,7 +128,7 @@
   }
   .empty {
     border: 1px dashed var(--line);
-    border-radius: 8px;
+    border-radius: var(--radius-8);
     background: var(--surface);
   }
 </style>

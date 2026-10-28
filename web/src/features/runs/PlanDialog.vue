@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import { vFormErrors } from '../../app/form-errors';
   import { ChevronRight } from '@lucide/vue';
   import ModalDialog from '../../components/ModalDialog.vue';
   import SelectField from '../../components/SelectField.vue';
@@ -18,6 +19,7 @@
   }>();
   const emit = defineEmits<{ close: []; saved: [] }>();
   const {
+    formError,
     taskType,
     modelConfigID,
     name,
@@ -51,22 +53,27 @@
 
 <template>
   <ModalDialog :title="title" wide @close="!busy && emit('close')"
-    ><form @submit.prevent="submit">
+    ><form v-form-errors="formError" @submit.prevent="submit">
       <div class="plan-config-row"
         ><label
           >任务类型<SelectField
             v-model="taskType"
+            data-field="task"
             label="计划任务类型"
             :options="[
               { value: 'rename', label: '命名' },
               { value: 'extract', label: '抽帧' }
             ]" /></label
-        ><ModelPicker v-if="taskType !== 'extract'" v-model="modelConfigID"
+        ><ModelPicker
+          v-if="taskType !== 'extract'"
+          v-model="modelConfigID"
+          data-field="model_config_id"
       /></div>
       <template v-if="mode === 'plan'"
         ><label
           >计划名称<input
             v-model="name"
+            name="name"
             required
             maxlength="80"
             placeholder="例如：每天整理旅行视频" /></label
@@ -74,6 +81,7 @@
           ><label
             >执行频率<SelectField
               v-model="kind"
+              data-field="kind"
               label="执行频率"
               :options="[
                 { value: 'hourly', label: '按小时' },
@@ -82,19 +90,37 @@
                 { value: 'cron', label: 'Cron 表达式' }
               ]"
               @change="preview = []" /></label
-          ><label>时区<input v-model="timezone" required placeholder="Asia/Shanghai" /></label></div
+          ><label
+            >时区<input
+              v-model="timezone"
+              name="timezone"
+              required
+              placeholder="Asia/Shanghai" /></label></div
         ><div v-if="kind !== 'cron'" class="form-grid"
           ><label v-if="kind !== 'hourly'"
-            >小时<input v-model="hour" type="number" min="0" max="23" required /></label
+            >小时<input
+              v-model="hour"
+              name="expression"
+              type="number"
+              min="0"
+              max="23"
+              required /></label
           ><label
-            >分钟<input v-model="minute" type="number" min="0" max="59" required /></label></div
+            >分钟<input
+              v-model="minute"
+              name="expression"
+              type="number"
+              min="0"
+              max="59"
+              required /></label></div
         ><div v-if="kind === 'weekly'" class="weekday-picker"
           ><label v-for="(d, i) in weekdays" :key="i"
-            ><input v-model="days" type="checkbox" :value="i" />周{{ d }}</label
+            ><input v-model="days" name="expression" type="checkbox" :value="i" />周{{ d }}</label
           ></div
         ><label v-if="kind === 'cron'"
           >Cron 表达式<input
             v-model="cron"
+            name="expression"
             aria-label="Cron 表达式"
             required
             placeholder="0 */6 * * *"
@@ -110,11 +136,21 @@
           ><li v-for="p in preview" :key="p">{{ p }}</li></ol
         ></template
       >
-      <label class="field-heading">选择目标目录</label><DirectoryPicker v-model="targets" /><label
-        class="check-label"
-        ><input v-model="recursive" type="checkbox" role="switch" />包含所选目录的子目录</label
+      <label class="field-heading">选择目标目录</label
+      ><DirectoryPicker v-model="targets" data-field="targets" /><label class="check-label"
+        ><input
+          v-model="recursive"
+          name="recursive"
+          type="checkbox"
+          role="switch"
+        />包含所选目录的子目录</label
       ><label v-if="mode === 'plan'" class="check-label"
-        ><input v-model="enabled" type="checkbox" role="switch" />保存后启用计划</label
+        ><input
+          v-model="enabled"
+          name="enabled"
+          type="checkbox"
+          role="switch"
+        />保存后启用计划</label
       >
       <p class="help">{{
         taskType === 'extract'
@@ -141,6 +177,6 @@
 
 <style scoped>
   .field-heading {
-    margin-bottom: 8px !important;
+    margin-bottom: var(--space-8) !important;
   }
 </style>

@@ -147,7 +147,7 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 	if entry.Title != "旅行" || entry.Body != "描述旅行风景" || entry.ID == 0 {
 		t.Fatal("created prompt mismatch", w.Body.String())
 	}
-	profile := map[string]any{"title": "引用配置", "prompt_id": entry.ID, "provider": "custom", "protocol": "openai", "base_url": "http://localhost:8080/v1", "model": "vision", "temperature": 0, "max_tokens": 128, "timeout": "10s"}
+	profile := map[string]any{"title": "引用配置", "prompt_id": entry.ID, "provider": "custom", "protocol": "openai", "base_url": "http://localhost:8080/v1", "model": "vision", "temperature": 0, "max_tokens": 128, "timeout_ms": 10000}
 	if w = call("POST", "/api/model-configs", profile, true); w.Code != 201 {
 		t.Fatal(w.Code, w.Body.String())
 	}
@@ -159,7 +159,7 @@ func TestPromptAPIFixedLibraryAndGuards(t *testing.T) {
 		Version int64 `json:"version"`
 	}
 	json.Unmarshal(w.Body.Bytes(), &saved)
-	unbound := map[string]any{"title": "缺提示词", "provider": "custom", "protocol": "openai", "base_url": "http://localhost:8080/v1", "model": "vision", "temperature": 0, "max_tokens": 128, "timeout": "10s"}
+	unbound := map[string]any{"title": "缺提示词", "provider": "custom", "protocol": "openai", "base_url": "http://localhost:8080/v1", "model": "vision", "temperature": 0, "max_tokens": 128, "timeout_ms": 10000}
 	if w = call("POST", "/api/model-configs", unbound, true); w.Code != 400 || !strings.Contains(w.Body.String(), `"path":"prompt_id"`) {
 		t.Fatal("profile without prompt accepted", w.Code, w.Body.String())
 	}

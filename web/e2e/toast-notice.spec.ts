@@ -61,8 +61,8 @@ test('保存系统设置不移动表单，切换分类清理通知，通知渠�
       json: {
         items: [],
         total: 0,
-        page: 1,
-        size: 50
+        offset: 0,
+        limit: 50
       }
     })
   )
@@ -83,13 +83,21 @@ test('保存系统设置不移动表单，切换分类清理通知，通知渠�
   await expect(page.getByRole('main').getByText('设置已保存')).toHaveCount(0)
   const after = await save.boundingBox()
   expect(Math.abs(defined(before).y - defined(after).y)).toBeLessThan(1)
-  await notice.getByRole('button', { name: '关闭提示' }).click()
+  const desktopClose = defined(await notice.getByRole('button', { name: '关闭提示' }).boundingBox())
+  expect(desktopClose.width).toBeGreaterThanOrEqual(24)
+  expect(desktopClose.height).toBeGreaterThanOrEqual(24)
+  const closeButton = notice.getByRole('button', { name: '关闭提示' })
+  await closeButton.focus()
+  await expect(closeButton).toBeFocused()
+  await page.keyboard.press('Enter')
   await expect(notice).toHaveCount(0)
   fail = true
   await page.getByLabel('同时抽帧的视频数', { exact: true }).fill('4')
   await save.click()
-  await expect(page.getByRole('alert')).toContainText('保存失败')
-  await expect(notice).toHaveCount(0)
+  await expect(page.getByRole('alert')).toContainText('服务暂时无法完成请求')
+  await expect(notice).toHaveCount(1)
+  await expect(notice).toContainText('服务暂时无法完成请求')
+  await expect(page.getByText('保存失败，请重试', { exact: true })).toHaveCount(0)
   fail = false
   await save.click()
   await expect(notice).toHaveCount(1)
@@ -105,6 +113,11 @@ test('保存系统设置不移动表单，切换分类清理通知，通知渠�
   expect(
     await notice.first().evaluate((el) => el.getBoundingClientRect().right)
   ).toBeLessThanOrEqual(390)
+  const mobileClose = defined(
+    await notice.first().getByRole('button', { name: '关闭提示' }).boundingBox()
+  )
+  expect(mobileClose.width).toBeGreaterThanOrEqual(44)
+  expect(mobileClose.height).toBeGreaterThanOrEqual(44)
   await page.screenshot({ path: 'test-results/settings-toast-mobile.png' })
   await page.getByRole('button', { name: '文件目录', exact: true }).click()
   await expect(notice).toHaveCount(0)
@@ -127,7 +140,8 @@ test('浮动提示保留重复消息、最新置顶，并独立关闭和到期',
           }
         ],
         total: 1,
-        page: 1
+        offset: 0,
+        limit: 100
       }
     })
   )

@@ -8,6 +8,10 @@ import (
 )
 
 func (a *App) extractions(w http.ResponseWriter, r *http.Request) {
+	if err := queryFields(r.URL.Query(), "success_offset", "failure_offset", "limit", "q", "run", "from", "to"); err != nil {
+		writeError(w, r, err)
+		return
+	}
 	value, err := record.New(a.db).Extractions(r.Context(), r.URL.Query())
 	if err != nil {
 		writeError(w, r, err)

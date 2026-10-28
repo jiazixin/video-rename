@@ -51,7 +51,7 @@ button.library-action:disabled {
 .directory-mark-actions {
   flex-direction: column;
   align-items: flex-end;
-  gap: 8px;
+  gap: var(--space-8);
   margin-top: 0;
   width: 100%;
   max-width: 100%;
@@ -61,7 +61,7 @@ button.library-action:disabled {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-8);
   max-width: 100%;
 }
 .directory-action-row > button {
@@ -75,7 +75,7 @@ button.library-action:disabled {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 12px;
+  gap: var(--space-12);
   margin-left: auto;
   min-width: 0;
   flex-wrap: wrap;
@@ -87,7 +87,7 @@ button.library-action:disabled {
   width: 1px;
   height: 20px;
   background: var(--line);
-  margin: 0 4px;
+  margin: 0 var(--space-4);
   flex-shrink: 0;
 }
 @media (max-width: 600px) {
@@ -104,12 +104,12 @@ button.library-action:disabled {
     flex: 0 0 auto;
     min-width: 76px;
     min-height: 44px;
-    padding: 7px 9px;
-    font-size: 11px;
+    padding: var(--space-7) var(--space-9);
+    font-size: var(--font-size-11);
   }
   .directory-refresh-summary {
     width: 100%;
-    gap: 8px;
+    gap: var(--space-8);
     justify-content: flex-start;
   }
   .directory-refresh-summary > button {
