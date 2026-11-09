@@ -1,6 +1,6 @@
 # Go 代码规范
 
-基线版本：1.0.1。适用范围：Go 后端服务、命令行工具与库。先读 [代码规范.md](代码规范.md)；`cmd/`、`internal/`、`testdata/`、配置文件位置与版本元数据见 [目录规范.md](目录规范.md)，本文不重复。第 10 节命令行入口契约与附录只在新建或修改 `cmd/` 时阅读。
+基线版本：1.0.2。适用范围：Go 后端服务、命令行工具与库。先读 [代码规范.md](代码规范.md)；`cmd/`、`internal/`、`testdata/`、配置文件位置与版本元数据见 [目录规范.md](目录规范.md)，本文不重复。第 10 节命令行入口契约与附录只在新建或修改 `cmd/` 时阅读。
 
 ## 1. 工具链
 
@@ -63,6 +63,7 @@ go run golang.org/x/vuln/cmd/govulncheck@<固定版本> ./...
 ## 5. context、并发与生命周期
 
 - 网络、数据库、外部进程调用，以及可能长时间运行的文件操作（如目录扫描、大文件复制），第一个参数为 `ctx context.Context`。进程启动时一次性读取本地配置文件不在此列（第 7 节的 `Load`）。不新增“无 ctx 的 `Xxx` + 带 ctx 的 `XxxContext`”成对 API，不在库代码中用 `context.Background()` 代替调用方的 ctx。关闭阶段需要脱离取消时用 `context.WithoutCancel(ctx)` 加超时。
+- 测试辅助函数可接收 `*testing.T` 并从 `t.Context()` 获取上下文，无须再接收一个 ctx 参数；网络、外部进程等需要超时的操作仍从该上下文派生明确的操作超时。`t.Context()` 不自带 deadline，测试总超时不能代替操作超时。
 - 不把 `context.Context` 存进结构体字段，更不导出。
 - 有后台工作的组件：`New(...)` 只做构造与校验，不启动 goroutine；`Run(ctx) error` 启动后台工作，阻塞到 `ctx` 结束且所有 goroutine 退出后返回。应用装配确需分步启动（例如先监听端口再启动后台任务）时使用 `Start(ctx) error` 与 `Shutdown(ctx) error`，并在包注释中说明顺序。
 - 后台 goroutine 用 `sync.WaitGroup.Go` 启动并等待；需要“任一失败即取消全部”时组合 `context.WithCancelCause`，不为此引入额外依赖。每个 goroutine 都有退出路径。
@@ -95,9 +96,9 @@ go run golang.org/x/vuln/cmd/govulncheck@<固定版本> ./...
 ```go
 // Source describes where configuration comes from.
 type Source struct {
-	Path      string                       // selected file
-	Explicit  bool                         // chosen by --config or CONFIG_FILE
-	WorkDir   string                       // base for relative paths when no file is used
+	Path      string                      // selected file
+	Explicit  bool                        // chosen by --config or CONFIG_FILE
+	WorkDir   string                      // absolute base for relative Path and built-in defaults
 	LookupEnv func(string) (string, bool) // os.LookupEnv in production
 }
 
@@ -105,7 +106,7 @@ func Load(src Source) (Config, error)
 func (c Config) Validate() error
 ```
 
-  `Load` 只读取本地配置文件，且在建立信号 ctx 之前运行，因此不接收 `ctx`（见第 5 节）。`Explicit` 为真时文件必须存在；为假时文件缺失可回退到内置默认值，但必填项缺失仍报错。`Validate` 只校验、不修改，规范化（去空白、转小写、补默认值）在解码阶段完成。
+  `Load` 只读取本地配置文件，且在建立信号 ctx 之前运行，因此不接收 `ctx`（见第 5 节）。`Explicit` 为真时文件必须存在；为假时文件缺失可回退到内置默认值，但必填项缺失仍报错。`WorkDir` 同时用于解析相对 `Path` 和内置默认路径；即使文件存在，其中省略的路径字段也以 `WorkDir` 为基准。文件中显式填写的相对路径以该文件所在目录为基准，见目录规范第 7.1 节。`Validate` 只校验、不修改，规范化（去空白、转小写、补默认值）在解码阶段完成。
 - 校验错误使用带字段路径的错误类型，消息为英文：`server.port: must be between 1 and 65535`。
 - 字段级环境变量覆盖的变量名为：程序名转大写、`-` 换成 `_`，作为前缀；层级之间用 `__` 连接，键名内部保留单个 `_`（如 `HARBOR_CONSOLE_SERVER__LISTEN_ADDR`）。协议写入 README 的“配置约定”，见目录规范第 7.1 节。
 
@@ -561,14 +562,22 @@ func TestReadBuildKeepsCommitTime(t *testing.T) {
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBuildVersion(t *testing.T) {
+	const (
+		commandTimeout = 2 * time.Minute
+		binaryTimeout  = 10 * time.Second
+		pipeWaitDelay  = 5 * time.Second
+	)
 	// Keep all commits, tags, binaries and source archives outside the project.
 	base := t.TempDir()
 	repo := filepath.Join(base, "repo")
@@ -599,11 +608,15 @@ func TestBuildVersion(t *testing.T) {
 	// command runs argv[0] with the remaining arguments in dir.
 	command := func(t *testing.T, dir string, argv ...string) string {
 		t.Helper()
-		cmd := exec.CommandContext(t.Context(), argv[0], argv[1:]...)
+		ctx, cancel := context.WithTimeout(t.Context(), commandTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 		cmd.Dir = dir
+		// Descendants retaining output pipes must not outlive the command's wait.
+		cmd.WaitDelay = pipeWaitDelay
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			t.Fatalf("%q: %v\n%s", argv, err, out)
+			t.Fatalf("%q: %v\n%s", argv, errors.Join(err, ctx.Err()), out)
 		}
 		return strings.TrimSpace(string(out))
 	}
@@ -635,12 +648,15 @@ func TestBuildVersion(t *testing.T) {
 			argv := append([]string{"go", "build", "-o", binary}, tc.flags...)
 			command(t, tc.dir, append(argv, ".")...)
 			// No source directory or Git executable is available at runtime.
-			cmd := exec.CommandContext(t.Context(), binary)
+			ctx, cancel := context.WithTimeout(t.Context(), binaryTimeout)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, binary)
 			cmd.Dir = base
 			cmd.Env = []string{"PATH=" + filepath.Join(base, "missing")}
+			cmd.WaitDelay = pipeWaitDelay
 			out, err := cmd.CombinedOutput()
 			if err != nil {
-				t.Fatalf("run binary: %v\n%s", err, out)
+				t.Fatalf("run binary: %v\n%s", errors.Join(err, ctx.Err()), out)
 			}
 			got := strings.TrimSpace(string(out))
 			if (tc.suffix == "" && got != tc.prefix) || !strings.HasPrefix(got, tc.prefix) || !strings.HasSuffix(got, tc.suffix) {
