@@ -267,7 +267,7 @@
                 name="retry_enabled"
                 type="checkbox"
                 role="switch"
-              />开启失败自动重试</label
+              /><span>开启失败自动重试</span></label
             ><fieldset :disabled="!form.retry_enabled" class="processing-fields"
               ><div class="retry-config-row">
                 <div class="retry-field"
@@ -393,14 +393,14 @@
                   type="radio"
                   value="immediate"
                   name="success-cache"
-                />立即删除（默认）</label
+                /><span>立即删除（默认）</span></label
               ><label class="processing-check"
                 ><input
                   v-model="form.success_cache_mode"
                   type="radio"
                   value="delayed"
                   name="success-cache"
-                />延时删除</label
+                /><span>延时删除</span></label
               ><div v-if="form.success_cache_mode === 'delayed'" class="cache-duration"
                 ><label
                   >成功后保留时长<input
@@ -423,7 +423,7 @@
                   type="radio"
                   value="keep"
                   name="success-cache"
-                />不因改名删除</label
+                /><span>不因改名删除</span></label
               ></fieldset
             ><fieldset class="processing-options"
               ><legend>闲置缓存清理</legend
@@ -433,7 +433,7 @@
                   name="idle_cache_hours"
                   type="checkbox"
                   role="switch"
-                />按闲置时间自动清理</label
+                /><span>按闲置时间自动清理</span></label
               ><div v-if="idleEnabled" class="cache-duration"
                 ><label
                   >连续未使用时长<input

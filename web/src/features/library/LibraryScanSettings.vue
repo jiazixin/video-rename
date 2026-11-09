@@ -60,7 +60,7 @@
               type="checkbox"
               role="switch"
               aria-label="开启定时扫描"
-            />开启定时扫描</label
+            /><span>开启定时扫描</span></label
           >
           <label class="scan-interval"
             >扫描间隔<span class="scan-interval-input"

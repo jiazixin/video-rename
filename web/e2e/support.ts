@@ -27,6 +27,24 @@ export function bodyRows(scope: Page | Locator): Locator {
   return scope.getByRole('row').filter({ has: pageOf(scope).getByRole('cell') })
 }
 
+/** Waits until every finite CSS animation has finished, so geometry reads final positions. */
+export async function settleAnimations(page: Page): Promise<void> {
+  // Vue holds the enter/leave start state for a frame even when reduced motion leaves no
+  // animation to wait on, e.g. a dialog's first frame is scaled and shifted.
+  await page.waitForFunction(
+    () => !document.querySelector('[class*="-enter-"], [class*="-leave-"]')
+  )
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((animation) => Number.isFinite(animation.effect?.getComputedTiming().endTime))
+        // A cancelled animation rejects `finished`; it has stopped moving all the same.
+        .map((animation) => animation.finished.catch(() => undefined))
+    )
+  )
+}
+
 /** The "current/total页" readout of a pagination control. */
 export function pageReadout(navigation: Locator): Locator {
   return navigation.getByText(/^\d+\/\d+页$/)

@@ -101,12 +101,9 @@
             : '后台将抽取视频画面，由指定模型生成名称并自动修改。'
         }}</p
         ><label v-if="entry.kind === 'directory'" class="check-label"
-          ><input
-            v-model="recursive"
-            name="recursive"
-            type="checkbox"
-            role="switch"
-          />包含子目录</label
+          ><input v-model="recursive" name="recursive" type="checkbox" role="switch" /><span
+            >包含子目录</span
+          ></label
         ><p class="help">{{
           mode === 'extract'
             ? '覆盖目录内全部分页的视频，包括已处理视频；已有有效截图直接复用。进度见“批次记录”，结果见“抽帧记录”。'

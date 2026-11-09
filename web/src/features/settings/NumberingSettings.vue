@@ -406,6 +406,8 @@
     border-radius: var(--radius-9);
     cursor: pointer;
     margin: 0;
+    /* The bordered card is the radio's visible control, so all of it selects. */
+    pointer-events: auto;
   }
   .method-option.selected {
     border-color: var(--palette-81aa93);
@@ -455,7 +457,6 @@
     margin: 0;
     padding: var(--space-20) var(--space-24);
     border-top: 1px solid var(--palette-edf0ee);
-    cursor: pointer;
   }
   .numbering-toggle > span {
     min-width: 0;

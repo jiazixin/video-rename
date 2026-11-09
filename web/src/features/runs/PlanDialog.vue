@@ -115,7 +115,9 @@
               required /></label></div
         ><div v-if="kind === 'weekly'" class="weekday-picker"
           ><label v-for="(d, i) in weekdays" :key="i"
-            ><input v-model="days" name="expression" type="checkbox" :value="i" />周{{ d }}</label
+            ><input v-model="days" name="expression" type="checkbox" :value="i" /><span
+              >周{{ d }}</span
+            ></label
           ></div
         ><label v-if="kind === 'cron'"
           >Cron 表达式<input
@@ -138,19 +140,13 @@
       >
       <label class="field-heading">选择目标目录</label
       ><DirectoryPicker v-model="targets" data-field="targets" /><label class="check-label"
-        ><input
-          v-model="recursive"
-          name="recursive"
-          type="checkbox"
-          role="switch"
-        />包含所选目录的子目录</label
+        ><input v-model="recursive" name="recursive" type="checkbox" role="switch" /><span
+          >包含所选目录的子目录</span
+        ></label
       ><label v-if="mode === 'plan'" class="check-label"
-        ><input
-          v-model="enabled"
-          name="enabled"
-          type="checkbox"
-          role="switch"
-        />保存后启用计划</label
+        ><input v-model="enabled" name="enabled" type="checkbox" role="switch" /><span
+          >保存后启用计划</span
+        ></label
       >
       <p class="help">{{
         taskType === 'extract'

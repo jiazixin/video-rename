@@ -279,7 +279,7 @@
               type="checkbox"
               role="switch"
               :aria-label="`启用${names[c.kind]}`"
-            />启用</label
+            /><span>启用</span></label
           ></header
         ><p class="help">{{ hints[c.kind] }}</p
         ><div class="notification-fields"
@@ -321,7 +321,7 @@
                 name="clear_secret"
                 type="checkbox"
                 role="switch"
-              />清除已保存的加签密钥</label
+              /><span>清除已保存的加签密钥</span></label
             ></template
           ><label class="check-label"
             ><input
@@ -329,7 +329,7 @@
               name="failure_only"
               type="checkbox"
               role="switch"
-            />仅失败时通知</label
+            /><span>仅失败时通知</span></label
           ><small class="help">包含部分失败、失败与服务中断；关闭此选项也通知完成和取消。</small
           ><div v-if="errors[c.kind]" class="notice error" role="alert">{{ errors[c.kind] }}</div
           ><footer

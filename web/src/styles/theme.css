@@ -313,6 +313,24 @@ label input,
 label select {
   width: 100%;
 }
+/* A label names its control and keeps keyboard and screen reader behaviour, but only the
+   control takes the pointer: clicking a field's title, its help text or the blank space a grid
+   or flex row stretches the label to does nothing. The cost is that this text can no longer be
+   selected with the mouse. */
+label {
+  pointer-events: none;
+}
+/* :where() keeps these restores weaker than any rule that switches a control off. */
+label :where(input, select, textarea, button, a[href], summary, [tabindex]) {
+  pointer-events: auto;
+}
+/* Checkbox, radio and switch captions still toggle, but only over the text itself. */
+label:where(:has(input:is([type='checkbox'], [type='radio'])))
+  :where(span, strong, small):not(:has(*)) {
+  width: fit-content;
+  cursor: pointer;
+  pointer-events: auto;
+}
 h1,
 h2,
 h3,
@@ -522,21 +540,28 @@ code {
   border-bottom: 1px solid var(--line);
   background: var(--palette-fdfdfd);
 }
+/* The input spans the whole box and the magnifier lets clicks through, so a click anywhere
+   inside the visible field focuses it. */
 .search-input {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: var(--space-9);
   border: 1px solid var(--line);
   background: var(--palette-ffffff);
   border-radius: var(--radius-6);
-  padding: 0 var(--space-11);
   min-width: 180px;
   width: 290px;
   color: var(--palette-999ca2);
 }
+.search-input > svg {
+  position: absolute;
+  left: var(--space-11);
+  pointer-events: none;
+}
 .search-input input {
   border: 0;
-  padding: var(--space-8) 0;
+  padding: var(--space-8) var(--space-11) var(--space-8)
+    calc(var(--space-11) + 16px + var(--space-9));
   min-height: 35px;
   width: 100%;
   font-size: var(--font-size-12);

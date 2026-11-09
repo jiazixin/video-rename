@@ -28,7 +28,7 @@
       <template v-if="action === 'auto' || action === 'extract'"
         ><p>处理选中的 {{ count }} 个条目，创建一个批次。</p
         ><ModelPicker v-if="action === 'auto'" v-model="modelConfigID" /><label class="check-label"
-          ><input v-model="recursive" type="checkbox" role="switch" />包含子目录</label
+          ><input v-model="recursive" type="checkbox" role="switch" /><span>包含子目录</span></label
         ><p class="help">{{
           action === 'extract'
             ? '预先生成截图供后续重命名使用，已有有效截图直接复用。结果见“抽帧记录”。'

@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright'
 import { test, expect, type Page } from '@playwright/test'
+import { settleAnimations } from './support'
 
 async function expectNoSeriousViolations(page: Page, where: string) {
   const audit = await new AxeBuilder({ page }).analyze()
@@ -19,14 +20,7 @@ async function expectNoSeriousViolations(page: Page, where: string) {
 /** Waits until no region is busy and every finite CSS animation has finished. */
 async function settle(page: Page) {
   await expect(page.locator('[aria-busy="true"]')).toHaveCount(0)
-  await page.evaluate(() =>
-    Promise.all(
-      document
-        .getAnimations()
-        .filter((animation) => animation.effect?.getComputedTiming().endTime !== Infinity)
-        .map((animation) => animation.finished)
-    )
-  )
+  await settleAnimations(page)
 }
 
 const pages = [

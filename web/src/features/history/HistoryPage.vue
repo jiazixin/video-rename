@@ -736,14 +736,14 @@
             :checked="!clearAll"
             :disabled="!chosen.size"
             @change="clearAll = false"
-          />已选 {{ chosen.size }} 条</label
+          /><span>已选 {{ chosen.size }} 条</span></label
         ><label class="check-label"
           ><input
             type="radio"
             name="clear-scope"
             :checked="clearAll"
             @change="clearAll = true"
-          />当前分类的全部记录（包括其他页，不受筛选条件限制）</label
+          /><span>当前分类的全部记录（包括其他页，不受筛选条件限制）</span></label
         ><p class="help">清除后无法恢复。文件、还原数据和已处理标记不受影响。</p
         ><div v-if="clearError" class="notice error" role="alert">{{ clearError }}</div
         ><div class="modal-actions"
