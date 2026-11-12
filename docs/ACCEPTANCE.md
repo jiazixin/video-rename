@@ -2,7 +2,7 @@
 
 ## 结论与范围
 
-[缺陷排查与修复计划](archive/2026-11-10-defect-audit.md) 列出的 D1–D11 全部修复，两轮补充排查中新发现的 N1–N7 同样修复；每项都有回归测试，其中 D11、N1、N3、N5、N7 在修复前先用测试复现。维护项 M1–M3 已处理（依赖升级与审计结论见计划）。疑点 Q1（NFS 改名）按决定暂不验证，Q3（登录限速的可信代理）决定不做，Q2（大小写命名）仍待验证。改动随提交 `18b1787` 合入，本记录的检查在该提交的内容上进行（提交前的最终工作区）。表单控件点击范围修复及更早的记录见 [历史快照](archive/2026-11-10-before-defect-fixes-acceptance.md)。
+[缺陷排查与修复计划](archive/2026-11-10-defect-audit.md) 列出的 D1–D11 全部修复，两轮补充排查中新发现的 N1–N7 同样修复；每项都有回归测试，其中 D11、N1、N3、N5、N7 在修复前先用测试复现。维护项 M1–M3 已处理（依赖升级与审计结论见计划）。疑点 Q1（NFS 改名）按决定暂不验证，Q3（登录限速的可信代理）决定不做，Q2（大小写命名）已于 2026-11-12 验证不成立，验证中发现的 Unicode 规范化问题已修复（见文末“后续”一节）。改动随提交 `18b1787` 合入，本记录的检查在该提交的内容上进行（提交前的最终工作区）。表单控件点击范围修复及更早的记录见 [历史快照](archive/2026-11-10-before-defect-fixes-acceptance.md)。
 
 本次改动了 Go 运行时代码、HTTP 接口、Web 界面、测试和文档，没有改动数据库结构（结构号仍为 2026102801）。依赖方面，Go 升到 1.27.4，前端开发依赖与 Vue 做了补丁升级（Vite 8.3.7、Vue 3.5.45、Vitest 5.1.0、Playwright 1.65.0 等，明细见计划 M2）。所有验证使用临时目录、合成媒体、本地假模型和隔离端口 18790，没有读取用户配置、媒体或数据库。
 
@@ -77,4 +77,26 @@
 - 没有用真实的模型服务和通知渠道验证；钉钉、企业微信等只有本地假服务。
 - 浏览器只用了 Chromium；没有真实触屏设备、Safari 和 Firefox。
 - 基准测试本次没有运行。
-- CI 与发布配置仍未逐步核对；记录但未改的现象（进度缓存的锁）和 Q1、Q2 列在 [修复计划](archive/2026-11-10-defect-audit.md)。
+- CI 与发布配置仍未逐步核对；记录但未改的现象（进度缓存的锁）和 Q1 列在 [修复计划](archive/2026-11-10-defect-audit.md)。
+
+## 后续：Q2 验证与 Unicode 规范化修复（2026-11-12）
+
+**Q2 不成立。** 在本机 APFS（不区分大小写）上走完整的 `AutoCommit` 实测：`Movie.mp4` → `movie`、`Movie.MP4` → `movie`、`movie.mp4` → `MOVIE`、含中文和空格的名称，都直接改为目标名，目录中只剩一个文件，没有追加后缀。原因是名称分配器在目标命中源文件本身、且目录里没有另一个同名目录项时，视为同一文件。
+
+**同类问题（已修复）。** 标题清洗统一为 NFC，而原名可能是 NFD（如 `e` + 组合重音符；常见于从 HFS+ 拷来的文件，影响带重音的拉丁字母、带浊音符的日文假名和韩文，汉字不受影响）。APFS 按规范化后的名称匹配，分配器的比较却只忽略大小写，于是 `Café.mp4`（NFD）自动命名为 `Café` 时变成 `Café (2).mp4`。修复：`internal/naming/conflict.go` 的 `sameDirectoryEntry` 先把两个名称归一为 NFC 再忽略大小写比较；目录中确实存在另一个同名目录项（硬链接）时仍追加后缀。实测 APFS 上 `renameatx_np(RENAME_EXCL)` 把 NFD 名改为 NFC 名可以成功。数据库结构与接口不变。
+
+测试（修复前在 APFS 上先失败）：
+
+- `internal/naming`：`TestAllocateAliasOfSourceKeepsTitle`（大小写、扩展名大小写、NFD 原名、NFD 原名加大小写四种），替换原来只打印日志、没有断言的 `TestAllocateUnchangedCaseOnly`。
+- `internal/library`：`TestAutoCommitRenamesToCaseOrNormalizationAlias`（端到端检查目录内容），`TestAutoCommitAllocatesSuffixForNormalizationHardLink`（APFS 不能同时保存两种写法，跳过；在 Linux 上执行）。
+
+检查结果（macOS / arm64，Go 1.27.4）：
+
+| 检查 | 结果 |
+| --- | --- |
+| Go 静态检查 | 改动文件 gofmt、goimports v0.50.0 无输出；`go vet ./...`、`go vet -tags integration,scale ./...`、`GOOS=linux go vet`（naming、library）、staticcheck v0.8.2 通过；`go mod verify`、`go mod tidy -diff` 通过 |
+| Go 测试 | `CGO_ENABLED=1 go test -race -count=1 ./...` 的 27 个测试包全部通过 |
+| Linux | 本机 Docker `golang:1.27.3`（在代码副本中把 `go` 指令临时改为 1.27.3，仓库未改）运行上述新测试与 `TestAutoCommitAllocatesSuffixForHardLink`：全部通过，硬链接用例实际执行，没有跳过 |
+| 其他 | `git diff --check` 通过 |
+
+未运行：Web 检查与 E2E（没有改动前端）、FFmpeg 集成、规模测试、Fuzz、govulncheck（依赖未变；`golang.org/x/text` 原已是直接依赖）。没有在 SMB / NFS 上验证。编号走临时名两阶段移动，不经过这个分配器，本次没有改动。

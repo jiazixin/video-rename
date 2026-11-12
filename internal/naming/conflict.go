@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 
+	"golang.org/x/text/unicode/norm"
+
 	"video-rename/internal/domain"
 )
 
@@ -112,12 +114,14 @@ func (a *Allocator) Release(dir, name string) {
 }
 
 // Equal identities can also be separate hard links. Only accept an exact source
-// name or a case alias that does not exist as a separate directory entry.
+// name or an alias that does not exist as a separate directory entry. Titles are
+// NFC while existing names may be NFD, and APFS matches names regardless of
+// case and normalization, so an alias may differ in either.
 func sameDirectoryEntry(dir, target, source string) bool {
 	if target == source {
 		return true
 	}
-	if !strings.EqualFold(target, source) {
+	if !strings.EqualFold(norm.NFC.String(target), norm.NFC.String(source)) {
 		return false
 	}
 	entries, err := os.ReadDir(dir)

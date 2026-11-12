@@ -82,6 +82,61 @@ func TestRenameParentReplacementDoesNotRedirectCommit(t *testing.T) {
 	}
 }
 
+func TestAutoCommitRenamesToCaseOrNormalizationAlias(t *testing.T) {
+	for _, tc := range []struct{ name, source, title, want string }{
+		{name: "case", source: "Movie.mp4", title: "movie", want: "movie.mp4"},
+		{name: "decomposed source", source: "Café.mp4", title: "Café", want: "Café.mp4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l, root, _ := fixture(t)
+			source := filepath.Join(root, tc.source)
+			put(t, source)
+			refresh(t, l, 1)
+			e := entry(t, entryOptions{l: l, parent: 1, name: tc.source})
+			snap, err := domain.StatSnapshot(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			op, err := l.AutoCommit(t.Context(), AutoCommitOptions{ID: e.ID, Snap: snap, Title: tc.title, Key: "alias", Run: 0})
+			if err != nil || op.New != tc.want {
+				t.Fatalf("got %q, %v, want %q", op.New, err, tc.want)
+			}
+			entries, err := os.ReadDir(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 1 || entries[0].Name() != tc.want {
+				t.Fatalf("got directory %v, want only %q", entries, tc.want)
+			}
+		})
+	}
+}
+
+func TestAutoCommitAllocatesSuffixForNormalizationHardLink(t *testing.T) {
+	l, root, _ := fixture(t)
+	source := filepath.Join(root, "Café.mp4")
+	put(t, source)
+	if err := os.Link(source, filepath.Join(root, "Café.mp4")); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			t.Skip("filesystem cannot hold separate normalization-only names")
+		}
+		t.Fatal(err)
+	}
+	refresh(t, l, 1)
+	e := entry(t, entryOptions{l: l, parent: 1, name: "Café.mp4"})
+	snap, err := domain.StatSnapshot(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := l.AutoCommit(t.Context(), AutoCommitOptions{ID: e.ID, Snap: snap, Title: "Café", Key: "hardlink", Run: 0})
+	if err != nil || op.New != "Café (2).mp4" {
+		t.Fatalf("got %q, %v, want %q", op.New, err, "Café (2).mp4")
+	}
+	if _, err := os.Stat(filepath.Join(root, "Café.mp4")); err != nil {
+		t.Fatal("existing hardlink lost:", err)
+	}
+}
+
 func TestAutoCommitAllocatesSuffixForHardLink(t *testing.T) {
 	for _, target := range []string{"title.mp4", "SOURCE.mp4"} {
 		t.Run(target, func(t *testing.T) {

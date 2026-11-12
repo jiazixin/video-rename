@@ -204,17 +204,28 @@ func TestAllocateUnchanged(t *testing.T) {
 	}
 }
 
-func TestAllocateUnchangedCaseOnly(t *testing.T) {
-	dir := t.TempDir()
-	job, _ := newFile(t, dir, "Beach.mp4")
-	a := NewAllocator()
-	// on a case-insensitive volume "beach.mp4" is the source file → unchanged;
-	// on a case-sensitive volume the path does not exist → a new target is allocated.
-	res, jerr := a.Allocate(t.Context(), Allocation{Directory: dir, Title: "beach", Extension: ".mp4", Job: job})
-	if jerr != nil {
-		t.Fatal(jerr)
+// A title that differs from the source only in case or Unicode normalization
+// names the source itself on volumes such as APFS, and a missing path on
+// volumes that compare names byte for byte. Neither needs a conflict suffix.
+func TestAllocateAliasOfSourceKeepsTitle(t *testing.T) {
+	for _, tc := range []struct{ name, source, title, want string }{
+		{name: "case", source: "Beach.mp4", title: "beach", want: "beach.mp4"},
+		{name: "extension case", source: "Beach.MP4", title: "beach", want: "beach.mp4"},
+		{name: "decomposed source", source: "Café.mp4", title: "Café", want: "Café.mp4"},
+		{name: "decomposed source and case", source: "Café.mp4", title: "café", want: "café.mp4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			job, _ := newFile(t, dir, tc.source)
+			res, jerr := NewAllocator().Allocate(t.Context(), Allocation{Directory: dir, Title: tc.title, Extension: filepath.Ext(tc.source), Job: job})
+			if jerr != nil {
+				t.Fatal(jerr)
+			}
+			if want := filepath.Join(dir, tc.want); res.Target != want {
+				t.Errorf("got target %q, want %q", res.Target, want)
+			}
+		})
 	}
-	t.Logf("case-only: unchanged=%v target=%q (depends on volume case sensitivity)", res.Unchanged, res.Target)
 }
 
 func TestAllocateConflictSuffix(t *testing.T) {
