@@ -46,9 +46,15 @@ func numberingRequestTest(t *testing.T, options numberingRequestTestOptions) num
 func waitNumberingTest(t *testing.T, a *App, key string) numberingStatus {
 	t.Helper()
 	// Real clients renew the lease through status requests. The deadline only
-	// bounds a stuck test; durable file moves have no ten-second latency contract.
-	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
-	defer cancel()
+	// bounds a stuck test and reports its last progress before `go test` times
+	// out; durable file moves have no latency contract. A fixed minute was too
+	// short for an 8003-item batch under the race detector on a two-core runner.
+	ctx := t.Context()
+	if deadline, ok := t.Deadline(); ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline.Add(-30*time.Second))
+		defer cancel()
+	}
 	poll := time.Tick(10 * time.Millisecond)
 	for {
 		r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/numbering/jobs/"+key, nil)

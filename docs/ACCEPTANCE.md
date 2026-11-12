@@ -72,7 +72,8 @@
 
 ## 未验证与遗留
 
-- 没有在 Linux、SMB / NFS 或其他架构上运行；GoReleaser 检查与快照、交叉编译本次没有运行；CI 没有运行（未推送）。
+- 本机没有在 Linux、SMB / NFS 或其他架构上运行，也没有运行 GoReleaser 检查与快照、交叉编译。
+- **CI 首轮（推送 `5fee0f9`）：** Web、E2E、GoReleaser 快照通过；Go 任务失败，原因是新增的 `TestLargeDirectoryNumberingPreviewIsPaged` 在两核机器开竞态检测时，8003 项批次的提交超过了测试等待写死的 1 分钟上限（本机不开竞态检测时整个用例 5 秒，提交 1.8 秒；开竞态检测时 118 秒，因为纯 Go 的 SQLite 驱动在竞态检测下慢约 30 倍）。修复：等待上限改为在 `go test` 自身超时前 30 秒停止并打印最后进度，防卡死与诊断不变，断言不变。本机以 `GOMAXPROCS=2` 开竞态检测运行 `internal/app` 全包通过，用时 212.6 秒。修复后的 CI 结果以 GitHub Actions 为准。
 - 没有用真实的模型服务和通知渠道验证；钉钉、企业微信等只有本地假服务。
 - 浏览器只用了 Chromium；没有真实触屏设备、Safari 和 Firefox。
 - 基准测试本次没有运行。
