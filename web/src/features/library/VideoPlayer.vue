@@ -1,5 +1,6 @@
 <script setup lang="ts">
   import { formatPlaybackTime } from '../../lib/format/date';
+  import PlaybackSpeedMenu from './PlaybackSpeedMenu.vue';
   import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
   import {
     Play,
@@ -31,11 +32,8 @@
     error = ref(''),
     fullscreen = ref(false),
     speed = ref(1);
-  const speeds = [1, 1.25, 1.5, 2, 0.5, 0.75];
-  // Cycles through the common rates; the next click after 2× drops to half speed.
-  function nextSpeed() {
-    speed.value = speeds[(speeds.indexOf(speed.value) + 1) % speeds.length] ?? 1;
-    if (video.value) video.value.playbackRate = speed.value;
+  function changeSpeed(value: number) {
+    if (video.value) video.value.playbackRate = value;
   }
   const progress = computed(() => (duration.value ? (current.value / duration.value) * 100 : 0));
   function sync() {
@@ -195,9 +193,7 @@
           ><span v-else-if="notice">{{ notice }}</span
           ><span v-else class="bar-hint">← → 快退 / 快进 10 秒 · 两侧切换上一集 / 下一集</span>
         </p>
-        <button class="speed" :aria-label="`播放速度 ${speed}×`" title="播放速度" @click="nextSpeed"
-          >{{ speed }}×</button
-        >
+        <PlaybackSpeedMenu v-model="speed" @update:model-value="changeSpeed" />
         <div class="media-volume"
           ><button :aria-label="muted ? '取消静音' : '静音'" @click="mute"
             ><VolumeX v-if="muted || !volume" :size="18" /><Volume2 v-else :size="18" /></button
@@ -346,16 +342,6 @@
   }
   .bar-error {
     color: var(--palette-ffc9c9);
-  }
-  .bar-row .speed {
-    min-width: 46px;
-    padding: var(--space-4) var(--space-8);
-    border: 1px solid var(--stage-line);
-    font-size: var(--font-size-12);
-    font-variant-numeric: tabular-nums;
-  }
-  .bar-row .speed:hover:not(:disabled) {
-    border: 1px solid var(--stage-line);
   }
   .media-volume {
     display: flex;
