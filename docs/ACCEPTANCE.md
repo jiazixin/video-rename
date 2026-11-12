@@ -100,3 +100,33 @@
 | 其他 | `git diff --check` 通过 |
 
 未运行：Web 检查与 E2E（没有改动前端）、FFmpeg 集成、规模测试、Fuzz、govulncheck（依赖未变；`golang.org/x/text` 原已是直接依赖）。没有在 SMB / NFS 上验证。编号走临时名两阶段移动，不经过这个分配器，本次没有改动。
+
+## 后续：递归标记复用扫描暂存库并恢复耗时日志（2026-11-12）
+
+**起因。** 用户反馈 50 万文件（分布在数千个以上的目录）递归标记约需 5–10 分钟，感觉比以前慢。排查结论：
+
+- 标记时每刷新一个目录都会新建、删除一个临时 SQLite 扫描库，并重新捕获一次孤儿候选（自 `67e7be7` 起）。按目录数量线性增加开销。
+- 10-27/28 规范整改把单条读查询改为显式读事务，逐文件复核的查询各多一次 BEGIN/COMMIT。本机 4000 目录 × 125 文件：10-07 版本（`1444962`）80.0 秒，`8e85b68` 94.4 秒。本次没有处理这一项。
+- 10-02 在生产环境实测的 529654 文件为 394 秒，与反馈的量级一致；`9bfcfce` 删除完成日志后无法再从生产日志区分阶段。
+
+**改动。** `internal/library/marks.go`：一次递归标记在第一次刷新目录时创建一个 `DirectoryScanner`，后续目录复用同一暂存库，结束（含取消）时关闭；只标记文件时不创建。结束时记录 `mark_finished`，含刷新目录、等待库锁、逐文件复核、写入四段耗时，字段见 [运行与恢复](operations.md)。数据库结构、接口、复核规则和批次大小不变。
+
+**本机实测**（macOS / arm64，Go 1.27.4，本地临时文件，50 万个 mp4，同日同机先后运行；临时探测用例未入库）：
+
+| 布局 | 改动前（`8e85b68`） | 改动后 | 改动后分段（刷新 / 复核 / 写入） |
+| --- | --- | --- | --- |
+| 4000 目录 × 125 文件 | 94.4 秒 | 87.6 秒、89.5 秒（两次） | 43.1 / 39.0 / 4.6 秒 |
+| 20000 目录 × 25 文件 | 159.9 秒 | 118.5 秒 | 68.8 / 40.8 / 6.6 秒 |
+
+数值不代表 SMB / NFS 的实际吞吐；生产环境的阶段占比需以部署后的 `mark_finished` 日志为准。
+
+测试（修复前在旧实现上先失败）：`internal/library` 新增 `TestProcessedMarksReuseOneScanStage`（多目录只出现一个暂存库、完成与取消后删除、日志计数与耗时字段）、`TestProcessedMarksFileTargetsSkipScanStage`（只标记文件不创建暂存库）。
+
+| 检查 | 结果 |
+| --- | --- |
+| Go 静态检查 | gofmt（全部跟踪文件）、goimports v0.50.0（改动文件）无输出；`go vet ./...`、`go vet -tags integration,scale ./...`、staticcheck v0.8.2（library、app）通过 |
+| Go 测试 | `go test -count=1 ./...` 全部通过；`CGO_ENABLED=1 go test -race -count=1` 的 `internal/library`、`internal/app`、`internal/libraryscan` 通过 |
+| 规模测试 | `go test -tags=scale -run '^TestScale' -count=1` 的 `internal/library`、`internal/app` 通过 |
+| 其他 | `git diff --check` 通过 |
+
+未运行：全仓竞态检测（只跑了受影响的三个包）、`TestScaleLarge` 超大规模用例（改动前的 100 目录布局实测为 98.2 秒，改动后未复测）、Web 检查与 E2E（没有改动前端）、FFmpeg 集成、Fuzz、govulncheck（依赖未变）。没有在 Linux 与 SMB / NFS 上验证。

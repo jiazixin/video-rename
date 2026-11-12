@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"video-rename/internal/discovery"
 	"video-rename/internal/domain"
@@ -38,12 +39,15 @@ func (l *Library) SetProcessed(ctx context.Context, ids []int64, marked bool) Ma
 // The callback runs synchronously and must not mutate the result's failure slice.
 func (l *Library) SetProcessedWithProgress(ctx context.Context, ids []int64, marked bool, progress func(MarkResult)) (result MarkResult) {
 	w := &markWalk{l: l, marked: marked, progress: progress, result: MarkResult{Failures: []MarkFailure{}}, seen: map[int64]bool{}, pending: make([]int64, 0, markBatchSize)}
+	started := time.Now()
 	defer func() {
+		w.closeScanner()
 		// Cancellation can happen between pages or targets, without a failed file.
 		// Never present that partial traversal as a completed operation.
 		w.result.Interrupted = ctx.Err() != nil
 		w.report()
 		result = w.result
+		w.logFinished(len(ids), time.Since(started))
 	}()
 	for _, id := range ids {
 		if w.seen[id] {
@@ -69,6 +73,7 @@ func (l *Library) SetProcessedWithProgress(ctx context.Context, ids []int64, mar
 
 // markWalk is one SetProcessed traversal. Media files collect into batches of
 // markBatchSize; each batch commits before its counts become visible.
+// It is used by one goroutine and needs no locking.
 type markWalk struct {
 	l        *Library
 	marked   bool
@@ -76,6 +81,69 @@ type markWalk struct {
 	result   MarkResult
 	seen     map[int64]bool
 	pending  []int64
+	// scanner reuses one staging database for every refreshed directory.
+	// It is created on the first directory, so file-only targets skip it.
+	scanner *DirectoryScanner
+	timing  markTiming
+}
+
+// markTiming accumulates where a traversal spends its time. It feeds only the
+// mark_finished log, so production runs show whether directory refresh,
+// per-file validation or the writer dominates.
+type markTiming struct {
+	directories int
+	batches     int
+	refresh     time.Duration
+	lockWait    time.Duration
+	validate    time.Duration
+	write       time.Duration
+}
+
+func (w *markWalk) logFinished(targets int, elapsed time.Duration) {
+	w.l.logger.Info("mark_finished",
+		"marked", w.marked,
+		"targets", targets,
+		"changed", w.result.Changed,
+		"unchanged", w.result.Unchanged,
+		"failed", w.result.Failed,
+		"interrupted", w.result.Interrupted,
+		"directories", w.timing.directories,
+		"batches", w.timing.batches,
+		"duration_ms", elapsed.Milliseconds(),
+		"refresh_duration_ms", w.timing.refresh.Milliseconds(),
+		"lock_wait_duration_ms", w.timing.lockWait.Milliseconds(),
+		"validate_duration_ms", w.timing.validate.Milliseconds(),
+		"write_duration_ms", w.timing.write.Milliseconds(),
+	)
+}
+
+// refresh rescans directory id through the traversal's shared scanner.
+func (w *markWalk) refresh(ctx context.Context, id int64) error {
+	if w.scanner == nil {
+		scanner, err := w.l.NewDirectoryScanner(ctx)
+		if err != nil {
+			return err
+		}
+		w.scanner = scanner
+	}
+	started := time.Now()
+	_, err := w.scanner.ScanDirectory(ctx, id)
+	w.timing.refresh += time.Since(started)
+	w.timing.directories++
+	return err
+}
+
+// closeScanner removes the shared staging database. Every mark is already
+// committed in the main database, so a cleanup failure is logged rather than
+// reported as a failed file.
+func (w *markWalk) closeScanner() {
+	if w.scanner == nil {
+		return
+	}
+	if err := w.scanner.Close(); err != nil {
+		w.l.logger.Error("mark_scanner_close_failed", "error", err)
+	}
+	w.scanner = nil
 }
 
 func (w *markWalk) report() {
@@ -100,7 +168,7 @@ func (w *markWalk) flush(ctx context.Context) {
 	if len(w.pending) == 0 {
 		return
 	}
-	files := w.l.setFilesProcessed(ctx, w.pending, w.marked)
+	files := w.l.setFilesProcessed(ctx, setFilesProcessedOptions{IDs: w.pending, Marked: w.marked, Timing: &w.timing})
 	w.pending = w.pending[:0]
 	// The whole batch is durable before exposing any of its counts.
 	for _, file := range files {
@@ -144,7 +212,7 @@ func (w *markWalk) walkDirectory(ctx context.Context, e Entry) {
 	if ctx.Err() != nil {
 		return
 	}
-	if err := w.l.Refresh(ctx, e.ID); err != nil {
+	if err := w.refresh(ctx, e.ID); err != nil {
 		w.fail(ctx, e.ID, err)
 		return
 	}
@@ -190,9 +258,21 @@ type fileMarkResult struct {
 	err     error
 }
 
-func (l *Library) setFilesProcessed(ctx context.Context, ids []int64, marked bool) (files []fileMarkResult) {
+// setFilesProcessedOptions groups the inputs for setFilesProcessed. Timing
+// accumulates the batch's lock wait, validation and write durations.
+type setFilesProcessedOptions struct {
+	IDs    []int64
+	Marked bool
+	Timing *markTiming
+}
+
+func (l *Library) setFilesProcessed(ctx context.Context, options setFilesProcessedOptions) (files []fileMarkResult) {
+	ids, marked, timing := options.IDs, options.Marked, options.Timing
+	started := time.Now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	locked := time.Now()
+	timing.lockWait += locked.Sub(started)
 	files = make([]fileMarkResult, len(ids))
 	for i, id := range ids {
 		files[i].id = id
@@ -215,6 +295,8 @@ func (l *Library) setFilesProcessed(ctx context.Context, ids []int64, marked boo
 			valid++
 		}
 	}
+	validated := time.Now()
+	timing.validate += validated.Sub(locked)
 	if err := ctx.Err(); err != nil {
 		batchFailed(err)
 		return
@@ -222,6 +304,7 @@ func (l *Library) setFilesProcessed(ctx context.Context, ids []int64, marked boo
 	if valid == 0 {
 		return
 	}
+	defer func() { timing.write += time.Since(validated) }()
 	// All filesystem and write-pool queries finish before taking the sole
 	// writer connection. Keep only SQL in this short transaction.
 	err := l.db.Write(ctx, func(tx *sql.Tx) (err error) {
@@ -259,7 +342,9 @@ func (l *Library) setFilesProcessed(ctx context.Context, ids []int64, marked boo
 	})
 	if err != nil {
 		batchFailed(err)
+		return
 	}
+	timing.batches++
 	return
 }
 

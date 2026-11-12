@@ -1,8 +1,10 @@
 package library
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"fmt"
 	"log/slog"
 	"os"
@@ -499,5 +501,121 @@ func TestAutomaticSuccessDiagnosticsPersistWithHistory(t *testing.T) {
 		return tx.QueryRowContext(t.Context(), "SELECT raw_request,raw_response FROM events WHERE operation=?", op.ID).Scan(&request, &response)
 	}); err != nil || request == "" || response == "" {
 		t.Fatal(request, response, err)
+	}
+}
+
+// scanStages lists the staging directories that directory scans create under dir.
+func scanStages(t *testing.T, dir string) []string {
+	t.Helper()
+	stages, err := filepath.Glob(filepath.Join(dir, "video-rename-scan-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return stages
+}
+
+type markFinishedLog struct {
+	Msg         string `json:"msg"`
+	Changed     int64  `json:"changed"`
+	Directories int    `json:"directories"`
+	Batches     int    `json:"batches"`
+	Interrupted bool   `json:"interrupted"`
+	DurationMS  *int64 `json:"duration_ms"`
+	RefreshMS   *int64 `json:"refresh_duration_ms"`
+	ValidateMS  *int64 `json:"validate_duration_ms"`
+	WriteMS     *int64 `json:"write_duration_ms"`
+}
+
+func lastMarkFinished(t *testing.T, logs *bytes.Buffer) markFinishedLog {
+	t.Helper()
+	var last markFinishedLog
+	for line := range bytes.Lines(logs.Bytes()) {
+		var record markFinishedLog
+		if err := json.Unmarshal(line, &record); err != nil {
+			t.Fatalf("decode log line %q: %v", line, err)
+		}
+		if record.Msg == "mark_finished" {
+			last = record
+		}
+	}
+	if last.Msg == "" {
+		t.Fatalf("got no mark_finished log in %q", logs.String())
+	}
+	return last
+}
+
+// Many small directories must not pay for a staging database each.
+func TestProcessedMarksReuseOneScanStage(t *testing.T) {
+	l, root, _ := fixture(t)
+	const directories, filesPerDirectory = 3, 2
+	for d := range directories {
+		dir := filepath.Join(root, fmt.Sprintf("dir-%d", d))
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for f := range filesPerDirectory {
+			put(t, filepath.Join(dir, fmt.Sprintf("%d.mp4", f)))
+		}
+	}
+	refresh(t, l, 1)
+	stageRoot := t.TempDir()
+	t.Setenv("TMPDIR", stageRoot)
+	var logs bytes.Buffer
+	l.logger = slog.New(slog.NewJSONHandler(&logs, nil))
+
+	seen := map[string]bool{}
+	r := l.SetProcessedWithProgress(t.Context(), []int64{1}, true, func(MarkResult) {
+		for _, stage := range scanStages(t, stageRoot) {
+			seen[stage] = true
+		}
+	})
+	if r.Changed != directories*filesPerDirectory || r.Failed != 0 || r.Interrupted {
+		t.Fatalf("got %+v, want %d changed files", r, directories*filesPerDirectory)
+	}
+	if len(seen) != 1 {
+		t.Fatalf("got %d staging databases during marking, want 1: %v", len(seen), seen)
+	}
+	if left := scanStages(t, stageRoot); len(left) != 0 {
+		t.Fatalf("got staging left after marking: %v, want none", left)
+	}
+	finished := lastMarkFinished(t, &logs)
+	// The root and every child directory are refreshed; each child commits its own batch.
+	if finished.Changed != r.Changed || finished.Directories != directories+1 || finished.Batches != directories || finished.Interrupted {
+		t.Fatalf("got mark_finished %+v, want changed=%d directories=%d batches=%d", finished, r.Changed, directories+1, directories)
+	}
+	if finished.DurationMS == nil || finished.RefreshMS == nil || finished.ValidateMS == nil || finished.WriteMS == nil {
+		t.Fatalf("got mark_finished without stage durations: %+v", finished)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	r = l.SetProcessedWithProgress(ctx, []int64{1}, false, func(MarkResult) { cancel() })
+	if !r.Interrupted {
+		t.Fatalf("got %+v, want an interrupted traversal", r)
+	}
+	if left := scanStages(t, stageRoot); len(left) != 0 {
+		t.Fatalf("got staging left after cancellation: %v, want none", left)
+	}
+	if finished = lastMarkFinished(t, &logs); !finished.Interrupted {
+		t.Fatalf("got mark_finished %+v, want interrupted", finished)
+	}
+}
+
+func TestProcessedMarksFileTargetsSkipScanStage(t *testing.T) {
+	l, _, ids := markBatchFixture(t, 3)
+	stageRoot := t.TempDir()
+	t.Setenv("TMPDIR", stageRoot)
+	var logs bytes.Buffer
+	l.logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	r := l.SetProcessedWithProgress(t.Context(), ids, true, func(MarkResult) {
+		if stages := scanStages(t, stageRoot); len(stages) != 0 {
+			t.Errorf("got staging %v while marking files, want none", stages)
+		}
+	})
+	if r.Changed != int64(len(ids)) || r.Failed != 0 {
+		t.Fatalf("got %+v, want %d changed files", r, len(ids))
+	}
+	if finished := lastMarkFinished(t, &logs); finished.Directories != 0 || finished.Batches != 1 {
+		t.Fatalf("got mark_finished %+v, want directories=0 batches=1", finished)
 	}
 }
