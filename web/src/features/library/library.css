@@ -55,8 +55,8 @@
   text-align: left;
   justify-content: flex-start;
 }
-.modal.audio-dialog {
-  width: 860px;
+.audio-dialog {
+  --modal-width: 860px;
 }
 .extension-input {
   display: flex;

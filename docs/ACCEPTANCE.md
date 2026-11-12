@@ -130,3 +130,20 @@
 | 其他 | `git diff --check` 通过 |
 
 未运行：全仓竞态检测（只跑了受影响的三个包）、`TestScaleLarge` 超大规模用例（改动前的 100 目录布局实测为 98.2 秒，改动后未复测）、Web 检查与 E2E（没有改动前端）、FFmpeg 集成、Fuzz、govulncheck（依赖未变）。没有在 Linux 与 SMB / NFS 上验证。
+
+## 后续：批次详情与音频弹窗尺寸修复（2026-11-12）
+
+**起因。** 批次记录中点“详情”打开的弹窗从 1160px 变成 650px。来源是 `eb549d9`（10-28 全仓规范整改）：弹窗样式从全局 `theme.css` 移入 `ModalDialog.vue` 的 `<style scoped>`，编译后的 `.modal.wide[data-v-…]` 优先级 (0,3,0) 高于 `run-detail.css` 的 `.modal.run-detail-dialog` (0,2,0)。修复前实测，被压住的不止宽度：批次详情标题 16px（应为 20px）、标题栏留白 19px 24px（应为 22px 28px）、关闭按钮居中（应顶端对齐）、窄屏标题栏留白 15px 20px（应为 18px）；音频弹窗宽 480px（应为 860px）。圆角、最大高度和内容留白与组件默认值优先级相同，只靠样式加载顺序碰巧正确。
+
+**改动。** 没有退回全局样式。`ModalDialog` 的宽度、最大高度、圆角、标题栏留白与对齐、标题字号、内容留白改为读取 `--modal-*` 自定义属性，未设置时取原默认值；`run-detail.css` 与 `library.css` 改为在自己的类上设置这些属性，不再覆盖组件内部声明，因此结果与选择器优先级和加载顺序无关。约定见 [当前设计](DESIGN.md) 的“弹窗尺寸”。其他弹窗的默认尺寸不变；数据库、接口与后端未改动。
+
+测试（修复前先失败）：`e2e/run-detail.spec.ts` 新增“批次详情保持自己的宽度、标题与留白”，在 1440×1200 与 390×844 下检查计算后的宽度、最大高度、圆角、留白、标题字号，并用关闭按钮相对标题栏的 `offsetTop` 检查顶端对齐（Chromium 158 把 `flex-start` 报告为 `flow-start`，所以不比较该字符串；临时把对齐改回居中时该断言报 37 而非 22）。`e2e/library-lifecycle.spec.ts` 新增“音频弹窗使用自己的宽度”。
+
+| 检查 | 结果 |
+| --- | --- |
+| Web | Prettier（`format:check`）、ESLint、Stylelint、vue-tsc 通过；Vitest 19 文件 / 65 项通过；Vite 生产构建通过 |
+| 完整 E2E | 重新构建 Web 与 `bin/video-rename` 后，Playwright **197 / 197** 通过，约 9.0 分钟（含新增 2 项）；运行期间临时 stash 过约 2 秒工作区，因此另行重跑 `run-detail.spec.ts` 与 `library-lifecycle.spec.ts`，15 项通过 |
+| 截图 | `test-results/run-detail-timeline-desktop.png` 中批次详情恢复为 1160px 宽、20px 标题 |
+| 其他 | `git diff --check` 通过 |
+
+未运行：Go 检查与测试、FFmpeg 集成、规模测试、Fuzz、govulncheck（没有改动 Go 代码与依赖）。只在本机 Playwright Chromium 158 中验证，没有在 Safari、Firefox 中实测。

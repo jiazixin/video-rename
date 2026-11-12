@@ -167,6 +167,16 @@ test('单类编号记录在离开文件目录时关闭', async ({ page }) => {
   await leaveLibrary(page)
 })
 
+test('音频弹窗使用自己的宽度', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await mockLibrary(page)
+  await login(page)
+  await page.getByRole('button', { name: '播放音频 first.wav', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'first.wav', exact: true })
+  await expect(dialog).toBeVisible()
+  expect(await dialog.evaluate((el) => getComputedStyle(el).width)).toBe('860px')
+})
+
 test('关闭后重开音频不会被旧的下一首响应切换', async ({ page }) => {
   await mockLibrary(page)
   await login(page)

@@ -264,6 +264,42 @@ test('时间线详情示例、模型展开、复制、移动布局和实时刷�
   await expect(dialog).toHaveCount(0)
 })
 
+// The detail dialog sizes itself through ModalDialog's custom properties; the shared
+// dialog's own defaults (650px wide, 16px title) must not win over them.
+test('批次详情保持自己的宽度、标题与留白', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1200 })
+  const dialog = await openSample(page)
+  const box = (selector: string, property: string) =>
+    dialog.evaluate(
+      (el, [s, p]) => {
+        const node = s ? el.querySelector(s) : el
+        return node ? getComputedStyle(node).getPropertyValue(p) : ''
+      },
+      [selector, property] as const
+    )
+  expect.soft(await box('', 'width')).toBe('1160px')
+  expect.soft(await box('', 'max-height')).toBe('1056px')
+  expect.soft(await box('', 'border-top-left-radius')).toBe('12px')
+  expect.soft(await box(':scope > header', 'padding')).toBe('22px 28px')
+  // The close button stays at the top of the two-row header instead of centring on it.
+  // offsetTop ignores the opening transform; Chromium serialises flex-start as flow-start.
+  expect
+    .soft(
+      await dialog.evaluate((el) => {
+        const header = el.querySelector<HTMLElement>(':scope > header'),
+          close = header?.querySelector<HTMLElement>(':scope > .icon-btn')
+        return header && close ? close.offsetTop - header.offsetTop : -1
+      })
+    )
+    .toBe(22)
+  expect.soft(await box(':scope > header h2', 'font-size')).toBe('20px')
+  expect.soft(await box(':scope > .modal-content', 'padding')).toBe('24px 28px')
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect.soft(await box('', 'width')).toBe(`${390 - 2 * 14}px`)
+  expect.soft(await box(':scope > header', 'padding')).toBe('18px')
+  expect.soft(await box(':scope > .modal-content', 'padding')).toBe('20px 16px')
+})
+
 test('失败、取消、完成与未开始批次的生命周期', async ({ page }) => {
   const run = sampleRun()
   const dialog = await openSample(page, run)

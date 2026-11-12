@@ -94,32 +94,35 @@
     justify-content: center;
     padding: var(--space-24);
   }
+  /* Scoped selectors outrank a caller's plain class, so callers size the dialog through these
+     custom properties (set on the class they pass) instead of overriding the declarations.
+     The fallbacks are the defaults. */
   .modal {
-    width: 480px;
+    width: var(--modal-width, 480px);
     max-width: 100%;
-    max-height: 90vh;
+    max-height: var(--modal-max-height, 90vh);
     background: var(--palette-ffffff);
     border: 1px solid var(--line);
-    border-radius: var(--radius-15);
+    border-radius: var(--modal-radius, var(--radius-15));
     box-shadow: var(--shadow-2);
     display: flex;
     flex-direction: column;
   }
   .modal.wide {
-    width: 650px;
+    width: var(--modal-width, 650px);
   }
   .modal > header {
     display: flex;
-    align-items: center;
+    align-items: var(--modal-header-align, center);
     justify-content: space-between;
-    padding: var(--space-19) var(--space-24);
+    padding: var(--modal-header-padding, var(--space-19) var(--space-24));
     border-bottom: 1px solid var(--line);
   }
   .modal > header h2 {
-    font-size: var(--font-size-16);
+    font-size: var(--modal-title-size, var(--font-size-16));
   }
   .modal-content {
-    padding: var(--space-24);
+    padding: var(--modal-content-padding, var(--space-24));
     overflow: auto;
   }
   .modal-content :deep(p) {
@@ -135,17 +138,17 @@
   }
   @media (max-width: 800px) {
     .modal-content {
-      padding: var(--space-20);
+      padding: var(--modal-content-padding, var(--space-20));
     }
   }
   @media (max-width: 800px) {
     .modal > header {
-      padding: var(--space-15) var(--space-20);
+      padding: var(--modal-header-padding, var(--space-15) var(--space-20));
     }
   }
   @media (max-width: 800px) {
     .modal {
-      max-height: 94vh;
+      max-height: var(--modal-max-height, 94vh);
     }
   }
 

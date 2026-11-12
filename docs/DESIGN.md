@@ -163,6 +163,22 @@ YAML 只保存监听地址、媒体根目录、持久数据和缓存目录、管
 
 可点击元素（按钮、链接、`summary`、标签页、下拉选项）不小于 24×24 CSS px（WCAG 2.5.8），尺寸取自 `tokens.css` 的 `--control-hit-area`：`theme.css` 给按钮设最小宽高，给 `summary` 和段落内链接补上下内边距，视觉尺寸不变的地方只扩大可点区域。勾选框（16px）和开关输入框不在此列，它们的说明文字属于同一个点击目标。`e2e/accessibility.spec.ts` 在 1440px 和 390px 下逐页检查。
 
+## 当前 UI 约定：弹窗尺寸
+
+`ModalDialog` 默认宽 480px，`wide` 为 650px，`theater` 为暗场大窗。需要其他尺寸的弹窗给 `ModalDialog` 传一个类名，在该类上设置组件提供的自定义属性，不直接覆盖 `.modal`、`header`、`.modal-content` 的声明：组件的 scoped 选择器带属性选择器，优先级高于调用方的普通类名，直接覆盖会被组件默认值压住，或只靠样式加载顺序碰巧生效。
+
+| 自定义属性 | 默认值 | 用途 |
+| --- | --- | --- |
+| `--modal-width` | 480px（`wide` 为 650px） | 面板宽度，始终不超过视口留边 |
+| `--modal-max-height` | 90vh（800px 以下 94vh） | 面板最大高度 |
+| `--modal-radius` | `--radius-15` | 面板圆角 |
+| `--modal-header-padding` | 19px 24px（800px 以下 15px 20px） | 标题栏留白 |
+| `--modal-header-align` | `center` | 标题与关闭按钮的纵向对齐 |
+| `--modal-title-size` | `--font-size-16` | 标题字号 |
+| `--modal-content-padding` | 24px（800px 以下 20px） | 内容区留白 |
+
+当前使用者：批次详情（1160px、88dvh、两行标题栏顶端对齐、20px 标题，700px 以下收窄留白）与音频播放（860px）。`e2e/run-detail.spec.ts` 与 `e2e/library-lifecycle.spec.ts` 检查这些值实际生效。
+
 ## 当前 UI 约定：动效
 
 过渡统一为线性曲线：进入 0.2s、离开 0.12s、悬停 0.15s（`--motion-*`）。页面切换先淡出旧页、再淡入新页并上移 6px；文件目录保持缓存与滚动位置。弹窗统一用 `ModalTransition` 包裹带 `v-if` 的 `ModalDialog`，遮罩淡入、面板从下方 8px 轻微放大落位；关闭中的弹窗和离开中的页面标记 `aria-hidden` 与 `inert`，不接收焦点和点击。系统设置、用量页切换分类时内容只做进入动画；分类下划线由 `v-tab-indicator` 滑动到当前项，换行时跟随所在行。下拉菜单与日历只做进入动画，关闭立即移除。`prefers-reduced-motion` 时关闭全部动画。
