@@ -19,6 +19,7 @@
       setSession(
         await api<{ username: string }>('/auth/login', {
           method: 'POST',
+          feedback: 'inline',
           body: {
             username: username.value,
             password: password.value

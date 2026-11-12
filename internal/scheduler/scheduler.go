@@ -5,8 +5,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +21,12 @@ import (
 	"video-rename/internal/model"
 	"video-rename/internal/storage"
 	"video-rename/internal/timefmt"
+)
+
+const (
+	maxNameLength = 80  // characters in a plan name
+	maxTargets    = 100 // directories in one plan
+	maxPlans      = 100
 )
 
 // Plan is a scheduled batch rule.
@@ -42,11 +48,23 @@ type Plan struct {
 }
 
 // Scheduler persists calendar rules and starts their batches. mu serializes
-// plan mutations and trigger deduplication.
+// plan mutations and trigger deduplication, and guards failures.
 type Scheduler struct {
-	mu   sync.Mutex
-	db   *storage.Store
-	Jobs *job.Manager
+	mu     sync.Mutex
+	db     *storage.Store
+	Jobs   *job.Manager
+	logger *slog.Logger
+	// failures holds the current failure of each plan, and of the tick itself
+	// under tickFailure, so a failure that persists is reported once.
+	failures map[int64]failure
+}
+
+// tickFailure keys a failure that is not tied to one plan.
+const tickFailure int64 = 0
+
+type failure struct {
+	message  string // stored record text
+	recorded bool   // saved to the event log
 }
 
 // Rule parses a five-field cron expression in time zone zone.
@@ -146,8 +164,21 @@ func (s *Scheduler) Save(ctx context.Context, p Plan) (Plan, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p.Name = strings.TrimSpace(p.Name)
-	if p.Name == "" || utf8.RuneCountInString(p.Name) > 80 || len(p.Targets) == 0 || len(p.Targets) > 100 {
-		return p, domain.Invalid(domain.FieldError{Path: "name", Reason: "required"}, domain.FieldError{Path: "targets", Reason: "selection_required"})
+	var issues []domain.FieldError
+	switch length := utf8.RuneCountInString(p.Name); {
+	case length == 0:
+		issues = append(issues, domain.FieldError{Path: "name", Reason: "required"})
+	case length > maxNameLength:
+		issues = append(issues, domain.FieldError{Path: "name", Reason: "too_long"})
+	}
+	switch {
+	case len(p.Targets) == 0:
+		issues = append(issues, domain.FieldError{Path: "targets", Reason: "selection_required"})
+	case len(p.Targets) > maxTargets:
+		issues = append(issues, domain.FieldError{Path: "targets", Reason: "too_many"})
+	}
+	if len(issues) > 0 {
+		return p, domain.Invalid(issues...)
 	}
 	if p.Task == "" {
 		p.Task = "rename"
@@ -209,7 +240,7 @@ func (s *Scheduler) Save(ctx context.Context, p Plan) (Plan, error) {
 			if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM schedules").Scan(&n); err != nil {
 				return p, err
 			}
-			if n >= 100 {
+			if n >= maxPlans {
 				return p, domain.Fail(domain.KindTooMany, domain.Failure{Reason: domain.ReasonSchedulesFull, Message: "at most 100 schedules"})
 			}
 			res, err := tx.ExecContext(ctx, "INSERT INTO schedules(name,targets,recursive,kind,expression,timezone,enabled,next,model_config_id,task) VALUES(?,?,?,?,?,?,?,?,?,?)", p.Name, string(raw), p.Recursive, p.Kind, p.Expression, p.Timezone, p.Enabled, p.Next, p.ModelConfigID, p.Task)
@@ -284,7 +315,8 @@ func (s *Scheduler) ResetNext(ctx context.Context, now time.Time) error {
 }
 
 // Tick starts the enabled plans that are due at now and advances their next run
-// time.
+// time. A plan that fails is reported and does not hold back the others; only a
+// failure to read the plans is returned.
 func (s *Scheduler) Tick(ctx context.Context, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -294,68 +326,120 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) error {
 	}
 	for _, p := range plans {
 		if !p.Enabled {
+			delete(s.failures, p.ID)
 			continue
 		}
-		at, err := time.Parse(timefmt.Layout, p.Next)
-		if err != nil {
-			return err
+		err := s.trigger(ctx, p, now)
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
-		if at.After(now) {
-			continue
-		}
-		next, err := Preview(p.Expression, p.Timezone, now)
-		if err != nil {
-			return err
-		}
-		loc, err := time.LoadLocation(p.Timezone)
-		if err != nil {
-			return fmt.Errorf("load schedule timezone %q: %w", p.Timezone, err)
-		}
-		wall := at.In(loc).Format("2006-01-02 15:04")
-		n, err := storage.WriteValue(ctx, s.db, func(tx *sql.Tx) (int64, error) {
-			result, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO schedule_ticks VALUES(?,?,?)", p.ID, wall, storage.Now())
-			if err != nil {
-				return 0, err
-			}
-			if _, err = tx.ExecContext(ctx, "UPDATE schedules SET next=? WHERE id=?", next[0], p.ID); err != nil {
-				return 0, err
-			}
-			return result.RowsAffected()
-		})
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			continue
-		}
-		var active int
-		if err = s.db.View(ctx, func(tx *sql.Tx) error {
-			return tx.QueryRowContext(ctx, "SELECT count(*) FROM runs WHERE plan=? AND status IN "+domain.ActiveRunStatusesSQL, p.ID).Scan(&active)
-		}); err != nil {
-			return err
-		}
-		message := domain.Record{Code: "schedule_triggered", Message: "triggered"}.Text()
-		if active > 0 {
-			message = domain.Record{Code: "schedule_skipped_active", Message: "previous run unfinished; skipped"}.Text()
-		} else {
-			_, err = s.Jobs.Create(ctx, job.Request{Task: p.Task, ModelConfigID: p.ModelConfigID, Targets: p.Targets, Recursive: p.Recursive, Key: fmt.Sprintf("plan:%d:%s", p.ID, wall)}, "schedule", p.ID)
-			if err != nil {
-				message = domain.RecordText(err)
-				if err := s.Jobs.Library.Event(ctx, library.EventInput{Category: "failure", Action: "schedule", Entry: 0, Operation: 0, Run: 0, Old: "", New: "", Message: message}); err != nil {
-					return err
-				}
-			}
-		}
-		if _, err = storage.WriteValue(ctx, s.db, func(tx *sql.Tx) (sql.Result, error) {
-			return tx.ExecContext(ctx, "UPDATE schedules SET last=? WHERE id=?", message, p.ID)
-		}); err != nil {
-			return err
-		}
+		s.report(ctx, p.ID, err)
 	}
 	return nil
 }
 
-// Run calls Tick every second until ctx ends.
+// trigger starts plan p if it is due at now. Callers hold mu.
+func (s *Scheduler) trigger(ctx context.Context, p Plan, now time.Time) error {
+	at, err := time.Parse(timefmt.Layout, p.Next)
+	if err != nil {
+		return fmt.Errorf("parse next run time of schedule %d: %w", p.ID, err)
+	}
+	if at.After(now) {
+		return nil
+	}
+	next, err := Preview(p.Expression, p.Timezone, now)
+	if err != nil {
+		return err
+	}
+	loc, err := time.LoadLocation(p.Timezone)
+	if err != nil {
+		return fmt.Errorf("load schedule timezone %q: %w", p.Timezone, err)
+	}
+	wall := at.In(loc).Format("2006-01-02 15:04")
+	n, err := storage.WriteValue(ctx, s.db, func(tx *sql.Tx) (int64, error) {
+		result, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO schedule_ticks VALUES(?,?,?)", p.ID, wall, storage.Now())
+		if err != nil {
+			return 0, err
+		}
+		if _, err = tx.ExecContext(ctx, "UPDATE schedules SET next=? WHERE id=?", next[0], p.ID); err != nil {
+			return 0, err
+		}
+		return result.RowsAffected()
+	})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return nil
+	}
+	var active int
+	if err = s.db.View(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT count(*) FROM runs WHERE plan=? AND status IN "+domain.ActiveRunStatusesSQL, p.ID).Scan(&active)
+	}); err != nil {
+		return err
+	}
+	message := domain.Record{Code: "schedule_triggered", Message: "triggered"}.Text()
+	if active > 0 {
+		message = domain.Record{Code: "schedule_skipped_active", Message: "previous run unfinished; skipped"}.Text()
+	} else {
+		_, err = s.Jobs.Create(ctx, job.Request{Task: p.Task, ModelConfigID: p.ModelConfigID, Targets: p.Targets, Recursive: p.Recursive, Key: fmt.Sprintf("plan:%d:%s", p.ID, wall)}, "schedule", p.ID)
+		if err != nil {
+			message = domain.RecordText(err)
+			if err := s.Jobs.Library.Event(ctx, library.EventInput{Category: "failure", Action: "schedule", Entry: 0, Operation: 0, Run: 0, Old: "", New: "", Message: message}); err != nil {
+				return err
+			}
+		}
+	}
+	_, err = storage.WriteValue(ctx, s.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(ctx, "UPDATE schedules SET last=? WHERE id=?", message, p.ID)
+	})
+	return err
+}
+
+// report notes the outcome of plan id, or of the tick itself for tickFailure.
+// A new failure is logged once and saved to the event log, and to the plan,
+// as soon as the database accepts it; while the same failure persists nothing
+// more is written. Callers hold mu.
+func (s *Scheduler) report(ctx context.Context, id int64, err error) {
+	if err == nil {
+		delete(s.failures, id)
+		return
+	}
+	message := domain.RecordText(err)
+	current := s.failures[id]
+	if current.message != message {
+		current = failure{message: message}
+		s.logger.Warn("schedule_failed", "schedule_id", id, "error", err)
+	}
+	if !current.recorded {
+		current.recorded = s.record(ctx, id, message) == nil
+	}
+	if s.failures == nil {
+		s.failures = map[int64]failure{}
+	}
+	s.failures[id] = current
+}
+
+// record saves a failure to the event log and, for a plan, as its last result.
+func (s *Scheduler) record(ctx context.Context, id int64, message string) error {
+	action := "schedule"
+	if id == tickFailure {
+		action = "scheduler"
+	}
+	if err := s.Jobs.Library.Event(ctx, library.EventInput{Category: "failure", Action: action, Message: message}); err != nil {
+		return err
+	}
+	if id == tickFailure {
+		return nil
+	}
+	_, err := storage.WriteValue(ctx, s.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(ctx, "UPDATE schedules SET last=? WHERE id=?", message, id)
+	})
+	return err
+}
+
+// Run calls Tick every second until ctx ends. A failing tick never stops the
+// loop: the failure is logged and recorded, and the next tick tries again.
 func (s *Scheduler) Run(ctx context.Context) error {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
@@ -364,19 +448,23 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case now := <-t.C:
-			if err := s.Tick(ctx, now); err != nil {
-				if ctx.Err() != nil {
-					return nil
-				}
-				if recordErr := s.Jobs.Library.Event(ctx, library.EventInput{Category: "failure", Action: "scheduler", Message: domain.RecordText(err)}); recordErr != nil {
-					return errors.Join(err, fmt.Errorf("record scheduler failure: %w", recordErr))
-				}
-			}
+			s.tick(ctx, now)
 		}
 	}
 }
 
+// tick runs one Tick and reports its own failure.
+func (s *Scheduler) tick(ctx context.Context, now time.Time) {
+	err := s.Tick(ctx, now)
+	if ctx.Err() != nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.report(ctx, tickFailure, err)
+}
+
 // New creates the schedule store and its batch runner.
-func New(db *storage.Store, manager *job.Manager) *Scheduler {
-	return &Scheduler{db: db, Jobs: manager}
+func New(db *storage.Store, manager *job.Manager, logger *slog.Logger) *Scheduler {
+	return &Scheduler{db: db, Jobs: manager, logger: logger.With("component", "scheduler")}
 }

@@ -23,7 +23,7 @@ func TestNumberingTreeHistoryConcurrentRequests(t *testing.T) {
 	for _, name := range []string{"photo.jpg", "child/photo.jpg"} {
 		put(t, filepath.Join(root, name))
 	}
-	batches, err := l.PreviewNumberingTree(t.Context(), 1, domain.DefaultNumberingSettings())
+	batches, err := l.PreviewNumberingTreeWithProgress(t.Context(), 1, domain.DefaultNumberingSettings(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestNumberingTreeIndexesEveryLevelAndRestores(t *testing.T) {
 	settings := domain.DefaultNumberingSettings()
 	settings.Image.Compact = false
 	settings.Audio.Compact = false
-	batches, err := l.PreviewNumberingTree(t.Context(), 1, settings)
+	batches, err := l.PreviewNumberingTreeWithProgress(t.Context(), 1, settings, nil)
 	if err != nil || len(batches) != 4 {
 		t.Fatalf("preview: %v, %v", batches, err)
 	}
@@ -155,7 +155,7 @@ func TestNumberingTreeSharedRulesAndChangedDirectory(t *testing.T) {
 	settings.Shared = true
 	settings.Image.Padding = 3
 	settings.Audio.Padding = 2
-	batches, err := l.PreviewNumberingTree(t.Context(), 1, settings)
+	batches, err := l.PreviewNumberingTreeWithProgress(t.Context(), 1, settings, nil)
 	if err != nil || len(batches) != 1 {
 		t.Fatalf("preview: %v %v", batches, err)
 	}
@@ -176,7 +176,7 @@ func TestNumberingTreeSharedRulesAndChangedDirectory(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := l.PreviewNumberingTree(ctx, 1, settings); err == nil {
+	if _, err := l.PreviewNumberingTreeWithProgress(ctx, 1, settings, nil); err == nil {
 		t.Fatal("ignored cancellation")
 	}
 }
@@ -193,7 +193,7 @@ func TestNumberingTreeSharedCompactReservesOnlyKeptNumbers(t *testing.T) {
 			settings := domain.DefaultNumberingSettings()
 			settings.Shared = true
 			settings.Audio.Compact = audioCompact
-			batches, err := l.PreviewNumberingTree(t.Context(), 1, settings)
+			batches, err := l.PreviewNumberingTreeWithProgress(t.Context(), 1, settings, nil)
 			if err != nil || len(batches) != 1 {
 				t.Fatalf("preview: %v %v", batches, err)
 			}
@@ -226,7 +226,7 @@ func TestNumberingTreeWithPendingRefreshFlag(t *testing.T) {
 	l.refreshMu.Lock()
 	l.refreshing[1] = func() {}
 	l.refreshMu.Unlock()
-	batches, err := l.PreviewNumberingTree(t.Context(), 1, domain.DefaultNumberingSettings())
+	batches, err := l.PreviewNumberingTreeWithProgress(t.Context(), 1, domain.DefaultNumberingSettings(), nil)
 	if err != nil || len(batches) != 1 || batches[0].Items[0].New != "1.jpg" {
 		t.Fatalf("preview: %+v, %v", batches, err)
 	}
@@ -251,7 +251,7 @@ func TestNumberingTreeConflictDiagnostics(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = l.PreviewNumberingTree(t.Context(), 1, domain.DefaultNumberingSettings())
+			_, err = l.PreviewNumberingTreeWithProgress(t.Context(), 1, domain.DefaultNumberingSettings(), nil)
 			diagnostic, ok := errors.AsType[*domain.JobError](err)
 			if !ok {
 				t.Fatalf("missing diagnostic: %v", err)
@@ -293,7 +293,7 @@ func TestNumberingTreeCompactNumericNamesAndCaseAliases(t *testing.T) {
 	}
 	settings := domain.DefaultNumberingSettings()
 	settings.Image.Compact = true
-	batches, err := l.PreviewNumberingTree(t.Context(), 1, settings)
+	batches, err := l.PreviewNumberingTreeWithProgress(t.Context(), 1, settings, nil)
 	if err != nil || len(batches) != 2 {
 		t.Fatalf("preview: %+v %v", batches, err)
 	}

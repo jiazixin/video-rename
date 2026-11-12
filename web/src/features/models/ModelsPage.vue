@@ -75,8 +75,8 @@
       emit('changed');
       open(copy);
       toast.show('模型配置已复制');
-    } catch (e) {
-      error.value = errorText(e);
+    } catch {
+      // A card has no error region of its own; useApi reports the failure as a toast.
     } finally {
       actionBusy.value = false;
     }
@@ -88,6 +88,7 @@
     try {
       await api<unknown>(`/model-configs/${deleteTarget.value.id}`, {
         method: 'DELETE',
+        feedback: 'inline',
         headers: { 'If-Match': deleteTarget.value.etag },
         body: {}
       });
@@ -132,6 +133,7 @@
     try {
       const result = await api<ProbeResult>('/model-configs/test-vision', {
         method: 'POST',
+        feedback: 'inline',
         body: { ...payload(), id: selected.value?.id || 0, probe_timeout_seconds: seconds },
         signal: controller.signal
       });
@@ -234,6 +236,7 @@
         selected.value ? `/model-configs/${selected.value.id}` : '/model-configs',
         {
           method: selected.value ? 'PATCH' : 'POST',
+          feedback: 'inline',
           headers: selected.value ? { 'If-Match': selected.value.etag } : {},
           body: payload()
         }
@@ -266,6 +269,7 @@
         '/model-configs/detect',
         {
           method: 'POST',
+          feedback: 'inline',
           body: { ...payload(), id: selected.value?.id || 0 },
           signal: controller.signal
         }
@@ -296,8 +300,8 @@
       toast.show('默认模型已更新');
       await load();
       emit('changed');
-    } catch (e) {
-      error.value = errorText(e);
+    } catch {
+      // A card has no error region of its own; useApi reports the failure as a toast.
     } finally {
       settingDefault.value = false;
     }

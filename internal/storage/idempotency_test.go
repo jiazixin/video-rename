@@ -105,9 +105,18 @@ func TestIdempotencyConcurrentReservationAndPendingRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	request.Now = request.Now.Add(48 * time.Hour)
+	// An unrecorded outcome rejects its key for the whole retention period.
+	// This used to hold forever; reservations now expire with the retention so
+	// that interrupted requests cannot fill the capacity permanently. Keys are
+	// generated per operation and file operations keep their own journal keys.
+	reserved := request.Now
+	request.Now = reserved.Add(idempotencyRetention - time.Millisecond)
 	if _, _, err := db.ReserveIdempotency(t.Context(), request); !errors.Is(err, ErrIdempotencyPending) {
-		t.Fatalf("uncertain mutation became repeatable: %v", err)
+		t.Fatalf("got %v within the retention period, want ErrIdempotencyPending", err)
+	}
+	request.Now = reserved.Add(idempotencyRetention)
+	if _, fresh, err := db.ReserveIdempotency(t.Context(), request); err != nil || !fresh {
+		t.Fatalf("got fresh=%v, err=%v after the retention period, want a fresh reservation", fresh, err)
 	}
 }
 

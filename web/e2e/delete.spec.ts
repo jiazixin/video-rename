@@ -1,4 +1,4 @@
-import { bodyRows, defined, pageReadout } from './support'
+import { bodyRows, defined, pageReadout, toasts } from './support'
 import { test, expect, type Page } from '@playwright/test'
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -41,12 +41,19 @@ test('批量删除跨页文件和非空目录，确认可取消，操作列右�
       .getByRole('columnheader', { name: '操作', exact: true })
       .evaluate((el) => getComputedStyle(el).textAlign)
   ).toBe('right')
-  expect(
-    await page
-      .locator('.file-table .row-actions')
-      .first()
-      .evaluate((el) => getComputedStyle(el).justifyContent)
-  ).toBe('flex-end')
+  // Measured rather than read from justify-content: Chromium 158 reports flex-end as flow-end.
+  const actionsGap = await page
+    .locator('.file-table .row-actions')
+    .first()
+    .evaluate((el) => {
+      const cell = el.closest('td')
+      const last = el.querySelector('button:last-of-type')
+      if (!cell || !last) return NaN
+      const contentRight =
+        cell.getBoundingClientRect().right - parseFloat(getComputedStyle(cell).paddingRight)
+      return contentRight - last.getBoundingClientRect().right
+    })
+  expect(Math.abs(actionsGap)).toBeLessThanOrEqual(1)
   expect(await toolbar.getByRole('button').allTextContents()).toEqual([
     '全选',
     '反选',
@@ -141,6 +148,8 @@ test('批量删除部分失败保留勾选，执行中禁止重复提交，重�
     await expect(dialog.getByRole('alert')).toContainText('已删除 1 项，失败 1 项')
     await expect(dialog.getByRole('alert')).toContainText('file001.txt：目录内有活动任务')
     await expect(dialog.getByRole('listitem')).toHaveText(['file001.txt'])
+    // The open dialog reports the outcome; a toast would repeat it.
+    await expect(toasts(page)).toHaveCount(0)
     await expect(page.getByRole('group', { name: '批量操作' }).getByText(/^已选 /)).toHaveText(
       '已选 1 项'
     )

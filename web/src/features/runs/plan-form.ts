@@ -57,6 +57,7 @@ export function usePlanForm({ mode, source, notify, onSaved }: PlanFormOptions) 
     try {
       preview.value = await apiItems<string>('/schedules/preview', {
         method: 'POST',
+        feedback: 'inline',
         signal: controller.signal,
         body: { expression: expression.value, timezone: timezone.value }
       })
@@ -72,6 +73,7 @@ export function usePlanForm({ mode, source, notify, onSaved }: PlanFormOptions) 
       if (mode === 'manual') {
         const r = await api<{ id: number }>('/runs', {
           method: 'POST',
+          feedback: 'inline',
           body: {
             task: taskType.value,
             model_config_id: extracting ? 0 : modelConfigID.value,
@@ -83,6 +85,7 @@ export function usePlanForm({ mode, source, notify, onSaved }: PlanFormOptions) 
       } else {
         await api<unknown>(source ? `/schedules/${source.id}` : '/schedules', {
           method: source ? 'PATCH' : 'POST',
+          feedback: 'inline',
           headers: source ? { 'If-Match': source.etag } : {},
           body: {
             task: taskType.value,

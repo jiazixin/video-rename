@@ -218,6 +218,7 @@
     try {
       const result = await api<{ deleted: number }>('/extractions/clear', {
         method: 'POST',
+        feedback: 'inline',
         body: { all: true }
       });
       toast.show(`已清除 ${result.deleted} 条抽帧记录`);

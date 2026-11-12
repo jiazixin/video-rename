@@ -79,7 +79,12 @@ func (m *Manager) failRun(ctx context.Context, id, target int64, cause error) er
 	})
 }
 
-func (m *Manager) completeRun(ctx context.Context, id int64, cancelled bool) error {
+// completeRun saves the final status of run id. stopped reports that its
+// context ended: the user cancelled it (status cancelling), a fatal failure
+// stopped it (error already saved), or the service is shutting down. The last
+// case is recorded exactly as startup recovery records a run cut off by a
+// crash, so a restart never looks like a user's cancellation.
+func (m *Manager) completeRun(ctx context.Context, id int64, stopped bool) error {
 	ctx, cancel := storage.Detach(ctx)
 	defer cancel()
 	return m.db.Write(ctx, func(tx *sql.Tx) error {
@@ -90,15 +95,17 @@ func (m *Manager) completeRun(ctx context.Context, id int64, cancelled bool) err
 			return err
 		}
 		status := "completed"
-		if cancelled || current == "cancelling" {
+		switch {
+		case (stopped || current == "cancelling") && message != "":
+			status = "failed"
+			err = cancelUnfinished(ctx, tx, id, recordCancelled)
+		case current == "cancelling":
 			status = "cancelled"
-			if message != "" {
-				status = "failed"
-			}
-			if err = cancelUnfinished(ctx, tx, id, recordCancelled); err != nil {
-				return err
-			}
-		} else {
+			err = cancelUnfinished(ctx, tx, id, recordCancelled)
+		case stopped:
+			status = "interrupted"
+			err = interruptRun(ctx, tx, id)
+		default:
 			var unfinished bool
 			if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM run_items WHERE run=? AND status IN ('queued','running'))", id).Scan(&unfinished); err != nil {
 				return err
@@ -113,9 +120,28 @@ func (m *Manager) completeRun(ctx context.Context, id int64, cancelled bool) err
 				}
 			}
 		}
+		if err != nil {
+			return err
+		}
 		if _, err = tx.ExecContext(ctx, "UPDATE runs SET status=?,finished=? WHERE id=?", status, storage.Now(), id); err != nil {
 			return err
 		}
 		return nil
 	})
+}
+
+// interruptRun records the service stopping under run id. Items and extraction
+// records that already ended as cancelled were stopped by the same shutdown.
+func interruptRun(ctx context.Context, tx *sql.Tx, id int64) error {
+	if err := cancelUnfinished(ctx, tx, id, recordItemInterrupted); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE run_items SET message=? WHERE run=? AND status='cancelled' AND message=?", recordItemInterrupted, id, recordCancelled); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE extraction_records SET message=? WHERE run=? AND message=?", recordExtractInterrupted, id, recordExtractionCancelled); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, "UPDATE runs SET error=? WHERE id=?", recordRunInterrupted, id)
+	return err
 }

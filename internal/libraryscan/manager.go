@@ -32,21 +32,27 @@ type ScanError struct {
 
 // Status is the state of the current or last scan round.
 type Status struct {
-	ID          string      `json:"id"`
-	Status      string      `json:"status"`
-	Source      string      `json:"source"`
-	Targets     []int64     `json:"targets"`
-	Started     string      `json:"started"`
-	Finished    string      `json:"finished"`
-	NextScan    string      `json:"next_scan"`
-	CurrentPath string      `json:"current_path"`
-	Directories int64       `json:"directories"`
-	Files       int64       `json:"files"`
-	Added       int64       `json:"added"`
-	Changed     int64       `json:"changed"`
-	Removed     int64       `json:"removed"`
-	Errors      []ScanError `json:"errors"`
+	ID          string  `json:"id"`
+	Status      string  `json:"status"`
+	Source      string  `json:"source"`
+	Targets     []int64 `json:"targets"`
+	Started     string  `json:"started"`
+	Finished    string  `json:"finished"`
+	NextScan    string  `json:"next_scan"`
+	CurrentPath string  `json:"current_path"`
+	Directories int64   `json:"directories"`
+	Files       int64   `json:"files"`
+	Added       int64   `json:"added"`
+	Changed     int64   `json:"changed"`
+	Removed     int64   `json:"removed"`
+	// ErrorCount counts every failure; Errors lists the first maxScanErrors.
+	ErrorCount int64       `json:"error_count"`
+	Errors     []ScanError `json:"errors"`
 }
+
+// maxScanErrors bounds the failures kept and reported for one round; a tree
+// with unreadable directories must not grow the polled status without limit.
+const maxScanErrors = 100
 
 type scanTimer interface {
 	C() <-chan time.Time
@@ -100,6 +106,7 @@ func (m *Manager) snapshotLocked() Status {
 	s.Targets = slices.Clone(s.Targets)
 	s.Errors = slices.Clone(s.Errors)
 	if m.settingsError != nil {
+		s.ErrorCount++
 		s.Errors = append(s.Errors, ScanError{Scope: "settings", Error: domain.RecordOf(m.settingsError)})
 		if !m.active {
 			s.Status = "failed"
@@ -361,8 +368,8 @@ func (m *Manager) Run(ctx context.Context) error {
 				m.mu.Lock()
 				if !m.active && !m.closed && ctx.Err() == nil {
 					m.status = Status{Status: "failed", Source: "automatic", Targets: slices.Clone(settings.Targets),
-						Finished: timefmt.Format(m.now()),
-						Errors:   []ScanError{{Scope: "targets", Error: domain.RecordOf(err)}}}
+						Finished: timefmt.Format(m.now()), ErrorCount: 1,
+						Errors: []ScanError{{Scope: "targets", Error: domain.RecordOf(err)}}}
 					m.anchor = m.now()
 				}
 				m.mu.Unlock()
@@ -407,7 +414,10 @@ func (m *Manager) addError(ctx context.Context, id int64, err error) {
 	defer cancel()
 	path := m.library.DisplayPath(ctx, id)
 	m.mu.Lock()
-	m.status.Errors = append(m.status.Errors, ScanError{Path: path, Error: domain.RecordOf(err)})
+	m.status.ErrorCount++
+	if len(m.status.Errors) < maxScanErrors {
+		m.status.Errors = append(m.status.Errors, ScanError{Path: path, Error: domain.RecordOf(err)})
+	}
 	m.mu.Unlock()
 }
 
@@ -472,9 +482,9 @@ func (m *Manager) run(ctx context.Context, targets, excluded []int64) {
 		switch {
 		case cancelled && !fatal:
 			m.status.Status = "cancelled"
-		case fatal || len(m.status.Errors) > 0 && m.status.Directories == 0:
+		case fatal || m.status.ErrorCount > 0 && m.status.Directories == 0:
 			m.status.Status = "failed"
-		case len(m.status.Errors) > 0:
+		case m.status.ErrorCount > 0:
 			m.status.Status = "partial_failure"
 		default:
 			m.status.Status = "completed"

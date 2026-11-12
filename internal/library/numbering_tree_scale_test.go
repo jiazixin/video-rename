@@ -27,7 +27,7 @@ func TestScaleNumberingTree(t *testing.T) {
 	settings := domain.DefaultNumberingSettings()
 	settings.Image.Compact = true
 	start := time.Now()
-	batches, err := l.PreviewNumberingTree(t.Context(), 1, settings)
+	batches, err := l.PreviewNumberingTreeWithProgress(t.Context(), 1, settings, nil)
 	if err != nil || len(batches) != directories {
 		t.Fatalf("batches=%d err=%v", len(batches), err)
 	}

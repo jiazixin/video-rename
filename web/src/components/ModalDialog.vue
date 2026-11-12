@@ -23,14 +23,17 @@
     }
     if (e.key === 'Tab') {
       const items = panel.value?.querySelectorAll<HTMLElement>(
-        'button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),summary,[tabindex="0"]'
+        'button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),summary,[tabindex="0"]'
       );
       if (!items?.length) return;
       const visible = Array.from(items).filter((item) => item.getClientRects().length);
       const first = visible[0],
         last = visible[visible.length - 1];
       if (!first || !last) return;
-      if (e.shiftKey && document.activeElement === first) {
+      // A media viewer focuses the panel itself; going back from there must
+      // wrap to the last control instead of leaving the dialog.
+      const onPanel = document.activeElement === panel.value;
+      if (e.shiftKey && (document.activeElement === first || onPanel)) {
         e.preventDefault();
         last.focus();
       } else if (!e.shiftKey && document.activeElement === last) {

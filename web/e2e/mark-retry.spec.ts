@@ -1,4 +1,4 @@
-import { bodyRows, defined } from './support'
+import { bodyRows, defined, toasts } from './support'
 import { test, expect, type Page } from '@playwright/test'
 import type { Entry } from '../src/app/contracts'
 
@@ -310,6 +310,8 @@ for (const interrupted of [false, true]) {
     await expect(dialog(page).getByRole('alert')).toContainText('已完成的标记会保留')
     await expect(dialog(page).getByRole('alert')).not.toContainText('后台任务可能仍在执行')
     await expect(confirm(page)).toBeDisabled()
+    // The open dialog reports the outcome; a toast would repeat it.
+    await expect(toasts(page)).toHaveCount(0)
     expect(posts).toBe(1)
   })
 }

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -263,5 +264,87 @@ func TestNumberingCloseBeforeSubmit(t *testing.T) {
 	s := numberingRequestTest(t, numberingRequestTestOptions{a: a, req: numberingRequest{Key: "close-before-submit", Action: "preview", Parent: 1}, want: 200})
 	if s.Status != "cancelled" {
 		t.Fatal(s)
+	}
+}
+
+// Finished results used to count against a fixed limit for an hour, so the
+// 33rd directory numbering within an hour was rejected.
+func TestNumberingJobsEvictOldestFinishedResults(t *testing.T) {
+	a, _ := markTestApp(t, 0)
+	if err := os.WriteFile(filepath.Join(a.Library.Root, "photo.jpg"), []byte("image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const rounds = 100
+	for i := range rounds {
+		preview := fmt.Sprintf("preview-%03d", i)
+		numberingRequestTest(t, numberingRequestTestOptions{a: a, req: numberingRequest{Key: preview, Action: "preview", Parent: 1}, want: http.StatusAccepted})
+		if s := waitNumberingTest(t, a, preview); s.Status != "completed" {
+			t.Fatalf("round %d preview: got %+v, want completed", i, s)
+		}
+		a.numberingMu.Lock()
+		batch := a.numberingJobs[preview].result[0].ID
+		a.numberingMu.Unlock()
+		if s := applyNumberingTest(t, a, fmt.Sprintf("apply-%03d", i), batch); s.Status != "completed" {
+			t.Fatalf("round %d apply: got %+v, want completed", i, s)
+		}
+	}
+	a.numberingMu.Lock()
+	retained := len(a.numberingJobs)
+	a.numberingMu.Unlock()
+	if retained > numberingJobCapacity {
+		t.Fatalf("got %d retained jobs, want at most %d", retained, numberingJobCapacity)
+	}
+	// The first preview was evicted long ago; applying it is a stale preview.
+	raw, err := json.Marshal(numberingRequest{Action: "apply", Parent: 1, Preview: "preview-000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := jsonRequest(http.MethodPost, "/api/numbering/jobs", strings.NewReader(string(raw)))
+	r.Header.Set("Idempotency-Key", "apply-evicted-preview")
+	w := httptest.NewRecorder()
+	a.startNumberingJob(w, r)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"preview_stale"`) {
+		t.Fatalf("got %d %s, want 409 preview_stale", w.Code, w.Body.String())
+	}
+}
+
+func TestNumberingJobsNeverEvictRunningJob(t *testing.T) {
+	a, _ := markTestApp(t, 0)
+	if err := os.WriteFile(filepath.Join(a.Library.Root, "photo.jpg"), []byte("image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	a.Library.Busy = func(context.Context, int64) bool {
+		once.Do(func() {
+			close(entered)
+			select {
+			case <-release:
+			case <-t.Context().Done():
+			}
+		})
+		return false
+	}
+	numberingRequestTest(t, numberingRequestTestOptions{a: a, req: numberingRequest{Key: "running-preview", Action: "preview", Parent: 1}, want: http.StatusAccepted})
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker not started")
+	}
+	// Each cancel of an unknown key retains a placeholder and evicts when full.
+	for i := range 2 * numberingJobCapacity {
+		r := httptest.NewRequest(http.MethodPost, "/cancel", nil)
+		r.SetPathValue("key", fmt.Sprintf("overtaking-cancel-%03d", i))
+		a.cancelNumberingJob(httptest.NewRecorder(), r)
+	}
+	a.numberingMu.Lock()
+	retained, running := len(a.numberingJobs), a.numberingJobs["running-preview"]
+	a.numberingMu.Unlock()
+	if running == nil || retained > numberingJobCapacity {
+		t.Fatalf("got running job kept=%v with %d retained jobs, want it kept within %d", running != nil, retained, numberingJobCapacity)
+	}
+	close(release)
+	if s := waitNumberingTest(t, a, "running-preview"); s.Status != "completed" {
+		t.Fatalf("got %+v, want the running preview to complete", s)
 	}
 }

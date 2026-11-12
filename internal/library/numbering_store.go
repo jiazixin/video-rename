@@ -62,6 +62,46 @@ func (l *Library) Numbering(ctx context.Context, id string) (Numbering, error) {
 	})
 }
 
+// NumberingPageSize is the fixed size of one page of numbering items.
+const NumberingPageSize = 100
+
+// NumberingPage is one page of the files in a numbering plan.
+type NumberingPage struct {
+	Items  []NumberingItem `json:"items"`
+	Total  int             `json:"total"`
+	Offset int             `json:"offset"`
+	Limit  int             `json:"limit"`
+}
+
+// NumberingItems returns the page of numbering id that starts at offset, in
+// plan order. An offset past the end selects the last page.
+func (l *Library) NumberingItems(ctx context.Context, id string, offset int) (NumberingPage, error) {
+	return storage.ReadValue(ctx, l.db, func(tx *sql.Tx) (NumberingPage, error) {
+		page := NumberingPage{Items: []NumberingItem{}, Limit: NumberingPageSize}
+		var exists bool
+		if err := tx.QueryRowContext(ctx, "SELECT 1 FROM image_numberings WHERE id=?", id).Scan(&exists); err != nil {
+			return page, err
+		}
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM image_numbering_items WHERE batch=?", id).Scan(&page.Total); err != nil {
+			return page, err
+		}
+		if page.Total == 0 {
+			return page, nil
+		}
+		page.Offset = min(offset, (page.Total-1)/NumberingPageSize*NumberingPageSize)
+		rows, err := tx.QueryContext(ctx, "SELECT entry,old_name,new_name FROM image_numbering_items WHERE batch=? ORDER BY position LIMIT ? OFFSET ?", id, NumberingPageSize, page.Offset)
+		if err != nil {
+			return page, err
+		}
+		page.Items, err = storage.CollectRows(rows, func(rows *sql.Rows) (NumberingItem, error) {
+			var i NumberingItem
+			err := rows.Scan(&i.Entry, &i.Old, &i.New)
+			return i, err
+		})
+		return page, err
+	})
+}
+
 // NumberingHistory returns the numberings of media under parent.
 func (l *Library) NumberingHistory(ctx context.Context, parent int64, media string) ([]Numbering, error) {
 	return storage.ReadValue(ctx, l.db, func(tx *sql.Tx) ([]Numbering, error) {

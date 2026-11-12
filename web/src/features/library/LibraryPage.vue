@@ -115,8 +115,10 @@
   }
   async function queueRun(task: RunTask, entries: Entry[]) {
     const extracting = task === 'extract';
+    // Both callers are dialogs that show the failure themselves.
     const run = await api<Run>('/runs', {
       method: 'POST',
+      feedback: 'inline',
       body: {
         task,
         targets: entries.map((e) => e.id),
@@ -701,7 +703,11 @@
   async function refresh() {
     const directory = dir.value;
     try {
-      await api<unknown>(`/directories/${directory}/refresh`, { method: 'POST', body: {} });
+      await api<unknown>(`/directories/${directory}/refresh`, {
+        method: 'POST',
+        body: {},
+        feedback: 'inline'
+      });
       toast.show('目录刷新已提交');
       if (directory === dir.value) await load({ keepRows: false });
     } catch (e) {
@@ -1675,6 +1681,8 @@
     color: var(--ink);
     font: inherit;
     font-weight: var(--font-weight-500);
+    /* A block button: the taller line keeps the name centred in its 24px box. */
+    line-height: var(--control-hit-area);
     cursor: text;
   }
   .inline-rename-trigger:focus-visible {

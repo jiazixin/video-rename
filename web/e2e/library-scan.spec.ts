@@ -137,6 +137,7 @@ const idleStatus = {
   added: 0,
   changed: 0,
   removed: 0,
+  error_count: 0,
   errors: []
 }
 

@@ -13,7 +13,9 @@
     saved = ref(''),
     loading = ref(true),
     saving = ref(false),
-    error = ref('');
+    // error reports a failed load at the top; saveError sits beside the save button.
+    error = ref(''),
+    saveError = ref('');
   const dirty = computed(() => !!form.value && JSON.stringify(form.value) !== saved.value);
   const media = ref<'image' | 'audio'>('image');
   const mediaName = computed(() => (media.value === 'image' ? '图片' : '音频'));
@@ -56,20 +58,24 @@
       const padding = form.value[kind].padding;
       if (!Number.isInteger(padding) || padding < 1 || padding > 9) {
         media.value = kind;
-        error.value = errorText(
+        saveError.value = errorText(
           invalidFields([{ path: `${kind}.padding`, reason: 'out_of_range' }])
         );
         return;
       }
     }
     saving.value = true;
-    error.value = '';
+    saveError.value = '';
     try {
-      form.value = await api<Settings>('/numbering/settings', { method: 'PUT', body: form.value });
+      form.value = await api<Settings>('/numbering/settings', {
+        method: 'PUT',
+        body: form.value,
+        feedback: 'inline'
+      });
       saved.value = JSON.stringify(form.value);
       toast.show('编号规则已保存。之后的预览与编号使用新规则；已生成的批次和整批还原不受影响。');
     } catch (e) {
-      error.value = errorText(e);
+      saveError.value = errorText(e);
     } finally {
       saving.value = false;
     }
@@ -208,6 +214,7 @@
           ></section
         >
       </fieldset>
+      <div v-if="saveError" class="notice error" role="alert">{{ saveError }}</div>
       <footer class="numbering-footer"
         ><div
           ><span class="save-state" :class="{ dirty }" role="status"

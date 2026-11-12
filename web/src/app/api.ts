@@ -95,16 +95,15 @@ function clientFailure(error: unknown, signal: AbortSignal | undefined, timeout:
 }
 
 /**
- * Reads and keyed writes retry network failures, timeouts, 429
- * and 503 at most twice; a Retry-After over 10 s returns the error at once.
+ * Retries at most twice. Any request that got no response (network failure or
+ * timeout) may be retried. Reads also retry 429 and 503. A keyed write does
+ * not: the server records its first response, so a retry would only replay
+ * it. A Retry-After over 10 s returns the error at once.
  */
-function retryDelayMs(error: unknown, attempt: number): number | undefined {
+function retryDelayMs(error: unknown, attempt: number, isWrite: boolean): number | undefined {
   if (attempt >= maxRetries || !(error instanceof ApiError)) return undefined
-  const transient =
-    error.code === 'network_unavailable' ||
-    error.code === 'timeout' ||
-    error.status === 429 ||
-    error.status === 503
+  const unanswered = error.code === 'network_unavailable' || error.code === 'timeout'
+  const transient = unanswered || (!isWrite && (error.status === 429 || error.status === 503))
   if (!transient) return undefined
   if (error.retryAfterMs !== undefined)
     return error.retryAfterMs > maxRetryWaitMs ? undefined : error.retryAfterMs
@@ -144,7 +143,7 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
     try {
       return await send<T>(path, options)
     } catch (error: unknown) {
-      const delay = retryable ? retryDelayMs(error, attempt) : undefined
+      const delay = retryable ? retryDelayMs(error, attempt, keyedPost) : undefined
       if (delay === undefined) throw error
       await sleep(delay, options.signal)
     }

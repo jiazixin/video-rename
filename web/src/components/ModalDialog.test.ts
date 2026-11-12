@@ -39,6 +39,29 @@ describe('ModalDialog', () => {
     document.body.style.paddingRight = ''
   })
 
+  // A media viewer focuses its panel. Shift+Tab from there used to leave the
+  // dialog for the page behind it.
+  it('keeps Shift+Tab inside a dialog whose panel holds the focus', async () => {
+    const user = userEvent.setup()
+    // jsdom lays nothing out; the dialog treats elements without boxes as hidden.
+    const rects = vi
+      .spyOn(HTMLElement.prototype, 'getClientRects')
+      .mockReturnValue([new DOMRect()] as unknown as DOMRectList)
+    const trigger = document.createElement('button')
+    trigger.textContent = 'Open fixture'
+    trigger.dataset.fixtureTrigger = ''
+    document.body.append(trigger)
+    const dialog = render(ModalDialog, { props: { title: '媒体预览', theater: true } })
+    await nextTick()
+    expect(screen.getByRole('dialog', { name: '媒体预览' })).toHaveFocus()
+    await user.tab({ shift: true })
+    expect(screen.getByRole('button', { name: '关闭' })).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('button', { name: '关闭' })).toHaveFocus()
+    dialog.unmount()
+    rects.mockRestore()
+  })
+
   it('sends Escape to the top dialog and keeps scrolling locked until every dialog closes', async () => {
     const user = userEvent.setup()
     const closeFirst = vi.fn()

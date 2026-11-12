@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -268,4 +269,44 @@ func TestIdleAndSuccessExpiryWhicheverFirst(t *testing.T) {
 	if c.Stats().Entries != 0 {
 		t.Fatal("idle deadline did not win")
 	}
+}
+
+// lateCancel reports cancellation from a later Err call on, like a batch that
+// is paused or stopped while a cached frame set is being verified.
+type lateCancel struct {
+	context.Context
+	remaining atomic.Int32
+}
+
+func (c *lateCancel) Err() error {
+	if c.remaining.Add(-1) < 0 {
+		return context.Canceled
+	}
+	return nil
+}
+
+// An interrupted verification used to be treated as a failed one, which
+// deleted a valid frame set and forced the next run to extract it again.
+func TestCancelledVerificationKeepsCachedFrames(t *testing.T) {
+	c := mustCache(t, t.TempDir(), 1000000)
+	key := strings.Repeat("c", 64)
+	lease, err := c.Acquire(t.Context(), key, 100000, build)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.Release(false)
+	ctx := &lateCancel{Context: t.Context()}
+	// Admission and the first frame check pass; reading the frame is cancelled.
+	ctx.remaining.Store(2)
+	if _, err := c.Acquire(ctx, key, 100000, build); !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v, want context.Canceled", err)
+	}
+	lease, err = c.Acquire(t.Context(), key, 100000, func(string) (domain.FrameSet, error) {
+		t.Error("valid cached frames were extracted again")
+		return domain.FrameSet{}, errors.New("unexpected extraction")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.Release(false)
 }

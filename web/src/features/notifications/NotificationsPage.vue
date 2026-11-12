@@ -168,6 +168,7 @@
     try {
       await api<unknown>(`/notifications/${c.kind}`, {
         method: 'PUT',
+        feedback: 'inline',
         body: {
           enabled: c.enabled,
           failure_only: c.failure_only,
@@ -191,7 +192,11 @@
     busy.value[c.kind] = true;
     errors.value[c.kind] = '';
     try {
-      await api<unknown>(`/notifications/${c.kind}/test`, { method: 'POST', body: {} });
+      await api<unknown>(`/notifications/${c.kind}/test`, {
+        method: 'POST',
+        body: {},
+        feedback: 'inline'
+      });
       toast.show(`${names[c.kind]}测试通知已发送（使用已保存的配置）`);
     } catch (e) {
       errors.value[c.kind] = errorText(e);

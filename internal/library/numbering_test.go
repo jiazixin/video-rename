@@ -734,3 +734,42 @@ func TestNumberingFingerprintFailureExplainsSourceDifference(t *testing.T) {
 		t.Fatal(saved, err)
 	}
 }
+
+// Unconfirmed previews used to be discarded by UTC calendar date. A preview
+// saved after 00:00 UTC (08:00 in China) deleted every preview made before it,
+// including earlier directories of the same tree preview, whose apply then
+// failed with a missing batch.
+func TestPreviewKeepsRecentPreviewsAcrossUTCMidnight(t *testing.T) {
+	l, root, _ := fixture(t)
+	for _, dir := range []string{"first", "second", "third"} {
+		if err := os.Mkdir(filepath.Join(root, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		put(t, filepath.Join(root, dir, "photo.jpg"))
+	}
+	batches, err := l.PreviewNumberingTreeWithProgress(t.Context(), 1, domain.DefaultNumberingSettings(), nil)
+	if err != nil || len(batches) != 3 {
+		t.Fatalf("got %d batches and error %v, want 3 previews", len(batches), err)
+	}
+	backdate := func(id string, created time.Time) {
+		t.Helper()
+		if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(t.Context(), "UPDATE image_numberings SET created=? WHERE id=?", timefmt.Format(created), id)
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now().UTC()
+	backdate(batches[0].ID, now.Truncate(24*time.Hour).Add(-time.Millisecond))
+	backdate(batches[1].ID, now.Add(-25*time.Hour))
+	// Saving another preview runs the cleanup.
+	if _, err := l.PreviewNumbering(t.Context(), NumberingRequest{Parent: batches[2].Parent, Media: "image", Sort: "name_asc", Settings: domain.DefaultNumberingSettings()}); err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := l.ApplyNumbering(t.Context(), batches[0].ID, nil); err != nil || applied.Status != "committed" {
+		t.Fatalf("got status %q and error %v for a preview from before UTC midnight, want it applied", applied.Status, err)
+	}
+	if _, err := l.Numbering(t.Context(), batches[1].ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("got %v for a preview older than the retention, want it discarded", err)
+	}
+}

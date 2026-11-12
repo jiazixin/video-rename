@@ -60,6 +60,8 @@ export type LibraryScanStatus = {
   added: number
   changed: number
   removed: number
+  /** Every failure of the round; errors lists only the first 100 of them. */
+  error_count: number
   /** scope replaces path for failures of the scan settings or targets. */
   errors: { path?: string; scope?: 'settings' | 'targets'; error: ServerRecord }[]
 }

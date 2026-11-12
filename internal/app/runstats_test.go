@@ -97,6 +97,11 @@ func TestRunsAnalyticsRejectsInvalidParameters(t *testing.T) {
 		"profile=-1",
 		"offset=-1",
 		"limit=101",
+		// The report has no such filters; accepting them would silently
+		// return unfiltered results.
+		"run=1",
+		"task=rename",
+		"status=failed",
 	} {
 		w := httptest.NewRecorder()
 		a.runsAnalytics(w, httptest.NewRequest("GET", "/api/runs/analytics?"+query, nil))

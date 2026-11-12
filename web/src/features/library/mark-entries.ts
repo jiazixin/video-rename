@@ -154,16 +154,19 @@ export function useMarkEntries({
         }
       }
       markKeys = []
-      notify(
-        `${markedValue ? '已标记' : '已取消标记'} ${changed} 个文件，未变更 ${unchanged} 个，失败 ${failed} 项`
-      )
+      // The dialog stays open with any failures and reports the outcome itself.
       if (failed) {
         markRetryUnavailable.value = true
         markError.value = [
           `已变更 ${changed} 个文件，未变更 ${unchanged} 个，失败 ${failed} 项；已完成的标记会保留。请关闭弹窗，重新选择失败目标后再操作。`,
           ...failures
         ].join('\n')
-      } else marking.value = []
+      } else {
+        marking.value = []
+        notify(
+          `${markedValue ? '已标记' : '已取消标记'} ${changed} 个文件，未变更 ${unchanged} 个，失败 0 项`
+        )
+      }
     } catch (e) {
       if (stopped()) return
       if (stage === 'query' && serverRejected(e) && e.status === 404) {

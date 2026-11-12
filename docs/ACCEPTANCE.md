@@ -1,66 +1,79 @@
-# 最新验收：表单控件点击范围（2026-11-10）
+# 最新验收：缺陷修复与补充排查（2026-11-10 至 11-11）
 
 ## 结论与范围
 
-鼠标在字段、下拉、开关或勾选框附近但不在控件上时，点击也会聚焦输入框、展开下拉或切换开关。该问题已修复：现在只有控件本身响应点击，勾选框、单选框和开关的说明文字仍可点击切换，但只限文字本身。规则见 [当前设计](DESIGN.md#当前-ui-约定点击范围)。本次只改动 Web 界面、E2E 测试和文档，Go 运行时代码与依赖版本未改动。全仓规范整改及之前的完整记录见 [历史快照](archive/2026-10-29-before-label-hit-area-acceptance.md)。
+[缺陷排查与修复计划](plans/2026-11-10-defect-audit.md) 列出的 D1–D11 全部修复，两轮补充排查中新发现的 N1–N7 同样修复；每项都有回归测试，其中 D11、N1、N3、N5、N7 在修复前先用测试复现。维护项 M1–M3 已处理（依赖升级与审计结论见计划）。疑点 Q1（NFS 改名）按决定暂不验证，Q3（登录限速的可信代理）决定不做，Q2（大小写命名）仍待验证。改动尚未提交，本记录针对当前工作区。表单控件点击范围修复及更早的记录见 [历史快照](archive/2026-11-10-before-defect-fixes-acceptance.md)。
 
-开始时已有的 `Go代码规范.md` 用户修改保留在工作区，不纳入本次提交。所有验证使用 `web/e2e/server.mjs` 的临时目录、合成媒体、本地假模型与隔离端口 18790，没有读取用户配置、媒体或数据库。日志与探测脚本在被忽略的 `.cache/label-hit-area/`。
+本次改动了 Go 运行时代码、HTTP 接口、Web 界面、测试和文档，没有改动数据库结构（结构号仍为 2026102801）。依赖方面，Go 升到 1.27.4，前端开发依赖与 Vue 做了补丁升级（Vite 8.3.7、Vue 3.5.45、Vitest 5.1.0、Playwright 1.65.0 等，明细见计划 M2）。所有验证使用临时目录、合成媒体、本地假模型和隔离端口 18790，没有读取用户配置、媒体或数据库。
 
-## 修复前核实
+## 对外行为的变化
 
-在 1440×1000 桌面视口用 Playwright 实测，测量前等待有限时长动画结束（被取消动画的 `finished` 拒绝已捕获），并等待 Vue 进入/离开类移除。修复前的回归测试在 256 个控件外空白点上全部误触发（`e2e-hit-area-before.log`），探测脚本的典型尺寸如下（`probe-mouse-before.txt`）：
+| 范围 | 变化 |
+| --- | --- |
+| 幂等请求 | 未完成预留 24 小时后过期；响应超过 512 KiB 时首次请求照常返回、同键重放为 409 `idempotency_result_unavailable`；处理函数异常记录为 500；因客户端断开而失败的请求记录为 503 `request_cancelled`（原为 500 `internal`） |
+| 管理台重试 | 带键 POST 只在没有收到响应（网络错误、超时）时重试；收到 429 / 503 不再重试。GET 不变 |
+| 单目录编号 | 预览响应只带前 100 项，新增 `GET /api/numberings/{id}/items` 分页读取；提交改走编号任务，有进度、可停止；删除 `POST /api/numberings/{id}/apply` 和 `POST /api/directories/{id}/numberings/tree-preview` |
+| 编号任务 | 结果满 64 条时淘汰最早结束的，不再返回 `numbering_jobs_full`（错误码已删除）；未确认预览保留 24 小时，不再按 UTC 日期清理 |
+| 批次 | 正常停止服务时运行中的批次记为“中断”，不再是“已取消”；“仅失败时通知”的渠道会收到 |
+| 计划 | 单个计划出错不影响其他计划；调度器不再因记录失败而停止；同一错误只记录一次。保存时名称、目标分别报错，新增原因 `too_long`、`too_many` |
+| 通知 | 渠道凭据读不出来时该条通知按发送失败处理，不再堵住其他渠道 |
+| 配置 | `log.level`、`log.format` 显式写成空字符串时使用默认值，不再启动失败 |
+| 后台扫描 | 状态新增 `error_count`，`errors` 最多列出前 100 个 |
+| 运行分析 | `GET /api/runs/analytics` 不再接受从未生效的 `run`、`task`、`status` 参数 |
+| 登录页 | 登录失败只在表单内提示一次 |
+| 写入失败提示 | 弹窗和表单里的写操作失败时只在按钮上方的错误区提示，不再同时弹浮动通知；批量删除、还原、标记部分失败时汇总只写在弹窗内；卡片和表格行上的操作仍用浮动通知；设置页的保存失败从页面顶部移到表单底部 |
+| 可点范围 | 按钮、`summary`、段落内链接不小于 24×24 CSS px |
+| 弹窗焦点 | 焦点在弹窗面板本身（如图片、视频预览）时按 Shift+Tab 不再跳出弹窗 |
+| 构建要求 | 从源码构建需要 Go 1.27.4 |
 
-| 位置 | 标签 / 控件尺寸 | 误触发 |
-| --- | --- | --- |
-| 登录用户名、密码 | 340×70 / 340×43 | 标题文字、标题右侧、标题与输入框间隙都会聚焦输入框 |
-| 批次记录 6 个筛选下拉 | 341×63 / 341×38 | 同上三处都会展开下拉（`SelectField` 的按钮包在 `<label>` 中） |
-| 处理与缓存数值字段 | 507×123 / 240×40 | 另有控件下方空白、帮助文字较短一行右侧空白 |
-| 失败重试、通知等开关 | 507×20 / 36×20 | 开关与文字间隙、文字右侧整列空白都会切换 |
-| 编号“扩展名转小写” | 1102×83 / 36×20 | 标题与开关之间约 500px 空白、行上下内边距都会切换 |
-| 计划弹窗“选择当前目录” | 586×50 / 16×16 | 勾选框与文字间隙、行右侧空白都会切换 |
+接口契约的完整说明见 [接口约定](API.md) 的“幂等请求”和“编号”两节。
 
-另发现相反问题：搜索框可见边框为 290×37，内部输入框只有 241×35，点击放大镜或框内左右内边距不会聚焦输入框。
+## 实现时做的取舍
 
-## 排查范围
-
-- `<label>` 共 83 个，分布在 16 个 Vue 文件：41 个包裹文本或数字输入框，16 个包裹 `SelectField`，22 个包裹勾选框、单选框或开关，3 个用 `for` 关联控件，1 个只作标题。
-- 自定义控件：`SelectField` 42 处，`DateField` 8 处（都不在 `<label>` 中，以 `aria-label` 命名，弹层传送到 `body`）；`role="switch"` 15 处。`<label>` 中另含登录密码的显示按钮和若干 `title` 提示；没有链接或帮助按钮（失败重试的帮助按钮在 `<label>` 之外）。
-- CSS 中没有用负 inset 伪元素或大内边距扩大点击区域；唯一的负 inset 是批次时间线运行中圆点的装饰脉冲环，不接收交互。
-- 受影响：登录页，批次记录筛选，系统设置的处理与缓存、后台目录扫描、编号规则、Prompt 配置、模型配置弹窗、抽帧设置、通知设置，计划弹窗与目录选择器，文件目录的批量/单项操作弹窗，运行记录清理弹窗；三处搜索框（文件目录、运行记录、抽帧记录）。
-- 预期行为、未修改：编号规则中带边框和选中底色的单选卡片，整张卡片就是控件；表格行、带分隔线的折叠标题（`<summary>`，如“规则说明”“数据表”）、目录选择器中整行宽度的子目录按钮，都有明显边界。“扩展名转小写”一行只有上分隔线、没有悬停底色，标题与开关相距约 500px，按开关处理。
-
-## 修复方式与取舍
-
-- `web/src/styles/theme.css` 一处通用规则：所有 `<label>` 不接收指针，再用 `:where()`（零特异性，不会覆盖关闭控件的规则）恢复其中的 `input`、`select`、`textarea`、`button`、`a[href]`、`summary` 和 `[tabindex]`。勾选框、单选框和开关所在标签中的叶子 `span` / `strong` / `small` 恢复可点，宽度收缩为 `fit-content`，因此多行说明中较短一行的右侧不再可点。
-- 18 处直接写在 `<label>` 里的开关、勾选框文字改为放在 `<span>` 中，文本与可访问名称不变。单选卡片单独保留整卡可点；“扩展名转小写”行去掉无效的 `cursor: pointer`。
-- 离开中的页面和弹窗已由 `inert` 屏蔽交互，恢复规则不会让它们重新可点。
-- 搜索框改为输入框铺满边框，放大镜绝对定位且不接收指针；图标位置（左 12px）与文字起点（左 37px）不变。修复前后在两种视口截图逐像素比较：只有放大镜抗锯齿约 4×5px 的差异，以及夹具每次随机生成的临时目录名。
-- 代价：标签中的标题和帮助文字不能再用鼠标拖选复制；标签内非叶子元素上的 `title` 提示不再显示（如目录选择器状态徽章的统计说明，叶子文字上仍会显示）。
-
-## 回归测试
-
-新增 `web/e2e/control-hit-area.spec.ts`：
-
-- 扫描登录页、批次记录筛选、逐个点击系统设置的 7 个分类标签（模型配置打开新增弹窗）、新建计划弹窗（按日与按周两种表单）、文件目录的抽帧当前目录与多选批量抽帧弹窗、运行记录的清除记录弹窗中所有可见 `<label>`，在标题文字、标题右侧、标题与控件间隙、控件下方、开关与文字间隙、文字与开关间隙、较短一行右侧等 7 类空白点击，断言焦点、勾选状态、展开状态和弹层数量都不变，并断言 7 类位置都实际覆盖到。
-- 正向断言：点击输入框聚焦、密码显示按钮可用、下拉展开、开关文字与开关本身切换、键盘 Space 切换、`<label>` 仍提供开关的可访问名称、单选卡片空白角选中、点击搜索框放大镜和左侧内边距聚焦输入框。
-- 在修复前的源码上运行：两项都失败（256 处误触发；放大镜不聚焦），日志 `e2e-hit-area-before.log`。修复后连续三轮通过（`e2e-hit-area-after.log`）。
-- 共享 `settleAnimations` 移入 `web/e2e/support.ts`，无障碍测试同步复用；原实现没有捕获被取消动画的拒绝。
+- **未完成预留的过期（D1）。** 原设计是未完成预留永久拒绝同键请求。改为保留期内拒绝、24 小时后过期，依据是管理台的键每次操作随机生成，改名、还原和批次创建另有各自的操作日志键。原存储测试断言“48 小时后仍拒绝”，按新契约改为“保留期内拒绝、到期后释放”。
+- **失败响应与重试（D7）。** 先实现了“服务端不固化 503、重试时重新执行”，实测后放弃：检测模型和测试通知在外部服务不可达时会真实重发 3 次，等待时间变为 3 倍；超过 60 秒的同步请求也会被重复执行。最终改为前端不重试已收到响应的带键 POST。
+- **停止服务时的批次状态（D3）。** 没有选择“保持活动状态留给下次启动收尾”，而是停止时立即收尾为中断，这样完成时间是实际停止的时间。
+- **调度器测试（D5）。** 原测试断言“记录失败时调度器返回错误”，这正是缺陷所在，替换为“调度器继续运行并在恢复后触发”。
+- **批次收尾测试（D3）。** 原测试用“已停止”参数模拟用户取消；现在这个参数代表服务停止，测试改为先把状态置为 `cancelling`。
+- **写入失败的提示位置（N5）。** `form-validation.spec.ts` 和 `toast-notice.spec.ts` 原先断言保存失败时出现浮动通知，按“只提示一次”的决定改为断言错误出现在表单内、没有浮动通知。
+- **操作列右对齐断言。** Playwright 1.65 自带的 Chromium 158 把计算后的 `justify-content: flex-end` 报告为 `flow-end`；`delete.spec.ts` 改为直接比较最后一个按钮与单元格内容区的右边缘（相差不超过 1px），检查的仍是右对齐。
+- **依赖版本。** 不采用发布不足两天的版本（Vite 8.3.8、typescript-eslint 8.72.2、rolldown 1.2.19），传递依赖用 `npm install --before` 按同一时间解析；未运行 `npm audit fix`，因为它会降级 `@vue/test-utils` 和 `glob`。
 
 ## 本次检查结果
 
-环境：macOS / arm64，Go 1.27.3、Node.js 26.13.0、Playwright 1.63.0（Chromium）。
+环境：macOS / arm64，Go 1.27.4、Node.js 26.13.0、FFmpeg 9.0.2、Playwright 1.65.0（Chromium 158.0.8127.18）。以下结果均为 2026-11-11 在最终工作区上一次连续运行所得。
 
 | 检查 | 结果 |
 | --- | --- |
-| Web | Prettier、ESLint、Stylelint、vue-tsc 通过；Vitest **19 文件 / 63 项**通过；Vite 生产构建通过（`web-checks.log`）。 |
-| 完整 E2E | 最终构建上 Playwright **189 / 189** 通过，约 9.0 分钟（`e2e-full.log`）。 |
-| Go | gofmt、`go vet ./...`、`go vet -tags=integration,scale ./...`、staticcheck 通过；`CGO_ENABLED=1 go test -race -count=1 ./...` 的 **27 个测试包**通过（`go-race.log`、`staticcheck.log`）。 |
-| 鼠标复测 | 修正后的探测脚本在桌面视口点击 217 个空白点，**0** 次触发（`probe-mouse-after.txt`）。 |
-| 触屏模拟 | 390×844、`hasTouch` + `isMobile`，同样逐个进入设置分类：217 个空白点中距最近控件或开关文字超过 10px 的 145 个全部不触发；触发的 69 个都在 4.5–6.3px 内（标题与控件间隙、开关与文字间隙）。对照：普通按钮下方 1–9px 轻触都会触发，10px 起不触发；改动前的源码上结果相同，鼠标在同样位置从不触发。这是 Chromium 的触摸校正，不做干预（`probe-touch-after.txt`）。 |
-| 其他 | `git diff --check` 通过；新增和修改的文档本地链接已核对。 |
+| Go 静态检查 | gofmt、goimports v0.50.0（`-local video-rename`）、`go vet ./...`、`go vet -tags=integration,scale ./...`、staticcheck v0.8.2 通过，无输出；`go mod verify`、`go mod tidy -diff` 通过 |
+| 漏洞检查 | govulncheck：可达漏洞 0（Go 1.27.3 时为 1 条，GO-2026-6859）；模块级告警 1 条，代码未调用。`npm audit --omit=dev` 0；含开发依赖 14 条 moderate，来源与结论见计划 M1 |
+| Go 测试 | `CGO_ENABLED=1 go test -race -count=1 ./...` 的 **27 个测试包**全部通过 |
+| FFmpeg 集成 | `go test -tags=integration -count=1 ./internal/media ./cmd/video-rename` 通过（真实 ffprobe / FFmpeg 的横屏、竖屏 4K、SAR、极短和损坏视频，以及构建版本测试） |
+| 规模测试 | `go test -tags=scale -run '^TestScale'`：`internal/library`、`job`、`app`、`runstat` 共 **12 项**通过（30 万文件索引与 1845.6 MiB 数据库、5 万文件分页、2 万文件目录树编号预览等） |
+| 超大规模 | `go test -tags=integration,scale -run '^TestScaleLarge' ./internal/library` **3 项**通过：53 万真实文件 / 111 个目录的扫描（未变化重扫 14.8 秒）、50 万真实文件递归标记（用例共 175.4 秒，全部成功）、进度统计 |
+| Web | Prettier、ESLint、Stylelint、vue-tsc 通过；Vitest **19 文件 / 65 项**通过；Vite 生产构建通过 |
+| 完整 E2E | Playwright **195 / 195** 通过，约 9.0 分钟（含真实 FFmpeg 抽帧与本地假模型）；最终构建后没有再改代码 |
+| Fuzz | 配置 YAML、ffprobe JSON、标题清理、模型响应四类各 10 秒通过，没有发现失败输入，工作区没有新增语料文件 |
+| 其他 | `git diff --check` 通过 |
+| 浏览器检查 | 应用内置浏览器实测登录失败提示和单目录编号的翻页、窄屏、进度；Playwright 脚本在 1440×1000 与 390×844 下逐页巡检 15 个地址，无横向溢出、控制台错误、失败请求或缺少名称的控件，Tab 焦点可见（第一轮，依赖升级前）。24×24 可点范围已改为 E2E 用例逐页检查。明细见修复计划的“浏览器检查” |
 
-## 验证边界
+规模与基准数值来自本机合成数据，不代表 SMB / NFS 的实际吞吐。
 
-- 浏览器自动化只有 Chromium；Firefox 124、Safari 17.4 对 `:has()` / `:where()` 与 `pointer-events` 的支持在登记的最低版本内，但本次未实测。真机触屏未测，触屏结论来自 Chromium 触摸模拟。
-- 自动扫描覆盖上面列出的页面和弹窗。其余同类写法（单项命名弹窗、模型编辑中的“清除已保存密钥”、Cron 字段、扫描与通知的条件字段等）使用同一条全局规则，没有逐个点击扫描，只经过完整回归。
-- 本次未改动依赖，未重跑 npm 审计、govulncheck、Fuzz、集成和规模测试；这些结果仍以历史快照为准。
+## 新增与调整的测试
+
+- `internal/app`：`TestIdempotencyDeliversOversizedResponseOnce`、`TestIdempotencyRecordsPanicAsFailure`、`TestIdempotencyReplaysFailures`、`TestIdempotencyExpiredReservationsFreeCapacity`、`TestLargeDirectoryNumberingPreviewIsPaged`、`TestNumberingJobsEvictOldestFinishedResults`、`TestNumberingJobsNeverEvictRunningJob`；`TestImageNumberingAPI`、`TestAudioNumberingAPI` 改走编号任务；`TestRunsAnalyticsRejectsInvalidParameters` 增加三个参数。
+- `internal/storage`：`TestIdempotencyConcurrentReservationAndPendingRestart` 按新契约调整。
+- `internal/job`：`TestShutdownInterruptsRunningRun`；`TestCompletionRejectsUnfinishedAndRollsBackCancellation` 调整。
+- `internal/scheduler`：`TestSchedulerSurvivesUnrecordableFailure`、`TestSchedulerRunStopsOnlyWithContext`、`TestSchedulerIsolatesFailingPlan`、`TestSaveReportsEachInvalidField`，替换 `TestRunReportsUnrecordableFailure`。
+- `internal/notification`：`TestUnreadableCredentialsDoNotBlockOtherChannels`、`TestFailureOnlyChannelReportsInterruptedRun`。
+- `internal/config`、`cmd/video-rename`：`TestEmptyLogSettingsSelectDefaults`、`TestNewLoggerAcceptsLoadedEmptyLogSettings`。
+- `internal/library`：`TestPreviewKeepsRecentPreviewsAcrossUTCMidnight`；`internal/framecache`：`TestCancelledVerificationKeepsCachedFrames`；`internal/libraryscan`：`TestScanErrorsAreBounded`。
+- Web：Vitest `does not retry a keyed write that received a 503`、`ModalDialog.test.ts`“keeps Shift+Tab inside a dialog whose panel holds the focus”；E2E `login.spec.ts`、`write-feedback.spec.ts`（两项）、`accessibility.spec.ts`“可点击元素不小于 24×24”（两种宽度），以及 `numbering.spec.ts` 的“大目录预览按页读取，提交显示进度并在确认后停止”；`delete.spec.ts`、`mark-retry.spec.ts` 的部分失败用例补充“没有浮动通知”断言。
+
+## 未验证与遗留
+
+- 没有在 Linux、SMB / NFS 或其他架构上运行；GoReleaser 检查与快照、交叉编译本次没有运行；CI 没有运行（改动未提交、未推送）。
+- 没有用真实的模型服务和通知渠道验证；钉钉、企业微信等只有本地假服务。
+- 浏览器只用了 Chromium；没有真实触屏设备、Safari 和 Firefox。
+- 基准测试本次没有运行。
+- CI 与发布配置仍未逐步核对；记录但未改的现象（进度缓存的锁）和 Q1、Q2 列在 [修复计划](plans/2026-11-10-defect-audit.md)。

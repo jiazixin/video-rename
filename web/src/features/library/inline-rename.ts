@@ -72,6 +72,7 @@ export function useInlineRename(options: { beforeSave: () => void; onSaved: () =
     try {
       await api<unknown>(`/entries/${e.id}/rename`, {
         method: 'POST',
+        feedback: 'inline',
         headers: { 'If-Match': inlineETag.value },
         body: {
           name

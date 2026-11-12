@@ -165,6 +165,7 @@
     try {
       restoreResult.value = await api<RestoreResult>(`/runs/${restoreTarget.value.id}/restore`, {
         method: 'POST',
+        feedback: 'inline',
         body: {}
       });
       if (!restoreResult.value.failed) {
@@ -185,7 +186,9 @@
     cancelling = ref(false),
     cancelError = ref('');
   const detail = ref<Run>(),
-    deletePlan = ref<Plan>();
+    deletePlan = ref<Plan>(),
+    deleting = ref(false),
+    deleteError = ref('');
   watch(detail, (value) => {
     detailID.value = value?.id ?? 0;
   });
@@ -309,8 +312,8 @@
       });
       toast.show(p.enabled ? '计划已停用' : '计划已启用');
       await load();
-    } catch (e) {
-      error.value = errorText(e);
+    } catch {
+      // A card has no error region of its own; useApi reports the failure as a toast.
     }
   }
   async function runPlan(p: Plan) {
@@ -321,15 +324,22 @@
       });
       toast.show(`运行 #${r.id} 已加入队列`);
       await load();
-    } catch (e) {
-      error.value = errorText(e);
+    } catch {
+      // A card has no error region of its own; useApi reports the failure as a toast.
     }
   }
+  function askDelete(p: Plan) {
+    deletePlan.value = p;
+    deleteError.value = '';
+  }
   async function remove() {
-    if (!deletePlan.value) return;
+    if (!deletePlan.value || deleting.value) return;
+    deleting.value = true;
+    deleteError.value = '';
     try {
       await api<unknown>(`/schedules/${deletePlan.value.id}`, {
         method: 'DELETE',
+        feedback: 'inline',
         headers: { 'If-Match': deletePlan.value.etag },
         body: {}
       });
@@ -337,7 +347,9 @@
       toast.show('计划已删除');
       await load();
     } catch (e) {
-      error.value = errorText(e);
+      deleteError.value = errorText(e);
+    } finally {
+      deleting.value = false;
     }
   }
   function askPause(r: Run) {
@@ -353,6 +365,7 @@
     try {
       await api<unknown>(`/runs/${pauseTarget.value.id}/${resume ? 'resume' : 'pause'}`, {
         method: 'POST',
+        feedback: 'inline',
         body: {
           confirm: true
         }
@@ -375,7 +388,11 @@
     if (!cancelTarget.value || cancelling.value) return;
     cancelling.value = true;
     try {
-      await api<unknown>(`/runs/${cancelTarget.value.id}/cancel`, { method: 'POST', body: {} });
+      await api<unknown>(`/runs/${cancelTarget.value.id}/cancel`, {
+        method: 'POST',
+        body: {},
+        feedback: 'inline'
+      });
       cancelTarget.value = undefined;
       toast.show('已提交取消请求');
       await load();
@@ -505,7 +522,7 @@
               ><button
                 class="icon-btn danger-button"
                 :aria-label="`删除 ${p.name}`"
-                @click="deletePlan = p"
+                @click="askDelete(p)"
                 ><Trash2 :size="15" /></button></footer></article></div></section
     ></template>
     <section v-else class="run-section" aria-label="批次列表">
@@ -798,11 +815,17 @@
       ></ModalTransition
     >
     <ModalTransition
-      ><ModalDialog v-if="deletePlan" title="删除运行计划" @close="deletePlan = undefined"
+      ><ModalDialog
+        v-if="deletePlan"
+        title="删除运行计划"
+        @close="!deleting && (deletePlan = undefined)"
         ><p>删除“{{ deletePlan.name }}”后，将不再自动触发。已有运行和历史记录会保留。</p
+        ><div v-if="deleteError" class="notice error" role="alert">{{ deleteError }}</div
         ><div class="modal-actions"
-          ><button @click="deletePlan = undefined">取消</button
-          ><button class="danger-button" @click="remove"><Trash2 :size="16" />删除计划</button></div
+          ><button :disabled="deleting" @click="deletePlan = undefined">取消</button
+          ><button class="danger-button" :disabled="deleting" @click="remove"
+            ><Trash2 :size="16" />{{ deleting ? '正在删除…' : '删除计划' }}</button
+          ></div
         ></ModalDialog
       ></ModalTransition
     >

@@ -370,3 +370,74 @@ func TestNotificationTimezoneUsesDST(t *testing.T) {
 		}
 	}
 }
+
+// A delivery whose channel credentials cannot be read used to be selected
+// again on every tick, so no later delivery of any channel was ever sent.
+func TestUnreadableCredentialsDoNotBlockOtherChannels(t *testing.T) {
+	s := service(t)
+	for _, kind := range []string{"bark", "webhook"} {
+		if err := s.Save(t.Context(), Input{Kind: kind, Enabled: true, Endpoint: secret.Value("http://127.0.0.1/" + kind)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := storage.WriteValue(t.Context(), s.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "UPDATE notification_channels SET credentials='not sealed' WHERE kind='bark'")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	run := addRun(t, addRunOptions{s: s, status: "completed", failed: 0})
+	var sent []string
+	s.send = func(_ context.Context, m message) error {
+		sent = append(sent, m.kind)
+		return nil
+	}
+	// The bark delivery is older and is selected first on every attempt.
+	for range 6 {
+		if _, err := storage.WriteValue(t.Context(), s.db, func(tx *sql.Tx) (sql.Result, error) {
+			return tx.ExecContext(t.Context(), "UPDATE notification_deliveries SET next_attempt='2000-01-01T00:00:00.000Z' WHERE status='pending'")
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.tick(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(sent) != 1 || sent[0] != "webhook" {
+		t.Fatalf("got sends %v, want exactly one webhook delivery", sent)
+	}
+	history, err := s.ListHistoryPage(t.Context(), 1, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]Delivery{}
+	for _, d := range history.Items {
+		got[d.Kind] = d
+	}
+	if d := got["webhook"]; d.Run != run || d.Status != "sent" {
+		t.Fatalf("got webhook delivery %+v, want sent", d)
+	}
+	if d := got["bark"]; d.Status != "failed" || d.Attempts != 3 || d.Error.Code != "notification_credentials_unreadable" {
+		t.Fatalf("got bark delivery %+v, want failed after 3 attempts with notification_credentials_unreadable", d)
+	}
+}
+
+// A batch cut off by the service stopping is a failure for notification
+// purposes, as docs/operations.md describes.
+func TestFailureOnlyChannelReportsInterruptedRun(t *testing.T) {
+	s := service(t)
+	if err := s.Save(t.Context(), Input{Kind: "webhook", Enabled: true, FailureOnly: true, Endpoint: "http://127.0.0.1/push"}); err != nil {
+		t.Fatal(err)
+	}
+	addRun(t, addRunOptions{s: s, status: "cancelled", failed: 0})
+	interrupted := addRun(t, addRunOptions{s: s, status: "interrupted", failed: 0})
+	if err := s.enqueue(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	history, err := s.ListHistoryPage(t.Context(), 1, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Items) != 1 || history.Items[0].Run != interrupted {
+		t.Fatalf("got deliveries %+v, want only run %d", history.Items, interrupted)
+	}
+}

@@ -1,6 +1,6 @@
 # 开发与测试
 
-应用是 Go 1.27.3 + Vue 3 / TypeScript + SQLite 的单实例服务。安装入口见 [中文 README](../README.md) / [English README](../README.en.md)，行为约定见 [当前设计](DESIGN.md)，文件归属见 [目录规范](../目录规范.md)。
+应用是 Go 1.27.4 + Vue 3 / TypeScript + SQLite 的单实例服务。安装入口见 [中文 README](../README.md) / [English README](../README.en.md)，行为约定见 [当前设计](DESIGN.md)，文件归属见 [目录规范](../目录规范.md)。
 
 ## 模块入口
 
@@ -30,13 +30,13 @@
 - 改名先持久化 prepared 日志再移动；编号使用冻结预览和两阶段移动。恢复按实际位置和身份判定，证据不足进入 review；统计缓存不参与文件安全判断。
 - 文件指纹存储整数 `mtime_ns`，保留纳秒变化检测；接口展示与其他业务时间采用 `internal/timefmt` 的 UTC 固定毫秒格式。文件成功提交前的最终 stat/fstat 复核是已登记的窄范围事务例外，见双语 README；不在事务内遍历目录、读取文件内容或调用网络/进程。
 - 管理员验证使用独立随机盐及 Argon2id（19 MiB、2 轮、并行度 1），认证组件不持有密码明文或快速密码摘要；会话令牌只存 SHA-256，密码变更使会话指纹失效。登录速率预算在密码派生前检查。
-- POST 幂等结果持久化在 `request_results`，空响应也可重放；同键异请求拒绝，未完成预留不会因重启或过期自动重做文件操作。完整请求、保留容量与恢复语义见 [API](API.md)。
+- POST 幂等结果持久化在 `request_results`，空响应也可重放；同键异请求拒绝。超限响应和处理函数 panic 都会结清预留；只有进程中途终止才留下未完成预留，它在保留期内拒绝同键请求、不因重启重做文件操作，并在 24 小时后与已完成记录一起过期。完整请求、保留容量与恢复语义见 [API](API.md)。
 
 ## 性能约束
 
 目录扫描在文件操作全局锁外分两遍观测，每页最多 128 项、最多四个属性 worker；本地暂存 SQLite 复用于整轮扫描。完整观测后短锁发布 generation，失败保留旧完整代。发布核对直接子项和祖先的索引证据，其他目录变化不会单独导致本目录失败。观测不一致完整重试一次，普通读取错误和取消不重试。
 
-标记每批最多 128 个文件，先复核再提交短事务，进度只统计已提交记录。后台标记结果缓存最多 128 条、终态保留最多一小时；断线恢复只查询原键，结果回收后需重新选择。编号任务每次查询续租，超过 20 秒未查询时停止。
+标记每批最多 128 个文件，先复核再提交短事务，进度只统计已提交记录。后台标记结果缓存最多 128 条、终态保留最多一小时；断线恢复只查询原键，结果回收后需重新选择。编号任务每次查询续租，超过 20 秒未查询时停止；任务结果最多保留 64 条、结束后一小时，满时淘汰最早结束的结果，不淘汰运行中的任务。单目录编号的预览响应只带前 100 项，其余分页读取；提交与目录编号共用编号任务。
 
 编号预览、提交和恢复在文件操作全局锁内核对冻结状态。等待锁时响应取消；目录观测每批最多读取 128 项，并在批次和条目之间检查取消，诊断扫描也使用相同约束。快照继续按文件名排序并保存当前第 4 版格式。已经进入内核的文件系统调用仍须先返回，不能把此处的上下文检查当成对阻塞 NAS 调用的强制中断。
 
@@ -111,7 +111,13 @@ go test -run '^$' -bench '^BenchmarkCacheSweepRetained$' -benchtime=1x -count=1 
 
 ## 依赖维护与构建版本
 
-前端使用 Vite 8、plugin-vue 6、vue-tsc 3。TypeScript 固定 **6.0.3**：当前发布的 vue-tsc 3.3.12 实测无法加载 TypeScript 7.0.2 的 `typescript/lib/tsc`，不使用私有 API 补丁或关闭类型检查；更新类型工具后再验证 TypeScript 7。构建使用 `vite/client` 声明导入的样式类型。
+前端使用 Vite 8、plugin-vue 6、vue-tsc 3。TypeScript 固定 **6.0.3**：2026-11-11 临时换装 TypeScript 7.0.2 实测，vue-tsc 3.3.14 仍无法加载 `typescript/lib/tsc`（`ERR_PACKAGE_PATH_NOT_EXPORTED`），ESLint 也无法加载 typescript-eslint 8.72（其声明的范围是 `>=4.8.4 <6.1.0`）。不使用私有 API 补丁或关闭类型检查；两者都支持后再验证 TypeScript 7。构建使用 `vite/client` 声明导入的样式类型。
+
+Vite 不低于 **8.3.7**：8.3.0–8.3.6 受 [GHSA-p4f5-76q4-ffq7](https://github.com/vitejs/vite/security/advisories/GHSA-p4f5-76q4-ffq7) 影响，开发服务器对外监听时可被远程执行代码。本项目的 `dev` 脚本只监听 127.0.0.1，发布的二进制不包含 Vite；开发时不要改成对外监听。
+
+2026-11-11 `npm audit` 报 14 条 moderate，全部来自开发工具链里的 `minimatch`（[GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)，11.0.1 修复）和 `glob`（[GHSA-3g3m-2fjr-6pw4](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4)，14.0.2 修复），经 ESLint、typescript-eslint 和 `@vue/test-utils` 引入；`npm audit --omit=dev` 为 0。ESLint 10.14.0 仍依赖 minimatch 10.x，上游没有可用的修复版本。不要运行 `npm audit fix`：实测它把 `@vue/test-utils` 从 2.5.1 降到 2.4.11、`glob` 从 13 降到 10，只少一条告警；`--force` 则降到 ESLint 9。
+
+升级依赖时不采用发布不足两天的版本（安全修复除外），用 `npm install --before=<日期>` 让传递依赖也按同一时间解析，再用 `npm ci` 确认锁文件可复现。
 
 YAML 使用 YAML 团队维护的 `go.yaml.in/yaml/v3`，不再依赖已归档的 `gopkg.in/yaml.v3`。SQLite 升级时沿用其要求的 libc 版本，并重新执行索引、持久化、竞态和规模测试。
 
@@ -130,7 +136,7 @@ go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
 版本与安全检查需要联网，结果仅代表执行时的公告数据库。依据：[YAML 维护声明](https://github.com/yaml/go-yaml)、[Vite 支持范围](https://vite.dev/releases)、[Vue 类型工具](https://github.com/vuejs/language-tools/tree/master/packages/tsc)。
 
-Go 最低版本为 **1.27.3**。这是 1.27 系列的补丁升级，包含 crypto/x509 安全修复；部署时需要重新构建并替换旧二进制，单独修改 `go.mod` 不会更新已经运行的程序。版本背景见 [Go 发布记录](https://go.dev/doc/devel/release#go1.27.minor)。
+Go 最低版本为 **1.27.4**。这是 1.27 系列的补丁升级，修复了 net/http 的 HTTP/1 服务端因 `MaxBytesReader` 响应头竞态而崩溃的问题（[GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859)，本服务用 `MaxBytesReader` 限制请求体，govulncheck 判定可达）；部署时需要重新构建并替换旧二进制，单独修改 `go.mod` 不会更新已经运行的程序。版本背景见 [Go 发布记录](https://go.dev/doc/devel/release#go1.27.minor)。
 
 GitHub Actions 使用 Node.js **26**（2026-10-28 起为 LTS；24 已于 2026-10-20 进入维护期），并设置 `check-latest: true`，每次运行取该主版本最新补丁（如 2026-10-21 的 26.12.1 安全版本），不使用 runner 预装缓存中可能落后的版本。本地构建仍只要求 `web/package.json` 声明的 Node.js ≥ 26.0。依据：[Node.js 发布计划](https://github.com/nodejs/Release)、[setup-node check-latest](https://github.com/actions/setup-node#check-latest-version)。
 

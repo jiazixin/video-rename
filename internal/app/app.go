@@ -73,7 +73,7 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 	if err != nil {
 		return nil, errors.Join(err, db.Close())
 	}
-	s := scheduler.New(db, j)
+	s := scheduler.New(db, j, logger)
 	if err = s.ResetNext(ctx, time.Now()); err != nil {
 		return nil, errors.Join(err, j.Cache.Close(), db.Close())
 	}

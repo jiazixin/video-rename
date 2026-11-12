@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/http"
 	"reflect"
 	"slices"
@@ -14,7 +15,15 @@ import (
 	"video-rename/internal/systemsetting"
 )
 
-const numberingLease = 20 * time.Second
+const (
+	// numberingLease stops a job whose client stopped asking for its status.
+	numberingLease = 20 * time.Second
+	// numberingJobCapacity bounds retained results; one job runs at a time.
+	numberingJobCapacity  = 64
+	numberingJobRetention = time.Hour
+	// A cancel that overtook its submission only has to outlive that request.
+	numberingCancelRetention = time.Minute
+)
 
 type numberingRequest struct {
 	Key     string   `json:"-"`
@@ -76,11 +85,7 @@ func (a *App) startNumberingJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, errShuttingDown)
 		return
 	}
-	for key, job := range a.numberingJobs {
-		if !job.finished.IsZero() && time.Since(job.finished) > time.Hour {
-			delete(a.numberingJobs, key)
-		}
-	}
+	a.pruneNumberingJobs(time.Now())
 	if job := a.numberingJobs[req.Key]; job != nil {
 		if job.request.Action == "" {
 			send(w, http.StatusOK, job.status)
@@ -99,10 +104,6 @@ func (a *App) startNumberingJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if len(a.numberingJobs) >= 64 {
-		writeError(w, r, domain.Fail(domain.KindTooMany, domain.Failure{Reason: domain.ReasonNumberingJobsFull, Message: "too many recent numbering jobs"}))
-		return
-	}
 	batchIDs := slices.Clone(req.Batches)
 	if req.Preview != "" {
 		source := a.numberingJobs[req.Preview]
@@ -120,6 +121,8 @@ func (a *App) startNumberingJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The preview was read above, so it may now be the result that makes room.
+	a.evictNumberingJobs()
 	// Detached from the request; cancel, the lease watchdog and Shutdown stop it.
 	ctx, cancel := context.WithCancel(context.WithoutCancel(r.Context()))
 	job := &numberingJob{request: req, batches: batchIDs, cancel: cancel, lease: time.Now(), status: numberingStatus{Key: req.Key, Status: "running", Phase: req.Action}}
@@ -148,6 +151,40 @@ func (a *App) startNumberingJob(w http.ResponseWriter, r *http.Request) {
 	a.numberingWG.Go(func() { a.runNumberingJob(ctx, job); cancel() })
 	send(w, http.StatusAccepted, job.status)
 }
+
+// pruneNumberingJobs drops expired results. Callers hold numberingMu.
+func (a *App) pruneNumberingJobs(now time.Time) {
+	maps.DeleteFunc(a.numberingJobs, func(_ string, job *numberingJob) bool {
+		if job.finished.IsZero() {
+			return false
+		}
+		retention := numberingJobRetention
+		if job.request.Action == "" {
+			retention = numberingCancelRetention
+		}
+		return now.Sub(job.finished) > retention
+	})
+}
+
+// evictNumberingJobs makes room for one more job by dropping the oldest
+// finished results; a running job is never dropped. A preview evicted here
+// answers a later apply with preview_stale. Callers hold numberingMu.
+func (a *App) evictNumberingJobs() {
+	for len(a.numberingJobs) >= numberingJobCapacity {
+		var oldestKey string
+		var oldest time.Time
+		for key, job := range a.numberingJobs {
+			if !job.finished.IsZero() && (oldest.IsZero() || job.finished.Before(oldest)) {
+				oldestKey, oldest = key, job.finished
+			}
+		}
+		if oldestKey == "" {
+			return
+		}
+		delete(a.numberingJobs, oldestKey)
+	}
+}
+
 func (a *App) runNumberingJob(ctx context.Context, job *numberingJob) {
 	update := func(fn func(*numberingStatus)) { a.numberingMu.Lock(); fn(&job.status); a.numberingMu.Unlock() }
 	var result []library.DirectoryNumbering
@@ -230,9 +267,9 @@ func (a *App) cancelNumberingJob(w http.ResponseWriter, r *http.Request) {
 		if a.numberingJobs == nil {
 			a.numberingJobs = map[string]*numberingJob{}
 		}
-		if len(a.numberingJobs) < 64 {
-			a.numberingJobs[key] = &numberingJob{finished: time.Now(), status: numberingStatus{Key: key, Status: "cancelled"}}
-		}
+		a.pruneNumberingJobs(time.Now())
+		a.evictNumberingJobs()
+		a.numberingJobs[key] = &numberingJob{finished: time.Now(), status: numberingStatus{Key: key, Status: "cancelled"}}
 		send(w, http.StatusOK, map[string]string{"status": "cancelled"})
 		return
 	}

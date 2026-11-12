@@ -30,6 +30,7 @@ export function useDeleteEntries(options: DeleteOptions) {
   function deleteRequest(e: Entry) {
     return api<unknown>(`/entries/${e.id}`, {
       method: 'DELETE',
+      feedback: 'inline',
       headers: { 'If-Match': e.etag },
       body: { confirmed: true }
     })
@@ -97,9 +98,10 @@ export function useDeleteEntries(options: DeleteOptions) {
         }
       }
       const summary = `已删除 ${entries.length - failed.length} 项，失败 ${failed.length} 项`
-      notify(summary)
       deletingBatch.value = options.keepFailures() ? failed : []
       deleteBatchError.value = failed.length ? [summary, ...errors].join('\n') : ''
+      // A dialog left open with the failures reports the outcome itself.
+      if (!deletingBatch.value.length) notify(summary)
       options.resetSelectionAnchor()
       if (directory === options.directory() && !options.disposed()) await options.reload()
     } finally {

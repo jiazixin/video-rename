@@ -96,6 +96,7 @@ export function useEntryDialog(options: EntryDialogOptions) {
       if (dialogMode.value === 'rename') {
         await api<unknown>(`/entries/${e.id}/rename`, {
           method: 'POST',
+          feedback: 'inline',
           headers: { 'If-Match': e.etag },
           body: {
             name: newName.value + extension.value
@@ -103,7 +104,11 @@ export function useEntryDialog(options: EntryDialogOptions) {
         })
         notify('名称已更新，历史已保存')
       } else if (dialogMode.value === 'restore') {
-        await api<unknown>(`/operations/${e.restore_id}/restore`, { method: 'POST', body: {} })
+        await api<unknown>(`/operations/${e.restore_id}/restore`, {
+          method: 'POST',
+          body: {},
+          feedback: 'inline'
+        })
         notify('名称已还原，可以再次自动命名')
       } else {
         await options.queueRun(dialogMode.value === 'extract' ? 'extract' : 'rename', [e])

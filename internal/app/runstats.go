@@ -14,7 +14,7 @@ import (
 // be omitted to cover all recorded batches and to defaults to now.
 func (a *App) runsAnalytics(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
-	if err := queryFields(query, "from", "to", "timezone", "source", "sort", "profile", "run", "offset", "limit", "task", "status"); err != nil {
+	if err := queryFields(query, "from", "to", "timezone", "source", "sort", "profile", "offset", "limit"); err != nil {
 		writeError(w, r, err)
 		return
 	}

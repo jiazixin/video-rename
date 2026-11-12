@@ -733,3 +733,26 @@ func TestScanExclusionsFrozenUntilNextRound(t *testing.T) {
 		t.Fatalf("next round ignored exclusion: %+v", status)
 	}
 }
+
+// Every failing directory used to be kept and returned by each status poll.
+func TestScanErrorsAreBounded(t *testing.T) {
+	m, _, root, _ := fixture(t)
+	const directories = maxScanErrors + 20
+	for i := range directories {
+		put(t, filepath.Join(root, fmt.Sprintf("dir-%03d", i), "clip.mp4"))
+	}
+	actual := m.library.ScanDirectory
+	m.scan = func(ctx context.Context, id int64) (library.ScanDirectoryResult, error) {
+		if id == 1 {
+			return actual(ctx, id)
+		}
+		return library.ScanDirectoryResult{}, errors.New("read NAS directory failed")
+	}
+	if _, err := m.Start(t.Context(), []int64{1}, "manual"); err != nil {
+		t.Fatal(err)
+	}
+	s := finished(t, m)
+	if s.Status != "partial_failure" || s.ErrorCount != directories || len(s.Errors) != maxScanErrors {
+		t.Fatalf("got status=%q error_count=%d listed=%d, want partial_failure, %d and %d", s.Status, s.ErrorCount, len(s.Errors), directories, maxScanErrors)
+	}
+}

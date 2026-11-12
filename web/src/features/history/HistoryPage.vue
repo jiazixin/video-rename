@@ -163,6 +163,7 @@
     try {
       const result = await api<{ deleted: number }>('/logs/clear', {
         method: 'POST',
+        feedback: 'inline',
         body: {
           category: category.value,
           all: clearAll.value,
@@ -302,9 +303,11 @@
   async function restore() {
     if (!selected.value) return;
     busy.value = true;
+    detailError.value = '';
     try {
       await api<unknown>(`/operations/${selected.value.operation}/restore`, {
         method: 'POST',
+        feedback: 'inline',
         body: {}
       });
       toast.show('名称已还原');
@@ -347,6 +350,7 @@
     try {
       const result = await api<LogRetryResult>('/logs/retry', {
         method: 'POST',
+        feedback: 'inline',
         headers: { 'Idempotency-Key': retryKey },
         body: {
           category: scope.category,

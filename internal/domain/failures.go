@@ -66,7 +66,6 @@ const (
 	ReasonNumberingItemModified
 	ReasonNumberingItemRenamed
 	ReasonNumberingJobGone
-	ReasonNumberingJobsFull
 	ReasonNumberingMediaChanged
 	ReasonNumberingNotPreview
 	ReasonNumberingNotRestorable
@@ -194,7 +193,6 @@ var outcomeCodes = map[FailureReason]string{
 	ReasonNumberingItemModified:             "numbering_item_modified",
 	ReasonNumberingItemRenamed:              "numbering_item_renamed",
 	ReasonNumberingJobGone:                  "numbering_job_gone",
-	ReasonNumberingJobsFull:                 "numbering_jobs_full",
 	ReasonNumberingMediaChanged:             "numbering_media_changed",
 	ReasonNumberingNotPreview:               "numbering_not_preview",
 	ReasonNumberingNotRestorable:            "numbering_not_restorable",

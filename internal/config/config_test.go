@@ -333,3 +333,32 @@ func TestRejectMultipleConfigurationDocuments(t *testing.T) {
 		t.Fatal("second configuration document silently ignored")
 	}
 }
+
+// An explicitly empty log level passed validation but could not be parsed
+// when the logger was created, so the service refused to start.
+func TestEmptyLogSettingsSelectDefaults(t *testing.T) {
+	media := t.TempDir()
+	for _, tc := range []struct {
+		name, log string
+		want      LogConfig
+	}{
+		{"omitted", "", LogConfig{Level: "info", Format: "json"}},
+		{"empty values", "log:\n  level: \"\"\n  format: \"\"\n", LogConfig{Level: "info", Format: "json"}},
+		{"empty mapping", "log: {}\n", LogConfig{Level: "info", Format: "json"}},
+		{"explicit", "log:\n  level: debug\n  format: text\n", LogConfig{Level: "debug", Format: "text"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := loadTemp(t, "media_path: "+media+"\nauth:\n  username: admin\n  password: x\n"+tc.log, "cfg.yaml")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Log != tc.want {
+				t.Fatalf("got %+v, want %+v", cfg.Log, tc.want)
+			}
+		})
+	}
+	_, err := loadTemp(t, "media_path: "+media+"\nauth:\n  username: admin\n  password: x\nlog:\n  level: verbose\n", "cfg.yaml")
+	if err == nil || !strings.Contains(err.Error(), "log.level: must be debug, info, warn or error") {
+		t.Fatalf("got %v, want a log.level field error", err)
+	}
+}

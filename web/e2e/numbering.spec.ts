@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { bodyRows, toasts } from './support'
+import { bodyRows, defined, toasts } from './support'
 
 test('图片默认连续编号、跨页预览、小写后缀与刷新后整批还原', async ({ page }) => {
   await page.goto('/')
@@ -140,4 +140,101 @@ test('编号规则设置位数后预览使用新规则', async ({ page }) => {
     await page.getByRole('button', { name: '保存编号规则', exact: true }).click()
     await expect(page.getByRole('button', { name: '保存编号规则', exact: true })).toBeDisabled()
   }
+})
+
+test('大目录预览按页读取，提交显示进度并在确认后停止', async ({ page }) => {
+  const total = 8003
+  const offsets: number[] = [],
+    submissions: { action: string; batches: string[] }[] = [],
+    cancelled: string[] = []
+  const item = (i: number) => ({
+    entry: i + 1,
+    old_name: `IMG_${String(i).padStart(5, '0')}.JPG`,
+    new_name: `${i + 1}.jpg`
+  })
+  // The preview response carries the counts and the first page only.
+  await page.route('**/api/directories/*/numberings/preview', (route) =>
+    route.fulfill({
+      status: 201,
+      json: {
+        id: 'large-preview',
+        parent: 1,
+        status: 'preview',
+        created: '2026-11-10T00:00:00.000Z',
+        undo_of: '',
+        total,
+        changed: total,
+        items: Array.from({ length: 100 }, (_, i) => item(i))
+      }
+    })
+  )
+  await page.route('**/api/numberings/large-preview/items?*', (route) => {
+    const offset = Number(new URL(route.request().url()).searchParams.get('offset'))
+    offsets.push(offset)
+    return route.fulfill({
+      json: {
+        items: Array.from({ length: Math.min(100, total - offset) }, (_, i) => item(offset + i)),
+        total,
+        offset,
+        limit: 100
+      }
+    })
+  })
+  let key = ''
+  const running = () => ({
+    key,
+    status: 'running',
+    phase: 'apply',
+    directory_done: 40,
+    directory_total: total,
+    directories: 0,
+    files: 0,
+    done: 0,
+    total: 1,
+    processing_log: ''
+  })
+  await page.route('**/api/numbering/jobs', (route) => {
+    key = defined(route.request().headers()['idempotency-key'])
+    submissions.push(route.request().postDataJSON())
+    return route.fulfill({ status: 202, json: running() })
+  })
+  await page.route('**/api/numbering/jobs/*', (route) => route.fulfill({ json: running() }))
+  await page.route('**/api/numbering/jobs/*/cancel', (route) => {
+    cancelled.push(route.request().url())
+    return route.fulfill({ json: { status: 'cancelling' } })
+  })
+  await page.goto('/')
+  await page.getByLabel('用户名', { exact: true }).fill('admin')
+  await page.getByLabel('密码', { exact: true }).fill('test-password-123')
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await page.getByRole('button', { name: '图片编号测试', exact: true }).click()
+  await page.getByRole('combobox', { name: '类型筛选', exact: true }).click()
+  await page.getByRole('option', { name: '图片', exact: true }).click()
+  await page.getByRole('button', { name: '一键编号', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '图片编号预览', exact: true })
+  await expect(dialog).toContainText('共 8003 张图片，8003 张需要修改')
+  await expect(bodyRows(dialog)).toHaveCount(100)
+  await expect(bodyRows(dialog).first()).toHaveText('IMG_00000.JPG1.jpg')
+  expect(offsets).toEqual([])
+  await dialog.getByRole('button', { name: '下页', exact: true }).click()
+  await expect(bodyRows(dialog).first()).toHaveText('IMG_00100.JPG101.jpg')
+  await dialog.getByRole('button', { name: '末页', exact: true }).click()
+  await expect(bodyRows(dialog)).toHaveCount(3)
+  await expect(bodyRows(dialog).last()).toHaveText('IMG_08002.JPG8003.jpg')
+  expect(offsets).toEqual([100, 8000])
+  await dialog.getByRole('button', { name: '确认编号', exact: true }).click()
+  const applying = page.getByRole('dialog')
+  await expect(applying.getByRole('status')).toContainText('当前目录 40 / 8003 个文件')
+  expect(submissions).toMatchObject([{ action: 'apply', batches: ['large-preview'] }])
+  // Closing while files are being renamed asks first; Escape keeps the job running.
+  await page.keyboard.press('Escape')
+  await expect(applying).toContainText('确定停止并关闭编号窗口吗')
+  await expect(page.getByRole('button', { name: '继续处理', exact: true })).toBeFocused()
+  expect(cancelled).toHaveLength(0)
+  await page.getByRole('button', { name: '继续处理', exact: true }).click()
+  await expect(applying.getByRole('status')).toContainText('当前目录 40 / 8003 个文件')
+  await applying.getByRole('button', { name: '停止并关闭', exact: true }).click()
+  await page.getByRole('button', { name: '确定停止并关闭', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect.poll(() => cancelled.length).toBe(1)
 })

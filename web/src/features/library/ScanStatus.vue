@@ -124,7 +124,11 @@
       }}</span>
     </div>
     <details v-if="status.errors?.length" class="scan-errors"
-      ><summary>{{ status.errors.length }} 个目录读取失败，保留上次完整列表</summary
+      ><summary
+        >{{ status.error_count }} 个目录读取失败，保留上次完整列表<template
+          v-if="status.error_count > status.errors.length"
+          >（仅列出前 {{ status.errors.length }} 个）</template
+        ></summary
       ><ul
         ><li v-for="failure in status.errors" :key="JSON.stringify(failure)"
           ><strong>{{ failureScope(failure) }}</strong

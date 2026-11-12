@@ -125,11 +125,11 @@ func (c Config) validateFields() error {
 		return fieldError("tmp_storage", "must not be empty")
 	}
 	switch c.Log.Level {
-	case "", "debug", "info", "warn", "error": // empty means info
+	case "", "debug", "info", "warn", "error": // empty selects info; decoding substitutes it
 	default:
 		return fieldError("log.level", "must be debug, info, warn or error")
 	}
-	if c.Log.Format != "" && c.Log.Format != "json" && c.Log.Format != "text" { // empty means json
+	if c.Log.Format != "" && c.Log.Format != "json" && c.Log.Format != "text" { // empty selects json
 		return fieldError("log.format", "must be json or text")
 	}
 	return nil

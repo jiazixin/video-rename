@@ -26,14 +26,18 @@
     processing_log?: string;
     total: number;
     changed: number;
-    items?: { entry: number; old_name: string; new_name: string }[];
+    items?: Item[];
   };
   const confirmingClose = ref(false),
     continueButton = ref<HTMLButtonElement>();
   const task = useNumberingTask();
   const progress = task.progress;
+  type Item = { entry: number; old_name: string; new_name: string };
+  // A tree preview is read from its job (previewKey); a restore preview from its
+  // batch (restoreSource). Either way only the visible page is held.
   const previewKey = ref(''),
-    remoteItems = ref<{ entry: number; old_name: string; new_name: string; path: string }[]>([]);
+    restoreSource = ref<{ id: string; path: string }>(),
+    visible = ref<(Item & { path: string })[]>([]);
   const { directory, disabled } = defineProps<{ directory: number; disabled: boolean }>();
   const emit = defineEmits<{ changed: []; notice: [message: string] }>();
   const show = ref(false),
@@ -46,14 +50,6 @@
     page = ref(0);
   const total = computed(() => batches.value.reduce((sum, b) => sum + b.total, 0));
   const changed = computed(() => batches.value.reduce((sum, b) => sum + b.changed, 0));
-  const items = computed(() =>
-    batches.value.flatMap((b) => (b.items || []).map((item) => ({ ...item, path: b.path })))
-  );
-  const visible = computed(() =>
-    previewKey.value
-      ? remoteItems.value
-      : items.value.slice(page.value * 100, (page.value + 1) * 100)
-  );
   const restoring = computed(() => !!batches.value[0]?.undo_of);
   const states: Record<string, string> = {
     committed: '已完成',
@@ -98,12 +94,17 @@
     busy.value = true;
     try {
       if (previewKey.value) {
-        const data = await api<{ batches: Batch[]; items: typeof remoteItems.value }>(
+        const data = await api<{ batches: Batch[]; items: typeof visible.value }>(
           `/numbering/jobs/${previewKey.value}/result?offset=${next * 100}`
         );
         if (!show.value) return;
         batches.value = data.batches;
-        remoteItems.value = data.items;
+        visible.value = data.items;
+      } else if (restoreSource.value) {
+        const { id, path } = restoreSource.value;
+        const data = await api<{ items: Item[] }>(`/numberings/${id}/items?offset=${next * 100}`);
+        if (!show.value) return;
+        visible.value = data.items.map((item) => ({ ...item, path }));
       }
       page.value = next;
     } catch (e) {
@@ -117,7 +118,9 @@
     error.value = '';
     diagnostics.value = '';
     batches.value = [];
+    visible.value = [];
     previewKey.value = '';
+    restoreSource.value = undefined;
     page.value = 0;
     busy.value = true;
     try {
@@ -162,8 +165,12 @@
     try {
       const undo = await api<Batch>(`/numberings/${batch.id}/restore-preview`, {
         method: 'POST',
+        feedback: 'inline',
         body: {}
       });
+      // The response carries the first page; loadPage reads the others.
+      restoreSource.value = { id: undo.id, path: batch.path };
+      visible.value = (undo.items ?? []).map((item) => ({ ...item, path: batch.path }));
       batches.value = [{ ...undo, path: batch.path }];
       history.value = false;
     } catch (e) {
@@ -196,7 +203,9 @@
       report(e);
     } finally {
       batches.value = [];
+      visible.value = [];
       previewKey.value = '';
+      restoreSource.value = undefined;
       history.value = true;
       emit('changed');
       if (show.value) {
@@ -216,6 +225,7 @@
     try {
       const updated = await api<Batch>(`/numberings/${batch.id}/recover`, {
         method: 'POST',
+        feedback: 'inline',
         body: {}
       });
       if (updated.status === 'review') error.value = errorText(updated.error);

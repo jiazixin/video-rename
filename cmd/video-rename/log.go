@@ -8,8 +8,8 @@ import (
 	"video-rename/internal/config"
 )
 
-// newLogger writes records to stdout with the configured level and format;
-// the validated configuration guarantees both are known.
+// newLogger writes records to stdout with the configured level and format.
+// config.Load guarantees both are known and replaces empty values by defaults.
 func newLogger(c config.LogConfig, stdout io.Writer) (*slog.Logger, func() error, error) {
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(c.Level)); err != nil {

@@ -23,7 +23,9 @@
   const form = ref<Settings>(),
     loading = ref(true),
     saving = ref(false),
+    // error reports a failed load at the top; saveError sits beside the save button.
     error = ref(''),
+    saveError = ref(''),
     saved = ref('');
   const startPercent = computed({
     get: () => Number(((form.value?.sampling.skip_start_ratio || 0) * 100).toFixed(8)),
@@ -76,21 +78,25 @@
   }
   async function save() {
     if (!form.value || saving.value) return;
-    error.value = '';
+    saveError.value = '';
     if (startPercent.value + endPercent.value >= 100) {
-      error.value = errorText(
+      saveError.value = errorText(
         invalidFields([{ path: 'sampling.skip_end_ratio', reason: 'sum_too_large' }])
       );
       return;
     }
     saving.value = true;
     try {
-      const result = await api<Settings>('/sampling', { method: 'PUT', body: form.value });
+      const result = await api<Settings>('/sampling', {
+        method: 'PUT',
+        body: form.value,
+        feedback: 'inline'
+      });
       form.value = result;
       saved.value = JSON.stringify(result);
       toast.show('设置已保存，将用于新建任务。');
     } catch (e) {
-      error.value = errorText(e);
+      saveError.value = errorText(e);
     } finally {
       saving.value = false;
     }
@@ -291,6 +297,7 @@
           /></div>
         </section>
       </fieldset>
+      <div v-if="saveError" class="notice error" role="alert">{{ saveError }}</div>
       <footer class="sampling-footer"
         ><div
           ><strong>{{ dirty ? '有未保存的修改' : '设置已同步' }}</strong

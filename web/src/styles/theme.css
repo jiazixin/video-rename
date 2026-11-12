@@ -184,6 +184,20 @@ button {
     color var(--motion-hover) linear,
     filter var(--motion-hover) linear;
 }
+/* Pointer targets are at least 24×24 CSS px. Text-style buttons keep their
+   look: only the box grows around the centred label. A summary is a block, so
+   it grows by padding; a link inside running text grows the same way, which
+   leaves the line height alone. */
+button {
+  min-width: var(--control-hit-area);
+  min-height: var(--control-hit-area);
+}
+summary {
+  padding-block: max(0px, calc((var(--control-hit-area) - 1lh) / 2));
+}
+p a {
+  padding-block: max(0px, calc((var(--control-hit-area) - 1.2em) / 2));
+}
 button:hover:not(:disabled) {
   background: var(--control-hover);
   border-color: var(--control-line-hover);

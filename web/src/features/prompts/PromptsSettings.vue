@@ -19,7 +19,9 @@
     promptsLoaded = ref(false),
     loading = ref(true),
     savingFixed = ref(false),
-    error = ref('');
+    // error reports a failed load at the top; fixedError sits beside its save button.
+    error = ref(''),
+    fixedError = ref('');
   const dirtyFixed = computed(() => fixed.value !== savedFixed.value);
   const failureKeywords = ref<string[]>([]),
     savedFailureKeywords = ref<string[]>([]),
@@ -92,10 +94,11 @@
   async function saveFixed() {
     if (savingFixed.value || !dirtyFixed.value) return;
     savingFixed.value = true;
-    error.value = '';
+    fixedError.value = '';
     try {
       const out = await api<{ fixed_prompt: string }>('/prompts/fixed', {
         method: 'PUT',
+        feedback: 'inline',
         body: {
           fixed_prompt: fixed.value
         }
@@ -104,7 +107,7 @@
       savedFixed.value = out.fixed_prompt;
       toast.show('固定提示词已保存。之后创建的运行会把它附加在所选提示词末尾发送。');
     } catch (e) {
-      error.value = errorText(e);
+      fixedError.value = errorText(e);
     } finally {
       savingFixed.value = false;
     }
@@ -157,6 +160,7 @@
     try {
       const out = await api<{ failure_keywords: string[] }>('/prompts/failure-keywords', {
         method: 'PUT',
+        feedback: 'inline',
         body: {
           failure_keywords: [...failureKeywords.value]
         }
@@ -185,6 +189,7 @@
     try {
       await api<unknown>(editId.value ? `/prompts/${editId.value}` : '/prompts', {
         method: editId.value ? 'PATCH' : 'POST',
+        feedback: 'inline',
         headers: editId.value ? { 'If-Match': editETag.value } : {},
         body: edit.value
       });
@@ -204,6 +209,7 @@
     try {
       await api<unknown>(`/prompts/${deleteTarget.value.id}`, {
         method: 'DELETE',
+        feedback: 'inline',
         headers: { 'If-Match': deleteTarget.value.etag },
         body: {}
       });
@@ -236,7 +242,8 @@
             rows="9"
             maxlength="16000"
             required
-          /><footer class="processing-footer"
+          /><div v-if="fixedError" class="notice error" role="alert">{{ fixedError }}</div
+          ><footer class="processing-footer"
             ><p class="help">保存后对新批次生效；恢复默认后也需保存。</p
             ><div class="prompts-fixed-actions"
               ><button

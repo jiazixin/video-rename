@@ -72,7 +72,11 @@ export function useLibraryScan(onPoll?: (signal: AbortSignal) => Promise<void>) 
     submitting.value = true
     actionError.value = ''
     try {
-      const status = await api<LibraryScanStatus>(path, { method: 'POST', body })
+      const status = await api<LibraryScanStatus>(path, {
+        method: 'POST',
+        body,
+        feedback: 'inline'
+      })
       if (state.value) state.value.status = status
       void refresh()
       return status
@@ -89,7 +93,8 @@ export function useLibraryScan(onPoll?: (signal: AbortSignal) => Promise<void>) 
     try {
       const saved = await api<LibraryScanSettings>('/library/scan/settings', {
         method: 'PUT',
-        body: settings
+        body: settings,
+        feedback: 'inline'
       })
       if (state.value) state.value.settings = saved
       void refresh()

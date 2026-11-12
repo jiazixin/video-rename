@@ -1,11 +1,9 @@
 package app
 
 import (
-	"context"
 	"errors"
 	"maps"
 	"net/http"
-	"time"
 
 	"video-rename/internal/domain"
 	"video-rename/internal/library"
@@ -13,25 +11,13 @@ import (
 )
 
 // numberingRoutes serves both media classes; the batch journal records which
-// class a numbering belongs to, so apply/restore/recover only need the ID.
+// class a numbering belongs to, so restore and recover only need the ID.
+// Previews are applied by a numbering job (POST /api/numbering/jobs).
 // Previews always read the currently saved rules; confirmed batches replay
 // the names frozen at preview time, so later rule changes never mutate them.
 func (a *App) numberingRoutes(api *router) {
 	a.numberingJobRoutes(api)
 	store := systemsetting.New(a.db)
-	api.HandleFunc("POST /api/directories/{id}/numberings/tree-preview", func(w http.ResponseWriter, r *http.Request) {
-		settings, err := store.Numbering(r.Context())
-		if err != nil {
-			numberingFailure(w, r, err)
-			return
-		}
-		batches, err := a.Library.PreviewNumberingTree(r.Context(), number(r.PathValue("id")), settings)
-		if err != nil {
-			numberingFailure(w, r, err)
-			return
-		}
-		send(w, http.StatusCreated, batches)
-	})
 	api.HandleFunc("GET /api/directories/{id}/numberings/tree", func(w http.ResponseWriter, r *http.Request) {
 		batches, err := a.Library.NumberingTreeHistory(r.Context(), number(r.PathValue("id")))
 		if err != nil {
@@ -90,7 +76,7 @@ func (a *App) numberingRoutes(api *router) {
 			numberingFailure(w, r, err)
 			return
 		}
-		send(w, http.StatusCreated, b)
+		send(w, http.StatusCreated, firstNumberingPage(b))
 	})
 	api.HandleFunc("GET /api/directories/{id}/numberings", func(w http.ResponseWriter, r *http.Request) {
 		media := r.URL.Query().Get("media")
@@ -105,16 +91,17 @@ func (a *App) numberingRoutes(api *router) {
 		}
 		send(w, http.StatusOK, b)
 	})
-	api.HandleFunc("POST /api/numberings/{id}/apply", func(w http.ResponseWriter, r *http.Request) {
-		// Renames must not stop half way when the client disconnects.
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Minute)
-		defer cancel()
-		b, err := a.Library.ApplyNumbering(ctx, r.PathValue("id"), nil)
+	api.HandleFunc("GET /api/numberings/{id}/items", func(w http.ResponseWriter, r *http.Request) {
+		if err := queryFields(r.URL.Query(), "offset"); err != nil {
+			writeError(w, r, err)
+			return
+		}
+		page, err := a.Library.NumberingItems(r.Context(), r.PathValue("id"), int(number(r.URL.Query().Get("offset"))))
 		if err != nil {
 			numberingFailure(w, r, err)
 			return
 		}
-		send(w, http.StatusOK, b)
+		send(w, http.StatusOK, page)
 	})
 	api.HandleFunc("POST /api/numberings/{id}/restore-preview", func(w http.ResponseWriter, r *http.Request) {
 		b, err := a.Library.PreviewNumberingRestore(r.Context(), r.PathValue("id"))
@@ -122,7 +109,7 @@ func (a *App) numberingRoutes(api *router) {
 			numberingFailure(w, r, err)
 			return
 		}
-		send(w, http.StatusCreated, b)
+		send(w, http.StatusCreated, firstNumberingPage(b))
 	})
 	api.HandleFunc("POST /api/numberings/{id}/recover", func(w http.ResponseWriter, r *http.Request) {
 		b, err := a.Library.RecoverNumbering(r.Context(), r.PathValue("id"))
@@ -132,6 +119,13 @@ func (a *App) numberingRoutes(api *router) {
 		}
 		send(w, http.StatusOK, b)
 	})
+}
+
+// firstNumberingPage bounds a preview response: it carries the counts and the
+// first page; GET /api/numberings/{id}/items reads the remaining pages.
+func firstNumberingPage(b library.Numbering) library.Numbering {
+	b.Items = b.Items[:min(len(b.Items), library.NumberingPageSize)]
+	return b
 }
 
 // Numbering preflight errors are returned before a batch is saved. Preserve

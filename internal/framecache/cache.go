@@ -367,6 +367,10 @@ func (c *Cache) Acquire(ctx context.Context, key string, reserve int64, build fu
 				l := c.lease(r)
 				c.mu.Unlock()
 				return l, nil
+			} else if ctxErr := ctx.Err(); ctxErr != nil {
+				// An interrupted check says nothing about the frames; keep them.
+				c.mu.Unlock()
+				return nil, ctxErr
 			} else if r.pins == 0 {
 				if err = c.remove(r); err != nil {
 					c.mu.Unlock()

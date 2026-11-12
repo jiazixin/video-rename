@@ -24,11 +24,19 @@
 | `/api/extractions` | `success_offset`、`failure_offset`、`limit`、`q`、`run`、`from`、`to` | `success` / `failure` 各含 `items`、`total`、`offset`、`limit`，另有 `running` 数量；每组默认 50 |
 | `/api/notifications/history` | `offset`、`limit` | `items`、`total`、`offset`、`limit`；默认 50 |
 | `/api/runs/{id}/items` | `offset`、`directory`、`status` | `items`、`total`、`offset`、`limit` 及整批统计；固定每页 100 |
-| `/api/usage/analytics`、`/api/runs/analytics` | `offset`、`limit` 及时间、模型、批次筛选 | `batches` 含 `items`、`total`、`offset`、`limit`；默认 20，允许 1–100 |
+| `/api/usage/analytics`、`/api/runs/analytics` | `offset`、`limit` 及时间筛选；用量另有 `source`、`sort`、`profile`、`run`、`model`，运行分析另有 `source`、`sort`、`profile` | `batches` 含 `items`、`total`、`offset`、`limit`；默认 20，允许 1–100 |
+| `/api/numberings/{id}/items` | `offset` | `items`（`entry`、`old_name`、`new_name`）、`total`、`offset`、`limit`；固定每页 100 |
 
 以上接口不再接受 `page`、`size`、`before`、`paged`、`success_page`、`failure_page`、`success_before`、`failure_before` 或目录 `generation` 输入，不保留旧分页实现。目录 `generation` 是只读字符串，用于播放器跨页读取时识别目录变化。目录 `kind` 只接受空值、`file`、`directory`、`video`、`image`、`audio`、`other`；`sort` 为空或 `name` / `size` / `mtime` / `renamed` / `status` 加 `_asc` / `_desc`。
 
 日期筛选传 RFC 3339 时间（管理台传 UTC 毫秒格式），不接收只有日期而没有时间的值。`GET /api/entries/{id}/history` 使用 `cursor` 返回 `{"items": [...], "next_cursor": "..."}`，每页最多 100 条，末页省略 `next_cursor`；游标为上一页最后一条操作的 ID 字符串，按 ID 降序定位，拒绝无效、非正和重复游标。编号任务结果的 `offset` 是当前预览切片参数。
+
+## 编号
+
+- 单目录预览 `POST /api/directories/{id}/numberings/preview`（请求体 `media`、`query`、`status`、`sort`）和还原预览 `POST /api/numberings/{id}/restore-preview` 返回 201 与批次：`id`、`total`、`changed` 和前 100 个 `items`；其余条目用 `GET /api/numberings/{id}/items?offset=` 分页读取，目录再大响应大小也不随文件数增长。
+- 目录树预览与所有提交都是编号任务：`POST /api/numbering/jobs`，`action` 为 `preview`（按 `parent` 扫描整棵目录树）或 `apply`（`batches` 给出预览批次 ID，或 `preview` 引用一个已完成的预览任务键）。用 `GET /api/numbering/jobs/{key}` 轮询进度并续租，20 秒无人查询则停止；`POST /api/numbering/jobs/{key}/cancel` 取消，服务关闭时同样取消并等待。提交失败或被取消时，当前目录恢复原名，已完成的目录保留。
+- 同一时间只运行一个编号任务（否则 409 `numbering_running`）。服务端最多保留 64 个任务结果，结束后保留一小时；达到上限时淘汰最早结束的结果，运行中的任务不会被淘汰。引用已被淘汰或过期的预览任务时返回 409 `preview_stale`，重新预览即可。
+- `POST /api/numberings/{id}/recover` 重试恢复未完成的批次。不提供同步的提交接口。
 
 ## 数量和可选字段
 
@@ -47,9 +55,17 @@
 
 所有已认证的 POST 支持 `Idempotency-Key` 请求头，取值匹配 `^[A-Za-z0-9_-]{8,128}$`。创建请求应提供此头；请求体不接受旧 `key` / `request_key` 字段。键在整个 API 中唯一，身份为请求方法、路径及查询、`If-Match` 与原始请求体的组合。同键同请求重放第一次已记录的 HTTP 状态、响应体及 `Content-Type` / `ETag` / `Location` / `Retry-After` / `Allow`，同键异请求返回 409 `idempotency_key_reused`。不带键的 POST 可以执行，但客户端不得自动重试。
 
-记录持久保留至少 24 小时，重启后仍可重放。并发同键请求串行等待，取消等待不取消已经开始的业务动作。结果先持久化再发送；如果服务在业务完成与结果记录之间中断，未完成保留项返回 409 `idempotency_pending`，避免再次执行不确定的文件操作，应先核对资源与操作日志。结果记录最多 10,000 条、合计 64 MiB；未完成项按每项 512 KiB 预留，单次结果（含选定响应头）不超过该值，达到容量时新请求返回 409 `idempotency_capacity`，不会提前驱逐仍在保留期的结果。后台任务的进度资源有自己的生命周期；重放 202 表示原提交已接受，不会重新启动任务。
+记录持久保留至少 24 小时，重启后仍可重放。并发同键请求串行等待，取消等待不取消已经开始的业务动作。结果先持久化再发送，任何状态码的响应都会被记录并原样重放，包括 4xx、500 和 503。结果记录最多 10,000 条、合计 64 MiB；单次结果（含选定响应头）不超过 512 KiB，达到容量时新请求返回 409 `idempotency_capacity`，不会提前驱逐仍在保留期的结果。后台任务的进度资源有自己的生命周期；重放 202 表示原提交已接受，不会重新启动任务。
 
-管理台为 POST 创建一次请求键，在网络错误、超时、429 或 503 后至多重试两次，同一逻辑请求始终沿用同一键；只读 GET 同样可重试。认证登录/登出不自动分配幂等键或重试。`Retry-After` 超过 10 秒时直接展示错误。
+处理结束时预留一定会被结清，不会停留在未完成状态：
+
+- 响应超过 512 KiB 时，首次请求照常收到完整响应，但内容不保留；同键重放返回 409 `idempotency_result_unavailable`，表示操作已完成、应刷新资源查看结果。列表类结果应使用分页接口，不依赖单次大响应。
+- 处理函数异常终止时记录为 500 `internal`，同键重放得到同一失败。
+- 请求在处理过程中被客户端取消（包括管理台 60 秒超时）且处理因此失败时，记录为 503 `request_cancelled`。单个改名、还原或删除一旦开始文件操作就不再响应请求取消，仍记录真实结果；标记和编号任务本来就脱离请求运行。整批还原在两项之间响应取消，已还原的项保留，重新提交时跳过它们。
+
+只有进程在“预留”与“记录结果”之间被终止（崩溃、断电、平滑关闭超时后仍在途的请求），或记录结果本身写入失败，才会留下未完成的预留。此时同键请求返回 409 `idempotency_pending`，避免再次执行不确定的文件操作，应先核对资源与操作日志。未完成预留按每项 512 KiB 计入容量，并与已完成记录一样在 24 小时后过期删除；过期后同一个键会被当作新请求执行。管理台的键每次操作随机生成，不会跨天复用；改名、还原与批次创建另有各自的操作日志键防止重复执行。
+
+管理台为 POST 创建一次请求键，同一逻辑请求始终沿用同一键。带键 POST 只在没有收到响应时（网络错误、超时）至多重试两次；收到的任何响应都是已记录的最终结果，包括 429 和 503，不再重试。只读 GET 在网络错误、超时、429 或 503 后至多重试两次。认证登录/登出不自动分配幂等键或重试。`Retry-After` 超过 10 秒时直接展示错误。
 
 服务端只返回英文说明和代码；管理台按代码显示中文，不展示服务端的英文说明。`details.detail`、`processing_log` 等原始诊断仅在明确的诊断视图展示，不拼入普通错误提示或 toast。
 
@@ -84,12 +100,12 @@ HTTP 状态由失败类别决定：参数无效 400、未登录 401、跨站 403
 | 409 | 配置：`mark_running`、`prompt_in_use`、`model_config_is_default`、`model_config_is_fallback`、`model_config_in_use`、`notification_not_configured`、`fallback_model_unavailable` | 资源已修改或仍被使用 | `prompt_in_use`：`configs`；`model_config_in_use`：`plans` |
 | 409 | 小写的任务错误码，如 `source_changed`、`rename_conflict` | 由文件处理产生的失败（见“任务与记录错误”） | 同记录 |
 | 400 | `nothing_to_number`、`numbering_nothing_selected`、`target_not_runnable`、`retry_scope_invalid`、`not_directory`、`not_regular_file`、`not_image`、`illegal_path`、`symlink_not_allowed`、`protected_entry`、`unsupported_channel`、`model_config_incomplete`、`fallback_model_invalid`、`model_snapshot_missing`、`model_snapshot_invalid`、`sampling_snapshot_invalid`、`scan_too_deep` | 请求对象不符合操作要求 | `model_config_incomplete`、`fallback_model_invalid` 以 `detail` 带出具体字段问题 |
-| 409 | `idempotency_key_reused`、`idempotency_pending`、`idempotency_capacity` | 幂等请求冲突、结果未确定或保留容量已满 | — |
-| 409 | `numbering_jobs_full`、`waiting_runs_full`、`prompts_full`、`model_configs_full`、`schedules_full` | 资源数量超过上限 | `waiting_runs_full`：`limit` |
+| 409 | `idempotency_key_reused`、`idempotency_pending`、`idempotency_capacity`、`idempotency_result_unavailable` | 幂等请求冲突、结果未确定、保留容量已满，或首次响应过大未保留 | — |
+| 409 | `waiting_runs_full`、`prompts_full`、`model_configs_full`、`schedules_full` | 资源数量超过上限 | `waiting_runs_full`：`limit` |
 | 412 | `precondition_failed` | `If-Match` 缺失、过期或不匹配 | — |
 | 429 | `rate_limited` | 请求频率超过上限，带 `Retry-After` | — |
 | 500 | `internal`、`library_halted`、`secret_invalid`、`secret_unreadable`、`notification_credentials_unreadable`、`notification_config_invalid`、`scan_settings_unreadable`、`cache_clear_incomplete`、`delete_*`、`rename_*`（改名后核对失败）、`journal_source_changed`、`numbering_unconfirmed`、`numbering_evidence_unsaved`、`numbering_item_ambiguous`、`numbering_item_modified`、`mark_batch_failed` | 服务端错误或需要重启核对 | `cache_clear_incomplete`：`deleted` |
-| 503 | `shutting_down`、`root_unavailable`、`scan_closed`、`scan_target_unavailable`、`temp_capacity_too_small`、`frames_over_reservation`、`discovery_*`、`notification_failed` | 服务或外部依赖暂时不可用 | `scan_target_unavailable`：`path`；`discovery_timeout`：`timeout_ms`；`discovery_http_error`：`status`；`notification_failed`：`reason`（`encode`、`invalid_endpoint`、`unreachable`、`response_unreadable`、`http_status`、`response_invalid`、`rejected`），`http_status` 另带 `status` |
+| 503 | `shutting_down`、`request_cancelled`、`root_unavailable`、`scan_closed`、`scan_target_unavailable`、`temp_capacity_too_small`、`frames_over_reservation`、`discovery_*`、`notification_failed` | 服务或外部依赖暂时不可用 | `scan_target_unavailable`：`path`；`discovery_timeout`：`timeout_ms`；`discovery_http_error`：`status`；`notification_failed`：`reason`（`encode`、`invalid_endpoint`、`unreachable`、`response_unreadable`、`http_status`、`response_invalid`、`rejected`），`http_status` 另带 `status` |
 
 ## 参数错误
 

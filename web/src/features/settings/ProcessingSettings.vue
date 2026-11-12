@@ -34,7 +34,9 @@
     saved = ref(''),
     loading = ref(true),
     saving = ref(false),
-    error = ref('');
+    // error reports a failed load at the top; saveError sits beside the save button.
+    error = ref(''),
+    saveError = ref('');
   const retryHelp = ref('');
   const models = ref<ModelProfile[]>([]),
     modelError = ref(''),
@@ -146,14 +148,18 @@
   async function save() {
     if (!form.value || saving.value) return;
     saving.value = true;
-    error.value = '';
+    saveError.value = '';
     try {
-      form.value = await api<Settings>('/system/settings', { method: 'PUT', body: form.value });
+      form.value = await api<Settings>('/system/settings', {
+        method: 'PUT',
+        body: form.value,
+        feedback: 'inline'
+      });
       saved.value = JSON.stringify(form.value);
       await refresh();
       toast.show('设置已保存。批次上限用于后续调度与提交，重试规则用于新批次，缓存规则立即生效。');
     } catch (e) {
-      error.value = errorText(e);
+      saveError.value = errorText(e);
     } finally {
       saving.value = false;
     }
@@ -169,7 +175,7 @@
     try {
       const result = await api<{ deleted: number; freed_bytes: number; retained: number }>(
         '/system/cache/clear',
-        { method: 'POST', body: { confirm: true } }
+        { method: 'POST', body: { confirm: true }, feedback: 'inline' }
       );
       toast.show(
         `已清理 ${result.deleted} 个视频的截图，释放约 ${gb(result.freed_bytes)} GB；保留 ${result.retained} 个正在使用或抽帧的视频。`
@@ -491,6 +497,7 @@
           >目录位置由配置文件中的 tmp_storage 指定，修改后重启服务。自动清理每分钟检查一次。</p
         ></section
       >
+      <div v-if="saveError" class="notice error" role="alert">{{ saveError }}</div>
       <footer class="processing-footer"
         ><p class="help">保存后缓存规则立即生效，已到期的闲置缓存会被清理。</p
         ><button class="primary" :disabled="saving || clearing || !dirty"

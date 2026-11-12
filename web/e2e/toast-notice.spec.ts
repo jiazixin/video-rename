@@ -94,13 +94,17 @@ test('保存系统设置不移动表单，切换分类清理通知，通知渠�
   fail = true
   await page.getByLabel('同时抽帧的视频数', { exact: true }).fill('4')
   await save.click()
-  await expect(page.getByRole('alert')).toContainText('服务暂时无法完成请求')
-  await expect(notice).toHaveCount(1)
-  await expect(notice).toContainText('服务暂时无法完成请求')
+  // A failed save is reported once, beside the button that caused it.
+  const failure = page.getByRole('alert')
+  await expect(failure).toContainText('服务暂时无法完成请求')
+  await expect(failure).toBeInViewport()
+  await expect(notice).toHaveCount(0)
+  await expect(page.getByText('服务暂时无法完成请求')).toHaveCount(1)
   await expect(page.getByText('保存失败，请重试', { exact: true })).toHaveCount(0)
   fail = false
   await save.click()
   await expect(notice).toHaveCount(1)
+  await expect(failure).toHaveCount(0)
   await page.getByRole('button', { name: '通知设置', exact: true }).click()
   await expect(notice).toHaveCount(0)
   const webhook = page.getByRole('form', { name: '自定义', exact: true })

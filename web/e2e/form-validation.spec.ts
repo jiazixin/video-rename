@@ -48,7 +48,9 @@ for (const width of [390, 1440]) {
     await expect(frames).toBeFocused()
     await expect(frames).toHaveAccessibleDescription(/1.*32/)
     await expect(quality).toHaveAccessibleDescription(/2.*15/)
-    await expect(toasts(page).first()).toContainText('1–32')
+    // Field errors sit at their fields and in the form; no toast repeats them.
+    await expect(page.getByRole('alert').filter({ hasText: '1–32' })).toBeVisible()
+    await expect(toasts(page)).toHaveCount(0)
     await expect(page.getByText('private database detail')).toHaveCount(0)
     await page.screenshot({ path: `test-results/form-errors-${width}.png`, fullPage: true })
     // Retrying must keep a changed value, rather than reverting to the saved draft.

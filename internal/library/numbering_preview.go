@@ -10,10 +10,16 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"video-rename/internal/domain"
 	"video-rename/internal/storage"
+	"video-rename/internal/timefmt"
 )
+
+// previewRetention keeps an unconfirmed preview available for confirmation,
+// including the earlier directories of a long tree preview.
+const previewRetention = 24 * time.Hour
 
 // NumberingRequest selects the entries a numbering preview covers.
 type NumberingRequest struct {
@@ -308,11 +314,14 @@ func (l *Library) saveNumberingPreview(ctx context.Context, b Numbering, path st
 				return Numbering{}, err
 			}
 		}
-		// Unconfirmed previews are disposable; completed journals remain available for restore.
-		if _, err = tx.ExecContext(ctx, `DELETE FROM image_numbering_items WHERE batch IN (SELECT id FROM image_numberings WHERE status='preview' AND created<?)`, b.Created[:10]); err != nil {
+		// Unconfirmed previews are disposable; completed journals remain available
+		// for restore. Stored times share one fixed-width UTC format, so they
+		// compare as text.
+		expired := timefmt.Format(time.Now().Add(-previewRetention))
+		if _, err = tx.ExecContext(ctx, `DELETE FROM image_numbering_items WHERE batch IN (SELECT id FROM image_numberings WHERE status='preview' AND created<?)`, expired); err != nil {
 			return Numbering{}, err
 		}
-		if _, err = tx.ExecContext(ctx, `DELETE FROM image_numberings WHERE status='preview' AND created<?`, b.Created[:10]); err != nil {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM image_numberings WHERE status='preview' AND created<?`, expired); err != nil {
 			return Numbering{}, err
 		}
 		return b, nil

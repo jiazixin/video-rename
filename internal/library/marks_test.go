@@ -376,21 +376,21 @@ func TestMediaMarksProtectManualNamesAndNumberedFiles(t *testing.T) {
 				t.Fatal(r)
 			}
 			settings := domain.DefaultNumberingSettings()
-			batches, err := l.PreviewNumberingTree(t.Context(), 1, settings)
+			batches, err := l.PreviewNumberingTreeWithProgress(t.Context(), 1, settings, nil)
 			if err != nil || len(batches) != 1 {
 				t.Fatalf("unmarked file cannot be numbered: %+v %v", batches, err)
 			}
 			if _, err = l.ApplyNumbering(t.Context(), batches[0].ID, nil); err != nil {
 				t.Fatal(err)
 			}
-			batches, err = l.PreviewNumberingTree(t.Context(), 1, settings)
+			batches, err = l.PreviewNumberingTreeWithProgress(t.Context(), 1, settings, nil)
 			if err != nil || len(batches) != 1 || batches[0].Total != 1 {
 				t.Fatalf("numbering history incorrectly protects file: %+v %v", batches, err)
 			}
 			if r := l.SetProcessed(t.Context(), []int64{e.ID}, true); r.Changed != 1 || r.Failed != 0 {
 				t.Fatalf("cannot protect numbered file: %+v", r)
 			}
-			batches, err = l.PreviewNumberingTree(t.Context(), 1, settings)
+			batches, err = l.PreviewNumberingTreeWithProgress(t.Context(), 1, settings, nil)
 			if err != nil || len(batches) != 0 {
 				t.Fatalf("all-protected directory should be skipped: %+v %v", batches, err)
 			}

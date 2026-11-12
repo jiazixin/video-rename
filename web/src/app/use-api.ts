@@ -4,6 +4,13 @@ import { errorText } from './errors'
 import type { FieldError } from './server-codes'
 import { useToast } from './use-toast'
 
+/**
+ * How a failed write is reported. The default is a toast. A caller that shows
+ * the failure itself, next to the control that caused it, passes 'inline' so
+ * the same text does not appear twice.
+ */
+export type RequestOptions = ApiOptions & { feedback?: 'toast' | 'inline' }
+
 /** Binds requests to the owning scope and the active lifetime of a kept-alive page. */
 export function useApi() {
   const formError = shallowRef<unknown>()
@@ -29,11 +36,11 @@ export function useApi() {
       details: { fields }
     })
     formError.value = error
-    toast?.show(errorText(error), 'error')
     return error
   }
 
-  async function request<T>(path: string, options: ApiOptions = {}): Promise<T> {
+  async function request<T>(path: string, requestOptions: RequestOptions = {}): Promise<T> {
+    const { feedback = 'toast', ...options } = requestOptions
     const signal = options.signal
       ? AbortSignal.any([lifetime.signal, options.signal])
       : lifetime.signal
@@ -51,13 +58,13 @@ export function useApi() {
     } catch (error) {
       if (isWrite && !signal.aborted) {
         if (error instanceof ApiError && error.status === 400) formError.value = error
-        toast?.show(errorText(error), 'error')
+        if (feedback === 'toast') toast?.show(errorText(error), 'error')
       }
       throw error
     }
   }
 
-  async function items<T>(path: string, options?: ApiOptions): Promise<T[]> {
+  async function items<T>(path: string, options?: RequestOptions): Promise<T[]> {
     return (await request<{ items: T[] }>(path, options)).items
   }
 

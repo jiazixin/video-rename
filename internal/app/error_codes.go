@@ -65,7 +65,6 @@ var failureCodes = map[domain.FailureReason]string{
 	domain.ReasonNumberingItemModified:             "numbering_item_modified",
 	domain.ReasonNumberingItemRenamed:              "numbering_item_renamed",
 	domain.ReasonNumberingJobGone:                  "numbering_job_gone",
-	domain.ReasonNumberingJobsFull:                 "numbering_jobs_full",
 	domain.ReasonNumberingMediaChanged:             "numbering_media_changed",
 	domain.ReasonNumberingNotPreview:               "numbering_not_preview",
 	domain.ReasonNumberingNotRestorable:            "numbering_not_restorable",

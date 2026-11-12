@@ -9,8 +9,8 @@
 | media_path | 必填，已存在的真实目录 | 媒体根目录，不能通过 HTTP 越界访问 |
 | storage | ../data | 数据目录，自动创建，必须在媒体根目录外；内部数据库文件名固定 |
 | tmp_storage | ../.cache | 可重建截图缓存的父目录，必须在媒体根目录外，修改后重启 |
-| log.level | info | 服务日志级别：debug、info、warn 或 error |
-| log.format | json | 服务日志格式：json 或 text，输出到 stdout |
+| log.level | info | 服务日志级别：debug、info、warn 或 error；显式写成空字符串时使用默认值 |
+| log.format | json | 服务日志格式：json 或 text，输出到 stdout；显式写成空字符串时使用默认值 |
 | auth.username | 必填 | 管理员账号 |
 | auth.password | 非空，拒绝占位密码，无最短长度限制 | 管理员密码，仅后端读取；明文不写入数据库或 API 响应 |
 

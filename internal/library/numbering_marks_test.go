@@ -119,7 +119,7 @@ func TestNumberingTreeTraversesProtectedDirectories(t *testing.T) {
 		t.Fatal(r)
 	}
 	put(t, filepath.Join(root, "child", "deep", "new.JPG"))
-	batches, err := l.PreviewNumberingTree(t.Context(), 1, domain.DefaultNumberingSettings())
+	batches, err := l.PreviewNumberingTreeWithProgress(t.Context(), 1, domain.DefaultNumberingSettings(), nil)
 	if err != nil || len(batches) != 1 || batches[0].Path != filepath.Join("child", "deep") || batches[0].Total != 1 {
 		t.Fatalf("protected ancestor blocked new descendant: %+v %v", batches, err)
 	}

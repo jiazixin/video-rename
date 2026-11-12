@@ -16,15 +16,11 @@ type DirectoryNumbering struct {
 	Path string `json:"path"`
 }
 
-// PreviewNumberingTree refreshes every real directory, including ones never
-// visited in the UI. Parent-first order keeps parent fingerprints valid while
-// applying batches (renaming in a child changes that child's directory mtime).
-func (l *Library) PreviewNumberingTree(ctx context.Context, parent int64, settings domain.NumberingSettings) ([]DirectoryNumbering, error) {
-	return l.PreviewNumberingTreeWithProgress(ctx, parent, settings, nil)
-}
-
 // PreviewNumberingTreeWithProgress previews numbering for every directory under
-// parent and reports progress.
+// parent and reports progress; progress may be nil. It refreshes every real
+// directory, including ones never visited in the UI. Parent-first order keeps
+// parent fingerprints valid while applying batches (renaming in a child changes
+// that child's directory mtime).
 func (l *Library) PreviewNumberingTreeWithProgress(ctx context.Context, parent int64, settings domain.NumberingSettings, progress func(int64, int, int)) ([]DirectoryNumbering, error) {
 	visited, files := 0, 0
 	if err := domain.ValidateNumberingSettings(settings); err != nil {

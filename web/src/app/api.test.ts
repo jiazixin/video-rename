@@ -120,6 +120,18 @@ describe('api retries', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
+  it('does not retry a keyed write that received a 503', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(json(503, { error: { code: 'notification_failed', message: 'offline' } }))
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    // The server recorded this response for the key; a retry would replay it.
+    await expect(
+      api('/notifications/webhook/test', { method: 'POST', body: {} })
+    ).rejects.toMatchObject({ status: 503, code: 'notification_failed' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('gives up after two retries with network_unavailable', async () => {
     vi.useFakeTimers()
     const fetchMock = vi.fn(() => Promise.reject(new TypeError('Failed to fetch')))

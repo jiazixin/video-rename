@@ -7,7 +7,9 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"regexp"
 	"time"
@@ -27,30 +29,89 @@ func requestKey(r *http.Request) string {
 	return rand.Text()
 }
 
+// retainedResponseLimit leaves room for the selected headers within one record.
+const retainedResponseLimit = storage.IdempotencyResponseLimit - 4096
+
+// errResultNotRetained replays a request whose first response was delivered
+// but was too large to keep.
+var errResultNotRetained = &httpFailure{http.StatusConflict, errorBody{Code: "idempotency_result_unavailable", Message: "request completed; its response was too large to retain, inspect the resource"}}
+
+// errHandlerFailed is the recorded outcome of a handler that panicked.
+var errHandlerFailed = &httpFailure{http.StatusInternalServerError, errorBody{Code: "internal", Message: "internal error"}}
+
+// capturedResponse buffers a keyed response until it is durable. A response
+// over the retention limit cannot be replayed: overflow records that outcome
+// first, then the buffered and remaining bytes stream to the client.
 type capturedResponse struct {
-	header   http.Header
-	status   int
-	body     bytes.Buffer
-	overflow bool
+	header    http.Header
+	status    int
+	body      bytes.Buffer
+	client    http.ResponseWriter
+	overflow  func() error
+	streaming bool
+	err       error
 }
 
 func (c *capturedResponse) Header() http.Header { return c.header }
+
 func (c *capturedResponse) WriteHeader(status int) {
 	if c.status == 0 {
 		c.status = status
 	}
 }
+
 func (c *capturedResponse) Write(data []byte) (int, error) {
+	if c.streaming {
+		return c.client.Write(data)
+	}
+	if c.err != nil {
+		return 0, c.err
+	}
 	if c.status == 0 {
 		c.status = http.StatusOK
 	}
-	if c.body.Len()+len(data) > storage.IdempotencyResponseLimit-4096 {
-		c.overflow = true
-		return 0, errors.New("response retention limit exceeded")
+	if c.body.Len()+len(data) <= retainedResponseLimit {
+		return c.body.Write(data)
 	}
-	return c.body.Write(data)
+	if c.err = c.overflow(); c.err != nil {
+		return 0, c.err
+	}
+	c.streaming = true
+	maps.Copy(c.client.Header(), c.header)
+	c.client.WriteHeader(c.status)
+	if _, err := c.client.Write(c.body.Bytes()); err != nil {
+		return 0, err
+	}
+	c.body.Reset()
+	return c.client.Write(data)
 }
 
+// failureResponse is the retained form of a transport failure.
+func failureResponse(key string, failure *httpFailure) (storage.IdempotencyResponse, error) {
+	body, err := json.Marshal(map[string]any{"error": failure.body})
+	if err != nil {
+		return storage.IdempotencyResponse{}, err
+	}
+	return storage.IdempotencyResponse{Key: key, Status: failure.status, Header: `{"Content-Type":"application/json; charset=utf-8"}`, Body: body}, nil
+}
+
+// recordFailure completes the reservation of key with a fixed failure. The
+// request context may have ended; the outcome must still be recorded.
+func (a *App) recordFailure(r *http.Request, key string, failure *httpFailure) error {
+	response, err := failureResponse(key, failure)
+	if err != nil {
+		return err
+	}
+	record, cancel := storage.Detach(r.Context())
+	defer cancel()
+	return a.db.CompleteIdempotency(record, response)
+}
+
+// idempotent replays the first recorded response of a keyed POST, whatever its
+// status: clients retry a key only when no response arrived. Every path out of
+// the handler settles the reservation, including an oversized response and a
+// panic. Only a process stopped in between leaves a reservation, which rejects
+// the key until it expires.
 func (a *App) idempotent(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := r.Header.Get("Idempotency-Key")
@@ -92,12 +153,31 @@ func (a *App) idempotent(next http.Handler) http.Handler {
 			replayResponse(w, response)
 			return
 		}
-		captured := &capturedResponse{header: make(http.Header)}
+		captured := &capturedResponse{header: make(http.Header), client: w, overflow: func() error {
+			return a.recordFailure(r, key, errResultNotRetained)
+		}}
+		defer func() {
+			recovered := recover()
+			if recovered == nil {
+				return
+			}
+			// An aborted response has no outcome to record. Any other panic is a
+			// final failure unless the response is already recorded and streaming.
+			if recovered != http.ErrAbortHandler && !captured.streaming {
+				if err := a.recordFailure(r, key, errHandlerFailed); err != nil {
+					requestLogger(r).Error("request_result_save_failed", "error", err)
+				}
+			}
+			panic(recovered)
+		}()
 		// Retain the API's JSON 404/405 response, including Allow, rather than
 		// re-encoding the router's plain-text response on every replay.
 		next.ServeHTTP(&routerErrorWriter{responseRecorder: &responseRecorder{ResponseWriter: captured}, request: r}, r)
-		if captured.overflow {
-			writeError(w, r, errors.New("request response exceeds retention limit; inspect pending result"))
+		if captured.err != nil {
+			writeError(w, r, fmt.Errorf("record oversized response: %w", captured.err))
+			return
+		}
+		if captured.streaming {
 			return
 		}
 		if captured.status == 0 {

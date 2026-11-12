@@ -79,10 +79,16 @@ func (s *Service) tick(ctx context.Context) error {
 		return err
 	}
 	c, credentials, err := s.get(ctx, d.Kind)
-	if err != nil {
+	var unreadable error
+	switch _, stored := domain.AsError(err); {
+	case stored:
+		// Credentials that cannot be decrypted or decoded fail this delivery
+		// like a rejected send. Returning here would select the same delivery
+		// on every tick and hold back every other channel.
+		unreadable = err
+	case err != nil:
 		return err
-	}
-	if !c.Enabled {
+	case !c.Enabled:
 		return nil
 	}
 	result, err := storage.WriteValue(ctx, s.db, func(tx *sql.Tx) (sql.Result, error) {
@@ -98,7 +104,10 @@ func (s *Service) tick(ctx context.Context) error {
 	if n == 0 {
 		return nil
 	}
-	err = s.send(ctx, message{credentials: credentials, kind: d.Kind, title: title, body: body})
+	err = unreadable
+	if err == nil {
+		err = s.send(ctx, message{credentials: credentials, kind: d.Kind, title: title, body: body})
+	}
 	status, message := "sent", ""
 	if err != nil {
 		status = "pending"

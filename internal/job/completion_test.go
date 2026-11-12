@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -227,6 +228,13 @@ func TestCompletionRejectsUnfinishedAndRollsBackCancellation(t *testing.T) {
 	if err := m.completeRun(t.Context(), id, false); err == nil {
 		t.Fatal("completed with unfinished files")
 	}
+	// A user cancellation is recorded as cancelling before the run stops; a
+	// stop without it is a service shutdown and ends as interrupted.
+	if _, err := storage.WriteValue(t.Context(), m.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "UPDATE runs SET status='cancelling' WHERE id=?", id)
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := storage.WriteValue(t.Context(), m.db, func(tx *sql.Tx) (sql.Result, error) {
 		return tx.ExecContext(t.Context(), "CREATE TRIGGER reject_cancel BEFORE UPDATE OF status ON runs WHEN NEW.status='cancelled' BEGIN SELECT RAISE(ABORT,'cancel write failed'); END")
 	}); err != nil {
@@ -309,4 +317,69 @@ func TestCompletionFailureCancelsOtherWorkers(t *testing.T) {
 	}); err != nil || unfinished != 0 {
 		t.Fatalf("unfinished=%d %v", unfinished, err)
 	}
+}
+
+// A graceful shutdown used to end running batches as cancelled, which a
+// failure-only notification channel ignores and which analytics count as a
+// user's cancellation.
+func TestShutdownInterruptsRunningRun(t *testing.T) {
+	m, root := setup(t)
+	for _, name := range []string{"a.mp4", "b.mp4"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("video"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := storage.WriteValue(t.Context(), m.db, func(tx *sql.Tx) (sql.Result, error) {
+		return tx.ExecContext(t.Context(), "UPDATE system_settings SET stability_seconds=0")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	var once sync.Once
+	m.analyzeTest = func(ctx context.Context, _ *config.TaskConfig, _ domain.VideoJob, _, _ string) (string, error) {
+		once.Do(func() { close(started) })
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	id, err := m.Create(t.Context(), Request{Targets: []int64{1}, Key: "shutdown-in-flight"}, "manual", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Cancelling the worker context is what the service does when it stops;
+	// Manager.Cancel is never called.
+	serving, stop := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { m.Execute(serving, id); close(done) }()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("model call not started")
+	}
+	stop()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not stop")
+	}
+	check := func(when string) {
+		t.Helper()
+		r := readRun(t, m, id)
+		if r.Status != "interrupted" || r.Error.Code != "run_interrupted_by_restart" || r.Finished == "" {
+			t.Fatalf("%s: got status=%q error=%q finished=%q, want an interrupted run", when, r.Status, r.Error.Code, r.Finished)
+		}
+		var items, interrupted int
+		if err := m.db.View(t.Context(), func(tx *sql.Tx) error {
+			return tx.QueryRowContext(t.Context(), `SELECT count(*),COALESCE(sum(status='cancelled' AND message LIKE '%"interrupted_by_restart"%'),0) FROM run_items WHERE run=?`, id).Scan(&items, &interrupted)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if items != 2 || interrupted != 2 {
+			t.Fatalf("%s: got %d of %d items recorded as interrupted, want 2 of 2", when, interrupted, items)
+		}
+	}
+	check("after shutdown")
+	if err := interruptRuns(t.Context(), m.db); err != nil {
+		t.Fatal(err)
+	}
+	check("after restart recovery")
 }

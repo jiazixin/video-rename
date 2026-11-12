@@ -3,6 +3,7 @@ package config
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -103,6 +104,9 @@ func read(src Source) (cfg Config, found bool, err error) {
 	if err := unmarshalStrict(data, &cfg); err != nil {
 		return Config{}, false, fmt.Errorf("parse %s: %w", abs, err)
 	}
+	// An explicitly empty log setting selects its default, like an omitted one.
+	cfg.Log.Level = cmp.Or(cfg.Log.Level, defaults().Log.Level)
+	cfg.Log.Format = cmp.Or(cfg.Log.Format, defaults().Log.Format)
 	cfg.ConfigDir = filepath.Dir(abs)
 	cfg.ConfigFile = abs
 	return cfg, true, nil

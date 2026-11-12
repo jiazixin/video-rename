@@ -11,7 +11,8 @@ import (
 var (
 	// ErrIdempotencyReused rejects a key used with a different request.
 	ErrIdempotencyReused = errors.New("idempotency key reused with a different request")
-	// ErrIdempotencyPending prevents repeating work whose outcome is not recorded.
+	// ErrIdempotencyPending prevents repeating work whose outcome is not recorded
+	// while its reservation is retained.
 	ErrIdempotencyPending = errors.New("idempotent request is pending or requires outcome review")
 	// ErrIdempotencyCapacity preserves the retention guarantee under pressure.
 	ErrIdempotencyCapacity = errors.New("idempotency retention capacity reached")
@@ -41,10 +42,17 @@ type IdempotencyResponse struct {
 }
 
 // ReserveIdempotency owns a fresh key, or returns its first completed response.
-// Pending records survive restart: uncertainty must never repeat a file mutation.
+// A reservation whose outcome was never recorded survives restart and rejects
+// its key for the retention period; it then expires like a completed record, so
+// interrupted requests cannot occupy the retention capacity forever.
 func (s *Store) ReserveIdempotency(ctx context.Context, request IdempotencyRequest) (response IdempotencyResponse, fresh bool, err error) {
 	err = s.Write(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM request_results WHERE expires_ms<=? AND status<>0", request.Now.UnixMilli()); err != nil {
+			return err
+		}
+		// Completed records use the partial expiry index. Reservations have empty
+		// bodies; testing status first keeps this scan away from retained bodies.
+		if _, err := tx.ExecContext(ctx, "DELETE FROM request_results WHERE status=0 AND expires_ms<=?", request.Now.UnixMilli()); err != nil {
 			return err
 		}
 		var fingerprint string

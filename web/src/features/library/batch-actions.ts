@@ -53,17 +53,25 @@ export function useBatchActions(options: BatchOptions) {
     for (const e of entries) {
       batchProgress.value = `正在还原 ${++done} / ${entries.length}`
       try {
-        await api<unknown>(`/operations/${e.restore_id}/restore`, { method: 'POST', body: {} })
+        await api<unknown>(`/operations/${e.restore_id}/restore`, {
+          method: 'POST',
+          body: {},
+          feedback: 'inline'
+        })
         chosen.value.delete(e.id)
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') throw err
         failures.push(`${e.name}：${errorText(err)}`)
       }
     }
-    options.notify(`已还原 ${entries.length - failures.length} 项，失败 ${failures.length} 项`)
+    const summary = `已还原 ${entries.length - failures.length} 项，失败 ${failures.length} 项`
     batchProgress.value = ''
-    if (failures.length) batchError.value = failures.join('\n')
-    else batchAction.value = ''
+    // The dialog stays open with the failures and reports the outcome itself.
+    if (failures.length) batchError.value = [summary, ...failures].join('\n')
+    else {
+      batchAction.value = ''
+      options.notify(summary)
+    }
   }
   async function submitBatch() {
     if (saving.value) return

@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -125,6 +126,8 @@ var (
 	errOriginRejected   = &httpFailure{http.StatusForbidden, errorBody{Code: "permission_denied", Message: "cross-site request rejected"}}
 	errNotJSON          = &httpFailure{http.StatusUnsupportedMediaType, errorBody{Code: "unsupported_media_type", Message: "request body must be application/json"}}
 	errTooLarge         = &httpFailure{http.StatusRequestEntityTooLarge, errorBody{Code: "payload_too_large", Message: "request body too large"}}
+	// errRequestCancelled answers work that stopped because its client went away.
+	errRequestCancelled = &httpFailure{http.StatusServiceUnavailable, errorBody{Code: "request_cancelled", Message: "request was cancelled before it completed"}}
 )
 
 // writeError maps typed failures to the wire contract of docs/API.md. Unknown
@@ -175,6 +178,11 @@ func errorResponse(r *http.Request, err error) (int, errorBody) {
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return http.StatusNotFound, errorBody{Code: "not_found", Message: "record not found"}
+	}
+	if r.Context().Err() != nil && errors.Is(err, context.Canceled) {
+		// The client is gone; this is not a server fault and may be retried.
+		requestLogger(r).Info("request_cancelled", "method", r.Method, "path", r.URL.Path)
+		return errRequestCancelled.status, errRequestCancelled.body
 	}
 	requestLogger(r).Error("request_failed", "method", r.Method, "path", r.URL.Path, "error", err)
 	return http.StatusInternalServerError, errorBody{Code: "internal", Message: "internal error"}
