@@ -1,6 +1,6 @@
-# 缺陷排查与修复计划（2026-11-10）
+# 缺陷排查与修复计划（2026-11-10，历史）
 
-状态：**D1–D11、N1–N7 已修复并复验，改动尚未提交**；维护项 M1–M3 已处理。疑点 Q1 按决定暂不验证，Q3 决定不做，Q2 仍待验证。2026-11-12 确认：D1 的 24 小时过期和 D7 的“已收到响应不重试”按推荐方案保留；删除的两个编号接口没有其他客户端调用。提交后把各项“修复记录”补上提交号，再把本文件移入 `docs/archive/` 并标明历史状态。本次验证结果见 [最新验收](../ACCEPTANCE.md)。
+状态：**已完成归档（历史）。** D1–D11、N1–N7 全部修复，随提交 `18b1787` 合入；维护项 M1–M3 已处理。疑点 Q1 按决定暂不验证，Q3 决定不做，Q2 仍待验证。2026-11-12 确认：D1 的 24 小时过期和 D7 的“已收到响应不重试”按推荐方案保留；删除的两个编号接口没有其他客户端调用。本文件记录的是当时的代码与结论，不作为当前行为依据；当前验证结果见 [最新验收](../ACCEPTANCE.md)。
 
 ## 怎么用这份文件
 
@@ -93,7 +93,7 @@
 - 新增测试：人为插入超过过期时间的 `status=0` 记录，下一次预留后被清理（或不计入容量），容量不会被未完成记录永久占满。
 - 现有 `internal/storage/idempotency_test.go`、`internal/app` 的幂等相关测试继续通过。
 
-**修复记录**（未提交）：采用“已完成记录过期 + 结清所有可确定的结果”。未完成预留与已完成记录一样在 24 小时后过期（`internal/storage/idempotency.go`）；响应超限时首次请求照常收到完整响应，预留补全为固定的 409 `idempotency_result_unavailable`；处理函数 panic 时补全为 500 `internal`（`internal/app/idempotency.go`）。原测试“未完成预留 48 小时后仍拒绝”按新契约改为“保留期内拒绝、到期后释放”，原因写在测试注释里。回归测试：`TestIdempotencyDeliversOversizedResponseOnce`、`TestIdempotencyRecordsPanicAsFailure`、`TestIdempotencyExpiredReservationsFreeCapacity`（`internal/app`），`TestIdempotencyConcurrentReservationAndPendingRestart`（`internal/storage`）。API.md 幂等一节已重写。
+**修复记录**（提交 `18b1787`）：采用“已完成记录过期 + 结清所有可确定的结果”。未完成预留与已完成记录一样在 24 小时后过期（`internal/storage/idempotency.go`）；响应超限时首次请求照常收到完整响应，预留补全为固定的 409 `idempotency_result_unavailable`；处理函数 panic 时补全为 500 `internal`（`internal/app/idempotency.go`）。原测试“未完成预留 48 小时后仍拒绝”按新契约改为“保留期内拒绝、到期后释放”，原因写在测试注释里。回归测试：`TestIdempotencyDeliversOversizedResponseOnce`、`TestIdempotencyRecordsPanicAsFailure`、`TestIdempotencyExpiredReservationsFreeCapacity`（`internal/app`），`TestIdempotencyConcurrentReservationAndPendingRestart`（`internal/storage`）。API.md 幂等一节已重写。
 
 ## D2 大目录的单目录编号预览返回 500
 
@@ -124,7 +124,7 @@
 - 新增 E2E 或 Vitest：前端对大目录预览能翻看全部条目。
 - 同键重放的行为在 API.md 中有明确说明。
 
-**修复记录**（未提交）：中间件见 D1。接口改为预览响应只带总数和前 100 项，其余用新增的 `GET /api/numberings/{id}/items?offset=` 分页读取（还原预览同样处理）；界面已不使用的同步 `tree-preview` 接口已删除。前端 `MediaNumbering.vue` 按页读取。回归测试：`TestLargeDirectoryNumberingPreviewIsPaged`（8003 个文件，带键预览 201、同键重放一致、逐页读完全部条目、经编号任务提交）；E2E `numbering.spec.ts` 在真实服务上翻到第 3 页并提交。
+**修复记录**（提交 `18b1787`）：中间件见 D1。接口改为预览响应只带总数和前 100 项，其余用新增的 `GET /api/numberings/{id}/items?offset=` 分页读取（还原预览同样处理）；界面已不使用的同步 `tree-preview` 接口已删除。前端 `MediaNumbering.vue` 按页读取。回归测试：`TestLargeDirectoryNumberingPreviewIsPaged`（8003 个文件，带键预览 201、同键重放一致、逐页读完全部条目、经编号任务提交）；E2E `numbering.spec.ts` 在真实服务上翻到第 3 页并提交。
 
 ## D3 正常停止服务时批次被记为“已取消”
 
@@ -148,7 +148,7 @@
 - “仅失败时通知”的渠道对被关闭打断的批次入队通知。
 - 现有 `TestLoopDynamicBatchCapacityAndShutdown`、`TestCancelInFlight`、`TestRestartFinalizesPendingItems` 等继续通过。
 
-**修复记录**（未提交）：采用“停止时立即收尾为中断”。`completeRun` 只在状态为 `cancelling` 时收尾为 `cancelled`；ctx 被取消而不是用户取消时收尾为 `interrupted`，写入与启动恢复相同的批次原因和条目原因，并把同一次停止中已记为取消的条目和抽帧记录改为中断原因（`internal/job/completion.go`）。已保存致命错误的批次仍为 `failed`。原测试 `TestCompletionRejectsUnfinishedAndRollsBackCancellation` 直接以“已停止”参数模拟用户取消，按新语义改为先把状态置为 `cancelling`。回归测试：`TestShutdownInterruptsRunningRun`（`internal/job`）、`TestFailureOnlyChannelReportsInterruptedRun`（`internal/notification`）。
+**修复记录**（提交 `18b1787`）：采用“停止时立即收尾为中断”。`completeRun` 只在状态为 `cancelling` 时收尾为 `cancelled`；ctx 被取消而不是用户取消时收尾为 `interrupted`，写入与启动恢复相同的批次原因和条目原因，并把同一次停止中已记为取消的条目和抽帧记录改为中断原因（`internal/job/completion.go`）。已保存致命错误的批次仍为 `failed`。原测试 `TestCompletionRejectsUnfinishedAndRollsBackCancellation` 直接以“已停止”参数模拟用户取消，按新语义改为先把状态置为 `cancelling`。回归测试：`TestShutdownInterruptsRunningRun`（`internal/job`）、`TestFailureOnlyChannelReportsInterruptedRun`（`internal/notification`）。
 
 ## D4 目录编号任务数量上限没有淘汰
 
@@ -162,7 +162,7 @@
 
 **验收标准**：新增测试：连续完成 100 次“预览 + 提交”不被拒绝；运行中的任务不会被淘汰；淘汰后的预览键提交返回 `preview_stale`。
 
-**修复记录**（未提交）：达到上限时淘汰最早结束的结果，运行中的任务不会被淘汰；取消占位只保留 1 分钟并同样参与淘汰；提交先读取被引用的预览再腾位置，引用已被淘汰的预览返回 `preview_stale`。不再产生 `numbering_jobs_full`，该错误码已从后端、前端文案和 API.md 删除。回归测试：`TestNumberingJobsEvictOldestFinishedResults`（100 轮预览 + 提交）、`TestNumberingJobsNeverEvictRunningJob`。
+**修复记录**（提交 `18b1787`）：达到上限时淘汰最早结束的结果，运行中的任务不会被淘汰；取消占位只保留 1 分钟并同样参与淘汰；提交先读取被引用的预览再腾位置，引用已被淘汰的预览返回 `preview_stale`。不再产生 `numbering_jobs_full`，该错误码已从后端、前端文案和 API.md 删除。回归测试：`TestNumberingJobsEvictOldestFinishedResults`（100 轮预览 + 提交）、`TestNumberingJobsNeverEvictRunningJob`。
 
 ## D5 计划调度器的错误处理
 
@@ -177,7 +177,7 @@
 
 **验收标准**：新增测试：注入一次写入失败后调度器继续运行并在恢复后触发到期计划；一个计划出错不影响另一个计划触发；持续失败不会每秒新增一条事件。
 
-**修复记录**（未提交）：`Run` 不再因记录失败而返回；`Tick` 按计划隔离失败，失败写入该计划的最近结果和失败记录，其余计划继续；同一失败持续期间只写一次日志（`schedule_failed`）和一条记录，记录写不进去时下一秒重试写入但不再重复日志。调度器构造函数新增日志参数。原测试 `TestRunReportsUnrecordableFailure` 断言“记录失败时 `Run` 返回错误”，按新契约替换为 `TestSchedulerSurvivesUnrecordableFailure` 和 `TestSchedulerRunStopsOnlyWithContext`；另有 `TestSchedulerIsolatesFailingPlan`。
+**修复记录**（提交 `18b1787`）：`Run` 不再因记录失败而返回；`Tick` 按计划隔离失败，失败写入该计划的最近结果和失败记录，其余计划继续；同一失败持续期间只写一次日志（`schedule_failed`）和一条记录，记录写不进去时下一秒重试写入但不再重复日志。调度器构造函数新增日志参数。原测试 `TestRunReportsUnrecordableFailure` 断言“记录失败时 `Run` 返回错误”，按新契约替换为 `TestSchedulerSurvivesUnrecordableFailure` 和 `TestSchedulerRunStopsOnlyWithContext`；另有 `TestSchedulerIsolatesFailingPlan`。
 
 ## D6 同步的单目录编号提交
 
@@ -192,7 +192,7 @@
 
 **验收标准**：单目录编号提交有进度、可取消，关闭服务时被取消并等待；`/api/numberings/{id}/apply` 不再存在，文档同步更新。
 
-**修复记录**（未提交）：单目录编号的提交改用编号任务（`action: apply` + `batches`），前端复用 `useNumberingTask` 显示进度，提交中关闭窗口需确认并取消任务；同步接口 `POST /api/numberings/{id}/apply` 已删除（现返回 404）。回归测试：`TestImageNumberingAPI`、`TestAudioNumberingAPI` 改走编号任务；E2E `numbering.spec.ts`。
+**修复记录**（提交 `18b1787`）：单目录编号的提交改用编号任务（`action: apply` + `batches`），前端复用 `useNumberingTask` 显示进度，提交中关闭窗口需确认并取消任务；同步接口 `POST /api/numberings/{id}/apply` 已删除（现返回 404）。回归测试：`TestImageNumberingAPI`、`TestAudioNumberingAPI` 改走编号任务；E2E `numbering.spec.ts`。
 
 ## D7 失败响应被固化后的自动重试
 
@@ -207,7 +207,7 @@
 
 **验收标准**：新增测试覆盖选定的契约（503 后同键重试会重新执行，或前端不再重试）；API.md 的幂等一节与实现一致。
 
-**修复记录**（未提交）：契约定为“任何已收到的响应都是最终结果”。服务端仍固化所有状态码；前端对带键 POST 只在没有收到响应（网络错误、超时）时重试，收到 429 / 503 不再重试（`web/src/app/api.ts`）。另一方案（服务端不固化 503、重试时重新执行）实现后放弃：检测模型、测试通知在外部服务不可达时会真实重发 3 次，等待时间变为 3 倍，超过 60 秒的同步请求也会被重复执行。因客户端断开而失败的处理不再记为 500 `internal`，改为 503 `request_cancelled`，超时后的重放显示“请求超时或已中断，操作可能只完成了一部分”。回归测试：`TestIdempotencyReplaysFailures`（`internal/app`），Vitest `does not retry a keyed write that received a 503`。
+**修复记录**（提交 `18b1787`）：契约定为“任何已收到的响应都是最终结果”。服务端仍固化所有状态码；前端对带键 POST 只在没有收到响应（网络错误、超时）时重试，收到 429 / 503 不再重试（`web/src/app/api.ts`）。另一方案（服务端不固化 503、重试时重新执行）实现后放弃：检测模型、测试通知在外部服务不可达时会真实重发 3 次，等待时间变为 3 倍，超过 60 秒的同步请求也会被重复执行。因客户端断开而失败的处理不再记为 500 `internal`，改为 503 `request_cancelled`，超时后的重放显示“请求超时或已中断，操作可能只完成了一部分”。回归测试：`TestIdempotencyReplaysFailures`（`internal/app`），Vitest `does not retry a keyed write that received a 503`。
 
 ## D8 通知队列被读取失败堵住
 
@@ -219,7 +219,7 @@
 
 **验收标准**：新增测试：一个渠道凭据损坏时，另一个渠道的通知仍能送达；损坏渠道的通知最终标记失败并带原因。
 
-**修复记录**（未提交）：读取凭据失败（无法解密或内容损坏）按一次发送失败处理：增加尝试次数、推后下次尝试、三次后标记失败并保留原因；数据库读取错误仍直接返回。回归测试：`TestUnreadableCredentialsDoNotBlockOtherChannels`。
+**修复记录**（提交 `18b1787`）：读取凭据失败（无法解密或内容损坏）按一次发送失败处理：增加尝试次数、推后下次尝试、三次后标记失败并保留原因；数据库读取错误仍直接返回。回归测试：`TestUnreadableCredentialsDoNotBlockOtherChannels`。
 
 ## D9 空日志级别
 
@@ -233,7 +233,7 @@
 
 **验收标准**：新增配置测试覆盖显式空值的行为；错误信息带字段路径。
 
-**修复记录**（未提交）：解码后把显式空的 `log.level`、`log.format` 归一为默认值 `info`、`json`，校验注释与 `newLogger` 注释同步；无效值仍报 `log.level` 字段错误。回归测试：`TestEmptyLogSettingsSelectDefaults`（`internal/config`）、`TestNewLoggerAcceptsLoadedEmptyLogSettings`（`cmd/video-rename`）。docs/configuration.md 已说明。
+**修复记录**（提交 `18b1787`）：解码后把显式空的 `log.level`、`log.format` 归一为默认值 `info`、`json`，校验注释与 `newLogger` 注释同步；无效值仍报 `log.level` 字段错误。回归测试：`TestEmptyLogSettingsSelectDefaults`（`internal/config`）、`TestNewLoggerAcceptsLoadedEmptyLogSettings`（`cmd/video-rename`）。docs/configuration.md 已说明。
 
 ## D10 计划保存的字段错误不准确
 
@@ -245,7 +245,7 @@
 
 **验收标准**：新增测试：四种输入各自只返回对应字段和原因。
 
-**修复记录**（未提交）：名称和目标分别校验，各自返回对应字段和原因（`required` / `too_long`，`selection_required` / `too_many`）；前端补 `name:too_long`、`targets:too_many` 文案。回归测试：`TestSaveReportsEachInvalidField`。
+**修复记录**（提交 `18b1787`）：名称和目标分别校验，各自返回对应字段和原因（`required` / `too_long`，`selection_required` / `too_many`）；前端补 `name:too_long`、`targets:too_many` 文案。回归测试：`TestSaveReportsEachInvalidField`。
 
 ## D11 登录失败提示重复
 
@@ -257,7 +257,7 @@
 
 **验收标准**：E2E：错误密码登录后页面上只有一处错误提示。
 
-**修复记录**（未提交）：修复前先加 E2E 复现（同一句“账号或密码错误”出现两次）。登录页的请求改为 `feedback: 'inline'`，在表单内提示，不再弹浮动通知。回归测试：E2E `login.spec.ts`。其他写操作弹窗的同类现象在第二轮按 N5 统一处理。
+**修复记录**（提交 `18b1787`）：修复前先加 E2E 复现（同一句“账号或密码错误”出现两次）。登录页的请求改为 `feedback: 'inline'`，在表单内提示，不再弹浮动通知。回归测试：E2E `login.spec.ts`。其他写操作弹窗的同类现象在第二轮按 N5 统一处理。
 
 ---
 
