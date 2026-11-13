@@ -51,6 +51,8 @@
 
 资源 GET、创建和修改响应带强 `ETag`，列表中的资源也带 `etag` 字段。客户端把该值原样放入 `If-Match`，用于上述三个资源的 PATCH/DELETE，以及文件改名/删除。缺失、过期或弱 validator 返回 412 `precondition_failed`；数据库写入仍原子检查内部版本。请求体不接受 `version`、只读 `id` 或响应元数据。读取接口为 `GET /api/prompts/{id}`、`GET /api/model-configs/{id}`、`GET /api/schedules/{id}`，文件可从目录或状态批量接口获取 `etag`。
 
+文件/目录条目的 `etag` 用于写操作校验。目录的大小和修改时间会随直接子项增删、改名而变化，扫描更新这些展示元数据时不递增目录的写入版本；目录自身改名、还原仍递增版本，路径与设备/inode 身份仍在操作时复核。文件的大小或修改时间变化仍递增版本。扫描发布的新列表使用独立的 `generation`，不能把条目 `etag` 当作整个目录树的内容快照。
+
 ## 幂等请求
 
 所有已认证的 POST 支持 `Idempotency-Key` 请求头，取值匹配 `^[A-Za-z0-9_-]{8,128}$`。创建请求应提供此头；请求体不接受旧 `key` / `request_key` 字段。键在整个 API 中唯一，身份为请求方法、路径及查询、`If-Match` 与原始请求体的组合。同键同请求重放第一次已记录的 HTTP 状态、响应体及 `Content-Type` / `ETag` / `Location` / `Retry-After` / `Allow`，同键异请求返回 409 `idempotency_key_reused`。不带键的 POST 可以执行，但客户端不得自动重试。

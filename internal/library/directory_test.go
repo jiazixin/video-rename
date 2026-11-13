@@ -82,6 +82,40 @@ func TestRenameParentReplacementDoesNotRedirectCommit(t *testing.T) {
 	}
 }
 
+func TestDirectoryRenameRejectsReplacement(t *testing.T) {
+	for _, scan := range []bool{false, true} {
+		t.Run(fmt.Sprintf("scan=%v", scan), func(t *testing.T) {
+			t.Parallel()
+			l, root, _ := fixture(t)
+			folder := filepath.Join(root, "folder")
+			if err := os.Mkdir(folder, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			refresh(t, l, 1)
+			dir := entry(t, entryOptions{l: l, parent: 1, name: "folder"})
+			if err := os.Rename(folder, folder+"-saved"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(folder, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			put(t, filepath.Join(folder, "keep.mp4"))
+			if scan {
+				refresh(t, l, 1)
+			}
+			if _, err := l.Rename(t.Context(), RenameRequest{ID: dir.ID, Version: dir.Version, Name: "renamed", Key: "replaced-directory"}); err == nil {
+				t.Fatal("got successful rename, want replacement rejected")
+			}
+			if data, err := os.ReadFile(filepath.Join(folder, "keep.mp4")); err != nil || string(data) != "video fixture" {
+				t.Fatalf("got replacement content %q and error %v, want untouched fixture", data, err)
+			}
+			if _, err := os.Stat(folder + "-saved"); err != nil {
+				t.Fatalf("original directory was changed: %v", err)
+			}
+		})
+	}
+}
+
 func TestAutoCommitRenamesToCaseOrNormalizationAlias(t *testing.T) {
 	for _, tc := range []struct{ name, source, title, want string }{
 		{name: "case", source: "Movie.mp4", title: "movie", want: "movie.mp4"},

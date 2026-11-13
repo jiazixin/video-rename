@@ -773,8 +773,12 @@ func (l *Library) publishDirectoryScan(ctx context.Context, params publishDirect
 			if _, err = tx.ExecContext(ctx, promoteScanCandidatesSQL, storage.Now(), id, marker); err != nil {
 				return err
 			}
+			// Child mutations change directory size/mtime without changing the
+			// directory being renamed. Refresh that metadata without invalidating
+			// its write version; name changes and identity checks still guard writes.
 			if _, err = tx.ExecContext(ctx, `UPDATE entries AS e SET
-		 version=e.version+CASE WHEN e.size<>s.size OR e.mtime_ns<>s.mtime_ns THEN 1 ELSE 0 END,
+		 version=e.version+CASE WHEN e.kind<>s.kind OR
+		 (e.kind<>'directory' AND (e.size<>s.size OR e.mtime_ns<>s.mtime_ns)) THEN 1 ELSE 0 END,
 		 kind=s.kind,size=s.size,mtime_ns=s.mtime_ns,observed=?
 		 FROM directory_scan.snapshot s JOIN directory_scan.baseline b ON s.entry=b.id
 		 WHERE e.id=s.entry AND (s.kind<>b.kind OR s.size<>b.size OR s.mtime_ns<>b.mtime_ns)`, storage.Now()); err != nil {

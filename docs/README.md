@@ -26,8 +26,9 @@
 
 | 记录 | 状态与范围 |
 | --- | --- |
-| [递归标记性能实施计划](archive/2026-11-13-mark-performance.md) | 已完成归档；暂存库 NORMAL、批量索引快照及细分耗时日志，当前实测见验收 |
-| [递归标记优化前的验收](archive/2026-11-13-before-mark-performance-acceptance.md) | 历史；11-10/11 的缺陷修复、11-12 的 Unicode 文件名修复与扫描暂存库复用，最新标记性能及回归见当前验收 |
+| [目录改名修复前的验收](archive/2026-11-14-before-directory-rename-acceptance.md) | 历史；处理标记性能优化、并发补验、用户回传测量与默认端口调整 |
+| [递归标记性能实施计划](archive/2026-11-13-mark-performance.md) | 已完成归档；暂存库 NORMAL、批量索引快照及细分耗时日志，实测见上方历史验收 |
+| [递归标记优化前的验收](archive/2026-11-13-before-mark-performance-acceptance.md) | 历史；11-10/11 的缺陷修复、11-12 的 Unicode 文件名修复与扫描暂存库复用，后续标记性能及回归见上方历史验收 |
 | [缺陷排查与修复计划](archive/2026-11-10-defect-audit.md) | 已完成归档；2026-11-10 排查出的 11 项缺陷和两轮补充排查的 7 项，各项证据、修复记录（提交 `18b1787`）、依赖升级结论与仍未验证的疑点 |
 | [缺陷修复前的验收](archive/2026-11-10-before-defect-fixes-acceptance.md) | 历史；表单控件点击范围修复的专项记录，之后的缺陷修复与全量复验见最新验收 |
 | [表单点击范围修复前的验收](archive/2026-10-29-before-label-hit-area-acceptance.md) | 历史；全仓规范整改、发布前复验和全量本机验证的最近一次完整记录，界面点击范围修复与复验见最新验收 |
