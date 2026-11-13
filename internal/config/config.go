@@ -43,10 +43,9 @@ type Config struct {
 
 // Source describes where configuration comes from.
 type Source struct {
-	Path      string                      // selected file
-	Explicit  bool                        // chosen by --config or CONFIG_FILE
-	WorkDir   string                      // base for relative paths when no file is used
-	LookupEnv func(string) (string, bool) // os.LookupEnv in production; unused: no field has an environment override
+	Path     string // selected file
+	Explicit bool   // chosen by --config or CONFIG_FILE
+	WorkDir  string // base for relative paths when no file is used
 }
 
 func defaults() Config {

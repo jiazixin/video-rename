@@ -52,7 +52,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "video-rename: config: %v\n", err)
 		return exitFailure
 	}
-	cfg, err := config.Load(config.Source{Path: path, Explicit: explicit, WorkDir: workDir, LookupEnv: os.LookupEnv})
+	cfg, err := config.Load(config.Source{Path: path, Explicit: explicit, WorkDir: workDir})
 	if err != nil {
 		fmt.Fprintf(stderr, "video-rename: config: %v\n", err)
 		return exitFailure
