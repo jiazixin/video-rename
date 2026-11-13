@@ -34,9 +34,9 @@
 
 ## 性能约束
 
-目录扫描在文件操作全局锁外分两遍观测，每页最多 128 项、最多四个属性 worker；本地暂存 SQLite 复用于整轮扫描。完整观测后短锁发布 generation，失败保留旧完整代。发布核对直接子项和祖先的索引证据，其他目录变化不会单独导致本目录失败。观测不一致完整重试一次，普通读取错误和取消不重试。
+目录扫描在文件操作全局锁外分两遍观测，每页最多 128 项、最多四个属性 worker；本地暂存 SQLite 复用于整轮扫描。暂存库为 WAL/NORMAL，进程结束后不复用；主库仍为 WAL/FULL。完整观测后短锁发布 generation，失败保留旧完整代。发布核对直接子项和祖先的索引证据，其他目录变化不会单独导致本目录失败。观测不一致完整重试一次，普通读取错误和取消不重试。
 
-标记每批最多 128 个文件，先复核再提交短事务，进度只统计已提交记录；递归标记整次复用一个 `DirectoryScanner` 暂存库刷新目录，结束日志 `mark_finished` 的字段见 [运行与恢复](operations.md)。后台标记结果缓存最多 128 条、终态保留最多一小时；断线恢复只查询原键，结果回收后需重新选择。编号任务每次查询续租，超过 20 秒未查询时停止；任务结果最多保留 64 条、结束后一小时，满时淘汰最早结束的结果，不淘汰运行中的任务。单目录编号的预览响应只带前 100 项，其余分页读取；提交与目录编号共用编号任务。
+标记每批最多 128 个文件，在库锁内先完成逐文件任务占用回调，再在一个短读事务里检查待恢复操作、批量读取文件及其公共祖先；已读取的公共祖先在本批复用，读事务结束后仍对每个文件独立复核全部祖先和文件属性。索引快照不跨批次复用，文件 I/O 不占用读事务或写连接；标记短事务提交后才报告进度。递归标记整次复用一个 `DirectoryScanner` 暂存库刷新目录，结束日志 `mark_finished` 的刷新/复核子阶段字段见 [运行与恢复](operations.md)。后台标记结果缓存最多 128 条、终态保留最多一小时；断线恢复只查询原键，结果回收后需重新选择。编号任务每次查询续租，超过 20 秒未查询时停止；任务结果最多保留 64 条、结束后一小时，满时淘汰最早结束的结果，不淘汰运行中的任务。单目录编号的预览响应只带前 100 项，其余分页读取；提交与目录编号共用编号任务。
 
 编号预览、提交和恢复在文件操作全局锁内核对冻结状态。等待锁时响应取消；目录观测每批最多读取 128 项，并在批次和条目之间检查取消，诊断扫描也使用相同约束。快照继续按文件名排序并保存当前第 4 版格式。已经进入内核的文件系统调用仍须先返回，不能把此处的上下文检查当成对阻塞 NAS 调用的强制中断。
 
@@ -99,15 +99,19 @@ go tool cover -func=coverage/go.out
 ```bash
 # 30万索引、5万分页、2万标记/编号、提交、来源筛选、10万条目/请求统计
 go test -tags=scale -run '^TestScale' -count=1 -timeout=15m -v ./internal/library ./internal/job ./internal/app ./internal/runstat
-# 50万真实临时文件标记，以及53万文件/111目录扫描；顺序执行
+# 50万文件标记、53万文件/10000目录标记（首次与已有索引）、53万文件/111目录扫描；顺序执行
 go test -tags=integration,scale -run '^TestScaleLarge' -count=1 -timeout=15m -v ./internal/library
+# 已有索引的递归标记基准；1或100目录，每目录53个真实临时文件
+go test -run '^$' -bench '^BenchmarkProcessedMarks$' -benchtime=3x -count=3 -benchmem ./internal/library
+# 单独运行多目录规模用例；日志带阶段耗时，另检查精确计数、完整性与外键
+go test -tags=integration,scale -run '^TestScaleLargeProcessedMarksManyDirectories$' -count=1 -timeout=15m -v ./internal/library
 # 完整历史筛选接口基准（夹具生成不计时）
 go test -tags=scale -run '^$' -bench '^BenchmarkHistoryModelSource$' -benchtime=1x -count=1 -benchmem ./internal/app
 # 11000条缓存账目保留检查（不含真实媒体和磁盘删除）
 go test -run '^$' -bench '^BenchmarkCacheSweepRetained$' -benchtime=1x -count=1 -benchmem ./internal/framecache
 ```
 
-普通规模测试预留至少 2 GB 临时空间，超大规模建议至少 5 GB。规模测试检查精确计数、候选清理及 SQLite 完整性/外键，不纳入默认快速测试。避免并行运行其他重负载后再作速度对比；本机合成数据结果不代表 SMB/NFS 实际吞吐。
+普通规模测试预留至少 2 GB 临时空间，超大规模建议至少 5 GB。规模测试检查精确计数、候选清理及 SQLite 完整性/外键，不纳入默认快速测试。避免并行运行其他重负载后再作速度对比；首次索引与已有索引分开报告，不把已有索引当作冷文件系统缓存。library 基准没有装配 job 任务占用回调；后台标记与占用规则另由 app/job 测试覆盖。本机合成数据结果不代表 SMB/NFS 实际吞吐。
 
 ## 依赖维护与构建版本
 

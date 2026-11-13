@@ -41,7 +41,10 @@ func NewScan(ctx context.Context, schema string) (_ *ScanStore, err error) {
 	}
 	dsn := url.URL{Scheme: "file", Path: s.path}
 	options := url.Values{}
-	for _, pragma := range []string{"foreign_keys(1)", "journal_mode(WAL)", "synchronous(FULL)", "busy_timeout(5000)"} {
+	// This stage is discarded after the traversal and never used for crash
+	// recovery. WAL/NORMAL preserves consistency without syncing every page's
+	// commit; durable publication still uses the main database's FULL writer.
+	for _, pragma := range []string{"foreign_keys(1)", "journal_mode(WAL)", "synchronous(NORMAL)", "busy_timeout(5000)"} {
 		options.Add("_pragma", pragma)
 	}
 	options.Set("_txlock", "immediate")

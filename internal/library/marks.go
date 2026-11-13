@@ -6,7 +6,6 @@ import (
 	"errors"
 	"time"
 
-	"video-rename/internal/discovery"
 	"video-rename/internal/domain"
 	"video-rename/internal/storage"
 )
@@ -97,6 +96,10 @@ type markTiming struct {
 	lockWait    time.Duration
 	validate    time.Duration
 	write       time.Duration
+	scan        directoryScanTiming
+	busy        time.Duration
+	query       time.Duration
+	fileRead    time.Duration
 }
 
 func (w *markWalk) logFinished(targets int, elapsed time.Duration) {
@@ -114,6 +117,15 @@ func (w *markWalk) logFinished(targets int, elapsed time.Duration) {
 		"lock_wait_duration_ms", w.timing.lockWait.Milliseconds(),
 		"validate_duration_ms", w.timing.validate.Milliseconds(),
 		"write_duration_ms", w.timing.write.Milliseconds(),
+		"refresh_prepare_duration_ms", w.timing.scan[scanPrepare].Milliseconds(),
+		"refresh_read_duration_ms", w.timing.scan[scanRead].Milliseconds(),
+		"refresh_stage_duration_ms", w.timing.scan[scanStage].Milliseconds(),
+		"refresh_publish_duration_ms", w.timing.scan[scanPublish].Milliseconds(),
+		"refresh_cleanup_duration_ms", w.timing.scan[scanCleanup].Milliseconds(),
+		"refresh_lock_wait_duration_ms", w.timing.scan[scanLockWait].Milliseconds(),
+		"validate_busy_duration_ms", w.timing.busy.Milliseconds(),
+		"validate_query_duration_ms", w.timing.query.Milliseconds(),
+		"validate_read_duration_ms", w.timing.fileRead.Milliseconds(),
 	)
 }
 
@@ -127,7 +139,7 @@ func (w *markWalk) refresh(ctx context.Context, id int64) error {
 		w.scanner = scanner
 	}
 	started := time.Now()
-	_, err := w.scanner.ScanDirectory(ctx, id)
+	_, err := w.scanner.scanDirectory(ctx, id, &w.timing.scan)
 	w.timing.refresh += time.Since(started)
 	w.timing.directories++
 	return err
@@ -192,7 +204,7 @@ func (w *markWalk) walk(ctx context.Context, e Entry) {
 		w.fail(ctx, e.ID, err)
 		return
 	}
-	if e.Kind == "file" && (discovery.IsVideoExtension(e.Name) || IsImage(e.Name) || IsAudio(e.Name)) {
+	if isMarkableFile(e) {
 		w.pending = append(w.pending, e.ID)
 		if len(w.pending) == markBatchSize {
 			w.flush(ctx)
@@ -285,18 +297,44 @@ func (l *Library) setFilesProcessed(ctx context.Context, options setFilesProcess
 			}
 		}
 	}
-	valid := 0
+	// Callbacks run before the read snapshot: they may consult or change the
+	// index, and must never run while holding a pooled reader connection.
+	busyStarted := time.Now()
 	for i := range files {
 		if ctx.Err() != nil {
 			break
 		}
-		files[i].entry, files[i].err = l.validateProcessedFile(ctx, files[i].id)
-		if files[i].err == nil {
-			valid++
+		if l.Busy != nil && l.Busy(ctx, files[i].id) {
+			files[i].err = errBusy
 		}
 	}
+	timing.busy += time.Since(busyStarted)
+	queryStarted := time.Now()
+	snapshot, readErr := l.readMarkBatch(ctx, files)
+	timing.query += time.Since(queryStarted)
+	valid := 0
+	readStarted := time.Now()
+	if readErr == nil {
+		for i := range files {
+			if ctx.Err() != nil {
+				break
+			}
+			if files[i].err != nil {
+				continue
+			}
+			files[i].err = l.validateProcessedSnapshot(ctx, files[i].entry, snapshot)
+			if files[i].err == nil {
+				valid++
+			}
+		}
+	}
+	timing.fileRead += time.Since(readStarted)
 	validated := time.Now()
 	timing.validate += validated.Sub(locked)
+	if readErr != nil {
+		batchFailed(readErr)
+		return
+	}
 	if err := ctx.Err(); err != nil {
 		batchFailed(err)
 		return
@@ -346,34 +384,6 @@ func (l *Library) setFilesProcessed(ctx context.Context, options setFilesProcess
 	}
 	timing.batches++
 	return
-}
-
-func (l *Library) validateProcessedFile(ctx context.Context, id int64) (Entry, error) {
-	if err := l.CheckAvailable(ctx, id); err != nil {
-		return Entry{}, err
-	}
-	if l.Busy != nil && l.Busy(ctx, id) {
-		return Entry{}, errBusy
-	}
-	e, err := l.indexedSnapshot(ctx, id)
-	if err != nil {
-		return Entry{}, err
-	}
-	if e.Kind != "file" || !(discovery.IsVideoExtension(e.Name) || IsImage(e.Name) || IsAudio(e.Name)) {
-		return Entry{}, errChanged
-	}
-	p, err := l.pathForEntry(ctx, e)
-	if err != nil {
-		return Entry{}, err
-	}
-	snap, err := domain.StatSnapshot(p)
-	if err != nil {
-		return Entry{}, err
-	}
-	if Identity(snap) != e.Identity || snap.Size != e.Size || stamp(snap) != e.ModifiedNS {
-		return Entry{}, errChanged
-	}
-	return e, nil
 }
 
 func processedQuery(e Entry, marked bool) string {

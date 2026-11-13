@@ -208,9 +208,19 @@ func (l *Library) Path(ctx context.Context, id int64) (string, error) {
 // pathForEntry reuses only the caller's freshly read entry. Every ancestor is
 // still loaded and checked against disk on this call; no path evidence is cached.
 func (l *Library) pathForEntry(ctx context.Context, e Entry) (string, error) {
+	return l.pathForSnapshot(ctx, e, l.indexedSnapshot)
+}
+
+// pathForSnapshot shares the disk checks with batch marking. A snapshot lookup
+// is allowed only while the caller holds Library.mu; disk evidence is always
+// read afresh for each file and every ancestor.
+func (l *Library) pathForSnapshot(ctx context.Context, e Entry, lookup func(context.Context, int64) (Entry, error)) (string, error) {
 	chain := []Entry{}
 	seen := map[int64]bool{}
 	for e.ID != 1 {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		if e.ID <= 0 || seen[e.ID] || len(chain) > 1024 {
 			return "", errBadHierarchy
 		}
@@ -223,7 +233,7 @@ func (l *Library) pathForEntry(ctx context.Context, e Entry) (string, error) {
 			return "", errBadHierarchy
 		}
 		var err error
-		e, err = l.indexedSnapshot(ctx, e.Parent)
+		e, err = lookup(ctx, e.Parent)
 		if err != nil {
 			return "", err
 		}
@@ -234,6 +244,9 @@ func (l *Library) pathForEntry(ctx context.Context, e Entry) (string, error) {
 	}
 	p := l.Root
 	for _, entry := range slices.Backward(chain) {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		p = filepath.Join(p, entry.Name)
 		st, err := os.Lstat(p)
 		if err != nil {

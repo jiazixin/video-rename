@@ -524,6 +524,15 @@ type markFinishedLog struct {
 	RefreshMS   *int64 `json:"refresh_duration_ms"`
 	ValidateMS  *int64 `json:"validate_duration_ms"`
 	WriteMS     *int64 `json:"write_duration_ms"`
+	PrepareMS   *int64 `json:"refresh_prepare_duration_ms"`
+	ReadMS      *int64 `json:"refresh_read_duration_ms"`
+	StageMS     *int64 `json:"refresh_stage_duration_ms"`
+	PublishMS   *int64 `json:"refresh_publish_duration_ms"`
+	CleanupMS   *int64 `json:"refresh_cleanup_duration_ms"`
+	ScanLockMS  *int64 `json:"refresh_lock_wait_duration_ms"`
+	BusyMS      *int64 `json:"validate_busy_duration_ms"`
+	QueryMS     *int64 `json:"validate_query_duration_ms"`
+	FileReadMS  *int64 `json:"validate_read_duration_ms"`
 }
 
 func lastMarkFinished(t *testing.T, logs *bytes.Buffer) markFinishedLog {
@@ -586,6 +595,7 @@ func TestProcessedMarksReuseOneScanStage(t *testing.T) {
 	if finished.DurationMS == nil || finished.RefreshMS == nil || finished.ValidateMS == nil || finished.WriteMS == nil {
 		t.Fatalf("got mark_finished without stage durations: %+v", finished)
 	}
+	assertMarkRefreshTiming(t, finished)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -599,6 +609,7 @@ func TestProcessedMarksReuseOneScanStage(t *testing.T) {
 	if finished = lastMarkFinished(t, &logs); !finished.Interrupted {
 		t.Fatalf("got mark_finished %+v, want interrupted", finished)
 	}
+	assertMarkRefreshTiming(t, finished)
 }
 
 func TestProcessedMarksFileTargetsSkipScanStage(t *testing.T) {
@@ -615,7 +626,33 @@ func TestProcessedMarksFileTargetsSkipScanStage(t *testing.T) {
 	if r.Changed != int64(len(ids)) || r.Failed != 0 {
 		t.Fatalf("got %+v, want %d changed files", r, len(ids))
 	}
-	if finished := lastMarkFinished(t, &logs); finished.Directories != 0 || finished.Batches != 1 {
+	finished := lastMarkFinished(t, &logs)
+	if finished.Directories != 0 || finished.Batches != 1 {
 		t.Fatalf("got mark_finished %+v, want directories=0 batches=1", finished)
+	}
+	assertMarkRefreshTiming(t, finished)
+}
+
+func assertMarkRefreshTiming(t *testing.T, finished markFinishedLog) {
+	t.Helper()
+	var total int64
+	for _, elapsed := range []*int64{finished.PrepareMS, finished.ReadMS, finished.StageMS, finished.PublishMS, finished.CleanupMS, finished.ScanLockMS} {
+		if elapsed == nil || *elapsed < 0 {
+			t.Fatalf("missing or negative refresh timing: %+v", finished)
+		}
+		total += *elapsed
+	}
+	if finished.RefreshMS == nil || total > *finished.RefreshMS {
+		t.Fatalf("refresh phases overlap: total=%d log=%+v", total, finished)
+	}
+	total = 0
+	for _, elapsed := range []*int64{finished.BusyMS, finished.QueryMS, finished.FileReadMS} {
+		if elapsed == nil || *elapsed < 0 {
+			t.Fatalf("missing or negative validation timing: %+v", finished)
+		}
+		total += *elapsed
+	}
+	if finished.ValidateMS == nil || total > *finished.ValidateMS {
+		t.Fatalf("validation phases overlap: total=%d log=%+v", total, finished)
 	}
 }

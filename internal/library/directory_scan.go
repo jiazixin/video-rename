@@ -127,8 +127,16 @@ func (s *DirectoryScanner) Close() error {
 
 // ScanDirectory indexes directory id and reports what changed.
 func (s *DirectoryScanner) ScanDirectory(ctx context.Context, id int64) (ScanDirectoryResult, error) {
+	return s.scanDirectory(ctx, id, nil)
+}
+
+func (s *DirectoryScanner) scanDirectory(ctx context.Context, id int64, timing *directoryScanTiming) (ScanDirectoryResult, error) {
+	clock := startScanClock(timing)
+	defer clock.stop()
+	clock.enter(scanLockWait)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	clock.enter(scanPrepare)
 	if err := ctx.Err(); err != nil {
 		return ScanDirectoryResult{}, err
 	}
@@ -143,7 +151,7 @@ func (s *DirectoryScanner) ScanDirectory(ctx context.Context, id int64) (ScanDir
 	}); err != nil {
 		return ScanDirectoryResult{}, err
 	}
-	return s.library.scanDirectoryWithStage(ctx, scanDirectoryWithStageOptions{ID: id, Stage: s.stage, Read: func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) }, Inspect: scanPinnedDirectoryEntry})
+	return s.library.scanDirectoryWithStage(ctx, scanDirectoryWithStageOptions{ID: id, Stage: s.stage, Read: func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) }, Inspect: scanPinnedDirectoryEntry, Clock: clock})
 }
 
 func (l *Library) scanDirectory(ctx context.Context, id int64, read func(*os.File, int) ([]os.DirEntry, error)) (ScanDirectoryResult, error) {
@@ -168,12 +176,16 @@ type scanDirectoryWithStageOptions struct {
 	Stage   *storage.ScanStore
 	Read    func(*os.File, int) ([]os.DirEntry, error)
 	Inspect func(*os.File, os.DirEntry) (scannedDirectoryEntry, error)
+	Clock   *scanClock
 }
 
 func (l *Library) scanDirectoryWithStage(ctx context.Context, params scanDirectoryWithStageOptions) (result ScanDirectoryResult, err error) {
 	id, stage, read, inspect := params.ID, params.Stage, params.Read, params.Inspect
+	clock := params.Clock
 
+	clock.enter(scanLockWait)
 	release, err := l.lockDirectoryScan(ctx, id)
+	clock.enter(scanPrepare)
 	if err != nil {
 		return result, err
 	}
@@ -189,6 +201,7 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, params scanDirecto
 		delete(l.scanning, id)
 		l.refreshMu.Unlock()
 		if err != nil {
+			clock.enter(scanPublish)
 			failureCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
 			if recordErr := l.db.Write(failureCtx, func(tx *sql.Tx) error {
@@ -199,10 +212,11 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, params scanDirecto
 			}
 		}
 	}()
-	baseline, err := l.captureScanBaseline(ctx, id, stage)
+	baseline, err := l.captureScanBaseline(ctx, id, stage, clock)
 	if err != nil {
 		return result, err
 	}
+	clock.enter(scanRead)
 	pinned, err := openScanDirectory(l.Root, baseline.chain)
 	if err != nil {
 		return result, err
@@ -227,7 +241,7 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, params scanDirecto
 			scanErr = scanSnapshotDifference("directory attributes between the two reads", observed, before)
 		}
 		if scanErr == nil {
-			scanErr = collectScanMetadata(ctx, collectScanMetadataOptions{Stage: stage, Table: table, Dir: dir, Read: read, Inspectors: []func(*os.File, os.DirEntry) (scannedDirectoryEntry, error){inspect}})
+			scanErr = collectScanMetadata(ctx, collectScanMetadataOptions{Stage: stage, Table: table, Dir: dir, Read: read, Inspectors: []func(*os.File, os.DirEntry) (scannedDirectoryEntry, error){inspect}, Clock: clock})
 		}
 		after, statErr := scanDirectorySnapshot(dir)
 		if dir != pinned {
@@ -245,6 +259,7 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, params scanDirecto
 		}
 		observed = after
 	}
+	clock.enter(scanStage)
 	if err = scanMetadataDifference(ctx, stage); err != nil {
 		return result, err
 	}
@@ -271,15 +286,18 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, params scanDirecto
 		gen = max(time.Now().UnixNano(), gen+1)
 		defer func() {
 			if !published {
+				clock.enter(scanCleanup)
 				cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 				defer cancel()
 				err = errors.Join(err, l.cleanScanStaging(cleanupCtx, cleanScanStagingOptions{Stage: stage, ID: id, Gen: gen, Marker: marker, Published: false}))
 			}
 		}()
+		clock.enter(scanPublish)
 		if err = l.buildScanGeneration(ctx, buildScanGenerationOptions{ID: id, Gen: gen, Marker: marker, Stage: stage}); err != nil {
 			return result, err
 		}
 	}
+	clock.enter(scanStage)
 	if err = stage.View(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, "SELECT entry FROM snapshot WHERE kind='directory' ORDER BY entry")
 		if err != nil {
@@ -296,6 +314,7 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, params scanDirecto
 	}
 	// Reopen the frozen ancestor chain and check the directory after staging. NAS
 	// operations stay outside the global publication lock.
+	clock.enter(scanRead)
 	dir, err := openScanDirectory(l.Root, baseline.chain)
 	if err != nil {
 		return result, err
@@ -308,13 +327,15 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, params scanDirecto
 	if !current.Same(observed) {
 		return result, scanSnapshotDifference("directory attributes before publishing", observed, current)
 	}
-	if err = l.publishDirectoryScan(ctx, publishDirectoryScanOptions{ID: id, Gen: gen, Marker: marker, Baseline: baseline, StagePath: stage.Path(), Rebuild: rebuild}); err != nil {
+	clock.enter(scanPublish)
+	if err = l.publishDirectoryScan(ctx, publishDirectoryScanOptions{ID: id, Gen: gen, Marker: marker, Baseline: baseline, StagePath: stage.Path(), Rebuild: rebuild, Clock: clock}); err != nil {
 		return result, err
 	}
 	published = true
 	// Reclaim interrupted staging even when this directory has not changed. Old
 	// generations are no longer visible; bounded writes let user operations
 	// acquire both the mutex and writer between pages.
+	clock.enter(scanCleanup)
 	return result, l.cleanScanStaging(ctx, cleanScanStagingOptions{Stage: stage, ID: id, Gen: gen, Marker: marker, Published: true})
 }
 
@@ -383,10 +404,12 @@ func (l *Library) captureScanOrphans(ctx context.Context, stage *storage.ScanSto
 	})
 }
 
-func (l *Library) captureScanBaseline(ctx context.Context, id int64, stage *storage.ScanStore) (baseline scanBaseline, err error) {
+func (l *Library) captureScanBaseline(ctx context.Context, id int64, stage *storage.ScanStore, clock *scanClock) (baseline scanBaseline, err error) {
+	clock.enter(scanLockWait)
 	if err = l.lockNumbering(ctx); err != nil {
 		return baseline, err
 	}
+	clock.enter(scanPrepare)
 	if l.broken != nil {
 		err = errHalted.Wrap(l.broken)
 	} else {
@@ -541,10 +564,13 @@ type collectScanMetadataOptions struct {
 	Dir        *os.File
 	Read       func(*os.File, int) ([]os.DirEntry, error)
 	Inspectors []func(*os.File, os.DirEntry) (scannedDirectoryEntry, error)
+	Clock      *scanClock
 }
 
 func collectScanMetadata(ctx context.Context, params collectScanMetadataOptions) error {
 	stage, table, dir, read, inspectors := params.Stage, params.Table, params.Dir, params.Read, params.Inspectors
+	clock := params.Clock
+	clock.enter(scanRead)
 
 	var statement string
 	switch table {
@@ -569,6 +595,7 @@ func collectScanMetadata(ctx context.Context, params collectScanMetadataOptions)
 			return err
 		}
 		if len(scanned) > 0 {
+			clock.enter(scanStage)
 			if err := stage.Write(ctx, func(tx *sql.Tx) (err error) {
 				stmt, err := tx.PrepareContext(ctx, statement)
 				if err != nil {
@@ -584,6 +611,7 @@ func collectScanMetadata(ctx context.Context, params collectScanMetadataOptions)
 			}); err != nil {
 				return err
 			}
+			clock.enter(scanRead)
 		}
 		if errors.Is(readErr, io.EOF) {
 			return nil
@@ -705,14 +733,17 @@ type publishDirectoryScanOptions struct {
 	Baseline  scanBaseline
 	StagePath string
 	Rebuild   bool
+	Clock     *scanClock
 }
 
 func (l *Library) publishDirectoryScan(ctx context.Context, params publishDirectoryScanOptions) error {
 	id, gen, marker, baseline, stagePath, rebuild := params.ID, params.Gen, params.Marker, params.Baseline, params.StagePath, params.Rebuild
 
+	params.Clock.enter(scanLockWait)
 	if err := l.lockNumbering(ctx); err != nil {
 		return err
 	}
+	params.Clock.enter(scanPublish)
 	defer l.mu.Unlock()
 	if l.broken != nil {
 		return errHalted.Wrap(l.broken)

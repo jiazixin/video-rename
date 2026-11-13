@@ -72,27 +72,16 @@ func numberingFingerprintFailure(path string, b Numbering, actual string) error 
 }
 
 func (l *Library) checkNumberingAvailable(ctx context.Context, id int64) error {
-	var pending bool
-	if err := l.db.View(ctx, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM image_numberings WHERE status IN ('running','rollback','review'))").Scan(&pending)
-	}); err != nil {
-		return err
-	}
-	if !pending {
-		return nil
-	}
-	var n int
-	err := l.db.View(ctx, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, `WITH RECURSIVE descendants(id) AS (SELECT ? UNION ALL SELECT e.id FROM entries e JOIN descendants d ON e.parent=d.id WHERE e.present=1), ancestors(id,parent) AS (SELECT id,parent FROM entries WHERE id=? UNION ALL SELECT e.id,e.parent FROM entries e JOIN ancestors a ON e.id=a.parent)
- SELECT count(*) FROM image_numberings WHERE status IN ('running','rollback','review') AND (parent IN (SELECT id FROM descendants) OR parent IN (SELECT id FROM ancestors))`, id, id).Scan(&n)
+	return l.db.View(ctx, func(tx *sql.Tx) error {
+		var pending bool
+		if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM image_numberings WHERE status IN ('running','rollback','review'))").Scan(&pending); err != nil {
+			return err
+		}
+		if !pending {
+			return nil
+		}
+		return checkPendingNumbering(ctx, tx, id)
 	})
-	if err != nil {
-		return err
-	}
-	if n > 0 {
-		return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingPending, Message: "directory has unfinished numbering; recover it from the numbering records"})
-	}
-	return nil
 }
 
 func (l *Library) lockNumbering(ctx context.Context) error {

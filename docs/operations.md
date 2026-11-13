@@ -30,7 +30,25 @@ SQLite索引用于展示，真实文件系统是最终事实来源。首次访�
 
 标记在后台执行，断连继续；弹窗重试只查询原任务，不重复执行。完成结果短期缓存，连续操作不受“一小时128次”限制；结果被回收、过期或服务重启后，关闭弹窗并重新选择尚需处理的目标，已提交标记和命名历史保留。标记以最多128个文件的小批次提交，进度按已提交结果更新。重启或服务关闭后未提交部分需重新选择执行。文件校验失败独立报告，数据库写入失败则当前批次回滚并报告失败，重新选择失败目标可补齐剩余文件。活动任务中的文件报告失败，结束后可重试。
 
-递归标记在整次操作中复用一个本地临时扫描库来刷新目录，只标记文件时不创建；结束（含取消）后删除。每次标记结束时服务日志写一条 `mark_finished`：`marked`、`targets`、`changed`、`unchanged`、`failed`、`interrupted`、刷新的目录数 `directories`、提交批次数 `batches`，以及总耗时 `duration_ms` 和分段耗时 `refresh_duration_ms`（刷新目录，含读目录与文件属性）、`lock_wait_duration_ms`（等待其他文件操作释放库锁）、`validate_duration_ms`（逐文件复核，含再次读取文件属性）、`write_duration_ms`（写入标记）。日志不含路径，可用于判断耗时主要在网络存储还是数据库。临时扫描库删除失败只记 `mark_scanner_close_failed`，不影响已提交的标记。
+递归标记在整次操作中复用一个本地临时扫描库来刷新目录，只标记文件时不创建；结束（含取消）后删除。暂存库使用 WAL/NORMAL，不用于重启恢复；标记、历史与业务索引仍由 WAL/FULL 主库持久化。临时文件使用操作系统临时目录（受 `TMPDIR` 影响），该目录也应在本地磁盘。临时扫描库删除失败只记 `mark_scanner_close_failed`，不影响已提交的标记。
+
+每次标记结束时服务日志写一条 `mark_finished`，包含 `marked`、`targets`、`changed`、`unchanged`、`failed`、`interrupted`、刷新的目录数 `directories`、提交批次数 `batches`。`duration_ms` 是总耗时；一级分段为 `refresh_duration_ms`（目录刷新）、`lock_wait_duration_ms`（标记批次获取库锁）、`validate_duration_ms`（复核）、`write_duration_ms`（标记事务，含等待写连接）。初始化/关闭扫描库、遍历分页及进度回调等计入总耗时，不一定在这些一级分段内。
+
+刷新和复核另外提供以下子阶段，单位均为毫秒：
+
+| 字段 | 口径 |
+| --- | --- |
+| `refresh_prepare_duration_ms` | 重置暂存表、可用性检查、读取索引基线与祖先并写入暂存基线 |
+| `refresh_read_duration_ms` | 打开/复核目录路径、两遍目录枚举与文件属性读取 |
+| `refresh_stage_duration_ms` | 两遍观测写入暂存库、比较与索引匹配、读取扫描结果 |
+| `refresh_publish_duration_ms` | 构建新索引代（含暂存 ID 回填）、发布索引状态；失败时记录扫描错误 |
+| `refresh_cleanup_duration_ms` | 清理过期索引代与孤儿候选 |
+| `refresh_lock_wait_duration_ms` | 等待扫描器、同目录扫描、捕获基线与发布时的库锁 |
+| `validate_busy_duration_ms` | 逐文件任务占用回调 |
+| `validate_query_duration_ms` | 本批可用性检查、文件与公共祖先的索引快照读取 |
+| `validate_read_duration_ms` | 逐文件根目录、祖先路径及文件身份/大小/mtime 的磁盘复核 |
+
+刷新子阶段之间互不重复，且已包含在 `refresh_duration_ms` 中；复核子阶段同理，不要把父阶段与子阶段再次相加。每个字段将累计时长截断到毫秒，小于 1 毫秒显示 0；数据库连接等待仍包含在调用它的阶段，不使用实例级连接池统计冒充本次任务耗时。日志不含路径；文件系统读取时间也不等于纯网络延迟。
 
 删除需要确认，目录连同全部子内容永久删除，不进回收站。根目录及活动/待核对范围不可删除。跨页批量删除逐项执行，失败保留选择，不提供整批回滚。
 

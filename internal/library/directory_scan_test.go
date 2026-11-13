@@ -554,7 +554,7 @@ func TestScanDirectoryReclaimsInterruptedCandidatesAfterRestart(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			baseline, err := l.captureScanBaseline(t.Context(), 1, stage)
+			baseline, err := l.captureScanBaseline(t.Context(), 1, stage, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -793,7 +793,7 @@ func TestScanCleanupFindsCommittedPageAfterStageUpdateFailure(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	baseline, err := l.captureScanBaseline(t.Context(), 1, stage)
+	baseline, err := l.captureScanBaseline(t.Context(), 1, stage, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

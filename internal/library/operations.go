@@ -624,29 +624,13 @@ func (l *Library) Recover(ctx context.Context) error {
 
 // CheckAvailable blocks uncertain filesystem operations on the entry and related directories.
 func (l *Library) CheckAvailable(ctx context.Context, id int64) error {
-	if err := l.checkNumberingAvailable(ctx, id); err != nil {
-		return err
-	}
-	var pending bool
-	if err := l.db.View(ctx, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM operations WHERE status IN ('prepared','review'))").Scan(&pending)
-	}); err != nil {
-		return err
-	}
-	if !pending {
-		return nil
-	}
-	var n int
-	err := l.db.View(ctx, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, `WITH RECURSIVE descendants(id) AS (SELECT ? UNION ALL SELECT e.id FROM entries e JOIN descendants d ON e.parent=d.id WHERE e.present=1), ancestors(id,parent) AS (SELECT id,parent FROM entries WHERE id=? UNION ALL SELECT e.id,e.parent FROM entries e JOIN ancestors a ON e.id=a.parent) SELECT count(*) FROM operations WHERE status IN ('prepared','review') AND (entry IN (SELECT id FROM descendants) OR entry IN (SELECT id FROM ancestors))`, id, id).Scan(&n)
+	return l.db.View(ctx, func(tx *sql.Tx) error {
+		pending, err := readPendingOperations(ctx, tx)
+		if err != nil {
+			return err
+		}
+		return pending.check(ctx, tx, id)
 	})
-	if err != nil {
-		return err
-	}
-	if n > 0 {
-		return errPendingReview
-	}
-	return nil
 }
 
 // Halted reports whether the library stopped changing files after an
