@@ -85,7 +85,7 @@ Edit `configs/config.local.yaml` with your media directory and a strong, unique 
 
 ```yaml
 listen: "127.0.0.1"
-port: 8790
+port: 8080
 media_path: "/srv/videos"   # existing media root
 storage: "../data"          # SQLite and key, relative to this file's directory
 tmp_storage: "../.cache"    # rebuildable frame cache
@@ -98,7 +98,7 @@ auth:
 ./video-rename --config configs/config.local.yaml
 ```
 
-Open [http://127.0.0.1:8790](http://127.0.0.1:8790) and sign in with your configured credentials. Without arguments the binary reads the file named by the `CONFIG_FILE` environment variable, or else `configs/config.local.yaml` under the working directory; see `--help` for other options.
+Open [http://127.0.0.1:8080](http://127.0.0.1:8080) and sign in with your configured credentials. Omitting `port` uses 8080; an explicit port in an existing configuration still takes precedence, and changes take effect after restarting. Without arguments the binary reads the file named by the `CONFIG_FILE` environment variable, or else `configs/config.local.yaml` under the working directory; see `--help` for other options.
 
 ### 3. Build from source
 
@@ -163,7 +163,7 @@ npm --prefix web exec -- playwright install chromium
 npm --prefix web run test:e2e
 ```
 
-For development, start the Go server and run `npm --prefix web run dev`; Vite proxies `/api` to `127.0.0.1:8790`. Browser tests use the isolated port **18790**, a temporary database, synthetic media, real FFmpeg, and a local mock model; keep that port free. Scale tests and dependency maintenance are covered in [development and testing](docs/IMPLEMENTATION.md).
+For development, start the Go server and run `npm --prefix web run dev`; Vite proxies `/api` to `127.0.0.1:8080`. Browser tests use the isolated port **18790**, a temporary database, synthetic media, real FFmpeg, and a local mock model; keep that port free. Scale tests and dependency maintenance are covered in [development and testing](docs/IMPLEMENTATION.md).
 
 On pushes to `main` and on pull requests, [CI](.github/workflows/ci.yml) runs Web formatting and type checks, Go checks and race tests, FFmpeg integration tests, Playwright E2E, and a multi-target GoReleaser snapshot build.
 

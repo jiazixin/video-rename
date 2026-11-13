@@ -85,7 +85,7 @@ chmod 600 configs/config.local.yaml
 
 ```yaml
 listen: "127.0.0.1"
-port: 8790
+port: 8080
 media_path: "/srv/videos"   # 已存在的媒体根目录
 storage: "../data"          # SQLite 与密钥，相对于配置文件所在目录
 tmp_storage: "../.cache"    # 可重建的截图缓存
@@ -98,7 +98,7 @@ auth:
 ./video-rename --config configs/config.local.yaml
 ```
 
-打开 [http://127.0.0.1:8790](http://127.0.0.1:8790)，用配置中的账号登录。不带参数时读取环境变量 `CONFIG_FILE` 指定的文件，未设置时读取工作目录下的 `configs/config.local.yaml`；其他参数见 `--help`。
+打开 [http://127.0.0.1:8080](http://127.0.0.1:8080)，用配置中的账号登录。省略 `port` 时默认使用 8080；已有配置显式设置了其他端口时，仍使用该值，修改后重启生效。不带参数时读取环境变量 `CONFIG_FILE` 指定的文件，未设置时读取工作目录下的 `configs/config.local.yaml`；其他参数见 `--help`。
 
 ### 3. 从源码构建
 
@@ -163,7 +163,7 @@ npm --prefix web exec -- playwright install chromium
 npm --prefix web run test:e2e
 ```
 
-开发时先启动 Go 服务，再运行 `npm --prefix web run dev`，Vite 会把 `/api` 代理到 `127.0.0.1:8790`。浏览器测试使用隔离端口 **18790**、临时数据库、合成媒体、真实 FFmpeg 和本地假模型，请保持该端口空闲。规模测试与依赖维护见 [开发与测试](docs/IMPLEMENTATION.md)。
+开发时先启动 Go 服务，再运行 `npm --prefix web run dev`，Vite 会把 `/api` 代理到 `127.0.0.1:8080`。浏览器测试使用隔离端口 **18790**、临时数据库、合成媒体、真实 FFmpeg 和本地假模型，请保持该端口空闲。规模测试与依赖维护见 [开发与测试](docs/IMPLEMENTATION.md)。
 
 推送到 `main` 和 Pull Request 时，[CI](.github/workflows/ci.yml) 会运行 Web 格式与类型检查、Go 检查与竞态测试、FFmpeg 集成测试、Playwright E2E，以及 GoReleaser 多目标快照构建。
 

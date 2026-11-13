@@ -50,7 +50,7 @@ type Source struct {
 }
 
 func defaults() Config {
-	return Config{Listen: "127.0.0.1", Port: 8790, Storage: "../data", TempStorage: "../.cache", Log: LogConfig{Level: "info", Format: "json"}}
+	return Config{Listen: "127.0.0.1", Port: 8080, Storage: "../data", TempStorage: "../.cache", Log: LogConfig{Level: "info", Format: "json"}}
 }
 
 // Load strictly decodes the selected file, resolves its paths and validates the result.

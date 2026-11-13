@@ -73,9 +73,16 @@ npm --prefix web exec -- playwright install chromium
 npm --prefix web run test:e2e
 ```
 
-开发时先启动 Go 服务，再运行 `npm --prefix web run dev`，Vite 将 `/api` 代理到 127.0.0.1:8790。前端由 Prettier 管理格式，`typecheck` 单独执行严格类型和未使用变量/参数检查，`build` 仅执行 Vite 生产构建；CI 显式依次调用各检查。
+开发时先启动 Go 服务，再运行 `npm --prefix web run dev`，Vite 将 `/api` 代理到 127.0.0.1:8080。前端由 Prettier 管理格式，`typecheck` 单独执行严格类型和未使用变量/参数检查，`build` 仅执行 Vite 生产构建；CI 显式依次调用各检查。
 
 Go 测试需要临时目录和本地 HTTP 监听权限。浏览器串行使用隔离服务器 **18790**、临时数据库、合成媒体、真实 FFmpeg 和本地假模型；不要占用该端口或复用真实服务。截图和 trace 在被忽略的 `web/test-results/`。
+
+任务创建与处理标记的交错回归在 `internal/job/marks_concurrency_test.go`，已包含在默认 Go 测试中。用通道控制真实 Busy 检查、Create 入队、候选入队和分析返回的顺序，核对任务计数、标记、文件及操作记录；使用临时文件、隔离数据库和假分析回调，不调用外部模型。单独重复验证：
+
+```sh
+go test -run '^TestProcessedMarkAndCreateInterleavings$' -count=50 -timeout=3m ./internal/job
+CGO_ENABLED=1 go test -race -run '^TestProcessedMarkAndCreateInterleavings$' -count=20 -timeout=3m ./internal/job
+```
 
 不可信输入的 Fuzz 种子与解析器同包，放在 `testdata/fuzz/`。CI 每类执行 10 秒，本地可延长；短时通过不代表穷尽输入空间：
 

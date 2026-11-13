@@ -16,7 +16,7 @@ const minimalYAML = "# deployment\n"
 // fullYAML matches the complete example in docs/configuration.md.
 const fullYAML = `
 listen: "127.0.0.1"
-port: 8790
+port: 8080
 media_path: "/srv/videos"
 storage: "../data"
 auth:
@@ -52,7 +52,7 @@ func TestLoadMinimalAppliesDefaults(t *testing.T) {
 		t.Fatalf("load failed: %v", err)
 	}
 
-	if cfg.Listen != "127.0.0.1" || cfg.Port != 8790 || cfg.Storage != "../data" || cfg.TempStorage != "../.cache" || cfg.ConfigDir == "" {
+	if cfg.Listen != "127.0.0.1" || cfg.Port != 8080 || cfg.Storage != "../data" || cfg.TempStorage != "../.cache" || cfg.ConfigDir == "" {
 		t.Fatalf("deployment defaults: %+v", cfg)
 	}
 }
