@@ -594,6 +594,14 @@
     directoryUpdateAvailable.value = false;
     directoryPollError.value = '';
   });
+  function centeredScrollTop(row: HTMLElement) {
+    const rect = row.getBoundingClientRect();
+    // Page entrance translates the whole library. Scroll to the row's final
+    // layout position so completing that animation cannot move it off-center.
+    const transform = listRoot.value ? getComputedStyle(listRoot.value).transform : 'none';
+    const translation = transform === 'none' ? 0 : new DOMMatrixReadOnly(transform).m42;
+    return window.scrollY + rect.top + rect.height / 2 - translation - window.innerHeight / 2;
+  }
   async function restorePosition(request: number, result: Page) {
     const saved = pendingPosition;
     if (!saved || (result.refreshing && !result.items.some((e) => e.id === saved.anchor))) return;
@@ -604,12 +612,7 @@
       ? listRoot.value?.querySelector<HTMLElement>(`[data-entry-id="${saved.anchor}"]`)
       : undefined;
     window.scrollTo({
-      top: row
-        ? window.scrollY +
-          row.getBoundingClientRect().top +
-          row.offsetHeight / 2 -
-          window.innerHeight / 2
-        : saved.scrollY,
+      top: row ? centeredScrollTop(row) : saved.scrollY,
       behavior: 'instant'
     });
     if (row) {
@@ -621,10 +624,8 @@
           if (disposed || request !== listRequest || pendingPosition || !returnAnchor.value) return;
           const r = listRoot.value?.querySelector<HTMLElement>(`[data-entry-id="${saved.anchor}"]`);
           if (!r) return;
-          const rect = r.getBoundingClientRect(),
-            offset = rect.top + rect.height / 2 - window.innerHeight / 2;
-          if (Math.abs(offset) > 1)
-            window.scrollTo({ top: window.scrollY + offset, behavior: 'instant' });
+          const top = centeredScrollTop(r);
+          if (Math.abs(top - window.scrollY) > 1) window.scrollTo({ top, behavior: 'instant' });
         }, delay);
       }
     }

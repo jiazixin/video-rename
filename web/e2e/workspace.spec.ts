@@ -2030,6 +2030,59 @@ test('切换页面后返回上级目录仍定位先前进入的文件夹', async
   await expect(bodyRows(page)).toHaveCount(60)
   await expect.poll(() => page.evaluate(() => Math.abs(window.scrollY - scrollY))).toBeLessThan(3)
 })
+test('返回目录在页面进入动画结束后仍准确居中', async ({ page }) => {
+  await login(page)
+  await page.getByRole('button', { name: '返回定位测试', exact: true }).click()
+  await expect(bodyRows(page)).toHaveCount(100)
+  await page.getByRole('button', { name: '下一页', exact: true }).click()
+  const target = page.getByRole('button', { name: '目录_135', exact: true })
+  const row = bodyRows(page).filter({ has: target })
+  const id = defined(await row.getAttribute('data-entry-id'), 'return directory ID')
+  await target.click()
+  await expect(page.getByText('这里还没有内容', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '批次记录', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '批次记录.' })).toBeVisible()
+  // Hold the real entrance translation while restoring the cached parent list.
+  // Its completion is controlled below, independently of runner frame timing.
+  await page.evaluate(() => {
+    document.documentElement.style.setProperty('--motion-enter', '10s')
+  })
+  await page.getByRole('button', { name: '文件目录', exact: true }).click()
+  await page.waitForFunction(() => {
+    const animations = document.querySelector('.library-page')?.getAnimations() ?? []
+    if (!animations.some((a) => a instanceof CSSTransition && a.transitionProperty === 'transform'))
+      return false
+    for (const animation of animations) {
+      animation.pause()
+      animation.currentTime = 0
+    }
+    return true
+  })
+  const refreshed = page.waitForResponse((response) => {
+    const url = new URL(response.url())
+    return (
+      url.pathname === '/api/entries/status' &&
+      !!url.searchParams.get('ids')?.split(',').includes(id)
+    )
+  })
+  await page.getByRole('button', { name: '返回定位测试', exact: true }).click()
+  await refreshed
+  await expect(bodyRows(page)).toHaveCount(60)
+  await expect(row).toHaveClass(/return-anchor/)
+  await page.locator('.library-page').evaluate(async (element) => {
+    const animations = element.getAnimations()
+    for (const animation of animations) animation.finish()
+    await Promise.all(animations.map((animation) => animation.finished))
+  })
+  await expect
+    .poll(() =>
+      row.evaluate((element) => {
+        const rect = element.getBoundingClientRect()
+        return Math.abs(rect.top + rect.height / 2 - innerHeight / 2)
+      })
+    )
+    .toBeLessThan(3)
+})
 test('目录内容在进入索引后显示直接子项数量', async ({ page }) => {
   await login(page)
   // Use a directory no earlier test opened to check the initial lazy statistics; 2026 · 旅行记录 is already cached.
