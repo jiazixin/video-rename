@@ -62,7 +62,8 @@ npm --prefix web run build
 go mod verify
 go mod tidy -diff
 go test -count=1 ./...
-CGO_ENABLED=1 go test -race -count=1 ./...
+CGO_ENABLED=1 go test -race -count=1 -timeout=15m -skip '^TestLargeDirectoryNumberingPreviewIsPaged$' ./...
+CGO_ENABLED=1 go test -race -count=1 -timeout=15m -run '^TestLargeDirectoryNumberingPreviewIsPaged$' ./internal/app
 go vet ./...
 go vet -tags=integration,scale ./...
 go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
@@ -185,7 +186,8 @@ Web 私有包不独立发布。数据库结构号、缓存命名空间与编号�
 
 CI 使用 GitHub Actions，配置只在 `.github/workflows/` 维护，步骤与上文原生命令一致，Action 均按提交固定并在注释中标明已核对的 tag：
 
-- `ci.yml`：推送 `main` 和 Pull Request 时运行。`web` 依次执行 Prettier、ESLint / Stylelint、严格类型检查、Vitest、生产构建及生产依赖审计；`go` 先构建 Web，再依次执行 `go mod verify`、`go mod tidy -diff`、gofmt、goimports、全部 8 个发布目标的 `go vet`、带标签 vet、staticcheck、`go test -race`、govulncheck，再运行四类输入解析的短时 Fuzz 和安装 FFmpeg 后的 `-tags=integration` 媒体与构建版本测试；`e2e` 构建 `bin/video-rename` 后在 Chromium 中运行完整 Playwright，失败时上传 `web/test-results/`；`release-snapshot` 执行 `goreleaser check` 和快照构建。CI 中 macOS 只做交叉 vet 与交叉编译，未在 CI 中实机运行。
+- `ci.yml`：推送 `main` 和 Pull Request 时运行。`web` 依次执行 Prettier、ESLint / Stylelint、严格类型检查、Vitest、生产构建及生产依赖审计；`go` 先构建 Web，再依次执行 `go mod verify`、`go mod tidy -diff`、gofmt、goimports、全部 8 个发布目标的 `go vet`、带标签 vet、staticcheck、常规 `go test -race`、govulncheck，再运行四类输入解析的短时 Fuzz 和安装 FFmpeg 后的 `-tags=integration` 媒体与构建版本测试；`e2e` 构建 `bin/video-rename` 后在 Chromium 中运行完整 Playwright，失败时上传 `web/test-results/`；`release-snapshot` 执行 `goreleaser check` 和快照构建。CI 中 macOS 只做交叉 vet 与交叉编译，未在 CI 中实机运行。
+- Go 竞态测试按同一个 `GO_HEAVY_TEST_PATTERN` 分成互补的两组：`go` 使用 `-skip` 排除 8,003 文件的 `TestLargeDirectoryNumberingPreviewIsPaged`；独立的 `go-heavy` 作业通过 `-run` 执行该用例。两组均保留 `CGO_ENABLED=1 -race -count=1`，测试包显式超时为 15 分钟；作业上限分别为 40 分钟（含交叉 vet、漏洞扫描、Fuzz 与集成测试）和 25 分钟（含安装与编译）。重型用例的等待截止不再被其他 app 测试消耗，断言和测试数据规模不变。独立作业会额外安装依赖并构建 Web，但不与常规测试争用同一 runner；任何一组失败仍使 CI 失败。
 - `release.yml`：推送 `v主.次.修订` 或 `v主.次.修订-预发布` tag 时运行，不使用依赖或构建缓存。先构建一次并核对 `--version` 精确等于 `video-rename <tag> (revision=<12位提交号>)`，再由 GoReleaser 构建并上传 Release。
 
 [.goreleaser.yaml](../.goreleaser.yaml) 先执行 `npm --prefix web ci --ignore-scripts` 与构建，再以 `CGO_ENABLED=0 -trimpath` 构建 linux amd64/arm64/ppc64le/s390x/riscv64/loong64 与 darwin amd64/arm64；32 位目标无法编译。不注入 `-X main.version`，版本由 Go 从检出的 tag 写入。输出在被忽略的 `bin/release/`，避免根 `dist/` 让工作区变脏。归档附带 LICENSE、中英文 README、配置示例及配置、运行、模型三份文档，并生成 SHA-256 `checksums.txt`。本地预演：

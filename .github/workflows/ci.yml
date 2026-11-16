@@ -12,6 +12,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Both race-test jobs use the same selector so their coverage is complementary.
+env:
+  GO_HEAVY_TEST_PATTERN: '^TestLargeDirectoryNumberingPreviewIsPaged$'
+
 # Actions are pinned by commit; the comment names the reviewed tag.
 jobs:
   web:
@@ -39,7 +43,8 @@ jobs:
   go:
     name: Go 检查与测试
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # Include setup, cross-platform vet, race tests and the remaining checks.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -85,7 +90,8 @@ jobs:
           GOOS=darwin GOARCH=arm64 go vet ./...
       - run: go vet -tags integration,scale ./...
       - run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
-      - run: CGO_ENABLED=1 go test -race -count=1 ./...
+      - name: 常规 Go 竞态测试
+        run: CGO_ENABLED=1 go test -race -count=1 -timeout=15m -skip "$GO_HEAVY_TEST_PATTERN" ./...
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
       - name: Fuzz untrusted input parsers
         run: |
@@ -95,6 +101,31 @@ jobs:
           go test ./internal/vision -run '^$' -fuzz '^FuzzModelResponse$' -fuzztime=10s -parallel=2
       # Real FFmpeg extraction and real `go build` version stamping.
       - run: go test -tags=integration -count=1 ./internal/media ./cmd/video-rename
+
+  go-heavy:
+    name: Go 重型编号竞态测试
+    runs-on: ubuntu-24.04
+    # Leave time for dependency installation and compilation before the test.
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          check-latest: true
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      # Keep the 8003-file regression and all assertions under the race detector,
+      # with a test deadline independent of the rest of internal/app.
+      - run: npm --prefix web ci --ignore-scripts
+      - run: npm --prefix web run build
+      - run: CGO_ENABLED=1 go test -race -count=1 -timeout=15m -run "$GO_HEAVY_TEST_PATTERN" -v ./internal/app
 
   e2e:
     name: E2E (Chromium)

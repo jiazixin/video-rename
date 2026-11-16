@@ -156,7 +156,8 @@ npm --prefix web run typecheck
 npm --prefix web run test
 npm --prefix web run build
 go vet ./...
-go test -race -count=1 ./...
+CGO_ENABLED=1 go test -race -count=1 -timeout=15m -skip '^TestLargeDirectoryNumberingPreviewIsPaged$' ./...
+CGO_ENABLED=1 go test -race -count=1 -timeout=15m -run '^TestLargeDirectoryNumberingPreviewIsPaged$' ./internal/app
 go test -tags=integration -count=1 ./internal/media ./cmd/video-rename
 go build -o bin/video-rename ./cmd/video-rename
 npm --prefix web exec -- playwright install chromium
