@@ -26,6 +26,7 @@
 
 | 记录 | 状态与范围 |
 | --- | --- |
+| [CI 重型竞态测试拆分](archive/2026-11-17-ci-split-acceptance.md) | 历史验收，记录常规组与重型组的本机覆盖情况 |
 | [CI 拆分前的目录改名验收](archive/2026-11-17-before-ci-split-acceptance.md) | 历史；子项变化后的目录改名、身份保护与本机回归，不代表远端 CI 已通过 |
 | [目录改名修复前的验收](archive/2026-11-14-before-directory-rename-acceptance.md) | 历史；处理标记性能优化、并发补验、用户回传测量与默认端口调整 |
 | [递归标记性能实施计划](archive/2026-11-13-mark-performance.md) | 已完成归档；暂存库 NORMAL、批量索引快照及细分耗时日志，实测见上方历史验收 |

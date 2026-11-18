@@ -78,19 +78,24 @@ func (l *Library) Delete(ctx context.Context, id, version int64) error {
 	if err := root.RemoveAll(rel); err != nil {
 		return domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonDeleteIncomplete, Message: "delete stopped; the directory may be partly deleted"}).Wrap(err)
 	}
-	_, err = storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
-		return tx.ExecContext(ctx, `WITH RECURSIVE descendants(id) AS (
-	 SELECT ? UNION ALL SELECT e.id FROM entries e JOIN descendants d ON e.parent=d.id
-	) UPDATE entries SET present=0,version=version+1 WHERE id IN (SELECT id FROM descendants)`, id)
+	// Unpublished scans also have present=0 entries. Leave those pages to their
+	// scanners, and remove the published subtree and its listings atomically.
+	const subtree = `WITH RECURSIVE descendants(id,kind,present) AS (
+	 SELECT id,kind,present FROM entries WHERE id=?
+	 UNION ALL SELECT e.id,e.kind,e.present FROM entries e JOIN descendants d ON e.parent=d.id WHERE d.kind='directory'
+	) `
+	failure := domain.Failure{Reason: domain.ReasonDeleteIndexFailed, Message: "deleted, but the index update failed"}
+	err = l.db.Write(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, subtree+"DELETE FROM directory_items WHERE entry IN (SELECT id FROM descendants WHERE present=1)", id); err != nil {
+			failure = domain.Failure{Reason: domain.ReasonDeleteListingFailed, Message: "deleted, but the listing update failed"}
+			return err
+		}
+		_, err := tx.ExecContext(ctx, subtree+"UPDATE entries SET present=0,version=version+1 WHERE id IN (SELECT id FROM descendants WHERE present=1)", id)
+		return err
 	})
 	if err != nil {
 		l.broken = err
-		return domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonDeleteIndexFailed, Message: "deleted, but the index update failed"}).Wrap(err)
-	}
-	if _, err := storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
-		return tx.ExecContext(ctx, "DELETE FROM directory_items WHERE entry IN (SELECT id FROM entries WHERE present=0)")
-	}); err != nil {
-		return domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonDeleteListingFailed, Message: "deleted, but the listing update failed"}).Wrap(err)
+		return domain.Fail(domain.KindInternal, failure).Wrap(err)
 	}
 	return nil
 }

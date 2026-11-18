@@ -67,9 +67,10 @@ func (l *Library) lockDirectoryScan(ctx context.Context, id int64) (func(), erro
 }
 
 type scanBaseline struct {
-	chain      []Entry
-	epoch      uint64
-	generation int64
+	chain             []Entry
+	epoch             uint64
+	generation        int64
+	listingIncomplete bool
 }
 
 type scanOrphan struct {
@@ -279,7 +280,7 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, params scanDirecto
 		return result, err
 	}
 	gen := baseline.generation
-	rebuild := gen == 0 || result.Added+result.Changed+result.Removed > 0
+	rebuild := gen == 0 || baseline.listingIncomplete || result.Added+result.Changed+result.Removed > 0
 	marker := fmt.Sprintf("directory-scan:%d:%d", id, time.Now().UnixNano())
 	published := false
 	if rebuild {
@@ -440,7 +441,10 @@ func (l *Library) captureScanBaseline(ctx context.Context, id int64, stage *stor
 			}
 			ancestor = e.Parent
 		}
-		if err = tx.QueryRowContext(ctx, "SELECT generation FROM directory_state WHERE dir=?", id).Scan(&baseline.generation); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		var listed int
+		if err = tx.QueryRowContext(ctx, `SELECT s.generation,
+		 (SELECT count(*) FROM directory_items i WHERE i.dir=s.dir AND i.generation=s.generation)
+		 FROM directory_state s WHERE s.dir=?`, id).Scan(&baseline.generation, &listed); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return baseline, err
 		}
 		rows, err := tx.QueryContext(ctx, "SELECT id,name,kind,identity,size,mtime_ns,version FROM entries WHERE parent=? AND present=1 ORDER BY id", id)
@@ -468,12 +472,14 @@ func (l *Library) captureScanBaseline(ctx context.Context, id int64, stage *stor
 			batch = batch[:0]
 			return nil
 		}
+		var indexed int
 		for rows.Next() {
 			var e Entry
 			if err = rows.Scan(&e.ID, &e.Name, &e.Kind, &e.Identity, &e.Size, &e.ModifiedNS, &e.Version); err != nil {
 				return baseline, err
 			}
 			batch = append(batch, e)
+			indexed++
 			if len(batch) == refreshPageSize {
 				if err = flush(); err != nil {
 					return baseline, err
@@ -486,6 +492,9 @@ func (l *Library) captureScanBaseline(ctx context.Context, id int64, stage *stor
 		if len(batch) > 0 {
 			err = flush()
 		}
+		// An interrupted or incomplete listing can omit indexed children even
+		// when the on-disk directory still matches every entry in the baseline.
+		baseline.listingIncomplete = listed != indexed
 		return baseline, err
 	})
 }

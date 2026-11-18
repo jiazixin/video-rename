@@ -1,35 +1,19 @@
-# 最新验收：CI 重型竞态测试拆分（2026-11-17）
+# 删除视频与跨目录扫描的回归验收（2026-11-18）
 
-## 范围与原因
+## 复现
 
-只修改 `.github/workflows/ci.yml` 和配套文档。工作区开始时干净；Go 源码、测试断言、8,003 文件夹具、依赖和锁文件均未修改。此前目录改名修复的本机验证已移入 [历史验收](archive/2026-11-17-before-ci-split-acceptance.md)。
+在临时媒体库中递归标记 A、B 内的视频，再删除 A 的视频并给 A 改名。A 的视频数归零，B 的视频仍有原标记，B 的处理进度仍为 1/1。
 
-[失败的 CI](https://github.com/jiazixin/video-rename/actions/runs/43494244688/job/132123053759) 对应提交 `ef63f53`：大目录编号用例约 322 秒后等待超时，随后 `internal/app` 达到 Go 默认的 10 分钟包级超时。该用例的等待截止来自整个测试包的截止前 30 秒，前置测试会消耗其预算。日志未报告竞态；其他作业通过，Go 作业后续的漏洞扫描、Fuzz 和集成测试被跳过。
+如果删除恰好发生在 B 的扫描已写入新条目、尚未发布列表之间，旧实现会清除 B 的新列表行。复现中，已有视频的处理标记仍在。新发现的子目录如果缺少列表行，递归扫描就无法进入它，父级汇总会持续显示“待统计”。用户提供的 HTTP 访问日志没有扫描结果或标记任务结果，无法从中确定现场是否发生过这种交错。
 
-## 修复
+## 修复与验证
 
-- 工作流只定义一次精确匹配的 `GO_HEAVY_TEST_PATTERN`。常规 `go` 作业用 `-skip`，独立 `go-heavy` 作业用 `-run`，合起来覆盖原有默认测试集。
-- 两组均使用 `CGO_ENABLED=1 go test -race -count=1 -timeout=15m`。重型用例有独立测试进程与 runner，不再与其他 app 测试共享包级截止时间；不修改等待逻辑、测试数据和断言。
-- 常规作业上限 40 分钟，包含环境准备、交叉 vet、静态检查、竞态、漏洞扫描、Fuzz 和集成测试；重型作业上限 25 分钟，给依赖安装与编译留出时间。新增作业也先构建真实 Web 嵌入资源，沿用固定版本的 Actions。
-- 双语 README 与开发说明同步两条验证命令。新增作业带来额外环境准备与构建成本；任何一组失败仍使工作流失败。
+删除现在按目标及其后代清理列表，并在同一事务更新条目。扫描从同一数据库快照比较当前列表行数和有效子项数，两者不一致时根据磁盘观测重新发布列表，保留可匹配的文件标记。
 
-## 实际验证
+- 使用修改前的源码运行两条新回归，分别复现兄弟目录的暂存列表行消失、后续递归扫描仍找不到已索引的子目录。修复后的测试检查了目录可达性、文件原标记和汇总结果。
+- 本机使用 macOS arm64、Go 1.27.4、临时 SQLite 和合成媒体。`internal/library`、`internal/libraryscan` 的包级竞态测试通过，`internal/app` 的目录改名、标记与状态接口专项竞态测试通过。两个库包的 `go vet` 通过。
+- 现场补充的 `mark_finished` 记录确认递归标记任务结束，失败数为 0，未中断。随后一次手动扫描完成，读取 1 个目录、3 个文件，新增、更新和移除均为 0。目录显示已处理 0/3，三个文件均显示未处理。
+- 用户回传的只读查询结果显示库中有 531,184 条标记。三个样本与各自的已标记候选在索引中的目录路径、文件名、大小、纳秒修改时间和设备号均相同，三个 inode 均发生变化。旧记录已退出可见索引，旧标记仍在。这解释了三个文件显示未处理。
+- 现场内核日志确认，11 月 14 日 04:42:24，Linux CIFS 客户端已对该共享自动停用服务端 inode。11 月 18 日的全量标记和两次视频删除都发生在这之后。现场 `findmnt` 显示该设备为 CIFS，挂载选项中未显示 `serverino`。客户端分配的 inode 在缓存回收后可能变化，与三个样本的结果吻合。现有日志无法定位这三次编号变化的具体触发事件。[内核自动回退](https://github.com/torvalds/linux/blob/v6.12/fs/smb/client/misc.c#L507-L521)、[inode 回收](https://github.com/torvalds/linux/blob/v6.12/fs/smb/client/cifsfs.c#L770-L776)、[目录枚举与 inode 分配](https://github.com/torvalds/linux/blob/v6.12/fs/smb/client/readdir.c#L927-L932)。
 
-本机 macOS / arm64，Go 1.27.4、Node.js 26.13.1。所有测试使用原有临时文件和隔离数据库，不使用用户媒体、配置或真实外部模型。两组在本机顺序执行，避免彼此争用资源；CI 则由独立 runner 执行。
-
-| 检查 | 结果 |
-| --- | --- |
-| `npm --prefix web ci --ignore-scripts`、`npm --prefix web run build` | 通过 |
-| `go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12` | 全部工作流通过语法、表达式与作业检查 |
-| 常规组：`CGO_ENABLED=1 go test -race -count=1 -timeout=15m -skip '^TestLargeDirectoryNumberingPreviewIsPaged$' ./...` | 27 个有测试的包通过；app 97.662 秒、job 93.829 秒、library 117.315 秒，无竞态报告 |
-| 重型组：`CGO_ENABLED=1 go test -race -count=1 -timeout=15m -run '^TestLargeDirectoryNumberingPreviewIsPaged$' -v ./internal/app` | 原用例通过，122.96 秒，无竞态报告 |
-| 测试清单与两组执行记录比较 | 默认清单 601 个顶层测试 / Fuzz 目标 / 示例，常规组 600 个、重型组 1 个；并集完整、交集为空 |
-| `npm --prefix web audit --audit-level=high --omit=dev` | 通过，生产依赖 0 漏洞；安装时全依赖审计仍提示 13 项 moderate，本次未升级依赖 |
-| `git diff --check`、改动文档本地链接检查 | 通过 |
-| Go 源码、测试与依赖锁文件差异检查 | 无改动，既有断言及竞态检查保留 |
-
-竞态测试添加 `-json` 保存诊断输出，其他参数与工作流一致。日志位于被忽略的 `test-results/ci-regular-race.jsonl`、`test-results/ci-heavy-race.jsonl`，清单位于 `test-results/ci-test-inventory.jsonl`。
-
-macOS 文件系统按既有条件跳过了 `TestAutoCommitAllocatesSuffixForNormalizationHardLink` 和 `TestAutoCommitAllocatesSuffixForHardLink/SOURCE.mp4`，原因分别是不支持独立的 Unicode 规范化同名文件和仅大小写不同的文件；没有新增跳过条件。三个无测试文件的包不计入 27 个测试包。
-
-未提交或推送，也未运行修改后的 GitHub Actions。上述耗时仅为本机结果，不能视为 Ubuntu runner 实测或性能保证。未重新运行完整 Web 检查/E2E、交叉 vet/构建、Go 漏洞扫描、Fuzz、FFmpeg 集成或规模测试；相关工作流步骤保持不变。Linux 文件系统场景及远端时限仍需推送后验证。
+上一轮的 CI 常规组与重型组验收见 [历史记录](archive/2026-11-17-ci-split-acceptance.md)。

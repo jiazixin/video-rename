@@ -115,6 +115,48 @@ func TestScanDirectoryUnchangedDoesNotRewriteIndex(t *testing.T) {
 	}
 }
 
+func TestScanDirectoryRepairsMissingPublishedListing(t *testing.T) {
+	l, root, _ := fixture(t)
+	ctx := t.Context()
+	put(t, filepath.Join(root, "video.mp4"))
+	if result := l.SetProcessed(ctx, []int64{1}, true); result.Changed != 1 || result.Failed != 0 {
+		t.Fatalf("recursive mark: %+v", result)
+	}
+	// A newly discovered directory contains a video whose fingerprint is already marked.
+	if err := os.Mkdir(filepath.Join(root, "folder"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(root, "video.mp4"), filepath.Join(root, "folder", "video.mp4")); err != nil {
+		t.Fatal(err)
+	}
+	refresh(t, l, 1)
+	dir := entry(t, entryOptions{l: l, parent: 1, name: "folder"})
+	// Reproduce the persisted result of a delete removing a staged directory listing.
+	if err := l.db.Write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "DELETE FROM directory_items WHERE entry=?", dir.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := l.ScanDirectory(ctx, 1)
+	if err != nil || result.Added+result.Changed+result.Removed != 0 {
+		t.Fatalf("scan of unchanged media: %+v, error: %v", result, err)
+	}
+	children, err := l.ChildDirectories(ctx, 1, 0)
+	if err != nil || !slices.Equal(children, []int64{dir.ID}) {
+		t.Fatalf("recursive scan cannot reach directory: %v, error: %v", children, err)
+	}
+	refresh(t, l, children[0])
+	page, err := l.ListPage(ctx, ListPageOptions{ID: dir.ID})
+	if err != nil || len(page.Items) != 1 || page.Items[0].Processed != "marked" {
+		t.Fatalf("rediscovered marked video: %+v, error: %v", page.Items, err)
+	}
+	entries, err := l.WithProgressBatch(ctx, []Entry{dir})
+	if err != nil || *entries[0].Progress != (DirectoryProgress{Total: 1, Processed: 1}) {
+		t.Fatalf("directory progress after recursive scan: %+v, error: %v", entries, err)
+	}
+}
+
 func TestScanDirectorySlowMetadataDoesNotBlockRename(t *testing.T) {
 	l, root, _ := fixture(t)
 	put(t, filepath.Join(root, "a.mp4"))
