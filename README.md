@@ -70,14 +70,15 @@ mkdir video-rename && tar -xzf video-rename_${ver}_linux_amd64.tar.gz -C video-r
 cd video-rename && ./video-rename --version
 ```
 
-包内包含二进制、LICENSE、中英文 README、[配置示例](configs/config.example.yaml)，以及[配置参考](docs/configuration.md)、[运行与恢复](docs/operations.md)、[模型配置](docs/models.md)三份文档。
+解压后，目录中只有 `video-rename`、`LICENSE` 和 `config.example.yaml` 三个文件。
 
 > macOS 包只有 ad-hoc 签名、未经公证。用浏览器下载后如被 Gatekeeper 拦截，可执行 `xattr -d com.apple.quarantine video-rename`。
 
 ### 2. 编写配置并启动
 
 ```sh
-cp configs/config.example.yaml configs/config.local.yaml
+mkdir -p configs
+cp config.example.yaml configs/config.local.yaml
 chmod 600 configs/config.local.yaml
 ```
 
@@ -115,7 +116,7 @@ go build -trimpath -o bin/video-rename ./cmd/video-rename
 ./bin/video-rename --version
 ```
 
-交叉编译时 Web 产物不变，只需给 `go build` 加目标平台：`GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o bin/video-rename-linux-amd64 ./cmd/video-rename`。之后按上一步复制配置并以 `./bin/video-rename --config configs/config.local.yaml` 启动。
+交叉编译时 Web 产物不变，只需给 `go build` 加目标平台：`GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o bin/video-rename-linux-amd64 ./cmd/video-rename`。从源码首次运行时，用 `cp configs/config.example.yaml configs/config.local.yaml` 复制示例，按上一步设置权限、编辑配置，再用 `./bin/video-rename --config configs/config.local.yaml` 启动。
 
 ## 第一次使用
 

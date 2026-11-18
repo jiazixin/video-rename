@@ -2218,6 +2218,28 @@ test('批次记录按实际开始计算耗时，排除排队时间', async ({ pa
   await expect(section.getByRole('article').getByTitle(/^从实际开始到结束/)).toHaveText('等待开始')
 })
 
+test('桌面和窄屏悬停播放进度条时视频画面尺寸稳定', async ({ page }) => {
+  await login(page)
+  await page.getByRole('button', { name: '播放视频 preview.webm', exact: true }).click()
+  const media = page.getByLabel('视频画面', { exact: true })
+  const seek = page.getByRole('slider', { name: '播放进度' })
+  await expect(seek).toBeEnabled()
+
+  for (const viewport of [
+    { width: 1440, height: 1000 },
+    { width: 390, height: 844 }
+  ]) {
+    await page.setViewportSize(viewport)
+    await page.getByRole('button', { name: '全屏播放' }).hover()
+    const frame = defined(await media.boundingBox())
+    await seek.hover()
+    await seek.evaluate(async (slider) => {
+      await Promise.all(slider.getAnimations().map((animation) => animation.finished))
+    })
+    expect(await media.boundingBox()).toEqual(frame)
+  }
+})
+
 test('大播放器、方向键十秒跳转与跨页切集', async ({ page }) => {
   await login(page)
   await page.getByRole('button', { name: '播放视频 preview.webm', exact: true }).click()

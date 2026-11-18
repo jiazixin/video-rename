@@ -70,14 +70,15 @@ mkdir video-rename && tar -xzf video-rename_${ver}_linux_amd64.tar.gz -C video-r
 cd video-rename && ./video-rename --version
 ```
 
-Each archive contains the binary, LICENSE, both READMEs, the [configuration example](configs/config.example.yaml), and the [configuration](docs/configuration.md), [operations](docs/operations.md) and [model setup](docs/models.md) references (in Chinese).
+Each archive contains only `video-rename`, `LICENSE`, and `config.example.yaml` at its root.
 
 > macOS archives are ad-hoc signed and not notarized. If Gatekeeper blocks a browser download, run `xattr -d com.apple.quarantine video-rename`.
 
 ### 2. Configure and start
 
 ```sh
-cp configs/config.example.yaml configs/config.local.yaml
+mkdir -p configs
+cp config.example.yaml configs/config.local.yaml
 chmod 600 configs/config.local.yaml
 ```
 
@@ -115,7 +116,7 @@ go build -trimpath -o bin/video-rename ./cmd/video-rename
 ./bin/video-rename --version
 ```
 
-To cross-compile, keep the same Web build and set the target for `go build`: `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o bin/video-rename-linux-amd64 ./cmd/video-rename`. Then copy the configuration as in step 2 and start with `./bin/video-rename --config configs/config.local.yaml`.
+To cross-compile, keep the same Web build and set the target for `go build`: `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o bin/video-rename-linux-amd64 ./cmd/video-rename`. For the first run from source, copy the example with `cp configs/config.example.yaml configs/config.local.yaml`, set permissions and edit the file as in step 2, then start with `./bin/video-rename --config configs/config.local.yaml`.
 
 ## Using the application
 

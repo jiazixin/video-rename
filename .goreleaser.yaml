@@ -46,12 +46,8 @@ archives:
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - LICENSE
-      - README.md
-      - README.en.md
-      - configs/config.example.yaml
-      - docs/configuration.md
-      - docs/operations.md
-      - docs/models.md
+      - src: configs/config.example.yaml
+        strip_parent: true
 
 checksum:
   name_template: checksums.txt

@@ -364,10 +364,6 @@
     );
     cursor: pointer;
     box-shadow: none;
-    transition: height var(--motion-hover) linear;
-  }
-  .video-theater input[type='range']:hover {
-    height: 7px;
   }
   .media-seek {
     width: 100%;
