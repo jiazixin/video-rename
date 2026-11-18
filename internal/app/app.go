@@ -65,11 +65,11 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 	if err != nil {
 		return nil, err
 	}
-	l, err := library.New(ctx, db, cfg.Path, logger)
+	l, err := library.New(ctx, db, cfg.MediaDirs, logger)
 	if err != nil {
 		return nil, errors.Join(err, db.Close())
 	}
-	j, err := jobqueue.New(ctx, jobqueue.Options{Store: db, Library: l, Config: cfg, Logger: logger})
+	j, err := jobqueue.New(ctx, jobqueue.Options{Store: db, Library: l, CacheDir: cfg.CacheDir, Logger: logger})
 	if err != nil {
 		return nil, errors.Join(err, db.Close())
 	}

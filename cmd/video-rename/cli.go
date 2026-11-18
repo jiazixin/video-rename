@@ -21,7 +21,7 @@ Options:
 Environment:
   CONFIG_FILE          Configuration file, used when --config is not given
 
-Set the media directory with media_path in the configuration file; sign-in,
+Set the media directories with media_dir in the configuration file; sign-in,
 manual runs and schedules are in the web UI.
 `
 

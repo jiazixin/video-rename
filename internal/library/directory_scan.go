@@ -218,7 +218,8 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, params scanDirecto
 		return result, err
 	}
 	clock.enter(scanRead)
-	pinned, err := openScanDirectory(l.Root, baseline.chain)
+	root := l.byRootID[baseline.chain[len(baseline.chain)-1].ID]
+	pinned, err := openScanDirectory(root.Path, baseline.chain)
 	if err != nil {
 		return result, err
 	}
@@ -316,7 +317,7 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, params scanDirecto
 	// Reopen the frozen ancestor chain and check the directory after staging. NAS
 	// operations stay outside the global publication lock.
 	clock.enter(scanRead)
-	dir, err := openScanDirectory(l.Root, baseline.chain)
+	dir, err := openScanDirectory(root.Path, baseline.chain)
 	if err != nil {
 		return result, err
 	}
@@ -436,7 +437,7 @@ func (l *Library) captureScanBaseline(ctx context.Context, id int64, stage *stor
 				return baseline, errNotDirectory
 			}
 			baseline.chain = append(baseline.chain, e)
-			if ancestor == 1 {
+			if _, ok := l.byRootID[ancestor]; ok {
 				break
 			}
 			ancestor = e.Parent

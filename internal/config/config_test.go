@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -17,8 +19,9 @@ const minimalYAML = "# deployment\n"
 const fullYAML = `
 listen: "127.0.0.1"
 port: 8080
-media_path: "/srv/videos"
-storage: "../data"
+media_dir:
+  - "/srv/videos"
+data_dir: "../data"
 auth:
   username: "admin"
   password: "test-password"
@@ -52,7 +55,7 @@ func TestLoadMinimalAppliesDefaults(t *testing.T) {
 		t.Fatalf("load failed: %v", err)
 	}
 
-	if cfg.Listen != "127.0.0.1" || cfg.Port != 8080 || cfg.Storage != "../data" || cfg.TempStorage != "../.cache" || cfg.ConfigDir == "" {
+	if cfg.Listen != "127.0.0.1" || cfg.Port != 8080 || cfg.DataDir != "data" || cfg.CacheDir != "cache" || cfg.ConfigDir == "" {
 		t.Fatalf("deployment defaults: %+v", cfg)
 	}
 }
@@ -89,7 +92,7 @@ func TestLoadFullExample(t *testing.T) {
 		t.Fatalf("load complete example failed: %v", err)
 	}
 
-	if cfg.Path != "/srv/videos" || cfg.Auth.Username != "admin" || cfg.Auth.Password != "test-password" {
+	if !slices.Equal(cfg.MediaDirs, []string{"/srv/videos"}) || cfg.Auth.Username != "admin" || cfg.Auth.Password != "test-password" {
 		t.Fatalf("deployment fields: %+v", cfg)
 	}
 }
@@ -243,7 +246,7 @@ func TestMissingFileAndEmptyPath(t *testing.T) {
 	if err == nil || !strings.HasPrefix(err.Error(), "read configuration: ") {
 		t.Errorf("explicit missing file: %v", err)
 	}
-	// Built-in defaults have no media_path or credentials, so a missing default file still fails.
+	// Built-in defaults have no media_dir or credentials, so a missing default file still fails.
 	_, err = Load(Source{Path: "configs/config.local.yaml", WorkDir: work})
 	if err == nil || !strings.Contains(err.Error(), "built-in defaults are incomplete: auth.username: is required") {
 		t.Errorf("missing default file: %v", err)
@@ -258,7 +261,7 @@ func TestMissingDefaultFileUsesWorkDir(t *testing.T) {
 	cfg, found, err := read(Source{Path: "configs/config.local.yaml", WorkDir: work})
 	want := defaults()
 	want.ConfigDir = work
-	if err != nil || found || cfg != want {
+	if err != nil || found || !reflect.DeepEqual(cfg, want) {
 		t.Fatalf("got %+v, %v, %v", cfg, found, err)
 	}
 }
@@ -318,10 +321,10 @@ func TestFrameSettingsNotInDeploymentYAML(t *testing.T) {
 	}
 }
 
-func TestMediaPathConfigKey(t *testing.T) {
-	cfg, err := readTemp(t, "media_path: /srv/videos\n", "config.yaml")
-	if err != nil || cfg.Path != "/srv/videos" {
-		t.Fatalf("media_path was not loaded correctly: cfg=%+v err=%v", cfg, err)
+func TestMediaDirConfigKey(t *testing.T) {
+	cfg, err := readTemp(t, "media_dir:\n  - /srv/videos\n", "config.yaml")
+	if err != nil || !slices.Equal(cfg.MediaDirs, []string{"/srv/videos"}) {
+		t.Fatalf("media_dir was not loaded correctly: cfg=%+v err=%v", cfg, err)
 	}
 	if _, err := readTemp(t, "path: /srv/videos\n", "config.yaml"); err == nil {
 		t.Fatal("obsolete path field should be rejected")
@@ -348,7 +351,7 @@ func TestEmptyLogSettingsSelectDefaults(t *testing.T) {
 		{"explicit", "log:\n  level: debug\n  format: text\n", LogConfig{Level: "debug", Format: "text"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg, err := loadTemp(t, "media_path: "+media+"\nauth:\n  username: admin\n  password: x\n"+tc.log, "cfg.yaml")
+			cfg, err := loadTemp(t, "media_dir:\n  - "+media+"\nauth:\n  username: admin\n  password: x\n"+tc.log, "cfg.yaml")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -357,7 +360,7 @@ func TestEmptyLogSettingsSelectDefaults(t *testing.T) {
 			}
 		})
 	}
-	_, err := loadTemp(t, "media_path: "+media+"\nauth:\n  username: admin\n  password: x\nlog:\n  level: verbose\n", "cfg.yaml")
+	_, err := loadTemp(t, "media_dir:\n  - "+media+"\nauth:\n  username: admin\n  password: x\nlog:\n  level: verbose\n", "cfg.yaml")
 	if err == nil || !strings.Contains(err.Error(), "log.level: must be debug, info, warn or error") {
 		t.Fatalf("got %v, want a log.level field error", err)
 	}

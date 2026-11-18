@@ -22,23 +22,24 @@ type AuthConfig struct {
 	Password secret.Value `yaml:"password"`
 }
 
-// LogConfig selects the service log level and format.
+// LogConfig selects the service log destination, level and format.
 type LogConfig struct {
+	File   string `yaml:"file"`
 	Level  string `yaml:"level"`  // debug, info, warn or error
 	Format string `yaml:"format"` // json or text
 }
 
 // Config contains deployment YAML fields and the directory used to resolve paths.
 type Config struct {
-	Listen      string     `yaml:"listen"`
-	Port        int        `yaml:"port"`
-	Path        string     `yaml:"media_path"`
-	TempStorage string     `yaml:"tmp_storage"`
-	Storage     string     `yaml:"storage"`
-	Auth        AuthConfig `yaml:"auth"`
-	Log         LogConfig  `yaml:"log"`
-	ConfigDir   string     `yaml:"-"` // base for relative paths: the file's directory, or WorkDir without a file
-	ConfigFile  string     `yaml:"-"` // absolute file path; empty when built-in defaults are used
+	Listen     string     `yaml:"listen"`
+	Port       int        `yaml:"port"`
+	MediaDirs  []string   `yaml:"media_dir"`
+	CacheDir   string     `yaml:"cache_dir"`
+	DataDir    string     `yaml:"data_dir"`
+	Auth       AuthConfig `yaml:"auth"`
+	Log        LogConfig  `yaml:"log"`
+	ConfigDir  string     `yaml:"-"` // base for relative paths: the file's directory, or WorkDir without a file
+	ConfigFile string     `yaml:"-"` // absolute file path; empty when built-in defaults are used
 }
 
 // Source describes where configuration comes from.
@@ -49,7 +50,7 @@ type Source struct {
 }
 
 func defaults() Config {
-	return Config{Listen: "127.0.0.1", Port: 8080, Storage: "../data", TempStorage: "../.cache", Log: LogConfig{Level: "info", Format: "json"}}
+	return Config{Listen: "127.0.0.1", Port: 8080, DataDir: "data", CacheDir: "cache", Log: LogConfig{Level: "info", Format: "json"}}
 }
 
 // Load strictly decodes the selected file, resolves its paths and validates the result.

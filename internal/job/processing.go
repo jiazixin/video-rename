@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"video-rename/internal/config"
@@ -142,7 +141,7 @@ func (m *Manager) process(ctx context.Context, params processOptions) (result er
 				m.extractionFailure(ctx, extractionFailureOptions{Run: batch, Entry: it.Entry, Path: m.diagnosticPath(ctx, it.Entry), Cause: err})
 			}
 		} else {
-			rel, pathErr := filepath.Rel(m.Library.Root, p)
+			rel, pathErr := m.Library.RelativePath(p)
 			if pathErr != nil {
 				rel = m.diagnosticPath(ctx, it.Entry)
 				err = errors.Join(err, fmt.Errorf("resolve diagnostic path for entry %d: %w", it.Entry, pathErr))

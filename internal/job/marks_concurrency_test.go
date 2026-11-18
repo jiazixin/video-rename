@@ -295,7 +295,7 @@ func (f markConcurrencyFixture) assertFileOutcome(t *testing.T, wantName string,
 	if got.Name != wantName || got.Identity != file.Identity || got.Size != file.Size || got.ModifiedNS != file.ModifiedNS {
 		t.Fatalf("got file %+v, want unchanged fingerprint and name=%q", got, wantName)
 	}
-	path := filepath.Join(m.Library.Root, "target", wantName)
+	path := filepath.Join(m.Library.MediaRoots()[0].Path, "target", wantName)
 	content, err := os.ReadFile(path)
 	if err != nil || string(content) != "fixture video" {
 		t.Fatalf("got file content %q, err=%v, want fixture video", content, err)

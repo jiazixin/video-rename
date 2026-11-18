@@ -81,7 +81,7 @@ func waitNumberingTest(t *testing.T, a *App, key string) numberingStatus {
 func TestNumberingBackgroundPreviewConfirmationAndPaging(t *testing.T) {
 	a, _ := markTestApp(t, 0)
 	for i := range 205 {
-		name := filepath.Join(a.Library.Root, "photo-"+strings.Repeat("x", i)+".jpg")
+		name := filepath.Join(a.Library.MediaRoots()[0].Path, "photo-"+strings.Repeat("x", i)+".jpg")
 		// Keep filenames below filesystem length limits.
 		if err := os.WriteFile(name, []byte("image"), 0o600); err != nil {
 			t.Fatal(err)
@@ -103,7 +103,7 @@ func TestNumberingBackgroundPreviewConfirmationAndPaging(t *testing.T) {
 	if len(batches) != 1 {
 		t.Fatal(batches)
 	}
-	if _, err := os.Stat(filepath.Join(a.Library.Root, "photo-.jpg")); err != nil {
+	if _, err := os.Stat(filepath.Join(a.Library.MediaRoots()[0].Path, "photo-.jpg")); err != nil {
 		t.Fatal("preview renamed file", err)
 	}
 	for _, offset := range []string{"0", "100", "200"} {
@@ -139,7 +139,7 @@ func TestNumberingExplicitCancelAndLease(t *testing.T) {
 	for _, lease := range []bool{false, true} {
 		t.Run(map[bool]string{false: "close", true: "lost page"}[lease], func(t *testing.T) {
 			a, _ := markTestApp(t, 0)
-			if err := os.WriteFile(filepath.Join(a.Library.Root, "photo.jpg"), []byte("image"), 0o600); err != nil {
+			if err := os.WriteFile(filepath.Join(a.Library.MediaRoots()[0].Path, "photo.jpg"), []byte("image"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			entered, release := make(chan struct{}), make(chan struct{})
@@ -191,7 +191,7 @@ func TestNumberingExplicitCancelAndLease(t *testing.T) {
 			if s.Status != "cancelled" {
 				t.Fatal(s)
 			}
-			if _, err := os.Stat(filepath.Join(a.Library.Root, "photo.jpg")); err != nil {
+			if _, err := os.Stat(filepath.Join(a.Library.MediaRoots()[0].Path, "photo.jpg")); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -215,7 +215,7 @@ func TestNumberingJobsProtectedAndShutdown(t *testing.T) {
 func TestNumberingCancelKeepsCompletedDirectories(t *testing.T) {
 	a, ids := markTestApp(t, 0)
 	for _, dir := range []string{"dir-0", "dir-1"} {
-		if err := os.WriteFile(filepath.Join(a.Library.Root, dir, "photo.jpg"), []byte("image"), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(a.Library.MediaRoots()[0].Path, dir, "photo.jpg"), []byte("image"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -256,7 +256,7 @@ func TestNumberingCancelKeepsCompletedDirectories(t *testing.T) {
 		t.Fatal(s)
 	}
 	for _, name := range []string{"dir-0/1.jpg", "dir-1/photo.jpg"} {
-		if _, err := os.Stat(filepath.Join(a.Library.Root, name)); err != nil {
+		if _, err := os.Stat(filepath.Join(a.Library.MediaRoots()[0].Path, name)); err != nil {
 			t.Fatal(name, err)
 		}
 	}
@@ -277,7 +277,7 @@ func TestNumberingCloseBeforeSubmit(t *testing.T) {
 // 33rd directory numbering within an hour was rejected.
 func TestNumberingJobsEvictOldestFinishedResults(t *testing.T) {
 	a, _ := markTestApp(t, 0)
-	if err := os.WriteFile(filepath.Join(a.Library.Root, "photo.jpg"), []byte("image"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(a.Library.MediaRoots()[0].Path, "photo.jpg"), []byte("image"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	const rounds = 100
@@ -316,7 +316,7 @@ func TestNumberingJobsEvictOldestFinishedResults(t *testing.T) {
 
 func TestNumberingJobsNeverEvictRunningJob(t *testing.T) {
 	a, _ := markTestApp(t, 0)
-	if err := os.WriteFile(filepath.Join(a.Library.Root, "photo.jpg"), []byte("image"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(a.Library.MediaRoots()[0].Path, "photo.jpg"), []byte("image"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	entered, release := make(chan struct{}), make(chan struct{})

@@ -37,7 +37,7 @@ func BenchmarkRecursiveDirectoryScan(b *testing.B) {
 					if err != nil {
 						b.Fatal(err)
 					}
-					l, err := library.New(b.Context(), db, root, slog.New(slog.DiscardHandler))
+					l, err := library.New(b.Context(), db, []string{root}, slog.New(slog.DiscardHandler))
 					if err != nil {
 						b.Fatal(err)
 					}

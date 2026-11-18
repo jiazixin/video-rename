@@ -1,9 +1,8 @@
 -- Current schema only. Keep the identity below in sync with schemaVersion.
 
 CREATE TABLE library (
- id INTEGER PRIMARY KEY CHECK(id=1),
- root TEXT NOT NULL,
- identity TEXT NOT NULL
+ id INTEGER PRIMARY KEY REFERENCES entries(id),
+ root TEXT NOT NULL UNIQUE
 );
 
 CREATE TABLE entries (
@@ -365,7 +364,7 @@ CREATE INDEX extraction_run ON extraction_records(run,id DESC);
 
 INSERT INTO notification_preferences VALUES(1,'UTC');
 
-PRAGMA user_version=2026102801;
+PRAGMA user_version=2026111801;
 
 CREATE INDEX run_analysis_start ON runs(analysis_start_ms,id);
 

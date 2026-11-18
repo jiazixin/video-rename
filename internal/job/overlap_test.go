@@ -21,7 +21,7 @@ func TestSubmissionDefersMediaPathValidation(t *testing.T) {
 	for _, mode := range []string{"missing-file", "replaced-directory", "symlink", "missing-mount"} {
 		t.Run(mode, func(t *testing.T) {
 			m, ids := scopeFixture(t)
-			root := m.Library.Root
+			root := m.Library.MediaRoots()[0].Path
 			target := ids["direct.mp4"]
 			switch mode {
 			case "missing-file":

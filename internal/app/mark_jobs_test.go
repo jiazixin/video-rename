@@ -32,7 +32,7 @@ func markTestApp(t *testing.T, files int) (*App, []int64) {
 			}
 		}
 	}
-	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{root}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

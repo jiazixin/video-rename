@@ -22,7 +22,7 @@ func TestImageNumberingAPI(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "photo.PNG"), []byte("picture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{root}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestImageNumberingAPI(t *testing.T) {
 
 func TestNumberingSettingsAPI(t *testing.T) {
 	root := t.TempDir()
-	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{root}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestAudioNumberingAPI(t *testing.T) {
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "track.MP3"), []byte("audio"), 0o600)
 	os.WriteFile(filepath.Join(root, "cover.png"), []byte("cover"), 0o600)
-	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{root}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func applyNumberingTest(t *testing.T, a *App, key string, batches ...string) num
 func TestLargeDirectoryNumberingPreviewIsPaged(t *testing.T) {
 	const numbered, unnumbered = 8000, 3
 	c := newContractClient(t)
-	root := c.app.Library.Root
+	root := c.app.Library.MediaRoots()[0].Path
 	for i := range numbered {
 		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("IMG_20240101_%06d.JPG", i+1)), nil, 0o600); err != nil {
 			t.Fatal(err)

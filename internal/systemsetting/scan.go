@@ -20,8 +20,8 @@ type ScanSettings struct {
 }
 
 // DefaultScanSettings returns the default background scan settings.
-func DefaultScanSettings() ScanSettings {
-	return ScanSettings{Enabled: true, IntervalMinutes: 60, Targets: []int64{1}, ExcludedTargets: []int64{}}
+func DefaultScanSettings(rootIDs ...int64) ScanSettings {
+	return ScanSettings{Enabled: true, IntervalMinutes: 60, Targets: rootIDs, ExcludedTargets: []int64{}}
 }
 
 // Validate checks the scan settings.
@@ -85,12 +85,25 @@ func (s Store) Scan(ctx context.Context) (ScanSettings, error) {
 		if err != nil {
 			return ScanSettings{}, err
 		}
-		v := DefaultScanSettings()
 		if policy.LibraryScan != nil {
-			v = *policy.LibraryScan
+			v := *policy.LibraryScan
 			v.Targets = slices.Clone(v.Targets)
 			v.ExcludedTargets = append([]int64{}, v.ExcludedTargets...)
+			return v, v.Validate()
 		}
+		rows, err := tx.QueryContext(ctx, "SELECT id FROM library ORDER BY id")
+		if err != nil {
+			return ScanSettings{}, err
+		}
+		roots, err := storage.CollectRows(rows, func(row *sql.Rows) (int64, error) {
+			var id int64
+			err := row.Scan(&id)
+			return id, err
+		})
+		if err != nil {
+			return ScanSettings{}, err
+		}
+		v := DefaultScanSettings(roots...)
 		return v, v.Validate()
 	})
 }

@@ -50,16 +50,23 @@ func (l *Library) DisplayPaths(ctx context.Context, ids []int64) (map[int64]stri
 		for _, id := range ids {
 			parts := []string{}
 			cur := id
-			for cur > 1 && len(parts) < 1024 {
+			for cur > 0 && len(parts) < 1024 {
 				n, ok := nodes[cur]
 				if !ok {
+					break
+				}
+				if root, ok := l.byRootID[cur]; ok {
+					if len(l.roots) > 1 {
+						parts = append(parts, root.Name)
+					}
+					cur = 0
 					break
 				}
 				parts = append(parts, n.name)
 				cur = n.parent
 			}
 			switch {
-			case cur > 1:
+			case cur > 0:
 				out[id] = MissingDisplayPath
 			case len(parts) == 0:
 				out[id] = RootDisplayPath

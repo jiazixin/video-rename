@@ -42,11 +42,11 @@ func setup(t *testing.T) (*Manager, string) {
 			t.Error(err)
 		}
 	})
-	l, err := library.New(t.Context(), db, root, slog.New(slog.DiscardHandler))
+	l, err := library.New(t.Context(), db, []string{root}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := New(t.Context(), Options{Store: db, Library: l, Config: &config.Config{}, Logger: slog.New(slog.DiscardHandler)})
+	m, err := New(t.Context(), Options{Store: db, Library: l, CacheDir: t.TempDir(), Logger: slog.New(slog.DiscardHandler)})
 	if err != nil {
 		t.Fatal(err)
 	}

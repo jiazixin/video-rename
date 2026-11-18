@@ -15,7 +15,7 @@ import (
 //go:embed schema.sql
 var schema string
 
-const schemaVersion = 2026102801
+const schemaVersion = 2026111801
 
 // initialize creates the current schema once. An unrelated or obsolete database
 // is rejected before any schema changes; its contents are never reset or upgraded.
@@ -32,7 +32,7 @@ func (s *Store) initialize(ctx context.Context) error {
 			return err
 		}
 		if version != 0 || tables != 0 {
-			return errors.New("unsupported database schema; configure a new storage directory for this version; the existing database was not modified")
+			return errors.New("unsupported database schema; configure a new data_dir for this version; the existing database was not modified")
 		}
 		if _, err := tx.ExecContext(ctx, schema); err != nil {
 			return fmt.Errorf("create database schema: %w", err)
@@ -72,7 +72,7 @@ func inspectSchema(ctx context.Context, path url.URL) (err error) {
 		return fmt.Errorf("inspect database tables: %w", err)
 	}
 	if version != 0 || tables != 0 {
-		return errors.New("unsupported database schema; configure a new storage directory for this version; the existing database was not modified")
+		return errors.New("unsupported database schema; configure a new data_dir for this version; the existing database was not modified")
 	}
 	return nil
 }
@@ -101,7 +101,7 @@ func inspectCurrentSchema(ctx context.Context, actual *sql.DB) (err error) {
 		return fmt.Errorf("inspect database schema: %w", err)
 	}
 	if !slices.Equal(got, want) {
-		return errors.New("unsupported database schema; structure differs from this build; configure a new storage directory; the existing database was not modified")
+		return errors.New("unsupported database schema; structure differs from this build; configure a new data_dir; the existing database was not modified")
 	}
 	return nil
 }

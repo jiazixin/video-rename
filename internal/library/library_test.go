@@ -2,7 +2,9 @@ package library
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -24,7 +26,7 @@ func fixture(t *testing.T) (*Library, string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l, err := New(t.Context(), db, root, slog.New(slog.DiscardHandler))
+	l, err := New(t.Context(), db, []string{root}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +97,7 @@ func TestRenameRestoreParentAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	l, err = New(t.Context(), db, root, slog.New(slog.DiscardHandler))
+	l, err = New(t.Context(), db, []string{root}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +187,7 @@ func TestPreparedRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	l, err = New(t.Context(), db, root, slog.New(slog.DiscardHandler))
+	l, err = New(t.Context(), db, []string{root}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -503,5 +505,88 @@ func TestManualExtensionChangeAndRestore(t *testing.T) {
 				t.Fatalf("files=%v err=%v", files, err)
 			}
 		})
+	}
+}
+
+func TestMultipleMediaRoots(t *testing.T) {
+	ctx := t.Context()
+	base := t.TempDir()
+	paths := []string{filepath.Join(base, "disk-a", "videos"), filepath.Join(base, "disk-b", "videos")}
+	for index, path := range paths {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "same.mp4"), []byte(fmt.Sprint(index)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db, err := storage.Open(ctx, filepath.Join(base, "data", "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	logger := slog.New(slog.DiscardHandler)
+	l, err := New(ctx, db, paths, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	roots := l.MediaRoots()
+	if len(roots) != 2 || roots[0].Name == roots[1].Name {
+		t.Fatal(roots)
+	}
+	for _, root := range roots {
+		refresh(t, l, root.ID)
+		p, err := l.ListPage(ctx, ListPageOptions{ID: root.ID})
+		if err != nil || len(p.Items) != 1 || p.Items[0].Name != "same.mp4" || len(p.MediaRoots) != 2 || p.Breadcrumbs[0].Name != root.Name {
+			t.Fatalf("page %+v: %v", p, err)
+		}
+		if err := l.Delete(ctx, root.ID, p.Directory.Version); err == nil {
+			t.Fatal("deleted a configured root")
+		}
+		if _, err := l.Rename(ctx, RenameRequest{ID: root.ID, Version: p.Directory.Version, Name: "moved", Key: "move-root"}); err == nil {
+			t.Fatal("renamed a configured root")
+		}
+	}
+	b := entry(t, entryOptions{l: l, parent: roots[1].ID, name: "same.mp4"})
+	if result := l.SetProcessed(ctx, []int64{roots[1].ID}, true); result.Failed != 0 || result.Changed != 1 {
+		t.Fatal(result)
+	}
+	firstFile := entry(t, entryOptions{l: l, parent: roots[0].ID, name: "same.mp4"})
+	secondFile := entry(t, entryOptions{l: l, parent: roots[1].ID, name: "same.mp4"})
+	if firstFile.Processed != "" || secondFile.Processed != "marked" {
+		t.Fatalf("unexpected marks across roots: %q, %q", firstFile.Processed, secondFile.Processed)
+	}
+	if _, err := l.Rename(ctx, RenameRequest{ID: b.ID, Version: b.Version, Name: "new.mp4", Key: "rename-b"}); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := New(ctx, db, []string{paths[1], paths[0]}, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if reopened.MediaRoots()[0].ID != roots[1].ID {
+		t.Fatal("reordering roots reassigned the ID")
+	}
+	f, err := reopened.OpenPlayback(ctx, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(f)
+	if err = errors.Join(err, f.Close()); err != nil || string(data) != "1" {
+		t.Fatalf("playback %q: %v", data, err)
+	}
+	b, err = reopened.Get(ctx, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reopened.Delete(ctx, b.ID, b.Version); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(paths[1], "new.mp4")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("target not deleted: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(paths[0], "same.mp4")); err != nil || string(data) != "0" {
+		t.Fatalf("other root changed: %q %v", data, err)
 	}
 }

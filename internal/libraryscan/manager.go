@@ -424,12 +424,12 @@ func (m *Manager) addError(ctx context.Context, id int64, err error) {
 // scanOne validates the root before each directory and again after a failed
 // read. A directory-specific error skips its descendants but not other ranges;
 // a missing or replaced root stops the whole round before any further work.
-func (m *Manager) scanOne(ctx context.Context, id int64, scan func(context.Context, int64) (library.ScanDirectoryResult, error)) (success, fatal bool) {
+func (m *Manager) scanOne(ctx context.Context, id, rootID int64, scan func(context.Context, int64) (library.ScanDirectoryResult, error)) (success, fatal bool) {
 	if ctx.Err() != nil {
 		return false, false
 	}
-	if _, err := m.library.Path(ctx, 1); err != nil {
-		m.addError(ctx, 1, err)
+	if _, err := m.library.Path(ctx, rootID); err != nil {
+		m.addError(ctx, rootID, err)
 		return false, true
 	}
 	path := m.library.DisplayPath(ctx, id)
@@ -440,7 +440,7 @@ func (m *Manager) scanOne(ctx context.Context, id int64, scan func(context.Conte
 	if errors.Is(err, library.ErrDirectoryScanChanged) && ctx.Err() == nil {
 		// Retry the complete scan once so a transient NAS observation can settle.
 		// A missing or replaced root must stop the round before another read.
-		if _, rootErr := m.library.Path(ctx, 1); rootErr == nil && ctx.Err() == nil {
+		if _, rootErr := m.library.Path(ctx, rootID); rootErr == nil && ctx.Err() == nil {
 			firstErr := err
 			result, err = scan(ctx, id)
 			if err != nil {
@@ -453,13 +453,13 @@ func (m *Manager) scanOne(ctx context.Context, id int64, scan func(context.Conte
 	}
 	if err != nil {
 		m.addError(ctx, id, err)
-		if _, rootErr := m.library.Path(ctx, 1); rootErr != nil {
-			if id != 1 {
-				m.addError(ctx, 1, rootErr)
+		if _, rootErr := m.library.Path(ctx, rootID); rootErr != nil {
+			if id != rootID {
+				m.addError(ctx, rootID, rootErr)
 			}
 			return false, true
 		}
-		return false, id == 1
+		return false, id == rootID
 	}
 	m.mu.Lock()
 	m.status.Directories++
@@ -517,7 +517,12 @@ func (m *Manager) run(ctx context.Context, targets, excluded []int64) {
 		if skip {
 			continue
 		}
-		ok, stop := m.scanOne(ctx, target, scan)
+		rootID, err := m.library.RootID(ctx, target)
+		if err != nil {
+			m.addError(ctx, target, err)
+			continue
+		}
+		ok, stop := m.scanOne(ctx, target, rootID, scan)
 		if stop {
 			fatal = true
 			return
@@ -557,7 +562,7 @@ func (m *Manager) run(ctx context.Context, targets, excluded []int64) {
 			if skip {
 				continue
 			}
-			ok, stop = m.scanOne(ctx, child, scan)
+			ok, stop = m.scanOne(ctx, child, rootID, scan)
 			if stop {
 				fatal = true
 				return

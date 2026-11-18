@@ -13,7 +13,7 @@ import (
 )
 
 func TestHistoryBatchFiltering(t *testing.T) {
-	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{t.TempDir()}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestHistoryBatchFiltering(t *testing.T) {
 }
 
 func TestHistoryShowsBatchModelSnapshot(t *testing.T) {
-	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{t.TempDir()}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ VALUES('manual','[]',1,'completed','2026-10-01T00:00:00.000Z','history-model-run
 }
 
 func TestHistoryUsesActualModelAttempt(t *testing.T) {
-	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{t.TempDir()}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

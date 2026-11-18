@@ -16,7 +16,7 @@ func TestPlaybackRangeAndRestrictions(t *testing.T) {
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "clip.mp4"), []byte("0123456789"), 0o600)
 	os.WriteFile(filepath.Join(root, "secret.txt"), []byte("secret"), 0o600)
-	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{root}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestAudioPlaybackRestrictions(t *testing.T) {
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "track.mp3"), []byte("audio fixture"), 0o600)
 	os.WriteFile(filepath.Join(root, "notes.txt"), []byte("notes"), 0o600)
-	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{root}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestImagePreviewRestrictions(t *testing.T) {
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "photo.png"), []byte("image fixture"), 0o600)
 	os.WriteFile(filepath.Join(root, "active.svg"), []byte("<svg/>"), 0o600)
-	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{root}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

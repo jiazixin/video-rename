@@ -39,7 +39,7 @@ func TestMissingRecordFailureUsesReadableMessage(t *testing.T) {
 }
 
 func TestHistoryDateFiltersCompareInstants(t *testing.T) {
-	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{t.TempDir()}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestHistoryDateFiltersCompareInstants(t *testing.T) {
 func TestStaticSPAAndProtectedAPI(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "media")
 	os.Mkdir(root, 0o700)
-	cfg := &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}
+	cfg := &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{root}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}
 	a, err := New(t.Context(), cfg, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
@@ -113,13 +113,13 @@ func TestStaticSPAAndProtectedAPI(t *testing.T) {
 }
 
 func TestDataDirectoryPersistenceAndShortPasswordLogin(t *testing.T) {
-	cfg := &config.Config{Path: t.TempDir(), Storage: filepath.Join(t.TempDir(), "state", "nested"), Auth: config.AuthConfig{Username: "admin", Password: "x"}}
+	cfg := &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{t.TempDir()}, DataDir: filepath.Join(t.TempDir(), "state", "nested"), Auth: config.AuthConfig{Username: "admin", Password: "x"}}
 	a, err := New(t.Context(), cfg, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"data.sqlite", "data.sqlite.key"} {
-		if _, err := os.Stat(filepath.Join(cfg.Storage, name)); err != nil {
+		if _, err := os.Stat(filepath.Join(cfg.DataDir, name)); err != nil {
 			shutdown(t, a)
 			t.Fatal(err)
 		}
@@ -163,7 +163,7 @@ func TestDataDirectoryPersistenceAndShortPasswordLogin(t *testing.T) {
 }
 
 func TestShutdownTimeoutLeavesStoresOpen(t *testing.T) {
-	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{t.TempDir()}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

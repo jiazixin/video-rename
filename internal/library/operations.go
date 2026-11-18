@@ -355,7 +355,7 @@ func (l *Library) commit(ctx context.Context, params commitOptions) (Operation, 
 	if !errors.Is(er, sql.ErrNoRows) {
 		return Operation{}, er
 	}
-	if e.ID == 1 || e.Kind == "symlink" || e.Kind == "other" {
+	if e.Parent == 0 || e.Kind == "symlink" || e.Kind == "other" {
 		return Operation{}, errProtectedEntry
 	}
 	if err := ValidName(name); err != nil {
@@ -393,8 +393,8 @@ func (l *Library) commit(ctx context.Context, params commitOptions) (Operation, 
 	l.indexEpoch.Add(1)
 	target := filepath.Join(filepath.Dir(p), name)
 	// Both paths share the verified absolute library root.
-	oldrel, _ := filepath.Rel(l.Root, p)
-	newrel, _ := filepath.Rel(l.Root, target)
+	oldrel, _ := l.RelativePath(p)
+	newrel, _ := l.RelativePath(target)
 	var exchange domain.ModelDiagnostics
 	if len(diagnostics) > 0 {
 		exchange = diagnostics[0]
@@ -597,8 +597,8 @@ func (l *Library) Recover(ctx context.Context) error {
 			return Identity(s) == o.Identity && (o.Kind == "directory" || (s.Size == o.Size && stamp(s) == o.ModifiedNS))
 		}
 		// Recovery paths share the verified absolute library root.
-		oldrel, _ := filepath.Rel(l.Root, old)
-		newrel, _ := filepath.Rel(l.Root, new)
+		oldrel, _ := l.RelativePath(old)
+		newrel, _ := l.RelativePath(new)
 		if (errors.Is(ae, fs.ErrNotExist) || o.Old == o.New) && be == nil && match(b) {
 			if err = l.finish(ctx, o, oldrel, newrel); err != nil {
 				return err

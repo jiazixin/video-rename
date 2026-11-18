@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"video-rename/internal/config"
 	"video-rename/internal/domain"
 	"video-rename/internal/job"
 	"video-rename/internal/library"
@@ -82,12 +81,12 @@ func newSchedulerFixture(t *testing.T) schedulerFixture {
 			t.Error(err)
 		}
 	})
-	l, err := library.New(t.Context(), db, root, slog.New(slog.DiscardHandler))
+	l, err := library.New(t.Context(), db, []string{root}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(l.Close)
-	m, err := job.New(t.Context(), job.Options{Store: db, Library: l, Config: &config.Config{}, Logger: slog.New(slog.DiscardHandler)})
+	m, err := job.New(t.Context(), job.Options{Store: db, Library: l, CacheDir: t.TempDir(), Logger: slog.New(slog.DiscardHandler)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,11 +318,11 @@ func TestPersistentTriggerDeduplicationAndOverlap(t *testing.T) {
 			t.Error(err)
 		}
 	}(db.Close)
-	l, err := library.New(t.Context(), db, root, slog.New(slog.DiscardHandler))
+	l, err := library.New(t.Context(), db, []string{root}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := job.New(t.Context(), job.Options{Store: db, Library: l, Config: &config.Config{}, Logger: slog.New(slog.DiscardHandler)})
+	m, err := job.New(t.Context(), job.Options{Store: db, Library: l, CacheDir: t.TempDir(), Logger: slog.New(slog.DiscardHandler)})
 	if err != nil {
 		t.Fatal(err)
 	}

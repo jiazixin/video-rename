@@ -1,9 +1,10 @@
 <script setup lang="ts">
   import './library.css';
   import { errorText } from '../../app/errors';
+  import DirectoryBreadcrumbs from './DirectoryBreadcrumbs.vue';
   import PageNavigation from '../../components/PageNavigation.vue';
   import { ref, onMounted, onUnmounted, computed } from 'vue';
-  import { Folder, ChevronRight, Home } from '@lucide/vue';
+  import { Folder, ChevronRight } from '@lucide/vue';
   import DirectoryStatus from './DirectoryStatus.vue';
   import './directory-picker.css';
   import { useApi } from '../../app/use-api';
@@ -49,7 +50,7 @@
       if (seq !== serial) return;
       page.value = result;
       const prefix = result.breadcrumbs
-        .filter((crumb) => crumb.id !== 1)
+        .filter((crumb) => crumb.name)
         .map((crumb) => crumb.name)
         .join(' / ');
       const paths: Record<number, string> = { [result.directory.id]: prefix || '整个媒体库' };
@@ -83,14 +84,8 @@
 </script>
 <template>
   <div class="directory-picker" :aria-busy="busy || page?.refreshing || undefined"
-    ><div class="picker-breadcrumb" role="navigation" aria-label="目录路径"
-      ><button type="button" @click="enter(1)"><Home :size="15" />媒体库</button
-      ><template v-for="crumb in page?.breadcrumbs.filter((x) => x.id !== 1)" :key="crumb.id"
-        ><ChevronRight :size="13" /><button type="button" @click="enter(crumb.id)">{{
-          crumb.name
-        }}</button></template
-      ></div
-    ><label class="picker-current"
+    ><DirectoryBreadcrumbs class="picker-breadcrumb" :page="page" @enter="enter" /><label
+      class="picker-current"
       ><input
         type="checkbox"
         aria-label="选择当前目录"

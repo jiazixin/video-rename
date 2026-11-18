@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"os"
-	"path/filepath"
 
 	"video-rename/internal/domain"
 	"video-rename/internal/storage"
@@ -21,7 +20,7 @@ func (l *Library) Delete(ctx context.Context, id, version int64) error {
 	if err != nil {
 		return err
 	}
-	if id == 1 || (e.Kind != "file" && e.Kind != "directory") {
+	if e.Parent == 0 || (e.Kind != "file" && e.Kind != "directory") {
 		return errProtectedEntry
 	}
 	if e.Version != version {
@@ -56,15 +55,15 @@ func (l *Library) Delete(ctx context.Context, id, version int64) error {
 	if Identity(snap) != e.Identity || (e.Kind == "file" && (snap.Size != e.Size || stamp(snap) != e.ModifiedNS)) {
 		return errChanged
 	}
-	root, err := os.OpenRoot(l.Root)
+	mount, rel, err := l.rootPath(p)
+	if err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(mount.Path)
 	if err != nil {
 		return err
 	}
 	defer root.Close()
-	rel, err := filepath.Rel(l.Root, p)
-	if err != nil {
-		return err
-	}
 	if _, err := l.Path(ctx, id); err != nil {
 		return err
 	}

@@ -87,7 +87,7 @@ func (l *Library) readMarkBatch(ctx context.Context, files []fileMarkResult) (ma
 
 func (s markBatchSnapshot) loadAncestors(ctx context.Context, statement *sql.Stmt, e Entry) error {
 	seen := map[int64]bool{}
-	for e.ID != 1 {
+	for e.Parent != 0 {
 		if err := ctx.Err(); err != nil {
 			return err
 		}

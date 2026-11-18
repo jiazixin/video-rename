@@ -28,7 +28,7 @@ func TestSettingsReloadReadsWhileWriterBusy(t *testing.T) {
 }
 
 func testSettingsReloadReadsWhileWriterBusy(t *testing.T, renewalDue bool) {
-	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{t.TempDir()}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,10 +172,12 @@ func testSettingsReloadReadsWhileWriterBusy(t *testing.T, renewalDue bool) {
 				}
 			case "/api/system":
 				var got struct {
-					RootID int64  `json:"root_id"`
-					Model  string `json:"model"`
+					MediaRoots []struct {
+						ID int64 `json:"id"`
+					} `json:"media_roots"`
+					Model string `json:"model"`
 				}
-				if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.RootID != 1 || got.Model != profile.Model {
+				if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || len(got.MediaRoots) != 1 || got.MediaRoots[0].ID != 1 || got.Model != profile.Model {
 					t.Errorf("system did not read committed model: got=%+v err=%v", got, err)
 				}
 			case "/api/system/settings":

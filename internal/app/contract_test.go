@@ -25,7 +25,7 @@ type contractRequest struct{ method, path, body, tag, key string }
 
 func newContractClient(t *testing.T) contractClient {
 	t.Helper()
-	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "contract-password"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{t.TempDir()}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "contract-password"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

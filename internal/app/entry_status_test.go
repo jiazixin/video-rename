@@ -20,7 +20,7 @@ func TestEntryMarksAndSnapshots(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("fixture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{root}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

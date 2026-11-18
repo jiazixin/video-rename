@@ -13,6 +13,9 @@
 /data/
 /.cache/
 /configs/*.local.yaml
+/configs/data/
+/configs/cache/
+/cache/
 /web/node_modules/
 /web/dist/
 /web/test-results/

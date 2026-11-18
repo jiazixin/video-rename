@@ -628,7 +628,7 @@ func TestScanDirectoryReclaimsInterruptedCandidatesAfterRestart(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			restarted, err := New(t.Context(), l.db, root, slog.New(slog.DiscardHandler))
+			restarted, err := New(t.Context(), l.db, []string{root}, slog.New(slog.DiscardHandler))
 			if err != nil {
 				t.Fatal(err)
 			}

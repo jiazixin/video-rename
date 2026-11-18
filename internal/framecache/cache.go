@@ -105,6 +105,9 @@ type Options struct {
 // New opens the frame cache under base with a byte limit.
 func New(ctx context.Context, options Options) (_ *Cache, err error) {
 	base, limit, logger := options.Base, options.LimitBytes, options.Logger
+	if !filepath.IsAbs(base) {
+		return nil, errors.New("frame cache base must be an absolute directory")
+	}
 	if logger == nil {
 		return nil, errors.New("frame cache logger is required")
 	}

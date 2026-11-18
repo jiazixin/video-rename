@@ -265,8 +265,8 @@ func (l *Library) performNumbering(ctx context.Context, b *Numbering, path strin
 				return fmt.Errorf("read numbering operation ID: %w", err)
 			}
 			// Validated directory and leaf names share the absolute library root.
-			oldrel, _ := filepath.Rel(l.Root, filepath.Join(path, i.Old))
-			newrel, _ := filepath.Rel(l.Root, filepath.Join(path, i.New))
+			oldrel, _ := l.RelativePath(filepath.Join(path, i.Old))
+			newrel, _ := l.RelativePath(filepath.Join(path, i.New))
 			if err = l.finishTx(ctx, finishTxOptions{Tx: tx, O: o, Oldrel: oldrel, Newrel: newrel}); err != nil {
 				return err
 			}

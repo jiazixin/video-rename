@@ -39,7 +39,7 @@ func fixture(t *testing.T) (*Manager, *testLibrary, string, systemsetting.Store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	l, err := library.New(t.Context(), db, root, slog.New(slog.DiscardHandler))
+	l, err := library.New(t.Context(), db, []string{root}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		if err := db.Close(); err != nil {
 			t.Error(err)
@@ -507,7 +507,7 @@ func TestAutomaticScheduleWaitsOneHourAndReplansFromCompletion(t *testing.T) {
 		t.Fatalf("startup timer=%s status=%+v", timer.delay, m.Snapshot())
 	}
 	clock.Advance(10 * time.Minute)
-	config := systemsetting.DefaultScanSettings()
+	config := systemsetting.DefaultScanSettings(1)
 	config.IntervalMinutes = 120
 	if err := settings.SaveScan(t.Context(), config); err != nil {
 		t.Fatal(err)
@@ -562,7 +562,7 @@ func TestLongManualRoundWaitsNewIntervalFromCompletion(t *testing.T) {
 	}
 	<-entered
 	await(t, func() bool { return m.Snapshot().NextScan == "" && clock.Timer().stopped.Load() })
-	config := systemsetting.DefaultScanSettings()
+	config := systemsetting.DefaultScanSettings(1)
 	config.IntervalMinutes = 90
 	if err := settings.SaveScan(t.Context(), config); err != nil {
 		t.Fatal(err)
@@ -606,7 +606,7 @@ func TestSettingsReadFailureIsVisibleAndDoesNotScan(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := settings.SaveScan(t.Context(), systemsetting.DefaultScanSettings()); err != nil {
+	if err := settings.SaveScan(t.Context(), systemsetting.DefaultScanSettings(1)); err != nil {
 		t.Fatal(err)
 	}
 	m.SettingsChanged()
@@ -643,7 +643,7 @@ func TestExcludedDirectoriesApplyToManualAndAutomaticScans(t *testing.T) {
 			skip := entryID(t, entryIDOptions{l: l, parent: 1, name: "skip"})
 			nested := entryID(t, entryIDOptions{l: l, parent: skip, name: "nested"})
 			keep := entryID(t, entryIDOptions{l: l, parent: 1, name: "keep"})
-			settings := systemsetting.DefaultScanSettings()
+			settings := systemsetting.DefaultScanSettings(1)
 			settings.ExcludedTargets = []int64{skip}
 			if err := store.SaveScan(t.Context(), settings); err != nil {
 				t.Fatal(err)
@@ -713,7 +713,7 @@ func TestScanExclusionsFrozenUntilNextRound(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-entered
-	settings := systemsetting.DefaultScanSettings()
+	settings := systemsetting.DefaultScanSettings(1)
 	settings.ExcludedTargets = []int64{skip}
 	if err := store.SaveScan(t.Context(), settings); err != nil {
 		t.Fatal(err)

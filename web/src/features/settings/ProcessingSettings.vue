@@ -494,7 +494,7 @@
             }}容量不足时优先清理闲置旧截图；使用中的截图保留，新抽帧等待空间释放。</dd
           ></dl
         ><p class="help"
-          >目录位置由配置文件中的 tmp_storage 指定，修改后重启服务。自动清理每分钟检查一次。</p
+          >目录位置由配置文件中的 cache_dir 指定，修改后重启服务。自动清理每分钟检查一次。</p
         ></section
       >
       <div v-if="saveError" class="notice error" role="alert">{{ saveError }}</div>

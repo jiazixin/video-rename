@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"log/slog"
 	"os/exec"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -48,15 +47,15 @@ type activeRun struct {
 
 // Options groups the inputs for New.
 type Options struct {
-	Store   *storage.Store
-	Library *library.Library
-	Config  *config.Config
-	Logger  *slog.Logger
+	Store    *storage.Store
+	Library  *library.Library
+	CacheDir string
+	Logger   *slog.Logger
 }
 
 // New creates the batch manager and seeds the default model settings.
 func New(ctx context.Context, params Options) (*Manager, error) {
-	db, l, cfg, logger := params.Store, params.Library, params.Config, params.Logger
+	db, l, logger := params.Store, params.Library, params.Logger
 
 	if err := (model.New(db)).Seed(ctx); err != nil {
 		return nil, err
@@ -71,18 +70,7 @@ func New(ctx context.Context, params Options) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	temp := cfg.TempStorage
-	if temp == "" {
-		var seq int
-		var name, path string
-		if err = db.View(ctx, func(tx *sql.Tx) error {
-			return tx.QueryRowContext(ctx, "PRAGMA database_list").Scan(&seq, &name, &path)
-		}); err != nil {
-			return nil, err
-		}
-		temp = filepath.Join(filepath.Dir(path), ".cache")
-	}
-	cache, err := framecache.New(ctx, framecache.Options{Base: temp, LimitBytes: settings.Bytes(), Logger: logger, Policy: new(settings.Policy)})
+	cache, err := framecache.New(ctx, framecache.Options{Base: params.CacheDir, LimitBytes: settings.Bytes(), Logger: logger, Policy: new(settings.Policy)})
 	if err != nil {
 		return nil, err
 	}

@@ -52,7 +52,7 @@ func TestFailureKeywordsDefaultsEmptyPersistenceAndRestart(t *testing.T) {
 	if err := store.Save(t.Context(), Default()); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveScan(t.Context(), DefaultScanSettings()); err != nil {
+	if err := store.SaveScan(t.Context(), DefaultScanSettings(1)); err != nil {
 		t.Fatal(err)
 	}
 	var raw string

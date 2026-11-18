@@ -57,41 +57,71 @@ func (c Config) resolve() (Config, error) {
 		}
 		return filepath.Clean(p)
 	}
-	c.Path, c.Storage, c.TempStorage = abs(c.Path), abs(c.Storage), abs(c.TempStorage)
-	temp, err := resolveDirectory(c.TempStorage)
+	var err error
+	c.DataDir, err = resolveDirectory(abs(c.DataDir))
 	if err != nil {
-		return Config{}, fieldErr("tmp_storage", "", err)
+		return Config{}, fieldErr("data_dir", "", err)
 	}
-	c.TempStorage = temp
-	root, err := filepath.EvalSymlinks(c.Path)
+	c.CacheDir, err = resolveDirectory(abs(c.CacheDir))
 	if err != nil {
-		return Config{}, fieldErr("media_path", "not accessible", err)
-	}
-	c.Path = root
-	if st, err := os.Stat(c.Path); err != nil || !st.IsDir() {
-		return Config{}, fieldError("media_path", "must be an existing directory")
-	}
-	if c.Storage, err = resolveStorage(c.Storage); err != nil {
-		return Config{}, err
+		return Config{}, fieldErr("cache_dir", "", err)
 	}
 	database, err := resolveExisting(c.DatabasePath())
 	if err != nil {
-		return Config{}, fieldErr("storage", "resolve database", err)
+		return Config{}, fieldErr("data_dir", "resolve database", err)
 	}
 	configDir, err := filepath.EvalSymlinks(c.ConfigDir)
 	if err != nil {
 		return Config{}, fmt.Errorf("resolve configuration directory: %w", err)
 	}
-	for _, p := range []struct{ field, message, path string }{
-		{"storage", "must be outside media_path", c.Storage},
-		{"storage", "database must be outside media_path", database},
-		{"media_path", "must not contain the configuration directory", configDir},
-		{"tmp_storage", "must be outside media_path", c.TempStorage},
-	} {
-		if within(c.Path, p.path) {
-			return Config{}, fieldError(p.field, p.message)
+	if c.ConfigFile != "" {
+		c.ConfigFile, err = filepath.EvalSymlinks(c.ConfigFile)
+		if err != nil {
+			return Config{}, fmt.Errorf("resolve configuration file: %w", err)
 		}
 	}
+	if c.Log.File != "" {
+		logPath := abs(c.Log.File)
+		parent, err := resolveDirectory(filepath.Dir(logPath))
+		if err != nil {
+			return Config{}, fieldErr("log.file", "", err)
+		}
+		c.Log.File = filepath.Join(parent, filepath.Base(logPath))
+		if err := c.checkLogFile(database); err != nil {
+			return Config{}, err
+		}
+	}
+	dirs := make([]string, 0, len(c.MediaDirs))
+	for i, path := range c.MediaDirs {
+		field := fmt.Sprintf("media_dir[%d]", i)
+		if strings.TrimSpace(path) == "" {
+			return Config{}, fieldError(field, "must not be empty")
+		}
+		root, err := filepath.EvalSymlinks(abs(path))
+		if err != nil {
+			return Config{}, fieldErr(field, "not accessible", err)
+		}
+		if info, err := os.Stat(root); err != nil || !info.IsDir() {
+			return Config{}, fieldError(field, "must be an existing directory")
+		}
+		for _, other := range dirs {
+			if within(root, other) || within(other, root) {
+				return Config{}, fieldError(field, "media directories must not overlap")
+			}
+		}
+		for _, item := range []struct{ field, path string }{
+			{"data_dir", c.DataDir}, {"data_dir", database}, {"cache_dir", c.CacheDir}, {"log.file", c.Log.File},
+		} {
+			if item.path != "" && within(root, item.path) {
+				return Config{}, fieldError(item.field, "must be outside media_dir")
+			}
+		}
+		if within(root, configDir) || (c.ConfigFile != "" && within(root, c.ConfigFile)) {
+			return Config{}, fieldError(field, "must not contain the configuration file or directory")
+		}
+		dirs = append(dirs, root)
+	}
+	c.MediaDirs = dirs
 	if err := c.checkFrameCache(database, configDir); err != nil {
 		return Config{}, err
 	}
@@ -115,14 +145,17 @@ func (c Config) validateFields() error {
 	if strings.Contains(c.Auth.Password.Reveal(), "请替换") {
 		return fieldError("auth.password", "must not be the example placeholder")
 	}
-	if strings.TrimSpace(c.Path) == "" {
-		return fieldError("media_path", "is required")
+	if len(c.MediaDirs) > 100 {
+		return fieldError("media_dir", "at most 100 roots can be selected for scanning")
 	}
-	if strings.TrimSpace(c.Storage) == "" {
-		return fieldError("storage", "is required")
+	if len(c.MediaDirs) == 0 {
+		return fieldError("media_dir", "is required")
 	}
-	if strings.TrimSpace(c.TempStorage) == "" {
-		return fieldError("tmp_storage", "must not be empty")
+	if strings.TrimSpace(c.DataDir) == "" {
+		return fieldError("data_dir", "is required")
+	}
+	if strings.TrimSpace(c.CacheDir) == "" {
+		return fieldError("cache_dir", "must not be empty")
 	}
 	switch c.Log.Level {
 	case "", "debug", "info", "warn", "error": // empty selects info; decoding substitutes it
@@ -135,32 +168,40 @@ func (c Config) validateFields() error {
 	return nil
 }
 
-// resolveStorage resolves the nearest existing ancestor so a symlink cannot hide storage inside media.
-func resolveStorage(storage string) (string, error) {
-	parent, suffix := storage, ""
-	for {
-		_, err := os.Lstat(parent)
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, fs.ErrNotExist) {
-			return "", fieldErr("storage", "", err)
-		}
-		suffix = filepath.Join(filepath.Base(parent), suffix)
-		next := filepath.Dir(parent)
-		if next == parent {
-			return "", fieldError("storage", "invalid path")
-		}
-		parent = next
+// checkLogFile prevents an append-only log from corrupting deployment state.
+func (c Config) checkLogFile(database string) error {
+	if within(c.Log.File, c.DataDir) || within(c.Log.File, c.CacheDir) {
+		return fieldError("log.file", "cannot be a directory required by data_dir or cache_dir")
 	}
-	real, err := filepath.EvalSymlinks(parent)
-	if err != nil {
-		return "", fieldErr("storage", "", err)
+	info, err := os.Lstat(c.Log.File)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fieldErr("log.file", "", err)
 	}
-	if st, err := os.Stat(real); err != nil || !st.IsDir() {
-		return "", fieldError("storage", "must be a data directory, not a database file name")
+	if info != nil && !info.Mode().IsRegular() {
+		return fieldError("log.file", "must be a regular file")
 	}
-	return filepath.Join(real, suffix), nil
+	protected := []string{c.ConfigFile}
+	for _, suffix := range []string{"", ".key", ".lock", "-shm", "-wal", "-journal"} {
+		protected = append(protected, database+suffix, c.DatabasePath()+suffix)
+	}
+	for _, path := range protected {
+		if path == "" {
+			continue
+		}
+		if within(path, c.Log.File) {
+			return fieldError("log.file", "must differ from configuration and database files")
+		}
+		if info != nil {
+			other, err := os.Stat(path)
+			if err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return fieldErr("log.file", "inspect protected file", err)
+			}
+			if other != nil && os.SameFile(info, other) {
+				return fieldError("log.file", "must differ from configuration and database files")
+			}
+		}
+	}
+	return nil
 }
 
 // resolveExisting follows a symlink at path when one exists, so an existing
@@ -178,29 +219,28 @@ func resolveExisting(path string) (string, error) {
 
 // checkFrameCache keeps persistent paths out of the disposable cache namespace.
 func (c Config) checkFrameCache(database, configDir string) error {
-	cachePath := FrameCachePath(c.TempStorage)
+	cachePath := FrameCachePath(c.CacheDir)
 	if st, err := os.Lstat(cachePath); err == nil && st.Mode()&os.ModeSymlink != 0 {
-		return fieldError("tmp_storage", "managed frame cache directory must not be a symlink")
+		return fieldError("cache_dir", "managed frame cache directory must not be a symlink")
 	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fieldErr("tmp_storage", "frame cache directory", err)
+		return fieldErr("cache_dir", "frame cache directory", err)
 	}
 	cacheRoot, err := resolveDirectory(cachePath)
 	if err != nil {
-		return fieldErr("tmp_storage", "frame cache directory", err)
+		return fieldErr("cache_dir", "frame cache directory", err)
 	}
 	// Only the generated cache namespace is disposable. Its parent may also
 	// contain configuration or storage, but none may live inside the namespace.
-	protected := []string{c.Path, c.Storage, database, configDir}
+	protected := append([]string{c.DataDir, database, configDir}, c.MediaDirs...)
+	if c.Log.File != "" {
+		protected = append(protected, c.Log.File)
+	}
 	if c.ConfigFile != "" {
-		file, err := filepath.EvalSymlinks(c.ConfigFile)
-		if err != nil {
-			return fmt.Errorf("resolve configuration file: %w", err)
-		}
-		protected = append(protected, file)
+		protected = append(protected, c.ConfigFile)
 	}
 	for _, p := range protected {
 		if within(cacheRoot, p) {
-			return fieldError("tmp_storage", fmt.Sprintf("managed frame cache directory %s must not contain media, configuration or storage", cacheRoot))
+			return fieldError("cache_dir", fmt.Sprintf("managed frame cache directory %s must not contain media, configuration, data or logs", cacheRoot))
 		}
 	}
 	return nil
@@ -217,9 +257,9 @@ func FrameCachePath(base string) string {
 	return filepath.Join(base, "video-rename-frames-v1")
 }
 
-// DatabasePath keeps the on-disk filename internal; Storage always denotes a directory.
+// DatabasePath keeps the on-disk filename internal; DataDir always denotes a directory.
 func (c Config) DatabasePath() string {
-	return filepath.Join(c.Storage, "data.sqlite")
+	return filepath.Join(c.DataDir, "data.sqlite")
 }
 
 // resolveDirectory resolves existing ancestors, including symlinks, without creating data.

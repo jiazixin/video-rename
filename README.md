@@ -86,9 +86,13 @@ chmod 600 configs/config.local.yaml
 ```yaml
 listen: "127.0.0.1"
 port: 8080
-media_path: "/srv/videos"   # 已存在的媒体根目录
-storage: "../data"          # SQLite 与密钥，相对于配置文件所在目录
-tmp_storage: "../.cache"    # 可重建的截图缓存
+media_dir:
+  - "/srv/videos"
+  # - "/mnt/nas/videos"
+data_dir: "data"
+cache_dir: "cache"
+log:
+  file: ""                  # 留空写 stdout，也可填写 "data/logs/service.log"
 auth:
   username: "admin"
   password: "请替换为你的密码"
@@ -132,17 +136,17 @@ go build -trimpath -o bin/video-rename ./cmd/video-rename
 
 完整字段、默认值和页面资源设置见 [配置参考](docs/configuration.md)。要点：
 
-- `-c <文件>` 与 `--config <文件>` 等价，同时指定不同文件报错。选择顺序为 `--config` > `CONFIG_FILE` > 工作目录下的 `configs/config.local.yaml`。`--config` 或 `CONFIG_FILE` 指定的文件必须存在，`CONFIG_FILE` 设置为空值也报错；默认文件缺失时改用内置默认值，但 `media_path` 与 `auth` 没有默认值，因此仍会报出缺失项并退出。除 `CONFIG_FILE` 外，不支持用环境变量覆盖配置项。
-- 配置中的相对路径以配置文件所在目录为基准。媒体目录必须已经存在；配置、数据和缓存目录必须位于媒体目录之外。
-- 媒体、配置和持久数据不能放入 `tmp_storage/video-rename-frames-v1/`，该目录由程序自动清理；危险的路径重叠会在启动前被拒绝。
+- `-c <文件>` 与 `--config <文件>` 等价，同时指定不同文件报错。选择顺序为 `--config` > `CONFIG_FILE` > 工作目录下的 `configs/config.local.yaml`。`--config` 或 `CONFIG_FILE` 指定的文件必须存在，`CONFIG_FILE` 设置为空值也报错；默认文件缺失时改用内置默认值，但 `media_dir` 与 `auth` 没有默认值，因此仍会报出缺失项并退出。除 `CONFIG_FILE` 外，不支持用环境变量覆盖配置项。
+- 配置中的相对路径以配置文件所在目录为基准。`media_dir` 至少填写一个已存在的目录，各目录不能重叠。可在文件浏览和目录选择器中切换根目录。配置、数据、缓存和日志须位于所有媒体根之外。使用默认配置文件时，数据和缓存分别位于 `configs/data/` 和 `configs/cache/`。
+- 媒体、配置和持久数据不能放入 `cache_dir/video-rename-frames-v1/`，该目录由程序自动清理；危险的路径重叠会在启动前被拒绝。
 - 示例密码不能用于启动。模型、抽帧规则、提示词、通知和扫描都在 Web 页面设置。
 
 ## 部署与数据
 
 - **监听**：仅本机使用时保留默认 `127.0.0.1`；局域网访问可改为 `0.0.0.0`。远程访问请使用 HTTPS 反向代理，限制入口访问并保留原始 Host。不要把管理员工作台直接暴露到不受信任网络。
-- **备份**：停止服务后备份完整 `storage` 目录，数据库与 `data.sqlite.key` 必须一起保留；缓存可以重建。恢复旧备份后先核对期间发生的文件改动。
+- **备份**：停止服务后备份完整 `data_dir` 目录，数据库与 `data.sqlite.key` 必须一起保留；缓存可以重建。恢复旧备份后先核对期间发生的文件改动。
 - **网络存储**：媒体目录可以是 SMB/NFS 挂载，但实际吞吐和文件身份行为需要在目标环境验证。
-- **兼容性**：项目尚未发布稳定版，不提供旧数据库迁移或旧配置兼容。不受支持的数据库会拒绝打开并保留原样；需要重建时请明确选择新的 `storage` 目录。
+- **兼容性**：项目尚未发布稳定版，不提供旧数据库迁移或旧配置兼容。不受支持的数据库会拒绝打开并保留原样；需要重建时请指定新的 `data_dir`。重新扫描可以重建文件索引；处理标记、历史和已保存的设置保存在原数据库中。
 
 批量操作、标记、重试、还原、通知与备份的细节见 [运行与恢复](docs/operations.md)。
 
@@ -173,7 +177,7 @@ npm --prefix web run test:e2e
 - 版本号来自 Git tag，格式为 `v主版本.次版本.修订版本`（预发布如 `v1.2.0-rc.1`）。Go 构建时自动写入模块版本，非 tag 提交显示伪版本，有未提交修改时带 `+dirty`。
 - 查询版本：`video-rename --version`，输出形如 `video-rename v1.2.0 (revision=0123456789ab)`。该命令与 `--help`（英文）输出到 stdout，不读取配置，也不启动服务。
 - 退出码：0 成功（含收到 SIGINT/SIGTERM 后正常关闭），2 参数错误，1 配置、启动或运行失败。参数错误以 `video-rename: <错误>` 纯文本写入 stderr，另附一行 `Run 'video-rename --help' for usage.`；配置错误为一行英文 `video-rename: config: <错误>`，校验错误带字段路径，如 `video-rename: config: port: must be between 1 and 65535`。
-- 日志：配置加载成功后，服务日志以 JSON 逐行写入 stdout，启动与关闭事件为 `service_starting`（含 `version`）、`service_listening`（含 `listen`）、`service_stopping`、`service_stopped`；此后的启动或运行失败记录为 `service_failed` 日志，不再另写 stderr。第一次 SIGINT/SIGTERM 开始平滑关闭（最多等待 10 秒），第二次立即终止进程。
+- 日志：配置加载成功后，服务日志默认以 JSON 逐行写入 stdout。`log.file` 填写路径后改为追加写入该文件，自动创建父目录，打开失败时启动报错。启动与关闭事件为 `service_starting`（含 `version`）、`service_listening`（含 `listen`）、`service_stopping`、`service_stopped`；此后的启动或运行失败记录为 `service_failed` 日志，不再另写 stderr。第一次 SIGINT/SIGTERM 开始平滑关闭（最多等待 10 秒），第二次立即终止进程。
 - 源码包没有 `.git` 时默认显示 `dev`，可显式注入与源码一致的版本：`go build -trimpath -ldflags='-X main.version=v1.0.0' -o bin/video-rename ./cmd/video-rename`。
 - 推送标准 tag 会触发 [Release 工作流](.github/workflows/release.yml)：先核对 `--version` 与 tag 一致，再由 GoReleaser 构建全部目标，并上传 tar.gz 与 `checksums.txt`。
 
@@ -203,7 +207,8 @@ configs/                 配置示例；本地实例 config.local.yaml 被忽略
 docs/                    使用、设计、开发与验收文档；archive/ 为历史记录
 .github/                 GitHub Actions CI 与 tag 发布
 .goreleaser.yaml         GoReleaser 多目标发布配置
-bin/ data/ .cache/       忽略的本机二进制（含 bin/release/ 发布预演）、状态与缓存
+bin/                     忽略的本机二进制和 bin/release/ 发布预演
+configs/data/ configs/cache/  使用示例配置时的默认数据和缓存目录
 coverage/ test-results/  忽略的覆盖率与测试输出
 ```
 
@@ -212,6 +217,7 @@ coverage/ test-results/  忽略的覆盖率与测试输出
 | 基线规则 | 实际行为 | 原因与依据 | 适用范围 / 重新评估条件 |
 | --- | --- | --- | --- |
 | §7.1 配置入口与覆盖 | `-c` / `--config` > `CONFIG_FILE` > 工作目录下的 `configs/config.local.yaml`；无字段环境变量覆盖 | 已有 CLI 配置协议 | 本程序；仅用户要求改变时评估 |
+| §7.2 运行目录 | `data` 和 `cache` 默认位于所选配置文件旁 | 部署路径相对于配置文件解析 | 部署默认值变更时复核 |
 | §11 工具必需路径 | `web/embed.go` 嵌入 `web/dist` | Go embed 与 Vite 的实际构建边界 | Web 资源；交付方式改变时评估 |
 | §4 `bin/` 只放可执行文件 | GoReleaser 输出（二进制、tar.gz、checksums、元数据）在 `bin/release/` | 默认根 `dist/` 未被忽略会让 Go 标记 dirty，且 `dist/` 保留给 Web 产物 | 发布构建；更换发布工具时评估 |
 

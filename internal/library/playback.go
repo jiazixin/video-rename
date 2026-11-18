@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"syscall"
 )
 
@@ -24,15 +23,15 @@ func (l *Library) OpenPlayback(ctx context.Context, id int64) (*os.File, error) 
 	if err != nil {
 		return nil, err
 	}
-	root, err := os.OpenRoot(l.Root)
+	mount, rel, err := l.rootPath(p)
+	if err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(mount.Path)
 	if err != nil {
 		return nil, err
 	}
 	defer root.Close()
-	rel, err := filepath.Rel(l.Root, p)
-	if err != nil {
-		return nil, err
-	}
 	f, err := root.Open(rel)
 	if err != nil {
 		return nil, err

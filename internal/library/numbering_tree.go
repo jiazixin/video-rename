@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"path/filepath"
 
 	"video-rename/internal/domain"
 	"video-rename/internal/storage"
@@ -44,7 +43,7 @@ func (l *Library) PreviewNumberingTreeWithProgress(ctx context.Context, parent i
 		if err != nil {
 			return nil, err
 		}
-		rel, err := filepath.Rel(l.Root, path)
+		rel, err := l.RelativePath(path)
 		if err != nil {
 			return nil, err
 		}
@@ -120,7 +119,7 @@ func (l *Library) NumberingTreeHistory(ctx context.Context, parent int64) ([]Dir
 		if err != nil {
 			return nil, err
 		}
-		rel, err := filepath.Rel(l.Root, path)
+		rel, err := l.RelativePath(path)
 		if err != nil {
 			return nil, err
 		}

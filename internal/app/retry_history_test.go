@@ -26,7 +26,7 @@ import (
 )
 
 func TestRetryHistoryRejectsUnsupportedAndKeepsFailures(t *testing.T) {
-	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{t.TempDir()}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestRetryHistoryRejectsUnsupportedAndKeepsFailures(t *testing.T) {
 
 func TestRetryHistoryBatchesAndRemovesOnlyAfterSuccess(t *testing.T) {
 	root := t.TempDir()
-	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{root}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestRetryHistoryBatchesAndRemovesOnlyAfterSuccess(t *testing.T) {
 
 func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 	root := t.TempDir()
-	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{root}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +285,7 @@ func TestRetryAllHistoryUsesChosenModelInOneBatchAndDeduplicates(t *testing.T) {
 }
 
 func TestRetryAllHistoryEmptyAndInvalidScope(t *testing.T) {
-	a, err := New(t.Context(), &config.Config{Path: t.TempDir(), Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{t.TempDir()}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +314,7 @@ func TestRetryHistoryMissingFilesDoNotBlockValidTargets(t *testing.T) {
 	for _, all := range []bool{true, false} {
 		t.Run(fmt.Sprintf("all=%t", all), func(t *testing.T) {
 			root := t.TempDir()
-			a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+			a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{root}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -418,7 +418,7 @@ func TestRetryHistoryMissingFilesDoNotBlockValidTargets(t *testing.T) {
 func setupSuccessfulHistoryRetry(t *testing.T, reply func(context.Context, string) (string, error)) (*App, int64, int64, int64) {
 	t.Helper()
 	root := t.TempDir()
-	a, err := New(t.Context(), &config.Config{Path: root, Storage: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
+	a, err := New(t.Context(), &config.Config{CacheDir: t.TempDir(), MediaDirs: []string{root}, DataDir: t.TempDir(), Auth: config.AuthConfig{Username: "admin", Password: "test-password-123"}}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -587,7 +587,7 @@ func TestRetrySuccessHistoryRejectsStaleAndProtectedRecords(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "content-changed":
-				if err := os.WriteFile(filepath.Join(a.Library.Root, e.Name), []byte("changed video content"), 0o600); err != nil {
+				if err := os.WriteFile(filepath.Join(a.Library.MediaRoots()[0].Path, e.Name), []byte("changed video content"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 				if err := a.Library.Refresh(t.Context(), 1); err != nil {

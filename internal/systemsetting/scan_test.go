@@ -16,9 +16,16 @@ func TestScanSettingsDefaultPersistenceAndIndependentUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Write(t.Context(), func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO entries(id,parent,name,kind,identity,size,mtime_ns,observed) VALUES(1,0,'one','directory','1:1',0,0,''),(2,0,'two','directory','1:2',0,0,'');
+			INSERT INTO library(id,root) VALUES(1,'/one'),(2,'/two')`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
 	store := Store{db: db}
 	got, err := store.Scan(t.Context())
-	if err != nil || !reflect.DeepEqual(got, DefaultScanSettings()) || got.IntervalMinutes != 60 || !got.Enabled {
+	if err != nil || !reflect.DeepEqual(got, DefaultScanSettings(1, 2)) || got.IntervalMinutes != 60 || !got.Enabled {
 		t.Fatalf("default scan: %+v %v", got, err)
 	}
 	scan := ScanSettings{Enabled: false, IntervalMinutes: 120, Targets: []int64{2, 3}, ExcludedTargets: []int64{4, 5}}

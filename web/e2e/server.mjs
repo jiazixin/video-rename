@@ -160,7 +160,7 @@ writeFileSync(
 const cfg = join(base, 'config.yaml')
 writeFileSync(
   cfg,
-  `listen: "127.0.0.1"\nport: 18790\nmedia_path: ${JSON.stringify(media)}\nstorage: ${JSON.stringify(join(base, 'data'))}\ntmp_storage: ${JSON.stringify(join(base, 'cache'))}\nauth:\n  username: "admin"\n  password: "test-password-123"\n`,
+  `listen: "127.0.0.1"\nport: 18790\nmedia_dir:\n  - ${JSON.stringify(media)}\ndata_dir: ${JSON.stringify(join(base, 'data'))}\ncache_dir: ${JSON.stringify(join(base, 'cache'))}\nauth:\n  username: "admin"\n  password: "test-password-123"\n`,
   { mode: 0o600 }
 )
 const child = spawn(resolve('../bin/video-rename'), ['--config', cfg], { stdio: 'inherit' })

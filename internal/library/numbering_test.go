@@ -243,7 +243,7 @@ func TestNumberingApplyRestoreAndIdempotence(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The saved journal survives a service restart and remains restorable.
-	restarted, err := New(t.Context(), l.db, root, slog.New(slog.DiscardHandler))
+	restarted, err := New(t.Context(), l.db, []string{root}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,7 +418,7 @@ func TestNumberingCrashRecovery(t *testing.T) {
 					})
 				}
 			}
-			restarted, err := New(t.Context(), l.db, root, slog.New(slog.DiscardHandler))
+			restarted, err := New(t.Context(), l.db, []string{root}, slog.New(slog.DiscardHandler))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -442,7 +442,7 @@ func TestNumberingRecoveryNeverOverwritesExternalFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, i.Old), []byte("external"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := New(t.Context(), l.db, root, slog.New(slog.DiscardHandler))
+	restarted, err := New(t.Context(), l.db, []string{root}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

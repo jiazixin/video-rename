@@ -35,7 +35,7 @@ func BenchmarkDirectoryScanUnchanged(b *testing.B) {
 						b.Error(err)
 					}
 				})
-				l, err := New(b.Context(), db, root, slog.New(slog.DiscardHandler))
+				l, err := New(b.Context(), db, []string{root}, slog.New(slog.DiscardHandler))
 				if err != nil {
 					b.Fatal(err)
 				}

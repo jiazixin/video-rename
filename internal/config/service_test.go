@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -14,7 +16,7 @@ func TestServiceConfiguration(t *testing.T) {
 	base := t.TempDir()
 	media := filepath.Join(base, "media")
 	os.Mkdir(media, 0o700)
-	cfg, err := loadTemp(t, minimalYAML+"\nlisten: 127.0.0.1\nport: 8790\nmedia_path: "+media+"\nauth:\n  username: admin\n  password: test-password-123\nstorage: "+filepath.Join(base, "state")+"\n", "cfg.yaml")
+	cfg, err := loadTemp(t, minimalYAML+"\nlisten: 127.0.0.1\nport: 8790\nmedia_dir:\n  - "+media+"\nauth:\n  username: admin\n  password: test-password-123\ndata_dir: "+filepath.Join(base, "state")+"\n", "cfg.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,11 +32,11 @@ func TestServiceConfiguration(t *testing.T) {
 		t.Fatalf("not a field error: %#v", err)
 	}
 	bad = cfg
-	bad.Storage = filepath.Join(media, "data")
-	if err = bad.Validate(); err == nil || err.Error() != "storage: must be outside media_path" {
+	bad.DataDir = filepath.Join(media, "data")
+	if err = bad.Validate(); err == nil || err.Error() != "data_dir: must be outside media_dir" {
 		t.Fatalf("database inside library: %v", err)
 	}
-	if bad.Storage != filepath.Join(media, "data") {
+	if bad.DataDir != filepath.Join(media, "data") {
 		t.Fatal("Validate changed the configuration")
 	}
 }
@@ -44,7 +46,7 @@ func TestValidateDoesNotNormalize(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(base, "media"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{Listen: "127.0.0.1", Port: 8790, Path: "../media", Storage: "../data", TempStorage: "../.cache", ConfigDir: filepath.Join(base, "configs"), Auth: AuthConfig{Username: "admin", Password: "x"}}
+	cfg := Config{Listen: "127.0.0.1", Port: 8790, MediaDirs: []string{"../media"}, DataDir: "../data", CacheDir: "../.cache", ConfigDir: filepath.Join(base, "configs"), Auth: AuthConfig{Username: "admin", Password: "x"}}
 	if err := os.Mkdir(cfg.ConfigDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +54,7 @@ func TestValidateDoesNotNormalize(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if cfg != want {
+	if !reflect.DeepEqual(cfg, want) {
 		t.Fatalf("Validate changed %+v to %+v", want, cfg)
 	}
 }
@@ -70,9 +72,9 @@ func TestStorageDirectoryAndShortPassword(t *testing.T) {
 	}
 	for _, storage := range []string{"./custom/nested", filepath.Join(base, "absolute"), ""} {
 		t.Run(storage, func(t *testing.T) {
-			yaml := "media_path: " + media + "\nauth:\n  username: admin\n  password: x\n"
+			yaml := "media_dir:\n  - " + media + "\nauth:\n  username: admin\n  password: x\n"
 			if storage != "" {
-				yaml += "storage: " + storage + "\n"
+				yaml += "data_dir: " + storage + "\n"
 			}
 			cfg, err := loadTemp(t, yaml, "cfg.yaml")
 			if err != nil {
@@ -80,20 +82,20 @@ func TestStorageDirectoryAndShortPassword(t *testing.T) {
 			}
 			want := storage
 			if want == "" {
-				want = "../data"
+				want = "data"
 			}
 			if !filepath.IsAbs(want) {
 				want = filepath.Join(cfg.ConfigDir, want)
 			}
 			// macOS temp roots can themselves be symlinks.
-			if filepath.Base(cfg.DatabasePath()) != "data.sqlite" || filepath.Dir(cfg.DatabasePath()) != cfg.Storage {
+			if filepath.Base(cfg.DatabasePath()) != "data.sqlite" || filepath.Dir(cfg.DatabasePath()) != cfg.DataDir {
 				t.Fatal(cfg.DatabasePath())
 			}
-			if filepath.Base(cfg.Storage) != filepath.Base(want) {
-				t.Fatal(cfg.Storage, want)
+			if filepath.Base(cfg.DataDir) != filepath.Base(want) {
+				t.Fatal(cfg.DataDir, want)
 			}
 			again, err := cfg.resolve()
-			if err != nil || again != cfg {
+			if err != nil || !reflect.DeepEqual(again, cfg) {
 				t.Fatal("resolving a loaded configuration must be idempotent", err)
 			}
 			for _, password := range []string{"", "   ", "请替换为你的密码"} {
@@ -117,7 +119,7 @@ func TestStorageDirectoryRejectsFilesAndMediaSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, storage := range []string{existing, filepath.Join(existing, "child"), link, filepath.Join(link, "new", "data")} {
-		if _, err := loadTemp(t, "media_path: "+media+"\nstorage: "+storage+"\nauth:\n  username: admin\n  password: x\n", "cfg.yaml"); err == nil || !strings.HasPrefix(err.Error(), "storage: ") {
+		if _, err := loadTemp(t, "media_dir:\n  - "+media+"\ndata_dir: "+storage+"\nauth:\n  username: admin\n  password: x\n", "cfg.yaml"); err == nil || !strings.HasPrefix(err.Error(), "data_dir: ") {
 			t.Fatalf("accepted storage %s: %v", storage, err)
 		}
 	}
@@ -133,8 +135,8 @@ func TestTempStorageResolutionAndIsolation(t *testing.T) {
 	if err := os.Mkdir(media, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	yaml := "media_path: " + media + "\nstorage: ../state\nauth:\n  username: admin\n  password: test\n"
-	cfg, err := loadTemp(t, yaml+"tmp_storage: ./frames\n", "config.yaml")
+	yaml := "media_dir:\n  - " + media + "\ndata_dir: ../state\nauth:\n  username: admin\n  password: test\n"
+	cfg, err := loadTemp(t, yaml+"cache_dir: ./frames\n", "config.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,16 +144,54 @@ func TestTempStorageResolutionAndIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.TempStorage != filepath.Join(realDir, "frames") {
-		t.Fatal(cfg.TempStorage)
+	if cfg.CacheDir != filepath.Join(realDir, "frames") {
+		t.Fatal(cfg.CacheDir)
 	}
 	link := filepath.Join(base, "media-link")
 	if err = os.Symlink(media, link); err != nil {
 		t.Fatal(err)
 	}
 	for _, value := range []string{"\"\"", media, filepath.Join(link, "new-cache")} {
-		if _, e := loadTemp(t, yaml+"tmp_storage: "+value+"\n", "config.yaml"); e == nil {
+		if _, e := loadTemp(t, yaml+"cache_dir: "+value+"\n", "config.yaml"); e == nil {
 			t.Fatal("accepted temp path", value)
+		}
+	}
+}
+
+func TestMultipleMediaDirsAndLogPath(t *testing.T) {
+	base := t.TempDir()
+	for _, d := range []string{"one", "two", "two/nested"} {
+		if err := os.MkdirAll(filepath.Join(base, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	src := Source{Path: filepath.Join(base, "config.yaml"), Explicit: true, WorkDir: base}
+	load := func(y string) (Config, error) {
+		t.Helper()
+		if err := os.WriteFile(src.Path, []byte("auth: {username: admin, password: x}\n"+y), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return Load(src)
+	}
+	const media = "media_dir: [one, two]\n"
+	cfg, err := load(media + "log: {file: logs/server.log}\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(cfg.MediaDirs, []string{filepath.Join(actual, "one"), filepath.Join(actual, "two")}) || cfg.Log.File != filepath.Join(actual, "logs", "server.log") || cfg.DataDir != filepath.Join(actual, "data") || cfg.CacheDir != filepath.Join(actual, "cache") {
+		t.Fatalf("incorrect resolved paths: %+v", cfg)
+	}
+	for _, bad := range []string{
+		"media_dir: []", "media_dir: one", "media_dir: [one, '']", "media_dir: [two, two/nested]", "media_dir: [one, ./one]", "media_dir: [one, missing]",
+		media + "data_dir: two/data", media + "cache_dir: two/cache", media + "log: {file: two/server.log}", media + "log: {file: config.yaml}", media + "log: {file: data/data.sqlite.key}", media + "log: {file: data/data.sqlite/service.log}", media + "log: {file: cache/video-rename-frames-v1/server.log}",
+		"media_path: one", media + "storage: data", media + "tmp_storage: cache",
+	} {
+		if _, err := load(bad); err == nil {
+			t.Errorf("accepted %q", bad)
 		}
 	}
 }

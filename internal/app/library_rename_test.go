@@ -15,7 +15,7 @@ func TestDirectoryRenameAfterChildMutationAndScan(t *testing.T) {
 		t.Run(mutation, func(t *testing.T) {
 			t.Parallel()
 			c := newContractClient(t)
-			folder := filepath.Join(c.app.Library.Root, "folder")
+			folder := filepath.Join(c.app.Library.MediaRoots()[0].Path, "folder")
 			if err := os.Mkdir(folder, 0o700); err != nil {
 				t.Fatal(err)
 			}
@@ -84,7 +84,7 @@ func TestDirectoryRenameAfterChildMutationAndScan(t *testing.T) {
 			}
 			request := contractRequest{method: http.MethodPost, path: fmt.Sprintf("/api/entries/%d/rename", dir.ID), tag: dir.ETag, body: `{"name":"renamed-folder"}`}
 			requireContractStatus(t, c.call(request), http.StatusCreated)
-			renamed := filepath.Join(c.app.Library.Root, "renamed-folder")
+			renamed := filepath.Join(c.app.Library.MediaRoots()[0].Path, "renamed-folder")
 			files, err := os.ReadDir(renamed)
 			if err != nil {
 				t.Fatal(err)

@@ -4,16 +4,17 @@ import (
 	"net/http"
 
 	"video-rename/internal/domain"
+	"video-rename/internal/library"
 	modelstore "video-rename/internal/model"
 	"video-rename/internal/systemsetting"
 )
 
 // systemStatus reports whether runs can start. Problem explains why not.
 type systemStatus struct {
-	RootID  int           `json:"root_id"`
-	Model   string        `json:"model"`
-	Ready   bool          `json:"ready"`
-	Problem domain.Record `json:"problem,omitzero"`
+	MediaRoots []library.MediaRoot `json:"media_roots"`
+	Model      string              `json:"model"`
+	Ready      bool                `json:"ready"`
+	Problem    domain.Record       `json:"problem,omitzero"`
 }
 
 func (a *App) systemSettingsRoutes(mux *router) {
@@ -42,7 +43,7 @@ func (a *App) systemSettingsRoutes(mux *router) {
 		if !configured && err == nil {
 			problem = domain.Record{Code: "no_ready_model", Message: "no model configuration is complete"}
 		}
-		send(w, http.StatusOK, systemStatus{RootID: 1, Model: model, Ready: err == nil && configured, Problem: problem})
+		send(w, http.StatusOK, systemStatus{MediaRoots: a.Library.MediaRoots(), Model: model, Ready: err == nil && configured, Problem: problem})
 	})
 	store := systemsetting.New(a.db)
 	mux.HandleFunc("GET /api/system/settings", func(w http.ResponseWriter, r *http.Request) {

@@ -86,9 +86,13 @@ Edit `configs/config.local.yaml` with your media directory and a strong, unique 
 ```yaml
 listen: "127.0.0.1"
 port: 8080
-media_path: "/srv/videos"   # existing media root
-storage: "../data"          # SQLite and key, relative to this file's directory
-tmp_storage: "../.cache"    # rebuildable frame cache
+media_dir:
+  - "/srv/videos"
+  # - "/mnt/nas/videos"
+data_dir: "data"
+cache_dir: "cache"
+log:
+  file: ""                  # stdout, or e.g. "data/logs/service.log"
 auth:
   username: "admin"
   password: "" # Set a strong, unique password.
@@ -132,17 +136,17 @@ To cross-compile, keep the same Web build and set the target for `go build`: `GO
 
 See the [configuration reference](docs/configuration.md) for every field, default, and in-app resource setting. Key points:
 
-- `-c <file>` and `--config <file>` are equivalent; naming different files with both is an error. The file is chosen as `--config` > `CONFIG_FILE` > `configs/config.local.yaml` under the working directory. A file named by `--config` or `CONFIG_FILE` must exist, and an empty `CONFIG_FILE` is an error; when the default file is missing the built-in defaults are used, but `media_path` and `auth` have no defaults, so startup still fails and reports the missing field. Apart from `CONFIG_FILE`, environment variables do not override configuration.
-- Relative paths resolve against the configuration file's directory. The media directory must already exist, and configuration, storage, and cache must live outside it.
-- Keep media, configuration, and persistent data out of `tmp_storage/video-rename-frames-v1/`, which the application cleans automatically. Unsafe path overlaps are rejected before startup.
+- `-c <file>` and `--config <file>` are equivalent; naming different files with both is an error. The file is chosen as `--config` > `CONFIG_FILE` > `configs/config.local.yaml` under the working directory. A file named by `--config` or `CONFIG_FILE` must exist, and an empty `CONFIG_FILE` is an error; when the default file is missing the built-in defaults are used, but `media_dir` and `auth` have no defaults, so startup still fails and reports the missing field. Apart from `CONFIG_FILE`, environment variables do not override configuration.
+- Relative paths resolve against the configuration file's directory. List one or more existing, non-overlapping directories in `media_dir`. Switch between roots in the file browser or directory picker. Keep configuration, data, cache, and logs outside every media root. With the default configuration file, the relative defaults resolve to `configs/data/` and `configs/cache/`.
+- Keep media, configuration, and persistent data out of `cache_dir/video-rename-frames-v1/`, which the application cleans automatically. Unsafe path overlaps are rejected before startup.
 - The example password cannot be used to start. Models, frame rules, prompts, notifications, and scans are configured in the Web interface.
 
 ## Deployment and data
 
 - **Listening**: keep the default `127.0.0.1` for local use; set `listen` to `0.0.0.0` for LAN access. For remote access, use an HTTPS reverse proxy, restrict access, and preserve the original Host header. Do not expose the administrator workspace directly to an untrusted network.
-- **Backups**: stop the service and back up the entire `storage` directory, keeping the database and `data.sqlite.key` together. The cache is rebuildable. After restoring an older backup, reconcile file changes made in the meantime.
+- **Backups**: stop the service and back up the entire `data_dir` directory, keeping the database and `data.sqlite.key` together. The cache is rebuildable. After restoring an older backup, reconcile file changes made in the meantime.
 - **Network storage**: media may live on an SMB/NFS mount, but verify throughput and file-identity behavior on your deployment.
-- **Compatibility**: there is no stable release yet, so legacy databases and configuration are not migrated. Unsupported databases are rejected and left untouched; choose a new `storage` directory when rebuilding.
+- **Compatibility**: there is no stable release yet, so legacy databases and configuration are not migrated. Unsupported databases are rejected and left untouched; choose a new `data_dir` directory when rebuilding. A fresh scan rebuilds the file index. Marks, history and saved settings belong to the original database.
 
 See [operations](docs/operations.md) for batch actions, marks, retries, undo, notifications, and backups.
 
@@ -173,7 +177,7 @@ On pushes to `main` and on pull requests, [CI](.github/workflows/ci.yml) runs We
 - Versions come from Git tags in the form `vMAJOR.MINOR.PATCH` (pre-releases such as `v1.2.0-rc.1`). Go stamps the module version at build time; untagged commits show a pseudo-version, and uncommitted changes add `+dirty`.
 - Query the version with `video-rename --version`, which prints e.g. `video-rename v1.2.0 (revision=0123456789ab)`. It and `--help` (in English) print to stdout, read no configuration and start no service.
 - Exit codes: 0 success (including a clean shutdown after SIGINT/SIGTERM), 2 usage error, 1 configuration, startup or runtime failure. Usage errors are written to stderr as plain text `video-rename: <error>` followed by `Run 'video-rename --help' for usage.`; configuration errors are one English line `video-rename: config: <error>`, with field paths for validation errors, e.g. `video-rename: config: port: must be between 1 and 65535`.
-- Logs: once the configuration loads, service logs are written to stdout as JSON lines. Startup and shutdown events are `service_starting` (with `version`), `service_listening` (with `listen`), `service_stopping` and `service_stopped`; later startup or runtime failures are logged as `service_failed` and not repeated on stderr. The first SIGINT/SIGTERM starts a graceful shutdown (up to 10 seconds); a second one terminates the process.
+- Logs: once the configuration loads, service logs default to JSON lines on stdout. Set `log.file` to append to a file. Missing parent directories are created, and an open failure stops startup. Startup and shutdown events are `service_starting` (with `version`), `service_listening` (with `listen`), `service_stopping` and `service_stopped`; later startup or runtime failures are logged as `service_failed` and not repeated on stderr. The first SIGINT/SIGTERM starts a graceful shutdown (up to 10 seconds); a second one terminates the process.
 - Source archives without `.git` report `dev`; inject a version matching the source explicitly: `go build -trimpath -ldflags='-X main.version=v1.0.0' -o bin/video-rename ./cmd/video-rename`.
 - Pushing a standard tag triggers the [Release workflow](.github/workflows/release.yml): it checks that `--version` matches the tag, then GoReleaser builds every target and uploads the tar.gz archives and `checksums.txt`.
 
@@ -205,7 +209,8 @@ configs/                 Configuration example; the local config.local.yaml is i
 docs/                    Usage, design, development and acceptance docs; archive/ is historical
 .github/                 GitHub Actions CI and tag releases
 .goreleaser.yaml         GoReleaser multi-target release configuration
-bin/ data/ .cache/       Ignored local binaries (including bin/release/ snapshots), state and cache
+bin/                     Ignored local binaries and bin/release/ snapshots
+configs/data/ configs/cache/  Default persistent state and cache with the example config
 coverage/ test-results/  Ignored coverage and test output
 ```
 
@@ -214,6 +219,7 @@ The directory baseline is maintained only in [目录规范.md](目录规范.md),
 | Baseline rule | Actual behavior | Reason | Scope / re-evaluate when |
 | --- | --- | --- | --- |
 | §7.1 Config entry and overrides | `-c` / `--config` > `CONFIG_FILE` > `configs/config.local.yaml` under the working directory; no per-field environment overrides | Existing CLI configuration protocol | This binary; only when the user asks to change it |
+| §7.2 Runtime directories | The default `data` and `cache` directories are adjacent to the selected configuration file | Config-relative deployment paths | Deployment defaults |
 | §11 Tool-required paths | `web/embed.go` embeds `web/dist` | The real build boundary between Go embed and Vite | Web assets; when the delivery model changes |
 | §4 `bin/` holds executables only | GoReleaser output (binaries, tar.gz, checksums, metadata) goes to `bin/release/` | An unignored root `dist/` would mark Go builds dirty, and `dist/` is reserved for Web output | Release builds; when the release tool changes |
 

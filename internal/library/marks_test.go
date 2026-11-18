@@ -334,7 +334,7 @@ func TestProcessedMarksRecursiveAndPersistent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	l, err = New(t.Context(), db, root, slog.New(slog.DiscardHandler))
+	l, err = New(t.Context(), db, []string{root}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -22,6 +22,7 @@ export type Entry = {
   task_status: string
 }
 export type Page = {
+  media_roots?: { id: number; name: string }[]
   offset: number
   limit: number
   total: number

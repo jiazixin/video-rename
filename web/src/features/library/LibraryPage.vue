@@ -27,7 +27,6 @@
     PenLine,
     Undo2,
     Sparkles,
-    Home,
     History,
     Link,
     Image as ImageIcon,
@@ -59,6 +58,7 @@
   import DateTime from '../../components/DateTime.vue';
   import ModalDialog from '../../components/ModalDialog.vue';
   import ModalTransition from '../../components/ModalTransition.vue';
+  import DirectoryBreadcrumbs from './DirectoryBreadcrumbs.vue';
   import SelectField from '../../components/SelectField.vue';
   import VideoPlayer from './VideoPlayer.vue';
   import AudioPlayer from './AudioPlayer.vue';
@@ -111,7 +111,7 @@
   } = useLibrarySelection(() => page.value?.items || []);
   // Breadcrumb names below the library root, for confirmation dialogs.
   function directoryNames() {
-    return page.value?.breadcrumbs.filter((c) => c.id !== 1).map((c) => c.name) || [];
+    return page.value?.breadcrumbs.filter((c) => c.name).map((c) => c.name) || [];
   }
   async function queueRun(task: RunTask, entries: Entry[]) {
     const extracting = task === 'extract';
@@ -954,14 +954,10 @@
     </Teleport>
     <div class="panel file-panel library-directory-overview">
       <div class="panel-toolbar directory-toolbar"
-        ><div class="breadcrumbs" role="navigation" aria-label="目录路径"
-          ><button @click="enter(1)"><Home :size="15" />媒体库</button
-          ><template v-for="crumb in page?.breadcrumbs.filter((x) => x.id !== 1)" :key="crumb.id"
-            ><ChevronRight :size="13" /><button @click="enter(crumb.id)">{{
-              crumb.name
-            }}</button></template
-          ></div
-        ><div class="directory-summary" role="group" aria-label="当前目录概况"
+        ><DirectoryBreadcrumbs class="breadcrumbs" :page="page" @enter="enter" /><div
+          class="directory-summary"
+          role="group"
+          aria-label="当前目录概况"
           ><DirectoryStatus v-if="page?.directory.progress" :entry="page.directory" /><div
             class="directory-refresh-summary"
             ><DirectoryContents inline :contents="page?.directory.contents" /><button

@@ -20,12 +20,12 @@ func TestCacheMustNotDeleteMedia(t *testing.T) {
 	if err := os.WriteFile(source, []byte("user media"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.Config{Listen: "127.0.0.1", Port: 8790, Path: root, TempStorage: base, Storage: filepath.Join(base, "state"), ConfigDir: base, Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}
+	cfg := config.Config{Listen: "127.0.0.1", Port: 8790, MediaDirs: []string{root}, CacheDir: base, DataDir: filepath.Join(base, "state"), ConfigDir: base, Auth: config.AuthConfig{Username: "admin", Password: "test-password"}}
 	if err := cfg.Validate(); err != nil {
 		t.Logf("safely rejected: %v", err)
 		return
 	}
-	cache, err := framecache.New(t.Context(), framecache.Options{Base: cfg.TempStorage, LimitBytes: 1 << 30, Logger: slog.New(slog.DiscardHandler)})
+	cache, err := framecache.New(t.Context(), framecache.Options{Base: cfg.CacheDir, LimitBytes: 1 << 30, Logger: slog.New(slog.DiscardHandler)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestCacheNamespaceProtectsPersistentPaths(t *testing.T) {
 			if err := os.WriteFile(file, []byte("preserve"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			cfg := config.Config{Listen: "127.0.0.1", Port: 8790, Path: media, Storage: state, TempStorage: base, ConfigDir: conf, Auth: config.AuthConfig{Username: "admin", Password: "test"}}
+			cfg := config.Config{Listen: "127.0.0.1", Port: 8790, MediaDirs: []string{media}, DataDir: state, CacheDir: base, ConfigDir: conf, Auth: config.AuthConfig{Username: "admin", Password: "test"}}
 			link := filepath.Join(base, "link")
 			if kind == "media-link" || kind == "storage-link" {
 				if err := os.Symlink(protected, link); err != nil {
@@ -60,9 +60,9 @@ func TestCacheNamespaceProtectsPersistentPaths(t *testing.T) {
 			}
 			switch kind {
 			case "media":
-				cfg.Path = protected
+				cfg.MediaDirs = []string{protected}
 			case "storage":
-				cfg.Storage = filepath.Join(protected, "not-created", "state")
+				cfg.DataDir = filepath.Join(protected, "not-created", "state")
 			case "config":
 				cfg.ConfigDir = protected
 			case "database-link":
@@ -70,15 +70,15 @@ func TestCacheNamespaceProtectsPersistentPaths(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "media-link":
-				cfg.Path = link
+				cfg.MediaDirs = []string{link}
 			case "storage-link":
-				cfg.Storage = filepath.Join(link, "new-state")
+				cfg.DataDir = filepath.Join(link, "new-state")
 			case "cache-link":
-				cfg.TempStorage = filepath.Join(base, "cache-parent")
-				if err := os.Mkdir(cfg.TempStorage, 0o700); err != nil {
+				cfg.CacheDir = filepath.Join(base, "cache-parent")
+				if err := os.Mkdir(cfg.CacheDir, 0o700); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.Symlink(managed, config.FrameCachePath(cfg.TempStorage)); err != nil {
+				if err := os.Symlink(managed, config.FrameCachePath(cfg.CacheDir)); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -101,11 +101,11 @@ func TestCacheNamespaceAllowsSiblingAndParentLayouts(t *testing.T) {
 			if err := os.MkdirAll(media, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			cfg := config.Config{Listen: "127.0.0.1", Port: 8790, Path: media, Storage: filepath.Join(base, "state"), TempStorage: base, ConfigDir: base, Auth: config.AuthConfig{Username: "a", Password: "b"}}
+			cfg := config.Config{Listen: "127.0.0.1", Port: 8790, MediaDirs: []string{media}, DataDir: filepath.Join(base, "state"), CacheDir: base, ConfigDir: base, Auth: config.AuthConfig{Username: "a", Password: "b"}}
 			if err := cfg.Validate(); err != nil {
 				t.Fatal(err)
 			}
-			cache, err := framecache.New(t.Context(), framecache.Options{Base: cfg.TempStorage, LimitBytes: 1 << 20, Logger: slog.New(slog.DiscardHandler)})
+			cache, err := framecache.New(t.Context(), framecache.Options{Base: cfg.CacheDir, LimitBytes: 1 << 20, Logger: slog.New(slog.DiscardHandler)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -127,7 +127,7 @@ func TestCacheNamespaceProtectsSymlinkedConfigFile(t *testing.T) {
 		}
 	}
 	file := filepath.Join(managed, "config.yaml")
-	raw := []byte("listen: 127.0.0.1\nport: 8790\nmedia_path: " + media + "\nstorage: " + filepath.Join(base, "state") + "\ntmp_storage: " + base + "\nauth:\n  username: a\n  password: b\n")
+	raw := []byte("listen: 127.0.0.1\nport: 8790\nmedia_dir:\n  - " + media + "\ndata_dir: " + filepath.Join(base, "state") + "\ncache_dir: " + base + "\nauth:\n  username: a\n  password: b\n")
 	if err := os.WriteFile(file, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}

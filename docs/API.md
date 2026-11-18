@@ -27,6 +27,8 @@
 | `/api/usage/analytics`、`/api/runs/analytics` | `offset`、`limit` 及时间筛选；用量另有 `source`、`sort`、`profile`、`run`、`model`，运行分析另有 `source`、`sort`、`profile` | `batches` 含 `items`、`total`、`offset`、`limit`；默认 20，允许 1–100 |
 | `/api/numberings/{id}/items` | `offset` | `items`（`entry`、`old_name`、`new_name`）、`total`、`offset`、`limit`；固定每页 100 |
 
+`GET /api/system` 的 `media_roots` 返回配置顺序的根目录 ID 和名称。配置多个媒体目录时，目录分页响应包含 `media_roots` 数组，每项提供稳定的 `id` 和用于切换的 `name`。面包屑首项是当前条目所属的根目录。单目录时省略该数组。
+
 以上接口不再接受 `page`、`size`、`before`、`paged`、`success_page`、`failure_page`、`success_before`、`failure_before` 或目录 `generation` 输入，不保留旧分页实现。目录 `generation` 是只读字符串，用于播放器跨页读取时识别目录变化。目录 `kind` 只接受空值、`file`、`directory`、`video`、`image`、`audio`、`other`；`sort` 为空或 `name` / `size` / `mtime` / `renamed` / `status` 加 `_asc` / `_desc`。
 
 日期筛选传 RFC 3339 时间（管理台传 UTC 毫秒格式），不接收只有日期而没有时间的值。`GET /api/entries/{id}/history` 使用 `cursor` 返回 `{"items": [...], "next_cursor": "..."}`，每页最多 100 条，末页省略 `next_cursor`；游标为上一页最后一条操作的 ID 字符串，按 ID 降序定位，拒绝无效、非正和重复游标。编号任务结果的 `offset` 是当前预览切片参数。
@@ -43,7 +45,7 @@
 - 文件大小为 `size_bytes`；目录的可选 `contents`、`progress` 以及空错误记录省略，不返回 `null`。
 - 模型配置与运行快照的超时为整数 `timeout_ms`（1000–1800000，默认 180000）。不接受旧 `timeout` 字符串。
 - 抽帧时长档位使用整数 `max_duration_ms`；大小档位使用整数 `max_mib`。最后一档省略上限，表示覆盖剩余范围；其余档位的上限为正且严格递增。不接受 `max_duration` 字符串。
-- 持久化格式身份为 `2026102801`。旧身份或实际结构不匹配的数据库只读检查后拒绝打开，不自动迁移、重建或删除数据。
+- 持久化格式身份为 `2026111801`。旧身份或实际结构不匹配的数据库只读检查后拒绝打开，不自动迁移、重建或删除数据。
 
 ## 修改与并发
 

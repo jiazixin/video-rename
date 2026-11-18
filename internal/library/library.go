@@ -48,7 +48,8 @@ type Library struct {
 	progressCacheMu sync.Mutex
 	progressCache   map[int64]directDirectoryCache
 	db              *storage.Store
-	Root            string
+	roots           []MediaRoot
+	byRootID        map[int64]MediaRoot
 	mu              sync.Mutex
 	refreshMu       sync.Mutex
 	refreshing      map[int64]context.CancelFunc
@@ -66,36 +67,19 @@ type Library struct {
 func Identity(s domain.Snapshot) string { return fmt.Sprintf("%d:%d", s.Dev, s.Ino) }
 func stamp(s domain.Snapshot) int64     { return s.ModTime.UnixNano() }
 
-// New opens the library rooted at root.
-func New(ctx context.Context, db *storage.Store, root string, logger *slog.Logger) (*Library, error) {
+// New binds the configured directories and recovers interrupted operations.
+func New(ctx context.Context, db *storage.Store, paths []string, logger *slog.Logger) (*Library, error) {
 	if logger == nil {
 		return nil, errors.New("library logger is required")
 	}
-	snap, err := domain.StatSnapshot(root)
+	roots, err := bindRoots(ctx, db, paths)
 	if err != nil {
 		return nil, err
 	}
-	var old, ident string
-	err = db.View(ctx, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, "SELECT root,identity FROM library WHERE id=1").Scan(&old, &ident)
-	})
-	if err == nil && (old != root || ident != Identity(snap)) {
-		return nil, errors.New("media root bound to the database changed; check the mount and configuration")
+	l := &Library{db: db, roots: roots, byRootID: make(map[int64]MediaRoot, len(roots)), logger: logger.With("component", "library"), refreshing: map[int64]context.CancelFunc{}, scanSlots: make(chan struct{}, 2)}
+	for _, root := range roots {
+		l.byRootID[root.ID] = root
 	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
-	}
-	if _, err = storage.WriteValue(ctx, db, func(tx *sql.Tx) (sql.Result, error) {
-		return tx.ExecContext(ctx, "INSERT OR IGNORE INTO library VALUES(1,?,?)", root, Identity(snap))
-	}); err != nil {
-		return nil, err
-	}
-	if _, err = storage.WriteValue(ctx, db, func(tx *sql.Tx) (sql.Result, error) {
-		return tx.ExecContext(ctx, "INSERT OR IGNORE INTO entries(id,parent,name,kind,identity,size,mtime_ns,observed) VALUES(1,0,'','directory',?,?,?,?)", Identity(snap), snap.Size, stamp(snap), storage.Now())
-	}); err != nil {
-		return nil, err
-	}
-	l := &Library{db: db, Root: root, logger: logger.With("component", "library"), refreshing: map[int64]context.CancelFunc{}, scanSlots: make(chan struct{}, 2)}
 	if err = l.recoverNumberings(ctx); err != nil {
 		return nil, err
 	}
@@ -217,7 +201,7 @@ func (l *Library) pathForEntry(ctx context.Context, e Entry) (string, error) {
 func (l *Library) pathForSnapshot(ctx context.Context, e Entry, lookup func(context.Context, int64) (Entry, error)) (string, error) {
 	chain := []Entry{}
 	seen := map[int64]bool{}
-	for e.ID != 1 {
+	for e.Parent != 0 {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
@@ -225,7 +209,7 @@ func (l *Library) pathForSnapshot(ctx context.Context, e Entry, lookup func(cont
 			return "", errBadHierarchy
 		}
 		seen[e.ID] = true
-		if e.Name == "" || filepath.Base(e.Name) != e.Name || strings.ContainsAny(e.Name, "/\\") {
+		if e.Name == "" || e.Name == "." || e.Name == ".." || filepath.Base(e.Name) != e.Name || strings.ContainsAny(e.Name, "/\\") {
 			return "", errIllegalPath
 		}
 		chain = append(chain, e)
@@ -238,11 +222,15 @@ func (l *Library) pathForSnapshot(ctx context.Context, e Entry, lookup func(cont
 			return "", err
 		}
 	}
-	rs, err := domain.StatSnapshot(l.Root)
+	root, ok := l.byRootID[e.ID]
+	if !ok {
+		return "", errBadHierarchy
+	}
+	rs, err := domain.StatSnapshot(root.Path)
 	if err != nil || Identity(rs) != e.Identity {
 		return "", errRootUnavailable
 	}
-	p := l.Root
+	p := root.Path
 	for _, entry := range slices.Backward(chain) {
 		if err := ctx.Err(); err != nil {
 			return "", err
@@ -279,7 +267,7 @@ func (l *Library) Relative(ctx context.Context, id int64) string {
 		return ""
 	}
 	// Path returned an absolute descendant of this absolute root.
-	r, _ := filepath.Rel(l.Root, p)
+	r, _ := l.RelativePath(p)
 	return r
 }
 func kindOf(st os.FileInfo) string {
@@ -327,6 +315,7 @@ func (l *Library) StartRefresh(ctx context.Context, id int64) {
 
 // Page is a page of directory entries.
 type Page struct {
+	MediaRoots  []MediaRoot   `json:"media_roots,omitempty"`
 	Total       int           `json:"total"`
 	Offset      int           `json:"offset"`
 	Limit       int           `json:"limit"`
@@ -363,6 +352,9 @@ func (l *Library) ListPage(ctx context.Context, params ListPageOptions) (Page, e
 
 	return storage.ReadValue(ctx, l.db, func(tx *sql.Tx) (Page, error) {
 		p := Page{Items: []Entry{}, Breadcrumbs: []Entry{}}
+		if len(l.roots) > 1 {
+			p.MediaRoots = l.MediaRoots()
+		}
 		statusFilter, err := processingStatusFilter(status)
 		if err != nil {
 			return p, err
@@ -496,22 +488,11 @@ func (l *Library) Close() {
 // Failure records pass a context without cancellation so cancelled work still
 // names its file.
 func (l *Library) DisplayPath(ctx context.Context, id int64) string {
-	parts := []string{}
-	for i := 0; id > 1 && i < 1024; i++ {
-		var parent int64
-		var name string
-		if err := l.db.View(ctx, func(tx *sql.Tx) error {
-			return tx.QueryRowContext(ctx, "SELECT parent,name FROM entries WHERE id=?", id).Scan(&parent, &name)
-		}); err != nil {
-			return MissingDisplayPath
-		}
-		parts = append([]string{name}, parts...)
-		id = parent
+	paths, err := l.DisplayPaths(ctx, []int64{id})
+	if err != nil {
+		return MissingDisplayPath
 	}
-	if len(parts) == 0 {
-		return RootDisplayPath
-	}
-	return strings.Join(parts, " / ")
+	return paths[id]
 }
 
 func directoryOrder(sortBy string) (string, string) {
