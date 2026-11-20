@@ -1056,10 +1056,17 @@ test('思考模式参数选择、保存与预算校验', async ({ page }) => {
   await expect(page.getByRole('combobox', { name: '思考参数类型', exact: true })).toHaveText(
     '本地模板 · enable_thinking'
   )
+  await select('服务类型', 'DeepSeek')
+  await select('思考模式', '开启思考')
+  await expect(page.getByRole('combobox', { name: '思考参数类型', exact: true })).toHaveCount(0)
+  await expect(page.getByText('DeepSeek / 智谱 · thinking（预设自动匹配）')).toBeVisible()
+  await select('思考模式', '跟随模型默认')
+  await expect(page.getByText('DeepSeek / 智谱 · thinking（预设自动匹配）')).toHaveCount(0)
   await select('服务类型', 'Claude')
   await page.getByLabel('模型名称', { exact: true }).fill('claude-sonnet-4-5')
   await page.getByLabel('API 密钥', { exact: true }).fill('fake-key')
   await select('思考模式', '开启思考')
+  await expect(page.getByText('Claude 固定思考预算（按型号自动匹配）')).toBeVisible()
   await expect(page.getByLabel('固定思考预算', { exact: true })).toBeVisible()
   await expect(page.getByLabel('温度', { exact: true })).toBeDisabled()
   await page.getByRole('button', { name: '保存配置', exact: true }).click()

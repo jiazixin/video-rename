@@ -128,7 +128,7 @@
   .modal-content :deep(p) {
     font-size: var(--font-size-13);
   }
-  .modal-content :deep(label) {
+  :where(.modal-content) :deep(label) {
     margin-bottom: var(--space-16);
   }
   @media (max-width: 800px) {

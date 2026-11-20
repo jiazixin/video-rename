@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 import { mockRunPages } from './run-pages'
 import { recordPage } from './run-record-pages'
-import { bodyRows, pageReadout } from './support'
+import { bodyRows, defined, pageReadout } from './support'
 
 async function login(page: Page) {
   await page.request.post('/api/auth/login', {
@@ -132,11 +132,22 @@ test('批次与详情直接跳页，目录选择器跳页不提交外层表单',
   await pager.getByRole('button', { name: '首页', exact: true }).click()
   await page.getByRole('article').first().getByRole('button', { name: '详情', exact: true }).click()
   const detail = page.getByRole('dialog')
-  await detail.getByRole('navigation', { name: '运行记录翻页' }).getByLabel('跳转页码').fill('3')
-  await detail
-    .getByRole('navigation', { name: '运行记录翻页' })
-    .getByLabel('跳转页码')
-    .press('Enter')
+  const detailNav = detail.getByRole('navigation', { name: '运行记录翻页' })
+  const detailInput = detailNav.getByLabel('跳转页码')
+  const detailJump = detailNav.getByRole('button', { name: '跳转', exact: true })
+  await detailInput.scrollIntoViewIfNeeded()
+  const detailInputBox = defined(await detailInput.boundingBox())
+  const detailJumpBox = defined(await detailJump.boundingBox())
+  expect(
+    Math.abs(
+      detailInputBox.y + detailInputBox.height / 2 - (detailJumpBox.y + detailJumpBox.height / 2)
+    )
+  ).toBeLessThan(2)
+  expect(
+    await detailInput.evaluate((el) => getComputedStyle(el.closest('label') ?? el).marginBottom)
+  ).toBe('0px')
+  await detailInput.fill('3')
+  await detailInput.press('Enter')
   await expect(detail).toContainText('第3页视频.mp4')
   await detail.getByRole('button', { name: '关闭', exact: true }).last().click()
   await page.getByRole('button', { name: '计划管理', exact: true }).click()

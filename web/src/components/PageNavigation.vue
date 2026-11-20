@@ -178,7 +178,7 @@
   .page-jump {
     gap: var(--space-8);
   }
-  .page-jump label {
+  .page-navigation .page-jump label {
     flex-direction: row;
     gap: var(--space-8);
     white-space: nowrap;
@@ -196,6 +196,7 @@
     background: var(--palette-ffffff);
     color: var(--ink);
     font: inherit;
+    line-height: var(--line-height-20);
     text-align: center;
     font-variant-numeric: tabular-nums;
   }

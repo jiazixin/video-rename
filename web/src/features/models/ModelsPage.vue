@@ -346,11 +346,37 @@
   function changeThinkingAdapter() {
     form.thinking_budget = isLlama.value ? 512 : 1024;
   }
+  const showEffort = computed(
+    () =>
+      form.thinking === 'enabled' &&
+      (['openai', 'ollama'].includes(form.provider) ||
+        (form.provider === 'claude' && !manualClaude.value) ||
+        (form.provider === 'custom' && ['effort', 'adaptive'].includes(form.thinking_adapter)))
+  );
   const showBudget = computed(
     () =>
       form.thinking === 'enabled' &&
-      (isLlama.value || form.thinking_adapter === 'budget' || manualClaude.value)
+      (isLlama.value ||
+        (form.provider === 'custom' && form.thinking_adapter === 'budget') ||
+        manualClaude.value)
   );
+  const presetThinkingAdapter = computed(() => {
+    switch (form.provider) {
+      case 'deepseek':
+      case 'zhipu':
+      case 'zhipu-coding':
+        return 'DeepSeek / 智谱 · thinking（预设自动匹配）';
+      case 'openai':
+      case 'ollama':
+        return 'OpenAI / Ollama · reasoning_effort（预设自动匹配）';
+      case 'claude':
+        return manualClaude.value
+          ? 'Claude 固定思考预算（按型号自动匹配）'
+          : 'Claude 自适应思考（按型号自动匹配）';
+      default:
+        return '';
+    }
+  });
   const thinkingNames: Record<string, string> = { enabled: '开启', disabled: '关闭' };
   const thinkingName = (mode: string) => thinkingNames[mode] ?? '模型默认';
   // Provider labels by preset ID; the server sends English names.
@@ -623,15 +649,14 @@
                 :options="[{ value: 'auto', label: '请选择服务支持的参数' }, ...thinkingAdapters]"
                 @change="changeThinkingAdapter"
             /></label>
+            <div v-else-if="form.thinking !== 'default'" class="thinking-adapter-auto">
+              <span class="thinking-adapter-label">思考参数类型</span>
+              <div class="thinking-adapter-value">{{ presetThinkingAdapter }}</div>
+              <small>内置服务类型已自动匹配请求参数，无需手动选择。</small>
+            </div>
           </div>
           <div class="form-grid model-parameters"
-            ><label
-              v-if="
-                form.thinking === 'enabled' &&
-                (['openai', 'ollama'].includes(form.provider) ||
-                  (form.provider === 'claude' && !manualClaude) ||
-                  ['effort', 'adaptive'].includes(form.thinking_adapter))
-              "
+            ><label v-if="showEffort"
               >思考强度<SelectField
                 v-model="form.thinking_effort"
                 data-field="thinking_effort"
