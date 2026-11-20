@@ -502,12 +502,18 @@ func TestAutomaticScheduleWaitsOneHourAndReplansFromCompletion(t *testing.T) {
 	clock := &fakeClock{now: time.Date(2026, 10, 3, 1, 0, 0, 0, time.UTC)}
 	m.now, m.newTimer = clock.Now, clock.NewTimer
 	go m.Run(t.Context())
+	// Scheduled scanning is disabled by default until explicitly enabled.
+	config := systemsetting.DefaultScanSettings(1)
+	config.Enabled = true
+	if err := settings.SaveScan(t.Context(), config); err != nil {
+		t.Fatal(err)
+	}
+	m.SettingsChanged()
 	await(t, func() bool { return clock.Timer() != nil })
 	if timer := clock.Timer(); timer.delay != time.Hour || m.Snapshot().Status != "idle" {
 		t.Fatalf("startup timer=%s status=%+v", timer.delay, m.Snapshot())
 	}
 	clock.Advance(10 * time.Minute)
-	config := systemsetting.DefaultScanSettings(1)
 	config.IntervalMinutes = 120
 	if err := settings.SaveScan(t.Context(), config); err != nil {
 		t.Fatal(err)
@@ -545,6 +551,11 @@ func TestLongManualRoundWaitsNewIntervalFromCompletion(t *testing.T) {
 	m, _, _, settings := fixture(t)
 	clock := &fakeClock{now: time.Date(2026, 10, 3, 1, 0, 0, 0, time.UTC)}
 	m.now, m.newTimer = clock.Now, clock.NewTimer
+	initial := systemsetting.DefaultScanSettings(1)
+	initial.Enabled = true
+	if err := settings.SaveScan(t.Context(), initial); err != nil {
+		t.Fatal(err)
+	}
 	entered, release := make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
 	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
@@ -563,6 +574,7 @@ func TestLongManualRoundWaitsNewIntervalFromCompletion(t *testing.T) {
 	<-entered
 	await(t, func() bool { return m.Snapshot().NextScan == "" && clock.Timer().stopped.Load() })
 	config := systemsetting.DefaultScanSettings(1)
+	config.Enabled = true
 	config.IntervalMinutes = 90
 	if err := settings.SaveScan(t.Context(), config); err != nil {
 		t.Fatal(err)
@@ -606,7 +618,9 @@ func TestSettingsReadFailureIsVisibleAndDoesNotScan(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := settings.SaveScan(t.Context(), systemsetting.DefaultScanSettings(1)); err != nil {
+	recovered := systemsetting.DefaultScanSettings(1)
+	recovered.Enabled = true
+	if err := settings.SaveScan(t.Context(), recovered); err != nil {
 		t.Fatal(err)
 	}
 	m.SettingsChanged()

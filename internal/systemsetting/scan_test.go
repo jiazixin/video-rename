@@ -25,10 +25,10 @@ func TestScanSettingsDefaultPersistenceAndIndependentUpdates(t *testing.T) {
 	}
 	store := Store{db: db}
 	got, err := store.Scan(t.Context())
-	if err != nil || !reflect.DeepEqual(got, DefaultScanSettings(1, 2)) || got.IntervalMinutes != 60 || !got.Enabled {
+	if err != nil || !reflect.DeepEqual(got, DefaultScanSettings(1, 2)) || got.IntervalMinutes != 60 || got.Enabled {
 		t.Fatalf("default scan: %+v %v", got, err)
 	}
-	scan := ScanSettings{Enabled: false, IntervalMinutes: 120, Targets: []int64{2, 3}, ExcludedTargets: []int64{4, 5}}
+	scan := ScanSettings{Enabled: true, IntervalMinutes: 120, Targets: []int64{2, 3}, ExcludedTargets: []int64{4, 5}}
 	if err := store.SaveScan(t.Context(), scan); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestScanSettingsDefaultPersistenceAndIndependentUpdates(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, scan) {
 		t.Fatalf("processing save overwrote scan: %+v %v", got, err)
 	}
-	scan.Enabled = true
+	scan.Enabled = false
 	if err := store.SaveScan(t.Context(), scan); err != nil {
 		t.Fatal(err)
 	}

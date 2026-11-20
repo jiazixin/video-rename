@@ -7,11 +7,21 @@
   padding: var(--space-10) var(--space-14);
   background: var(--palette-f8faf9);
 }
-.directory-picker .picker-breadcrumb button {
+.directory-picker .picker-breadcrumb .crumb-link {
   min-width: 0;
   white-space: normal;
   overflow-wrap: anywhere;
   text-align: left;
+}
+.directory-picker .picker-breadcrumb .root-tab {
+  min-height: 28px;
+  padding: var(--space-3) var(--space-8);
+  font-size: var(--font-size-11);
+}
+.directory-picker .picker-breadcrumb .root-dropdown-trigger {
+  min-height: 30px;
+  padding: var(--space-4) var(--space-8);
+  font-size: var(--font-size-11);
 }
 .directory-picker .picker-current {
   display: grid;

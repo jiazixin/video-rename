@@ -11,14 +11,16 @@ async function login(page: Page) {
   await expect(page.getByRole('heading', { name: '文件目录.' })).toBeVisible()
 }
 
-test('后台扫描默认一小时，范围与间隔保存后重开保持，窄屏可操作', async ({ page }) => {
+test('后台扫描默认关闭、间隔一小时，范围与间隔保存后重开保持，窄屏可操作', async ({ page }) => {
   await login(page)
   const original = (await (await page.request.get('/api/library/scan')).json()).settings
+  expect(original.enabled).toBe(false)
   expect(original.interval_minutes).toBe(60)
   try {
     await page.getByRole('button', { name: '系统设置', exact: true }).click()
     await page.getByRole('button', { name: '后台目录扫描', exact: true }).click()
     const panel = page.getByRole('region', { name: '后台目录扫描', exact: true })
+    await expect(panel.getByLabel('开启定时扫描', { exact: true })).not.toBeChecked()
     await expect(panel.getByLabel('扫描间隔（分钟）', { exact: true })).toHaveValue('60')
     await panel.getByLabel('扫描间隔（分钟）', { exact: true }).fill('120')
     await panel.getByLabel('开启定时扫描', { exact: true }).check()

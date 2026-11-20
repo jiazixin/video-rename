@@ -33,7 +33,11 @@
       excluded_targets: [...result.excluded_targets]
     };
     saved.value = JSON.stringify(form.value);
-    toast.show('扫描设置已保存。自动扫描在后台运行，关闭网页仍会继续。');
+    toast.show(
+      result.enabled
+        ? '扫描设置已保存。自动扫描在后台运行，关闭网页仍会继续。'
+        : '扫描设置已保存。定时扫描已关闭，仍可随时手动扫描。'
+    );
   }
   onMounted(scan.startPolling);
 </script>

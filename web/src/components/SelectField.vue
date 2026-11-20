@@ -179,11 +179,16 @@
     justify-content: space-between;
     gap: var(--space-20);
     padding: var(--space-8) var(--space-11);
+    border: 1px solid var(--control-line);
     border-radius: var(--radius-7);
+    background: var(--palette-ffffff);
     font-size: var(--font-size-12);
     font-weight: var(--font-weight-400);
     text-align: left;
     box-shadow: var(--shadow-4);
+  }
+  .select-trigger:hover:not(:disabled) {
+    border-color: var(--control-line-hover);
   }
   .select-trigger > span {
     overflow: hidden;
@@ -197,8 +202,8 @@
     transform: rotate(180deg);
   }
   .select-trigger[aria-expanded='true'] {
-    border-color: var(--palette-8eb6a5);
-    box-shadow: var(--shadow-5);
+    border-color: var(--palette-619982);
+    box-shadow: var(--shadow-14);
     background: var(--palette-ffffff);
   }
   .select-menu {
@@ -208,7 +213,7 @@
     flex-direction: column;
     overflow-y: auto;
     padding: var(--space-5);
-    border: 1px solid var(--palette-dce4df);
+    border: 1px solid var(--palette-b9c1cb);
     border-radius: var(--radius-9);
     background: var(--palette-ffffff);
     box-shadow: var(--shadow-6);

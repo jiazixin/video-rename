@@ -21,7 +21,7 @@ type ScanSettings struct {
 
 // DefaultScanSettings returns the default background scan settings.
 func DefaultScanSettings(rootIDs ...int64) ScanSettings {
-	return ScanSettings{Enabled: true, IntervalMinutes: 60, Targets: rootIDs, ExcludedTargets: []int64{}}
+	return ScanSettings{Enabled: false, IntervalMinutes: 60, Targets: rootIDs, ExcludedTargets: []int64{}}
 }
 
 // Validate checks the scan settings.

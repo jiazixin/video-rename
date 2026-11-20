@@ -66,7 +66,7 @@ func TestLibraryScanAPISettingsAndDiscovery(t *testing.T) {
 		Status   libraryscan.Status         `json:"status"`
 	}
 	w := request("GET", "/api/library/scan", "", true)
-	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &response) != nil || !response.Settings.Enabled || response.Settings.IntervalMinutes != 60 {
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &response) != nil || response.Settings.Enabled || response.Settings.IntervalMinutes != 60 {
 		t.Fatalf("scan defaults: %d %s", w.Code, w.Body.String())
 	}
 	for _, target := range []struct{ method, path, body string }{

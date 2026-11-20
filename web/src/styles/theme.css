@@ -533,14 +533,13 @@ code {
   gap: var(--space-7);
   flex-wrap: wrap;
 }
-.breadcrumbs button {
+.breadcrumbs .crumb-link {
   border: 0;
   background: transparent;
-  padding: 0;
   color: var(--steel);
   font-size: var(--font-size-12);
 }
-.breadcrumbs button:last-child {
+.breadcrumbs .crumb-link.current {
   color: var(--ink);
 }
 .breadcrumbs > svg {

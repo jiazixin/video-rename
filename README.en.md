@@ -130,7 +130,7 @@ To cross-compile, keep the same Web build and set the target for `go build`: `GO
 | Processed marks | Protect existing names: marked images/audio skip numbering, and marked videos skip normal automatic naming |
 | Frame extraction | Does not rename files; cached frames can be reused for naming |
 | Schedules | Naming or extraction per directory with an explicit time zone; missed runs are not replayed after downtime |
-| Background scans | On by default: first run one hour after startup, then one hour after each scan. Scope, exclusions, interval and the on/off switch are configurable. Scans only update listings and never start processing |
+| Background scans | Off by default; once enabled, runs after waiting the configured interval (default 1 hour) after startup and after each scan. Scope, exclusions, interval, and manual scans are configurable. Scans only update listings and never start processing |
 | Usage and analysis | Request usage, durations, and failures; when model usage is unavailable, estimates cover text tokens only, not images |
 
 ## Configuration

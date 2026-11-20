@@ -1601,12 +1601,21 @@
       position: relative;
     }
     .library-directory-overview .breadcrumbs {
-      padding-right: var(--space-42);
+      width: auto;
+      margin-right: var(--space-52);
       flex-wrap: nowrap;
       overflow-x: auto;
       scrollbar-width: thin;
     }
-    .library-directory-overview .breadcrumbs button {
+    .library-directory-overview .breadcrumbs :deep(.root-switcher),
+    .library-directory-overview .breadcrumbs :deep(.root-tabs),
+    .library-directory-overview .breadcrumbs :deep(.crumb-trail) {
+      flex-wrap: nowrap;
+      flex-shrink: 0;
+    }
+    .library-directory-overview .breadcrumbs :deep(.crumb-link),
+    .library-directory-overview .breadcrumbs :deep(.root-tab),
+    .library-directory-overview .breadcrumbs :deep(.root-dropdown-trigger) {
       white-space: nowrap;
       flex-shrink: 0;
     }

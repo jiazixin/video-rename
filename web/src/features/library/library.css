@@ -120,10 +120,9 @@
   background: var(--palette-fafbfc);
   border-bottom: 1px solid var(--line);
 }
-.picker-breadcrumb button {
+.picker-breadcrumb .crumb-link {
   font-size: var(--font-size-11);
   border: 0;
-  padding: 0;
   background: transparent;
 }
 .picker-current {
@@ -319,7 +318,7 @@
   width: 100%;
   min-width: 0;
 }
-.directory-toolbar > .breadcrumbs button {
+.directory-toolbar > .breadcrumbs .crumb-link {
   white-space: normal;
   overflow-wrap: anywhere;
   text-align: left;
