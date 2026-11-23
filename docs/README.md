@@ -26,6 +26,7 @@
 
 | 记录 | 状态与范围 |
 | --- | --- |
+| [多媒体目录与日志文件验收](archive/2026-11-18-multi-root-acceptance.md) | 历史验收，记录 2026-11-18 多媒体根与日志文件的本机验证范围 |
 | [删除视频与跨目录扫描](archive/2026-11-18-delete-scan-acceptance.md) | 历史验收，含跨目录删除与扫描交错的回归及 CIFS 文件身份现场记录 |
 | [CI 重型竞态测试拆分](archive/2026-11-17-ci-split-acceptance.md) | 历史验收，记录常规组与重型组的本机覆盖情况 |
 | [CI 拆分前的目录改名验收](archive/2026-11-17-before-ci-split-acceptance.md) | 历史；子项变化后的目录改名、身份保护与本机回归，不代表远端 CI 已通过 |

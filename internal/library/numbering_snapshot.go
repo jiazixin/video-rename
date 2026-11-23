@@ -69,8 +69,10 @@ func scanNumberingDirectory(ctx context.Context, path string, visit func(os.DirE
 	}
 }
 
-func directoryFingerprint(ctx context.Context, path string) (string, error) {
-	snapshot := numberingDirectorySnapshot{Version: 4, Entries: []numberingEntrySnapshot{}}
+const numberingSnapshotVersion = 5
+
+func directoryFingerprint(ctx context.Context, root MediaRoot, path string) (string, error) {
+	snapshot := numberingDirectorySnapshot{Version: numberingSnapshotVersion, Entries: []numberingEntrySnapshot{}}
 	err := scanNumberingDirectory(ctx, path, func(e os.DirEntry) error {
 		info, err := e.Info()
 		if err != nil {
@@ -80,7 +82,11 @@ func directoryFingerprint(ctx context.Context, path string) (string, error) {
 		if err != nil {
 			return err
 		}
-		entry := numberingEntrySnapshot{Name: e.Name(), Type: info.Mode().Type().String(), Identity: Identity(snap)}
+		identity, sameDevice := root.entryIdentity(snap)
+		if !sameDevice {
+			identity = crossDeviceIdentity(snap)
+		}
+		entry := numberingEntrySnapshot{Name: e.Name(), Type: info.Mode().Type().String(), Identity: identity}
 		// Descendant contents and permission bits are not part of this rename plan.
 		if !info.IsDir() {
 			entry.Size = info.Size()
@@ -113,7 +119,7 @@ func directoryFingerprint(ctx context.Context, path string) (string, error) {
 func decodeNumberingSnapshot(raw string) (numberingDirectorySnapshot, bool) {
 	var snapshot numberingDirectorySnapshot
 	err := json.Unmarshal([]byte(raw), &snapshot)
-	return snapshot, err == nil && snapshot.Version == 4 && snapshot.Hash != ""
+	return snapshot, err == nil && snapshot.Version == numberingSnapshotVersion && snapshot.Hash != ""
 }
 func numberingFingerprintLabel(raw string) string {
 	if snapshot, ok := decodeNumberingSnapshot(raw); ok {
@@ -152,7 +158,7 @@ func describeNumberingSnapshotDiff(detail *strings.Builder, before, after string
 		}
 		delete(byName, a.Name)
 		if a != b {
-			report("entry %q: kind %s -> %s; identity (dev:inode) %s -> %s; size %d -> %d; mtime_ns %d -> %d\n", a.Name, a.Type, b.Type, a.Identity, b.Identity, a.Size, b.Size, a.ModifiedNS, b.ModifiedNS)
+			report("entry %q: kind %s -> %s; identity (root:inode) %s -> %s; size %d -> %d; mtime_ns %d -> %d\n", a.Name, a.Type, b.Type, a.Identity, b.Identity, a.Size, b.Size, a.ModifiedNS, b.ModifiedNS)
 		}
 	}
 	for _, b := range current.Entries {

@@ -262,7 +262,7 @@ func (l *Library) refreshDirectory(ctx context.Context, id int64, read func(int)
 			first = false
 		}
 		return batch, err
-	}, func(_ *os.File, de os.DirEntry) (scannedDirectoryEntry, error) {
+	}, func(root MediaRoot, _ *os.File, de os.DirEntry) (scannedDirectoryEntry, error) {
 		info, err := de.Info()
 		if err != nil {
 			return scannedDirectoryEntry{}, err
@@ -271,7 +271,11 @@ func (l *Library) refreshDirectory(ctx context.Context, id int64, read func(int)
 		if err != nil {
 			return scannedDirectoryEntry{}, err
 		}
-		return scannedDirectoryEntry{de.Name(), kindOf(info), Identity(snap), stamp(snap), snap.Size}, nil
+		identity, sameDevice := root.entryIdentity(snap)
+		if !sameDevice {
+			return scannedDirectoryEntry{de.Name(), "other", crossDeviceIdentity(snap), stamp(snap), snap.Size}, nil
+		}
+		return scannedDirectoryEntry{de.Name(), kindOf(info), identity, stamp(snap), snap.Size}, nil
 	})
 	return err
 }

@@ -159,7 +159,7 @@ func (l *Library) scanDirectory(ctx context.Context, id int64, read func(*os.Fil
 	return l.scanDirectoryWithMetadata(ctx, id, read, scanPinnedDirectoryEntry)
 }
 
-func (l *Library) scanDirectoryWithMetadata(ctx context.Context, id int64, read func(*os.File, int) ([]os.DirEntry, error), inspect func(*os.File, os.DirEntry) (scannedDirectoryEntry, error)) (result ScanDirectoryResult, err error) {
+func (l *Library) scanDirectoryWithMetadata(ctx context.Context, id int64, read func(*os.File, int) ([]os.DirEntry, error), inspect func(MediaRoot, *os.File, os.DirEntry) (scannedDirectoryEntry, error)) (result ScanDirectoryResult, err error) {
 	stage, err := newScanStage(ctx)
 	if err != nil {
 		return ScanDirectoryResult{}, err
@@ -176,7 +176,7 @@ type scanDirectoryWithStageOptions struct {
 	ID      int64
 	Stage   *storage.ScanStore
 	Read    func(*os.File, int) ([]os.DirEntry, error)
-	Inspect func(*os.File, os.DirEntry) (scannedDirectoryEntry, error)
+	Inspect func(MediaRoot, *os.File, os.DirEntry) (scannedDirectoryEntry, error)
 	Clock   *scanClock
 }
 
@@ -219,7 +219,7 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, params scanDirecto
 	}
 	clock.enter(scanRead)
 	root := l.byRootID[baseline.chain[len(baseline.chain)-1].ID]
-	pinned, err := openScanDirectory(root.Path, baseline.chain)
+	pinned, err := openScanDirectory(root, baseline.chain)
 	if err != nil {
 		return result, err
 	}
@@ -243,7 +243,7 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, params scanDirecto
 			scanErr = scanSnapshotDifference("directory attributes between the two reads", observed, before)
 		}
 		if scanErr == nil {
-			scanErr = collectScanMetadata(ctx, collectScanMetadataOptions{Stage: stage, Table: table, Dir: dir, Read: read, Inspectors: []func(*os.File, os.DirEntry) (scannedDirectoryEntry, error){inspect}, Clock: clock})
+			scanErr = collectScanMetadata(ctx, collectScanMetadataOptions{Root: root, Stage: stage, Table: table, Dir: dir, Read: read, Inspectors: []func(MediaRoot, *os.File, os.DirEntry) (scannedDirectoryEntry, error){inspect}, Clock: clock})
 		}
 		after, statErr := scanDirectorySnapshot(dir)
 		if dir != pinned {
@@ -317,7 +317,7 @@ func (l *Library) scanDirectoryWithStage(ctx context.Context, params scanDirecto
 	// Reopen the frozen ancestor chain and check the directory after staging. NAS
 	// operations stay outside the global publication lock.
 	clock.enter(scanRead)
-	dir, err := openScanDirectory(root.Path, baseline.chain)
+	dir, err := openScanDirectory(root, baseline.chain)
 	if err != nil {
 		return result, err
 	}
@@ -500,12 +500,13 @@ func (l *Library) captureScanBaseline(ctx context.Context, id int64, stage *stor
 	})
 }
 
-func openScanDirectory(root string, chain []Entry) (*os.File, error) {
+func openScanDirectory(root MediaRoot, chain []Entry) (*os.File, error) {
 	var dir *os.File
-	displayPath := root
+	displayPath := root.Path
 	for _, e := range slices.Backward(chain) {
-		parent, name := unix.AT_FDCWD, root
-		if dir != nil {
+		parent, name := unix.AT_FDCWD, root.Path
+		isRoot := dir == nil
+		if !isRoot {
 			if e.Name == "" || e.Name == "." || e.Name == ".." || filepath.Base(e.Name) != e.Name {
 				return nil, errors.Join(errIllegalPath, dir.Close())
 			}
@@ -524,11 +525,15 @@ func openScanDirectory(root string, chain []Entry) (*os.File, error) {
 		}
 		dir = os.NewFile(uintptr(fd), displayPath)
 		snapshot, err := scanDirectorySnapshot(dir)
-		if err != nil || Identity(snapshot) != e.Identity {
-			if err == nil {
-				err = errIdentityChanged
-			}
+		if err != nil {
 			return nil, errors.Join(err, dir.Close())
+		}
+		if isRoot {
+			if !root.matchesRoot(snapshot, e.Identity) {
+				return nil, errors.Join(errRootUnavailable, dir.Close())
+			}
+		} else if !root.matches(snapshot, e.Identity) {
+			return nil, errors.Join(errIdentityChanged, dir.Close())
 		}
 	}
 	return dir, nil
@@ -545,7 +550,7 @@ func scanDirectorySnapshot(dir *os.File) (domain.Snapshot, error) {
 // Fstatat uses the pinned directory descriptor even if an ancestor path is
 // concurrently renamed or replaced with a symlink. DirEntry.Info would instead
 // lstat the path stored in os.File.Name and could observe another filesystem.
-func scanPinnedDirectoryEntry(dir *os.File, de os.DirEntry) (scannedDirectoryEntry, error) {
+func scanPinnedDirectoryEntry(root MediaRoot, dir *os.File, de os.DirEntry) (scannedDirectoryEntry, error) {
 	name := de.Name()
 	if name == "" || name == "." || name == ".." || filepath.Base(name) != name {
 		return scannedDirectoryEntry{}, errIllegalPath
@@ -553,6 +558,13 @@ func scanPinnedDirectoryEntry(dir *os.File, de os.DirEntry) (scannedDirectoryEnt
 	var st unix.Stat_t
 	if err := unix.Fstatat(int(dir.Fd()), name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return scannedDirectoryEntry{}, err
+	}
+	snap := domain.Snapshot{Dev: uint64(st.Dev), Ino: uint64(st.Ino), Size: st.Size, ModTime: time.Unix(st.Mtim.Sec, st.Mtim.Nsec)}
+	identity, sameDevice := root.entryIdentity(snap)
+	if !sameDevice {
+		// A nested mount has an independent inode space; record it as "other"
+		// so recursive scans and mutations never cross into another filesystem.
+		return scannedDirectoryEntry{name, "other", crossDeviceIdentity(snap), stamp(snap), snap.Size}, nil
 	}
 	kind := "other"
 	switch st.Mode & unix.S_IFMT {
@@ -563,22 +575,22 @@ func scanPinnedDirectoryEntry(dir *os.File, de os.DirEntry) (scannedDirectoryEnt
 	case unix.S_IFLNK:
 		kind = "symlink"
 	}
-	snap := domain.Snapshot{Dev: uint64(st.Dev), Ino: uint64(st.Ino), Size: st.Size, ModTime: time.Unix(st.Mtim.Sec, st.Mtim.Nsec)}
-	return scannedDirectoryEntry{name, kind, Identity(snap), stamp(snap), snap.Size}, nil
+	return scannedDirectoryEntry{name, kind, identity, stamp(snap), snap.Size}, nil
 }
 
 // collectScanMetadataOptions groups the inputs for collectScanMetadata.
 type collectScanMetadataOptions struct {
+	Root       MediaRoot
 	Stage      *storage.ScanStore
 	Table      string
 	Dir        *os.File
 	Read       func(*os.File, int) ([]os.DirEntry, error)
-	Inspectors []func(*os.File, os.DirEntry) (scannedDirectoryEntry, error)
+	Inspectors []func(MediaRoot, *os.File, os.DirEntry) (scannedDirectoryEntry, error)
 	Clock      *scanClock
 }
 
 func collectScanMetadata(ctx context.Context, params collectScanMetadataOptions) error {
-	stage, table, dir, read, inspectors := params.Stage, params.Table, params.Dir, params.Read, params.Inspectors
+	root, stage, table, dir, read, inspectors := params.Root, params.Stage, params.Table, params.Dir, params.Read, params.Inspectors
 	clock := params.Clock
 	clock.enter(scanRead)
 
@@ -600,7 +612,7 @@ func collectScanMetadata(ctx context.Context, params collectScanMetadataOptions)
 			return err
 		}
 		batch, readErr := read(dir, refreshPageSize)
-		scanned, err := readDirectoryMetadata(ctx, batch, func(de os.DirEntry) (scannedDirectoryEntry, error) { return inspect(dir, de) })
+		scanned, err := readDirectoryMetadata(ctx, batch, func(de os.DirEntry) (scannedDirectoryEntry, error) { return inspect(root, dir, de) })
 		if err != nil {
 			return err
 		}

@@ -144,7 +144,11 @@ func (l *Library) PreviewNumberingRestore(ctx context.Context, id string) (Numbe
 	if err != nil {
 		return Numbering{}, err
 	}
-	fingerprint, err := directoryFingerprint(ctx, path)
+	root, _, err := l.rootPath(path)
+	if err != nil {
+		return Numbering{}, err
+	}
+	fingerprint, err := directoryFingerprint(ctx, root, path)
 	if err != nil {
 		return Numbering{}, err
 	}
@@ -160,7 +164,7 @@ func (l *Library) PreviewNumberingRestore(ctx context.Context, id string) (Numbe
 		if err != nil {
 			return Numbering{}, err
 		}
-		if e.Parent != b.Parent || e.Name != i.New || e.RestoreID != i.Operation || !numberingMatch(filepath.Join(path, e.Name), i) {
+		if e.Parent != b.Parent || e.Name != i.New || e.RestoreID != i.Operation || !numberingMatch(root, filepath.Join(path, e.Name), i) {
 			return Numbering{}, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingItemChangedSince, Message: "file changed or was renamed later; the batch cannot be restored", Details: map[string]any{"media": b.Media, "name": i.New}})
 		}
 		b.Items = append(b.Items, NumberingItem{Entry: e.ID, Version: e.Version, Identity: i.Identity, Size: i.Size, ModifiedNS: i.ModifiedNS, Old: i.New, New: i.Old, UndoOf: i.Operation})
@@ -168,5 +172,5 @@ func (l *Library) PreviewNumberingRestore(ctx context.Context, id string) (Numbe
 	if len(b.Items) == 0 {
 		return Numbering{}, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingNothingToRestore, Message: "batch has nothing to restore", Details: map[string]any{"media": b.Media}})
 	}
-	return l.saveNumberingPreview(ctx, b, path)
+	return l.saveNumberingPreview(ctx, b, root, path)
 }

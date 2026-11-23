@@ -2,7 +2,8 @@
 
 CREATE TABLE library (
  id INTEGER PRIMARY KEY REFERENCES entries(id),
- root TEXT NOT NULL UNIQUE
+ root TEXT NOT NULL UNIQUE,
+ mount_point INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE entries (
@@ -364,7 +365,7 @@ CREATE INDEX extraction_run ON extraction_records(run,id DESC);
 
 INSERT INTO notification_preferences VALUES(1,'UTC');
 
-PRAGMA user_version=2026111801;
+PRAGMA user_version=2026112301;
 
 CREATE INDEX run_analysis_start ON runs(analysis_start_ms,id);
 

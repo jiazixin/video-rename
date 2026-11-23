@@ -2,9 +2,9 @@ package library
 
 import (
 	"context"
-	"fmt"
 	"os"
-	"syscall"
+
+	"video-rename/internal/domain"
 )
 
 // OpenPlayback pins a regular file beneath the configured root. The returned
@@ -41,8 +41,8 @@ func (l *Library) OpenPlayback(ctx context.Context, id int64) (*os.File, error) 
 		f.Close()
 		return nil, err
 	}
-	identity, ok := st.Sys().(*syscall.Stat_t)
-	if !st.Mode().IsRegular() || !ok || fmt.Sprintf("%d:%d", uint64(identity.Dev), identity.Ino) != e.Identity {
+	snap, err := domain.SnapshotFromInfo(st)
+	if !st.Mode().IsRegular() || err != nil || !mount.matches(snap, e.Identity) {
 		f.Close()
 		return nil, errIdentityChanged
 	}

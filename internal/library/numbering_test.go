@@ -514,14 +514,14 @@ func TestNumberingPreviewChecksActualCaseSourceSnapshot(t *testing.T) {
 			item := NumberingItem{Entry: e.ID, Old: name, New: "5.jpeg", Version: e.Version, Identity: e.Identity, Size: e.Size, ModifiedNS: e.ModifiedNS}
 			switch field {
 			case "identity":
-				item.Identity = "0:0"
+				item.Identity = "r1:0"
 			case "size":
 				item.Size++
 			case "mtime_ns":
 				item.ModifiedNS = 0
 			}
 			batch := Numbering{ID: numberingToken(), Parent: 1, Media: "image", Status: "preview", Created: timefmt.Format(time.Now()), Items: []NumberingItem{item}}
-			_, err := l.saveNumberingPreview(t.Context(), batch, root)
+			_, err := l.saveNumberingPreview(t.Context(), batch, l.roots[0], root)
 			diagnostic, ok := errors.AsType[*domain.JobError](err)
 			if !ok || diagnostic.Code != domain.CodeRenameConflict {
 				t.Fatalf("stale %s accepted: %v", field, err)
@@ -585,7 +585,7 @@ func TestNumberingCompactUppercaseFromTwoStagesAllFilesAndRestores(t *testing.T)
 					// At the first final move, every later file must already be at
 					// its own temporary name, both on disk and in the journal.
 					for _, item := range journal.Items[1:] {
-						if item.Current != item.Temp || !numberingMatch(filepath.Join(root, item.Temp), item) {
+						if item.Current != item.Temp || !numberingMatch(l.roots[0], filepath.Join(root, item.Temp), item) {
 							t.Fatalf("file was not staged before final moves: %+v", item)
 						}
 					}
@@ -671,6 +671,7 @@ func TestNumberingCancelledDuringMovesRestoresCurrentDirectory(t *testing.T) {
 
 func TestNumberingFingerprintIgnoresChildMetadataButRejectsReplacement(t *testing.T) {
 	root := t.TempDir()
+	mediaRoot := testMediaRoot(t, root)
 	child := filepath.Join(root, "child")
 	if err := os.Mkdir(child, 0o700); err != nil {
 		t.Fatal(err)
@@ -679,7 +680,7 @@ func TestNumberingFingerprintIgnoresChildMetadataButRejectsReplacement(t *testin
 	if err := os.WriteFile(file, []byte("image"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	before, err := directoryFingerprint(t.Context(), root)
+	before, err := directoryFingerprint(t.Context(), mediaRoot, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -692,7 +693,7 @@ func TestNumberingFingerprintIgnoresChildMetadataButRejectsReplacement(t *testin
 	if err := os.Chmod(file, 0o640); err != nil {
 		t.Fatal(err)
 	}
-	after, err := directoryFingerprint(t.Context(), root)
+	after, err := directoryFingerprint(t.Context(), mediaRoot, root)
 	if err != nil || before != after {
 		t.Fatal("unrelated child metadata invalidated preview", before, after, err)
 	}
@@ -702,14 +703,14 @@ func TestNumberingFingerprintIgnoresChildMetadataButRejectsReplacement(t *testin
 	if err := os.Mkdir(child, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	replaced, err := directoryFingerprint(t.Context(), root)
+	replaced, err := directoryFingerprint(t.Context(), mediaRoot, root)
 	if err != nil || replaced == after {
 		t.Fatal("directory replacement not detected", err)
 	}
 	if err := os.WriteFile(file, []byte("changed file content"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	changed, err := directoryFingerprint(t.Context(), root)
+	changed, err := directoryFingerprint(t.Context(), mediaRoot, root)
 	if err != nil || changed == replaced {
 		t.Fatal("file changes not detected", err)
 	}

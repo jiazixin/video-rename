@@ -133,9 +133,11 @@ func (s Snapshot) SameIdentity(o Snapshot) bool {
 	return s.Dev == o.Dev && s.Ino == o.Ino
 }
 
-// VideoJob is a pending video with its normalized absolute path and the identity snapshot from the scan.
+// VideoJob is a pending video with its normalized absolute path, persisted
+// root-scoped identity, and the runtime metadata snapshot from the scan.
 type VideoJob struct {
 	JobID    string
+	Identity string
 	Path     string
 	Snapshot Snapshot
 }

@@ -73,23 +73,26 @@ type Stats struct {
 
 // Key returns the cache key of the frames of job extracted with cfg.
 func Key(job domain.VideoJob, cfg *config.TaskConfig) string {
+	identity := job.Identity
+	if identity == "" {
+		identity = fmt.Sprintf("dev:%d:ino:%d", job.Snapshot.Dev, job.Snapshot.Ino)
+	}
 	// The key contains only validated finite settings and fixed scalar types.
+	// Persisted identity excludes runtime st_dev so frames survive remounts.
 	raw, _ := json.Marshal(struct {
 		Version  int `json:"version"`
 		Snapshot struct {
-			Dev        uint64 `json:"device"`
-			Ino        uint64 `json:"inode"`
+			Identity   string `json:"identity"`
 			Size       int64  `json:"size"`
 			ModifiedNS int64  `json:"modified_ns"`
 		} `json:"snapshot"`
 		Sampling config.SamplingConfig `json:"sampling"`
 		Images   config.ImagesConfig   `json:"images"`
-	}{3, struct {
-		Dev        uint64 `json:"device"`
-		Ino        uint64 `json:"inode"`
+	}{4, struct {
+		Identity   string `json:"identity"`
 		Size       int64  `json:"size"`
 		ModifiedNS int64  `json:"modified_ns"`
-	}{job.Snapshot.Dev, job.Snapshot.Ino, job.Snapshot.Size, job.Snapshot.ModTime.UnixNano()}, cfg.Sampling, cfg.Images})
+	}{identity, job.Snapshot.Size, job.Snapshot.ModTime.UnixNano()}, cfg.Sampling, cfg.Images})
 	h := sha256.Sum256(raw)
 	return hex.EncodeToString(h[:])
 }

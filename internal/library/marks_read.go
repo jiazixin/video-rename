@@ -117,11 +117,15 @@ func (l *Library) validateProcessedSnapshot(ctx context.Context, e Entry, snapsh
 	if err != nil {
 		return err
 	}
+	root, _, err := l.rootPath(p)
+	if err != nil {
+		return err
+	}
 	snap, err := domain.StatSnapshot(p)
 	if err != nil {
 		return err
 	}
-	if Identity(snap) != e.Identity || snap.Size != e.Size || stamp(snap) != e.ModifiedNS {
+	if !root.matches(snap, e.Identity) || snap.Size != e.Size || stamp(snap) != e.ModifiedNS {
 		return errChanged
 	}
 	return nil

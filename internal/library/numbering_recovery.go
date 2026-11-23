@@ -12,7 +12,7 @@ import (
 )
 
 // Resolve a crash between filesystem rename and journal completion without guessing.
-func (l *Library) reconcileNumbering(ctx context.Context, b *Numbering, path string) error {
+func (l *Library) reconcileNumbering(ctx context.Context, b *Numbering, root MediaRoot, path string) error {
 	exact := map[string]bool{}
 	err := scanNumberingDirectory(ctx, path, func(entry os.DirEntry) error {
 		exact[entry.Name()] = true
@@ -26,9 +26,9 @@ func (l *Library) reconcileNumbering(ctx context.Context, b *Numbering, path str
 			return err
 		}
 		i := &b.Items[idx]
-		current := exact[i.Current] && numberingMatch(filepath.Join(path, i.Current), *i)
+		current := exact[i.Current] && numberingMatch(root, filepath.Join(path, i.Current), *i)
 		if i.Pending != "" {
-			pending := exact[i.Pending] && numberingMatch(filepath.Join(path, i.Pending), *i)
+			pending := exact[i.Pending] && numberingMatch(root, filepath.Join(path, i.Pending), *i)
 			if current == pending {
 				return domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonNumberingItemAmbiguous, Message: "file location is ambiguous; manual review needed", Details: map[string]any{"media": b.Media, "name": i.Old}})
 			}
@@ -47,14 +47,14 @@ func (l *Library) reconcileNumbering(ctx context.Context, b *Numbering, path str
 	}
 	return syncNumberingDir(path)
 }
-func (l *Library) rollbackNumbering(ctx context.Context, b *Numbering, path string) error {
+func (l *Library) rollbackNumbering(ctx context.Context, b *Numbering, root MediaRoot, path string) error {
 	if _, err := storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
 		return tx.ExecContext(ctx, "UPDATE image_numberings SET status='rollback' WHERE id=?", b.ID)
 	}); err != nil {
 		return err
 	}
 	b.Status = "rollback"
-	if err := l.reconcileNumbering(ctx, b, path); err != nil {
+	if err := l.reconcileNumbering(ctx, b, root, path); err != nil {
 		return err
 	}
 	// Stage first, including final names that may occupy another item's original name.
@@ -118,8 +118,12 @@ func (l *Library) recoverNumbering(ctx context.Context, id string) (Numbering, e
 		return b, nil
 	}
 	path, err := l.Path(ctx, b.Parent)
+	var root MediaRoot
 	if err == nil {
-		err = l.rollbackNumbering(ctx, &b, path)
+		root, _, err = l.rootPath(path)
+	}
+	if err == nil {
+		err = l.rollbackNumbering(ctx, &b, root, path)
 	}
 	b.Status = "rolled_back"
 	b.Error = domain.Record{Code: "numbering_interrupted_restored", Message: "interrupted numbering was rolled back", Details: map[string]any{"media": b.Media}}

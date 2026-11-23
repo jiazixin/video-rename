@@ -1,15 +1,27 @@
-# 多媒体目录与日志文件验收（2026-11-18）
+# 持久化文件身份与重挂载兼容验收（2026-11-23）
 
-本机环境为 macOS arm64、Go 1.27.4 和 Node.js 26.13.1。服务验证使用临时 SQLite、合成媒体和隔离端口。
+本机环境为 macOS arm64、Go 1.27.4（`go version go1.27.4 darwin/arm64`）。本次仅修改 Go 后端存储结构、文件身份逻辑及文档，未改动 `web/` 前端代码。所有测试使用隔离临时目录与临时 SQLite 数据库。
 
-| 检查 | 结果 |
+## 变更要点
+
+- **数据库结构号**：`internal/storage/schema.sql` 与 `internal/storage/schema.go` 提升为 `2026112301`，`library` 表新增 `mount_point INTEGER NOT NULL DEFAULT 0`；不提供旧库迁移，既有 `2026111801` 数据库只读核对后拒绝打开并保持原状。
+- **持久化身份与运行期设备号分离**：`entries`、`marks`、`operations`、`run_items`、`image_numbering_items`、`numberingDirectorySnapshot`（第 5 版）与 `framecache.Key`（第 4 版）改用所属根范围的 `r<root_id>:<ino>`，不再持久化内核 `st_dev`；进程启动时将各媒体根当前的运行期 `st_dev` 与根 `ino` 保存在 `MediaRoot` 中，所有路径、扫描、播放与写操作仍严格核对运行期 `st_dev` 与根身份，跨设备子项归类为 `other`（`xdev:<dev>:<ino>`）且不深入。
+- **启动核对与诊断**：启动时核对已绑定根目录存在、`mount_point` 状态未变化且根 `r<root_id>:<ino>` 一致；网络共享重挂载仅改变 `st_dev`（包括原设备号复用到其他共享）时允许启动，卸载后落回空本地目录、根目录被替换或服务端 inode 变化（如 `noserverino`）时明确报错并输出期望/实际身份与当前设备号。
+
+## 本机执行结果
+
+| 检查 | 命令与结果 |
 | --- | --- |
-| 配置与 CLI | 验证多个相对媒体路径、默认的数据和缓存路径、拒绝旧键与危险的路径重叠。日志留空写 stdout，指定文件时创建父目录并追加，重启保留先前记录。 |
-| 媒体操作 | 两个同名根目录分别包含同名视频。扫描、标记、改名、播放和删除定位到所选根；调整配置顺序后原 ID 有效，两个根都受改名和删除保护。 |
-| 浏览器双根实测 | 启动编译出的服务并登录 Chromium，在 1440 和 390 像素宽度下用键盘切换根目录，核对列表和横向溢出。后台扫描默认选中两个根，设置弹窗可切换到第二个根。服务生命周期事件写入日志文件，stdout 为空。 |
-| Web 检查 | 类型检查、ESLint、Stylelint、Prettier、65 项单元测试和生产构建通过。 |
-| 相关 E2E | `npm --prefix web run test:e2e -- library-scan.spec.ts library-lifecycle.spec.ts` 通过 26 项，覆盖目录选择、刷新、加载失败、空状态、窄屏与焦点恢复。 |
-| Go 竞态测试 | 按开发说明分别运行全仓常规组及独立的 8,003 文件编号用例，两组通过。 |
-| Go 检查与构建 | 本机 `go vet ./...`、Linux amd64 交叉 vet、staticcheck、FFmpeg 与 CLI 构建版本集成测试、服务二进制构建通过。 |
+| 模块与格式 | `go mod verify`、`go mod tidy -diff`、`gofmt -l`、`go run golang.org/x/tools/cmd/goimports@v0.50.0 -local video-rename -l` 通过，无未格式化文件。 |
+| 全目标静态检查 | 8 个发布目标（`linux/amd64`、`linux/arm64`、`linux/ppc64le`、`linux/s390x`、`linux/riscv64`、`linux/loong64`、`darwin/amd64`、`darwin/arm64`）`go vet ./...`、`go vet -tags=integration,scale ./...` 与 `go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...` 全部通过。 |
+| 新增与更新回归 | `internal/library/roots_test.go` 覆盖重挂载 `st_dev` 变化与设备号复用（`51→52`、`52→58`）、卸载丢失 `mount_point` 拒绝、根 inode 变化拒绝、移除已绑定根拒绝、物理重复根拒绝、同 inode 不同设备双根允许、未规范化/尾斜杠根路径拒绝、运行期切换 `root.dev` 阻断 `Path`/`ScanDirectory`/`OpenPlayback`/`Rename`、跨设备子项归类为 `other`/`xdev:`、重启替换根目录拒绝，以及扫描/标记/改名/编号后持久化表不含 `st_dev` 且重挂载后标记与还原仍可用；`internal/framecache/cache_test.go` 覆盖 `st_dev` 变化不影响缓存键以及空 `Identity` 兜底保留设备隔离。 |
+| OCR 托管审查与复验 | `ocr delegate`（v1.14.1）审查全部 21 个可审查代码文件（覆盖率 100%，0 Critical/High，2 Medium）；修复 `inspectRoot` 尾斜杠路径校验与 `framecache.Key` 空 `Identity` 跨设备兜底后，复跑格式、`go vet`、`staticcheck`、`CGO_ENABLED=1 go test -race -count=1 ./internal/framecache ./internal/library ./internal/job` 及本机/Linux 交叉编译均通过。 |
+| Go 竞态测试（常规组） | `CGO_ENABLED=1 go test -race -count=1 -timeout=15m -skip '^TestLargeDirectoryNumberingPreviewIsPaged$' ./...` 全部 27 个测试包通过。 |
+| Go 竞态测试（重型组） | `CGO_ENABLED=1 go test -race -count=1 -timeout=15m -run '^TestLargeDirectoryNumberingPreviewIsPaged$' ./internal/app` 通过（113.13s）。 |
+| 集成测试 | `go test -tags=integration -count=1 ./internal/media ./cmd/video-rename` 通过（真实 FFmpeg 抽帧与 CLI 构建版本集成测试）。 |
+| 本机与交叉编译 | `go build -buildvcs=true -trimpath -o bin/video-rename ./cmd/video-rename`（`video-rename v1.1.13+dirty (revision=e81ece39f0ed, modified)`）及 `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -buildvcs=true -trimpath -o bin/video-rename-linux-amd64 ./cmd/video-rename` 构建通过。 |
 
-本次使用本机文件系统和 Chromium。Linux/Samba 目标环境、完整浏览器套件及远端 CI 未执行。
+## 未验证范围
+
+- **Linux / Samba 实机运行**：`bin/video-rename-linux-amd64` 仅完成了本机交叉编译，未在真实 AlmaLinux 10.2 + Samba/CIFS 重挂载环境中实机执行；内核 CIFS 客户端因外部客户端移动/重命名目录触发 `Autodisabling the use of server inode numbers` 属于内核行为，仍需通过部署与操作习惯规避。
+- **前端与浏览器套件**：本次未修改 `web/` 代码，未重新执行 Web 单元/lint/Playwright E2E、`govulncheck`、Fuzz、规模测试或远端 CI。

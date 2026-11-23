@@ -75,7 +75,11 @@ func (l *Library) PreviewNumbering(ctx context.Context, req NumberingRequest) (N
 	if err != nil {
 		return Numbering{}, err
 	}
-	before, err := directoryFingerprint(ctx, path)
+	root, _, err := l.rootPath(path)
+	if err != nil {
+		return Numbering{}, err
+	}
+	before, err := directoryFingerprint(ctx, root, path)
 	if err != nil {
 		return Numbering{}, err
 	}
@@ -120,7 +124,7 @@ func (l *Library) PreviewNumbering(ctx context.Context, req NumberingRequest) (N
 		}
 		if sameClass {
 			item := NumberingItem{Identity: e.Identity, Size: e.Size, ModifiedNS: e.ModifiedNS}
-			if !numberingMatch(filepath.Join(path, e.Name), item) {
+			if !numberingMatch(root, filepath.Join(path, e.Name), item) {
 				return Numbering{}, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingMediaChanged, Message: "a file changed; refresh the directory", Details: map[string]any{"media": m.value}})
 			}
 		}
@@ -146,7 +150,7 @@ func (l *Library) PreviewNumbering(ctx context.Context, req NumberingRequest) (N
 	if err != nil {
 		return Numbering{}, err
 	}
-	after, err := directoryFingerprint(ctx, path)
+	after, err := directoryFingerprint(ctx, root, path)
 	if err != nil {
 		return Numbering{}, err
 	}
@@ -161,7 +165,7 @@ func (l *Library) PreviewNumbering(ctx context.Context, req NumberingRequest) (N
 		items = mixedNumberingNames(selected, outside, settings)
 	}
 	b := Numbering{ID: numberingToken(), Parent: parent, Created: storage.Now(), Status: "preview", Fingerprint: before, Media: m.value, Items: items}
-	return l.saveNumberingPreview(ctx, b, path)
+	return l.saveNumberingPreview(ctx, b, root, path)
 }
 
 // Resolve an occupied target using only names returned by ReadDir. Looking up a
@@ -182,6 +186,7 @@ func numberingTargetMoves(name string, names map[string][]string, changed map[st
 
 // numberingConflictOptions groups the inputs for numberingConflict.
 type numberingConflictOptions struct {
+	Root       MediaRoot
 	Path       string
 	Batch      Numbering
 	Item       NumberingItem
@@ -192,13 +197,13 @@ type numberingConflictOptions struct {
 // Preview failures have no committed journal. Return evidence to the numbering
 // dialog so a conflict can be inspected before any file is renamed.
 func numberingConflict(params numberingConflictOptions) error {
-	path, b, item, target, candidates := params.Path, params.Batch, params.Item, params.Target, params.Candidates
+	root, path, b, item, target, candidates := params.Root, params.Path, params.Batch, params.Item, params.Target, params.Candidates
 
 	var detail strings.Builder
 	fmt.Fprintf(&detail, "numbering target conflict\ndirectory: %q\noriginal name: %q\ntarget name: %q\nmedia: %s\nfiles: %d; planned renames: %d\nindexed identity: %s\nsize: %d bytes\nmtime_ns: %d\n", path, item.Old, item.New, b.Media, len(b.Items), b.Changed, item.Identity, item.Size, item.ModifiedNS)
 	fmt.Fprintf(&detail, "target kind: %s\ntarget size: %d bytes\n", kindOf(target), target.Size())
 	if snap, err := domain.SnapshotFromInfo(target); err == nil {
-		fmt.Fprintf(&detail, "target identity: %s\n", Identity(snap))
+		fmt.Fprintf(&detail, "target identity: %s\n", root.identityLabel(snap))
 	}
 	// Reuse the target and name candidates from the failed check. Only inspect
 	// matching names, rather than statting every unrelated file for diagnostics.
@@ -217,7 +222,7 @@ func numberingConflict(params numberingConflictOptions) error {
 		}
 		fmt.Fprintf(&detail, "same file as the target path: %t\n", os.SameFile(target, actual))
 		if snapshot, err := domain.SnapshotFromInfo(actual); err == nil {
-			fmt.Fprintf(&detail, "entry identity: %s; size: %d; mtime_ns: %d\n", Identity(snapshot), snapshot.Size, stamp(snapshot))
+			fmt.Fprintf(&detail, "entry identity: %s; size: %d; mtime_ns: %d\n", root.identityLabel(snapshot), snapshot.Size, stamp(snapshot))
 		}
 		fmt.Fprintf(&detail, "occupying entry: %q (%s)\n", name, kindOf(actual))
 		participation := "not part of this numbering"
@@ -233,7 +238,7 @@ func numberingConflict(params numberingConflictOptions) error {
 	return &domain.JobError{Code: domain.CodeRenameConflict, Message: fmt.Sprintf("target %s is occupied by an entry outside this numbering (source %s)", item.New, item.Old), Details: map[string]any{"reason": "target_occupied", "from": item.Old, "to": item.New}, ProcessingLog: detail.String()}
 }
 
-func (l *Library) saveNumberingPreview(ctx context.Context, b Numbering, path string) (Numbering, error) {
+func (l *Library) saveNumberingPreview(ctx context.Context, b Numbering, root MediaRoot, path string) (Numbering, error) {
 	changed := map[string]NumberingItem{}
 	identities := map[string]bool{}
 	for _, i := range b.Items {
@@ -299,8 +304,8 @@ func (l *Library) saveNumberingPreview(ctx context.Context, b Numbering, path st
 		if err != nil {
 			return Numbering{}, err
 		}
-		if !moves || !target.Mode().IsRegular() || Identity(snapshot) != moving.Identity || snapshot.Size != moving.Size || stamp(snapshot) != moving.ModifiedNS {
-			return Numbering{}, numberingConflict(numberingConflictOptions{Path: path, Batch: b, Item: *i, Target: target, Candidates: candidates})
+		if !moves || !target.Mode().IsRegular() || !root.matches(snapshot, moving.Identity) || snapshot.Size != moving.Size || stamp(snapshot) != moving.ModifiedNS {
+			return Numbering{}, numberingConflict(numberingConflictOptions{Root: root, Path: path, Batch: b, Item: *i, Target: target, Candidates: candidates})
 		}
 	}
 	b.Total = len(b.Items)

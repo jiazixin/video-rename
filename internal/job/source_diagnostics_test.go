@@ -37,7 +37,7 @@ func TestDirectoryScanFailurePersistsDiagnostics(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := storage.WriteValue(t.Context(), m.db, func(tx *sql.Tx) (sql.Result, error) {
-		return tx.ExecContext(t.Context(), "UPDATE entries SET identity='999:888' WHERE id=?", entry)
+		return tx.ExecContext(t.Context(), "UPDATE entries SET identity='r1:888' WHERE id=?", entry)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestDirectoryScanFailurePersistsDiagnostics(t *testing.T) {
 	if !strings.Contains(message, `"stage":"path_identity"`) || !strings.Contains(oldPath, "folder") {
 		t.Fatalf("message=%s path=%s", message, oldPath)
 	}
-	for _, want := range []string{path, "999 ->", "888 ->", "kind: directory"} {
+	for _, want := range []string{path, "r1:888", "888 ->", "kind: directory"} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("missing %q: %s", want, detail)
 		}

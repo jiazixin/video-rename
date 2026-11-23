@@ -188,7 +188,7 @@ func (m *Manager) checkItem(ctx context.Context, batch Run, it item) (e library.
 	if err == nil {
 		snap, err = domain.StatSnapshot(path)
 	}
-	if err == nil && (library.Identity(snap) != it.Identity || snap.Size != it.Size || snap.ModTime.UnixNano() != it.ModifiedNS) {
+	if err == nil && (!m.Library.MatchesPathIdentity(path, snap, it.Identity) || snap.Size != it.Size || snap.ModTime.UnixNano() != it.ModifiedNS) {
 		return e, path, snap, recordSkipUnstable, nil
 	}
 	return e, path, snap, "", err
@@ -227,7 +227,7 @@ func (m *Manager) runItemTask(ctx context.Context, params runItemTaskOptions) (l
 		m.extractionFailure(ctx, extractionFailureOptions{Run: batch, Entry: it.Entry, Path: m.diagnosticPath(ctx, it.Entry), Cause: err})
 		return nil, false, true, err
 	}
-	job := domain.VideoJob{Path: path, Snapshot: snap, JobID: fmt.Sprint(it.ID)}
+	job := domain.VideoJob{JobID: fmt.Sprint(it.ID), Identity: it.Identity, Path: path, Snapshot: snap}
 	if batch.Task == "extract" {
 		lease, err = m.prepareFrames(ctx, prepareFramesOptions{Run: batch, Entry: it.Entry, Config: cfg, Job: job, Probe: probe, Ffmpeg: ffmpeg, Extracted: extracted})
 		extracted()

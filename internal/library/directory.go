@@ -14,24 +14,25 @@ import (
 // openDirectory pins each indexed ancestor before opening its child. A path
 // replacement cannot redirect subsequent relative filesystem operations.
 // The caller holds Library.mu and must close the returned directory.
-func (l *Library) openDirectory(ctx context.Context, id int64) (*os.File, error) {
+func (l *Library) openDirectory(ctx context.Context, id int64) (*os.File, MediaRoot, error) {
 	var chain []Entry
 	seen := map[int64]bool{}
 	for {
 		if id <= 0 || seen[id] || len(chain) > 1024 {
-			return nil, errBadHierarchy
+			return nil, MediaRoot{}, errBadHierarchy
 		}
 		seen[id] = true
 		e, err := l.IndexedEntry(ctx, id)
 		if err != nil {
-			return nil, err
+			return nil, MediaRoot{}, err
 		}
 		if e.Kind != "directory" {
-			return nil, errNotDirectory
+			return nil, MediaRoot{}, errNotDirectory
 		}
 		chain = append(chain, e)
 		if root, ok := l.byRootID[id]; ok {
-			return openScanDirectory(root.Path, chain)
+			dir, err := openScanDirectory(root, chain)
+			return dir, root, err
 		}
 		id = e.Parent
 	}

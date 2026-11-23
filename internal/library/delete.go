@@ -48,16 +48,16 @@ func (l *Library) Delete(ctx context.Context, id, version int64) error {
 	if err != nil {
 		return err
 	}
+	mount, rel, err := l.rootPath(p)
+	if err != nil {
+		return err
+	}
 	snap, err := domain.StatSnapshot(p)
 	if err != nil {
 		return err
 	}
-	if Identity(snap) != e.Identity || (e.Kind == "file" && (snap.Size != e.Size || stamp(snap) != e.ModifiedNS)) {
+	if !mount.matches(snap, e.Identity) || (e.Kind == "file" && (snap.Size != e.Size || stamp(snap) != e.ModifiedNS)) {
 		return errChanged
-	}
-	mount, rel, err := l.rootPath(p)
-	if err != nil {
-		return err
 	}
 	root, err := os.OpenRoot(mount.Path)
 	if err != nil {

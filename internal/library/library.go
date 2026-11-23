@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -63,9 +64,41 @@ type Library struct {
 	closed          bool
 }
 
-// Identity returns the device and inode identity of s.
-func Identity(s domain.Snapshot) string { return fmt.Sprintf("%d:%d", s.Dev, s.Ino) }
-func stamp(s domain.Snapshot) int64     { return s.ModTime.UnixNano() }
+// EntryIdentity formats the persisted identity of an entry under rootID.
+// Persisted identities exclude st_dev because network mounts allocate ephemeral
+// device numbers across remounts and host reboots.
+func EntryIdentity(rootID int64, ino uint64) string { return fmt.Sprintf("r%d:%d", rootID, ino) }
+
+func crossDeviceIdentity(s domain.Snapshot) string { return fmt.Sprintf("xdev:%d:%d", s.Dev, s.Ino) }
+func runtimeIdentity(s domain.Snapshot) string     { return fmt.Sprintf("%d:%d", s.Dev, s.Ino) }
+func stamp(s domain.Snapshot) int64                { return s.ModTime.UnixNano() }
+
+func parseEntryIdentity(identity string) (int64, uint64, bool) {
+	rest, ok := strings.CutPrefix(identity, "r")
+	if !ok {
+		return 0, 0, false
+	}
+	rootText, inoText, ok := strings.Cut(rest, ":")
+	if !ok {
+		return 0, 0, false
+	}
+	rootID, err := strconv.ParseInt(rootText, 10, 64)
+	if err != nil || rootID <= 0 {
+		return 0, 0, false
+	}
+	ino, err := strconv.ParseUint(inoText, 10, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+	return rootID, ino, true
+}
+
+// MatchesPathIdentity reports whether snap at a verified absolute path still
+// belongs to its bound root's runtime device and matches the persisted identity.
+func (l *Library) MatchesPathIdentity(path string, snap domain.Snapshot, identity string) bool {
+	root, _, err := l.rootPath(path)
+	return err == nil && root.matches(snap, identity)
+}
 
 // New binds the configured directories and recovers interrupted operations.
 func New(ctx context.Context, db *storage.Store, paths []string, logger *slog.Logger) (*Library, error) {
@@ -227,7 +260,7 @@ func (l *Library) pathForSnapshot(ctx context.Context, e Entry, lookup func(cont
 		return "", errBadHierarchy
 	}
 	rs, err := domain.StatSnapshot(root.Path)
-	if err != nil || Identity(rs) != e.Identity {
+	if err != nil || !root.matchesRoot(rs, e.Identity) {
 		return "", errRootUnavailable
 	}
 	p := root.Path
@@ -247,13 +280,18 @@ func (l *Library) pathForSnapshot(ctx context.Context, e Entry, lookup func(cont
 		if err != nil {
 			return "", err
 		}
-		if Identity(s) != entry.Identity {
-			var before domain.Snapshot
-			_, parseErr := fmt.Sscanf(entry.Identity, "%d:%d", &before.Dev, &before.Ino)
-			before.Size = entry.Size
-			before.ModTime = time.Unix(0, entry.ModifiedNS)
+		if !root.matches(s, entry.Identity) {
+			before := domain.Snapshot{
+				Dev:     root.dev,
+				Size:    entry.Size,
+				ModTime: time.Unix(0, entry.ModifiedNS),
+			}
+			indexedRoot, indexedIno, parsed := parseEntryIdentity(entry.Identity)
+			if parsed {
+				before.Ino = indexedIno
+			}
 			diagnostic := domain.SourceChangedError(domain.SourceChange{Message: "file identity changed; refresh the directory", Stage: domain.StagePathIdentity, Path: p, Before: before, After: s})
-			diagnostic.ProcessingLog += fmt.Sprintf("entry: %d\nkind: %s\nindexed identity: %q\nidentity parse error: %v\nsize or mtime_ns changes of a directory alone do not cause this identity error.\n", entry.ID, entry.Kind, entry.Identity, parseErr)
+			diagnostic.ProcessingLog += fmt.Sprintf("entry: %d\nkind: %s\nroot: %d (runtime device %d)\nindexed identity: %q (parsed=%t, root=%d)\nsize or mtime_ns changes of a directory alone do not cause this identity error.\n", entry.ID, entry.Kind, root.ID, root.dev, entry.Identity, parsed, indexedRoot)
 			return "", diagnostic
 		}
 	}

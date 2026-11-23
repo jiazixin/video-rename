@@ -12,7 +12,7 @@ import (
 
 func scanSnapshotDifference(phase string, before, after domain.Snapshot) error {
 	return ErrDirectoryScanChanged.Wrap(fmt.Errorf("%s: identity %s -> %s, size %d -> %d, mtime_ns %d -> %d",
-		phase, Identity(before), Identity(after), before.Size, after.Size, stamp(before), stamp(after)))
+		phase, runtimeIdentity(before), runtimeIdentity(after), before.Size, after.Size, stamp(before), stamp(after)))
 }
 
 // Report one captured difference, without rereading a possibly unstable NAS.

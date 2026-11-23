@@ -26,7 +26,7 @@ func TestAncestorIdentityDiagnostic(t *testing.T) {
 	refresh(t, l, parent.ID)
 	file := entry(t, entryOptions{l: l, parent: parent.ID, name: "a.mp4"})
 	if _, err := storage.WriteValue(t.Context(), l.db, func(tx *sql.Tx) (sql.Result, error) {
-		return tx.ExecContext(t.Context(), "UPDATE entries SET identity='999:888' WHERE id=?", parent.ID)
+		return tx.ExecContext(t.Context(), "UPDATE entries SET identity=? WHERE id=?", EntryIdentity(1, 888), parent.ID)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestAncestorIdentityDiagnostic(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected source diagnostic, got %v", err)
 	}
-	for _, want := range []string{dir, "999 ->", "888 ->", "kind: directory", "stage: " + domain.StagePathIdentity} {
+	for _, want := range []string{dir, "888 ->", "root: 1", `indexed identity: "r1:888"`, "kind: directory", "stage: " + domain.StagePathIdentity} {
 		if !strings.Contains(diagnostic.ProcessingLog, want) {
 			t.Fatalf("missing %q: %s", want, diagnostic.ProcessingLog)
 		}

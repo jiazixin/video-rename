@@ -99,11 +99,11 @@ func (l *Library) lockNumbering(ctx context.Context) error {
 	return nil
 }
 
-func numberingMatch(path string, i NumberingItem) bool {
+func numberingMatch(root MediaRoot, path string, i NumberingItem) bool {
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
 		return false
 	}
 	s, err := domain.SnapshotFromInfo(info)
-	return err == nil && Identity(s) == i.Identity && s.Size == i.Size && stamp(s) == i.ModifiedNS
+	return err == nil && root.matches(s, i.Identity) && s.Size == i.Size && stamp(s) == i.ModifiedNS
 }

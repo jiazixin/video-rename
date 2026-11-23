@@ -43,7 +43,11 @@ func (l *Library) ApplyNumbering(ctx context.Context, id string, progress func(i
 	if err != nil {
 		return b, err
 	}
-	fingerprint, err := directoryFingerprint(ctx, path)
+	root, _, err := l.rootPath(path)
+	if err != nil {
+		return b, err
+	}
+	fingerprint, err := directoryFingerprint(ctx, root, path)
 	if err != nil {
 		return b, err
 	}
@@ -70,7 +74,7 @@ func (l *Library) ApplyNumbering(ctx context.Context, id string, progress func(i
 		if b.UndoOf == "" && e.Processed == "marked" {
 			return b, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingItemMarked, Message: "file is marked to skip numbering; preview again", Details: map[string]any{"media": b.Media, "name": e.Name}})
 		}
-		if e.Parent != b.Parent || e.Version != i.Version || e.Name != i.Old || !numberingMatch(filepath.Join(path, i.Old), i) {
+		if e.Parent != b.Parent || e.Version != i.Version || e.Name != i.Old || !numberingMatch(root, filepath.Join(path, i.Old), i) {
 			return b, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingItemChanged, Message: "file changed; preview again", Details: map[string]any{"media": b.Media, "name": i.Old}})
 		}
 		if err = l.CheckAvailable(ctx, i.Entry); err != nil {
@@ -117,7 +121,7 @@ func (l *Library) ApplyNumbering(ctx context.Context, id string, progress func(i
 			l.broken = saveErr
 			return b, domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonNumberingEvidenceUnsaved, Message: "saving the numbering failure failed; restart to review"}).Wrap(saveErr)
 		}
-		if recovery := l.rollbackNumbering(ctx, &b, path); recovery != nil {
+		if recovery := l.rollbackNumbering(ctx, &b, root, path); recovery != nil {
 			b.Status = "review"
 			b.Error = domain.Record{Code: "numbering_recovery_incomplete", Message: fmt.Sprintf("%v; recovery incomplete: %v", cause, recovery), Details: map[string]any{"media": b.Media, "cause": domain.RecordOf(cause), "recovery": domain.RecordOf(recovery)}}
 			if diagnostic, ok := errors.AsType[*domain.JobError](recovery); ok {
@@ -161,13 +165,13 @@ func (l *Library) moveNumbering(ctx context.Context, params moveNumberingOptions
 	if checked, err := l.Path(ctx, b.Parent); err != nil || checked != path {
 		return errors.New("parent directory changed")
 	}
-	dir, err := l.openDirectory(ctx, b.Parent)
+	dir, root, err := l.openDirectory(ctx, b.Parent)
 	if err != nil {
 		return err
 	}
 	defer dir.Close()
 	snap, err := directorySnapshot(dir, i.Current)
-	if err != nil || Identity(snap) != i.Identity || snap.Size != i.Size || stamp(snap) != i.ModifiedNS {
+	if err != nil || !root.matches(snap, i.Identity) || snap.Size != i.Size || stamp(snap) != i.ModifiedNS {
 		return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingItemChanged, Message: "file identity or content changed", Details: map[string]any{"media": b.Media, "name": i.Current}})
 	}
 	l.indexEpoch.Add(1)
@@ -178,7 +182,7 @@ func (l *Library) moveNumbering(ctx context.Context, params moveNumberingOptions
 	}
 	i.Pending = target
 	if err := rename.NoReplaceAt(int(dir.Fd()), i.Current, target); err != nil {
-		return numberingMoveFailure(ctx, numberingMoveFailureOptions{Batch: b, Item: i, Path: path, Target: target, Cause: err})
+		return numberingMoveFailure(ctx, numberingMoveFailureOptions{Root: root, Batch: b, Item: i, Path: path, Target: target, Cause: err})
 	}
 	if err := dir.Sync(); err != nil {
 		return err
@@ -290,7 +294,7 @@ func (l *Library) performNumbering(ctx context.Context, b *Numbering, path strin
 }
 
 func (l *Library) verifyNumberingCommit(ctx context.Context, b *Numbering) (err error) {
-	dir, err := l.openDirectory(ctx, b.Parent)
+	dir, root, err := l.openDirectory(ctx, b.Parent)
 	if err != nil {
 		return err
 	}
@@ -300,7 +304,7 @@ func (l *Library) verifyNumberingCommit(ctx context.Context, b *Numbering) (err 
 			return err
 		}
 		operation := Operation{Kind: "file", Identity: item.Identity, Size: item.Size, ModifiedNS: item.ModifiedNS}
-		if err := verifyOperationFile(dir, item.New, operation); err != nil {
+		if err := root.verifyOperationFile(dir, item.New, operation); err != nil {
 			return domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonNumberingItemChanged, Message: "file changed before commit", Details: map[string]any{"media": b.Media, "name": item.New}}).Wrap(err)
 		}
 	}

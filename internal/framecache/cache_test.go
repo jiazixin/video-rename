@@ -127,14 +127,20 @@ func TestPartialFailureCleanedAndUnknownFilesUntouched(t *testing.T) {
 func TestMappingDependsOnSourceAndFramesNotModel(t *testing.T) {
 	frame := config.DefaultFrameSettings()
 	cfg := config.TaskConfig{Sampling: frame.Sampling, Images: frame.Images}
-	job := domain.VideoJob{Snapshot: domain.Snapshot{Dev: 1, Ino: 2, Size: 3, ModTime: time.Unix(1000, 0)}}
+	job := domain.VideoJob{Identity: "r1:2", Snapshot: domain.Snapshot{Dev: 51, Ino: 2, Size: 3, ModTime: time.Unix(1000, 0)}}
 	key := Key(job, &cfg)
 	cfg.Prompt = "new prompt"
 	cfg.Server.Model = "new model"
 	job.Path = "new/path"
+	job.Snapshot.Dev = 58
 	if Key(job, &cfg) != key {
-		t.Fatal("model or path changed frame key")
+		t.Fatal("model, path, or runtime device changed frame key")
 	}
+	job.Identity = "r2:2"
+	if Key(job, &cfg) == key {
+		t.Fatal("root identity change ignored")
+	}
+	job.Identity = "r1:2"
 	job.Snapshot.Size++
 	if Key(job, &cfg) == key {
 		t.Fatal("source changes ignored")
@@ -143,6 +149,12 @@ func TestMappingDependsOnSourceAndFramesNotModel(t *testing.T) {
 	cfg.Images.MaxDimension++
 	if Key(job, &cfg) == key {
 		t.Fatal("frame parameters ignored")
+	}
+	// Fallback without persisted identity must still distinguish devices.
+	fallbackA := domain.VideoJob{Snapshot: domain.Snapshot{Dev: 51, Ino: 2, Size: 3, ModTime: time.Unix(1000, 0)}}
+	fallbackB := domain.VideoJob{Snapshot: domain.Snapshot{Dev: 52, Ino: 2, Size: 3, ModTime: time.Unix(1000, 0)}}
+	if Key(fallbackA, &cfg) == Key(fallbackB, &cfg) {
+		t.Fatal("fallback key without persisted identity collided across devices")
 	}
 }
 

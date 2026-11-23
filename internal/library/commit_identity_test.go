@@ -159,10 +159,10 @@ func TestNumberingCommitRejectsChangedFile(t *testing.T) {
 			if err != nil || string(data) != "externally changed content must survive" {
 				t.Fatalf("got file=%q err=%v, want external content preserved", data, err)
 			}
-			if change == "replace" && !numberingMatch(path+".saved", item) {
+			if change == "replace" && !numberingMatch(l.roots[0], path+".saved", item) {
 				t.Fatal("got changed original snapshot, want original preserved after replacement")
 			}
-			if change == "parent" && !numberingMatch(filepath.Join(root+".saved", item.New), item) {
+			if change == "parent" && !numberingMatch(l.roots[0], filepath.Join(root+".saved", item.New), item) {
 				t.Fatal("got changed original snapshot, want original preserved after parent replacement")
 			}
 		})

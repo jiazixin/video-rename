@@ -171,8 +171,8 @@ func TestScanDirectorySlowMetadataDoesNotBlockRename(t *testing.T) {
 	go func() {
 		_, err := l.scanDirectoryWithMetadata(t.Context(), 1,
 			func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) },
-			func(dir *os.File, de os.DirEntry) (scannedDirectoryEntry, error) {
-				item, err := scanPinnedDirectoryEntry(dir, de)
+			func(mediaRoot MediaRoot, dir *os.File, de os.DirEntry) (scannedDirectoryEntry, error) {
+				item, err := scanPinnedDirectoryEntry(mediaRoot, dir, de)
 				if de.Name() == "a.mp4" {
 					enter()
 					<-released
@@ -394,11 +394,11 @@ func TestScanDirectoryMetadataFailureKeepsIndexAndCleansScratch(t *testing.T) {
 	_, err := l.scanDirectoryWithMetadata(t.Context(), 1, func(dir *os.File, n int) ([]os.DirEntry, error) {
 		reads++
 		return dir.ReadDir(n)
-	}, func(dir *os.File, de os.DirEntry) (scannedDirectoryEntry, error) {
+	}, func(mediaRoot MediaRoot, dir *os.File, de os.DirEntry) (scannedDirectoryEntry, error) {
 		if reads == 2 {
 			return scannedDirectoryEntry{}, wantErr
 		}
-		return scanPinnedDirectoryEntry(dir, de)
+		return scanPinnedDirectoryEntry(mediaRoot, dir, de)
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("scan error: %v", err)
@@ -557,7 +557,7 @@ func TestScanDirectoryMetadataUsesPinnedDescriptorDuringSymlinkSwitch(t *testing
 	}
 	result, err := l.scanDirectoryWithMetadata(t.Context(), id,
 		func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) },
-		func(dir *os.File, de os.DirEntry) (scannedDirectoryEntry, error) {
+		func(mediaRoot MediaRoot, dir *os.File, de os.DirEntry) (scannedDirectoryEntry, error) {
 			parked := inside + "-parked"
 			if err := os.Rename(inside, parked); err != nil {
 				return scannedDirectoryEntry{}, err
@@ -565,7 +565,7 @@ func TestScanDirectoryMetadataUsesPinnedDescriptorDuringSymlinkSwitch(t *testing
 			if err := os.Symlink(outside, inside); err != nil {
 				return scannedDirectoryEntry{}, errors.Join(err, os.Rename(parked, inside))
 			}
-			item, statErr := scanPinnedDirectoryEntry(dir, de)
+			item, statErr := scanPinnedDirectoryEntry(mediaRoot, dir, de)
 			removeErr := os.Remove(inside)
 			restoreErr := os.Rename(parked, inside)
 			return item, errors.Join(statErr, removeErr, restoreErr)
@@ -575,8 +575,8 @@ func TestScanDirectoryMetadataUsesPinnedDescriptorDuringSymlinkSwitch(t *testing
 		t.Fatalf("pinned metadata scan: %+v %v", result, err)
 	}
 	indexed := entry(t, entryOptions{l: l, parent: id, name: "one.mp4"})
-	if indexed.Identity != Identity(actual) {
-		t.Fatalf("scan published metadata from outside root: indexed=%s actual=%s", indexed.Identity, Identity(actual))
+	if want := EntryIdentity(l.roots[0].ID, actual.Ino); indexed.Identity != want {
+		t.Fatalf("scan published metadata from outside root: indexed=%s actual=%s", indexed.Identity, want)
 	}
 }
 
@@ -600,11 +600,11 @@ func TestScanDirectoryReclaimsInterruptedCandidatesAfterRestart(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			dir, err := openScanDirectory(root, baseline.chain)
+			dir, err := openScanDirectory(l.roots[0], baseline.chain)
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = collectScanMetadata(t.Context(), collectScanMetadataOptions{Stage: stage, Table: "snapshot", Dir: dir, Read: func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) }})
+			err = collectScanMetadata(t.Context(), collectScanMetadataOptions{Root: l.roots[0], Stage: stage, Table: "snapshot", Dir: dir, Read: func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) }})
 			err = errors.Join(err, dir.Close())
 			if err != nil {
 				t.Fatal(err)
@@ -839,11 +839,11 @@ func TestScanCleanupFindsCommittedPageAfterStageUpdateFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir, err := openScanDirectory(root, baseline.chain)
+	dir, err := openScanDirectory(l.roots[0], baseline.chain)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = collectScanMetadata(t.Context(), collectScanMetadataOptions{Stage: stage, Table: "snapshot", Dir: dir, Read: func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) }})
+	err = collectScanMetadata(t.Context(), collectScanMetadataOptions{Root: l.roots[0], Stage: stage, Table: "snapshot", Dir: dir, Read: func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) }})
 	err = errors.Join(err, dir.Close())
 	if err != nil {
 		t.Fatal(err)
@@ -983,7 +983,7 @@ func TestScanDirectoryRejectsAncestorReplacementAfterPinnedVerification(t *testi
 			var replace sync.Once
 			_, err := l.scanDirectoryWithMetadata(t.Context(), id,
 				func(dir *os.File, n int) ([]os.DirEntry, error) { return dir.ReadDir(n) },
-				func(dir *os.File, de os.DirEntry) (scannedDirectoryEntry, error) {
+				func(mediaRoot MediaRoot, dir *os.File, de os.DirEntry) (scannedDirectoryEntry, error) {
 					var replaceErr error
 					replace.Do(func() {
 						if replaceErr = os.Rename(inside, inside+"-parked"); replaceErr == nil {
@@ -993,7 +993,7 @@ func TestScanDirectoryRejectsAncestorReplacementAfterPinnedVerification(t *testi
 					if replaceErr != nil {
 						return scannedDirectoryEntry{}, replaceErr
 					}
-					return scanPinnedDirectoryEntry(dir, de)
+					return scanPinnedDirectoryEntry(mediaRoot, dir, de)
 				})
 			if err == nil {
 				t.Fatal("final ancestor verification accepted a replaced path")

@@ -53,9 +53,19 @@ func TestNumberingCancelledWhileWaitingForLock(t *testing.T) {
 	}
 }
 
+func testMediaRoot(t *testing.T, dir string) MediaRoot {
+	t.Helper()
+	snap, err := domain.StatSnapshot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return MediaRoot{ID: 1, Path: dir, Name: filepath.Base(dir), dev: snap.Dev, ino: snap.Ino}
+}
+
 func TestNumberingDirectoryCancellation(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
+	mediaRoot := testMediaRoot(t, root)
 	for i := range 2*refreshPageSize + 1 {
 		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("%04d.jpg", i)), nil, 0o600); err != nil {
 			t.Fatal(err)
@@ -77,7 +87,7 @@ func TestNumberingDirectoryCancellation(t *testing.T) {
 			if !errors.Is(err, context.Canceled) || visited != stop {
 				t.Fatalf("visited %d entries, error %v; want %d and context.Canceled", visited, err, stop)
 			}
-			snapshot, err := directoryFingerprint(ctx, root)
+			snapshot, err := directoryFingerprint(ctx, mediaRoot, root)
 			if !errors.Is(err, context.Canceled) || snapshot != "" {
 				t.Fatalf("cancelled fingerprint returned %q, %v", snapshot, err)
 			}
@@ -88,6 +98,7 @@ func TestNumberingDirectoryCancellation(t *testing.T) {
 func TestNumberingSnapshotIncludesEveryPageInNameOrder(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
+	mediaRoot := testMediaRoot(t, root)
 	var names []string
 	for i := 2 * refreshPageSize; i >= 0; i-- {
 		name := fmt.Sprintf("%04d.jpg", i)
@@ -97,7 +108,7 @@ func TestNumberingSnapshotIncludesEveryPageInNameOrder(t *testing.T) {
 		names = append(names, name)
 	}
 	slices.Reverse(names)
-	raw, err := directoryFingerprint(t.Context(), root)
+	raw, err := directoryFingerprint(t.Context(), mediaRoot, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +132,7 @@ func TestNumberingSnapshotDiagnosesNonParticipatingEntries(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "added.txt"), []byte("new"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	actual, err := directoryFingerprint(t.Context(), root)
+	actual, err := directoryFingerprint(t.Context(), l.roots[0], root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,11 +163,11 @@ func TestNumberingRejectsInvalidPreviewFormat(t *testing.T) {
 		{"empty", ""},
 		{"plain", "fingerprint"},
 		{"malformed", "{"},
-		{"unsupported_version", `{"version":2,"hash":"fingerprint","entries":[]}`},
+		{"unsupported_version", `{"version":4,"hash":"fingerprint","entries":[]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			l, root, b := numberedFixture(t)
-			before, err := directoryFingerprint(t.Context(), root)
+			before, err := directoryFingerprint(t.Context(), l.roots[0], root)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -170,7 +181,7 @@ func TestNumberingRejectsInvalidPreviewFormat(t *testing.T) {
 			if !ok || diagnostic.Code != domain.CodeSourceChanged || diagnostic.Details["reason"] != "preview_invalid" {
 				t.Fatal("invalid preview accepted or misdiagnosed", err)
 			}
-			after, err := directoryFingerprint(t.Context(), root)
+			after, err := directoryFingerprint(t.Context(), l.roots[0], root)
 			if err != nil || after != before {
 				t.Fatal("invalid preview changed files", err)
 			}
@@ -188,13 +199,13 @@ func TestNumberingRejectsInvalidPreviewFormat(t *testing.T) {
 	}
 }
 func TestNumberingSnapshotReportsIdentityOnlyDrift(t *testing.T) {
-	before := numberingDirectorySnapshot{Version: 4, Hash: "old", Entries: []numberingEntrySnapshot{{Name: "photo.jpg", Type: "----------", Identity: "1:100", Size: 42, ModifiedNS: 1790467200000000000}}}
+	before := numberingDirectorySnapshot{Version: numberingSnapshotVersion, Hash: "old", Entries: []numberingEntrySnapshot{{Name: "photo.jpg", Type: "----------", Identity: "r1:100", Size: 42, ModifiedNS: 1790467200000000000}}}
 	old, err := json.Marshal(before)
 	if err != nil {
 		t.Fatal(err)
 	}
 	before.Hash = "new"
-	before.Entries[0].Identity = "1:999"
+	before.Entries[0].Identity = "r1:999"
 	current, err := json.Marshal(before)
 	if err != nil {
 		t.Fatal(err)
@@ -203,7 +214,7 @@ func TestNumberingSnapshotReportsIdentityOnlyDrift(t *testing.T) {
 	if !describeNumberingSnapshotDiff(&detail, string(old), string(current)) {
 		t.Fatal("not decoded")
 	}
-	for _, want := range []string{"photo.jpg", "1:100 -> 1:999", "size 42 -> 42", "1 entries differ"} {
+	for _, want := range []string{"photo.jpg", "r1:100 -> r1:999", "size 42 -> 42", "1 entries differ"} {
 		if !strings.Contains(detail.String(), want) {
 			t.Fatal(want, detail.String())
 		}

@@ -52,6 +52,7 @@ func (b *Numbering) decodeNumberingError(stored string) error {
 
 // numberingMoveFailureOptions groups the inputs for numberingMoveFailure.
 type numberingMoveFailureOptions struct {
+	Root   MediaRoot
 	Batch  *Numbering
 	Item   *NumberingItem
 	Path   string
@@ -62,7 +63,7 @@ type numberingMoveFailureOptions struct {
 // Capture after the failed syscall and before any rollback. These are subsequent
 // observations, not an assertion about the filesystem at syscall time.
 func numberingMoveFailure(ctx context.Context, params numberingMoveFailureOptions) error {
-	b, item, path, target, cause := params.Batch, params.Item, params.Path, params.Target, params.Cause
+	root, b, item, path, target, cause := params.Root, params.Batch, params.Item, params.Path, params.Target, params.Cause
 
 	phase := "final_rename"
 	if target == item.Temp {
@@ -85,7 +86,7 @@ func numberingMoveFailure(ctx context.Context, params numberingMoveFailureOption
 		}
 		fmt.Fprintf(&detail, "%s %q: kind=%s; size=%d; mtime_ns=%d", label, name, kindOf(info), info.Size(), info.ModTime().UnixNano())
 		if snapshot, err := domain.SnapshotFromInfo(info); err == nil {
-			fmt.Fprintf(&detail, "; identity=%s", Identity(snapshot))
+			fmt.Fprintf(&detail, "; identity=%s", root.identityLabel(snapshot))
 		}
 		fmt.Fprintln(&detail)
 		if info.Mode()&os.ModeSymlink != 0 {

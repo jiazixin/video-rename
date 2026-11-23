@@ -177,11 +177,15 @@ func (l *Library) Restore(ctx context.Context, id int64, key string) (Operation,
 	if err != nil {
 		return Operation{}, err
 	}
+	root, _, err := l.rootPath(p)
+	if err != nil {
+		return Operation{}, err
+	}
 	s, err := domain.StatSnapshot(p)
 	if err != nil {
 		return Operation{}, err
 	}
-	if Identity(s) != old.Identity || (e.Kind != "directory" && (s.Size != old.Size || stamp(s) != old.ModifiedNS)) {
+	if !root.matches(s, old.Identity) || (e.Kind != "directory" && (s.Size != old.Size || stamp(s) != old.ModifiedNS)) {
 		return Operation{}, domain.Fail(domain.KindConflict, domain.Failure{Reason: domain.ReasonRestoreSourceChanged, Message: "file identity or content changed; cannot restore"})
 	}
 	return l.commit(ctx, commitOptions{Entry: e, Name: old.Old, Source: "restore", Key: key, Undo: id, Run: 0})
@@ -374,7 +378,7 @@ func (l *Library) commit(ctx context.Context, params commitOptions) (Operation, 
 	if err != nil {
 		return Operation{}, err
 	}
-	dir, err := l.openDirectory(ctx, e.Parent)
+	dir, root, err := l.openDirectory(ctx, e.Parent)
 	if err != nil {
 		return Operation{}, err
 	}
@@ -383,7 +387,7 @@ func (l *Library) commit(ctx context.Context, params commitOptions) (Operation, 
 	if err != nil {
 		return Operation{}, err
 	}
-	if Identity(snap) != e.Identity || (e.Kind != "directory" && (snap.Size != e.Size || stamp(snap) != e.ModifiedNS)) {
+	if !root.matches(snap, e.Identity) || (e.Kind != "directory" && (snap.Size != e.Size || stamp(snap) != e.ModifiedNS)) {
 		return Operation{}, errChanged
 	}
 	if name == e.Name && source == "manual" {
@@ -424,7 +428,7 @@ func (l *Library) commit(ctx context.Context, params commitOptions) (Operation, 
 	}
 	// Journaling can block long enough for another process to replace the leaf.
 	// Retain prepared evidence on any mismatch; recovery must inspect both names.
-	if err = verifyOperationFile(dir, e.Name, o); err != nil {
+	if err = root.verifyOperationFile(dir, e.Name, o); err != nil {
 		l.broken = err
 		return o, domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonJournalSourceChanged, Message: "source changed after journaling; restart to review"}).Wrap(err)
 	}
@@ -449,7 +453,7 @@ func (l *Library) commit(ctx context.Context, params commitOptions) (Operation, 
 		l.broken = err
 		return o, domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonRenameParentChanged, Message: "renamed, but the parent directory changed; restart to review"}).Wrap(err)
 	}
-	if err = verifyOperationFile(dir, name, o); err != nil {
+	if err = root.verifyOperationFile(dir, name, o); err != nil {
 		l.broken = err
 		return o, domain.Fail(domain.KindInternal, domain.Failure{Reason: domain.ReasonRenameResultChanged, Message: "renamed file identity or content changed; restart to review"}).Wrap(err)
 	}
@@ -461,12 +465,12 @@ func (l *Library) commit(ctx context.Context, params commitOptions) (Operation, 
 	return o, nil
 }
 
-func verifyOperationFile(dir *os.File, name string, o Operation) error {
+func (r MediaRoot) verifyOperationFile(dir *os.File, name string, o Operation) error {
 	snap, err := directorySnapshot(dir, name)
 	if err != nil {
 		return err
 	}
-	if Identity(snap) != o.Identity || (o.Kind != "directory" && (snap.Size != o.Size || stamp(snap) != o.ModifiedNS)) {
+	if !r.matches(snap, o.Identity) || (o.Kind != "directory" && (snap.Size != o.Size || stamp(snap) != o.ModifiedNS)) {
 		return errors.New("file identity or content does not match the operation journal")
 	}
 	return nil
@@ -479,12 +483,12 @@ func (l *Library) finish(ctx context.Context, o Operation, oldrel, newrel string
 		}
 		// Revalidate after database writes as well: they can wait on storage while
 		// another process changes the renamed leaf. Roll back the success journal.
-		dir, err := l.openDirectory(ctx, o.Parent)
+		dir, root, err := l.openDirectory(ctx, o.Parent)
 		if err != nil {
 			return err
 		}
 		defer dir.Close()
-		if err = verifyOperationFile(dir, o.New, o); err != nil {
+		if err = root.verifyOperationFile(dir, o.New, o); err != nil {
 			return err
 		}
 		if _, err = l.Path(ctx, o.Parent); err != nil {
@@ -582,6 +586,10 @@ func (l *Library) Recover(ctx context.Context) error {
 	}
 	for _, o := range ops {
 		parent, pe := l.Path(ctx, o.Parent)
+		var root MediaRoot
+		if pe == nil {
+			root, _, pe = l.rootPath(parent)
+		}
 		if pe != nil {
 			if _, err = storage.WriteValue(ctx, l.db, func(tx *sql.Tx) (sql.Result, error) {
 				return tx.ExecContext(ctx, "UPDATE operations SET status='review',error=? WHERE id=?", domain.Record{Code: "parent_unverifiable", Message: "parent directory cannot be verified"}.Text(), o.ID)
@@ -594,7 +602,7 @@ func (l *Library) Recover(ctx context.Context) error {
 		a, ae := domain.StatSnapshot(old)
 		b, be := domain.StatSnapshot(new)
 		match := func(s domain.Snapshot) bool {
-			return Identity(s) == o.Identity && (o.Kind == "directory" || (s.Size == o.Size && stamp(s) == o.ModifiedNS))
+			return root.matches(s, o.Identity) && (o.Kind == "directory" || (s.Size == o.Size && stamp(s) == o.ModifiedNS))
 		}
 		// Recovery paths share the verified absolute library root.
 		oldrel, _ := l.RelativePath(old)
