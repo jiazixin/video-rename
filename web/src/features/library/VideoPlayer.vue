@@ -1,7 +1,8 @@
 <script setup lang="ts">
   import { formatPlaybackTime } from '../../lib/format/date';
   import PlaybackSpeedMenu from './PlaybackSpeedMenu.vue';
-  import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
+  import { readVideoPreferences, writeVideoPreferences } from './video-preferences';
+  import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue';
   import {
     Play,
     Pause,
@@ -24,27 +25,72 @@
   const emit = defineEmits<{ previous: []; next: [] }>();
   const video = ref<HTMLVideoElement>(),
     shell = ref<HTMLElement>();
+  const initialPreferences = readVideoPreferences();
   const paused = ref(true),
     current = ref(0),
     duration = ref(0),
-    volume = ref(1),
-    muted = ref(false),
+    volume = ref(initialPreferences.volume),
+    muted = ref(initialPreferences.muted),
     error = ref(''),
     fullscreen = ref(false),
-    speed = ref(1);
+    speed = ref(initialPreferences.speed);
+  let isLoadingSource = true;
+  function persistPreferences() {
+    writeVideoPreferences({
+      speed: speed.value,
+      volume: volume.value,
+      muted: muted.value
+    });
+  }
+  function applyPreferences() {
+    const v = video.value;
+    if (!v) return;
+    if (v.volume !== volume.value) v.volume = volume.value;
+    if (v.muted !== muted.value) v.muted = muted.value;
+    if (v.defaultPlaybackRate !== speed.value) v.defaultPlaybackRate = speed.value;
+    if (v.playbackRate !== speed.value) v.playbackRate = speed.value;
+  }
   function changeSpeed(value: number) {
-    if (video.value) video.value.playbackRate = value;
+    speed.value = value;
+    persistPreferences();
+    const v = video.value;
+    if (!v) return;
+    v.defaultPlaybackRate = value;
+    v.playbackRate = value;
   }
   const progress = computed(() => (duration.value ? (current.value / duration.value) * 100 : 0));
-  function sync() {
+  function syncTimeline() {
     const v = video.value;
     if (!v) return;
     paused.value = v.paused;
     current.value = v.currentTime;
     duration.value = Number.isFinite(v.duration) ? v.duration : 0;
+  }
+  function onLoadedMetadata() {
+    applyPreferences();
+    isLoadingSource = false;
+    syncTimeline();
+  }
+  function syncVolume() {
+    const v = video.value;
+    if (!v) return;
+    if (v.volume === volume.value && v.muted === muted.value) return;
     volume.value = v.volume;
     muted.value = v.muted;
+    persistPreferences();
+  }
+  function syncRate() {
+    const v = video.value;
+    if (!v) return;
+    if (isLoadingSource) {
+      if (v.defaultPlaybackRate !== speed.value) v.defaultPlaybackRate = speed.value;
+      if (v.playbackRate !== speed.value) v.playbackRate = speed.value;
+      return;
+    }
+    if (v.playbackRate === speed.value) return;
     speed.value = v.playbackRate;
+    v.defaultPlaybackRate = v.playbackRate;
+    persistPreferences();
   }
   async function toggle() {
     const v = video.value;
@@ -64,7 +110,7 @@
         duration.value,
         Math.max(0, Number((e.target as HTMLInputElement).value))
       );
-      sync();
+      syncTimeline();
     }
   }
   function keyboard(e: KeyboardEvent) {
@@ -79,20 +125,25 @@
       0,
       Math.min(duration.value, v.currentTime + (e.key === 'ArrowRight' ? 10 : -10))
     );
-    sync();
+    syncTimeline();
   }
   function changeVolume(e: Event) {
-    if (video.value) {
-      video.value.volume = Number((e.target as HTMLInputElement).value);
-      video.value.muted = false;
-      sync();
-    }
+    const nextVolume = Math.min(1, Math.max(0, Number((e.target as HTMLInputElement).value)));
+    volume.value = nextVolume;
+    muted.value = false;
+    persistPreferences();
+    const v = video.value;
+    if (!v) return;
+    v.volume = nextVolume;
+    v.muted = false;
   }
   function mute() {
-    if (video.value) {
-      video.value.muted = !video.value.muted;
-      sync();
-    }
+    const nextMuted = !muted.value;
+    muted.value = nextMuted;
+    persistPreferences();
+    const v = video.value;
+    if (!v) return;
+    v.muted = nextMuted;
   }
   async function expand() {
     try {
@@ -105,11 +156,25 @@
   function fullChanged() {
     fullscreen.value = document.fullscreenElement === shell.value;
   }
+  watch(
+    () => src,
+    () => {
+      isLoadingSource = true;
+      error.value = '';
+      current.value = 0;
+      duration.value = 0;
+      paused.value = true;
+      applyPreferences();
+    },
+    { flush: 'post' }
+  );
   onMounted(() => {
+    applyPreferences();
     document.addEventListener('fullscreenchange', fullChanged);
     document.addEventListener('keydown', keyboard);
   });
   onBeforeUnmount(() => {
+    isLoadingSource = true;
     document.removeEventListener('fullscreenchange', fullChanged);
     document.removeEventListener('keydown', keyboard);
     const v = video.value;
@@ -132,14 +197,14 @@
         playsinline
         preload="metadata"
         @click="toggle"
-        @loadedmetadata="sync"
-        @durationchange="sync"
-        @timeupdate="sync"
-        @play="sync"
-        @pause="sync"
-        @ended="sync"
-        @volumechange="sync"
-        @ratechange="sync"
+        @loadedmetadata="onLoadedMetadata"
+        @durationchange="syncTimeline"
+        @timeupdate="syncTimeline"
+        @play="syncTimeline"
+        @pause="syncTimeline"
+        @ended="syncTimeline"
+        @volumechange="syncVolume"
+        @ratechange="syncRate"
         @error="error = '无法播放此视频，文件可能不可用或浏览器不支持其编码。'"
       />
       <button

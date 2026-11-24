@@ -1375,7 +1375,6 @@
             >第 {{ videoPosition }} 个</span
           ></template
         ><VideoPlayer
-          :key="playing.id"
           :src="`/api/entries/${playing.id}/video`"
           :switching="videoBusy"
           :notice="videoNotice"

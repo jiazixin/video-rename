@@ -2277,6 +2277,95 @@ test('大播放器、方向键十秒跳转与跨页切集', async ({ page }) => 
   await expect(page.getByRole('button', { name: '下一集', exact: true })).toBeVisible()
 })
 
+test('切换视频与重新打开保留播放速度和音量', async ({ page }) => {
+  await login(page)
+  await page.getByRole('button', { name: '播放视频 preview.webm', exact: true }).click()
+  const media = page.getByLabel('视频画面', { exact: true })
+  await expect
+    .poll(() => media.evaluate((v: HTMLVideoElement) => v.readyState))
+    .toBeGreaterThanOrEqual(2)
+  const previewSrc = await media.evaluate((v: HTMLVideoElement) => v.currentSrc)
+  const previewBody = await (await page.request.get(previewSrc)).body()
+
+  await page.getByRole('button', { name: '播放速度 1×', exact: true }).click()
+  await page.getByRole('menuitemradio', { name: '1.5×', exact: true }).click()
+  await page.getByRole('slider', { name: '音量', exact: true }).fill('0.4')
+  await expect
+    .poll(() =>
+      media.evaluate((v: HTMLVideoElement) => ({
+        rate: v.playbackRate,
+        defaultRate: v.defaultPlaybackRate,
+        volume: v.volume,
+        muted: v.muted
+      }))
+    )
+    .toEqual({ rate: 1.5, defaultRate: 1.5, volume: 0.4, muted: false })
+
+  // Serve real playable video bytes for placeholder pagination fixtures so Chromium loads metadata on each switch.
+  await page.route('**/api/entries/*/video', (route) =>
+    route.fulfill({ status: 200, contentType: 'video/webm', body: previewBody })
+  )
+  await page.getByRole('dialog').getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(media).toHaveCount(0)
+
+  await page.getByRole('button', { name: '分页测试', exact: true }).click()
+  await page.getByRole('button', { name: '播放视频 片段_0099.mp4', exact: true }).click()
+  await expect
+    .poll(() => media.evaluate((v: HTMLVideoElement) => v.readyState))
+    .toBeGreaterThanOrEqual(2)
+  const firstSrc = await media.evaluate((v: HTMLVideoElement) => v.currentSrc)
+  await expect(page.getByRole('button', { name: '播放速度 1.5×', exact: true })).toBeVisible()
+  await expect(page.getByRole('slider', { name: '音量', exact: true })).toHaveValue('0.4')
+  expect(
+    await media.evaluate((v: HTMLVideoElement) => ({
+      rate: v.playbackRate,
+      defaultRate: v.defaultPlaybackRate,
+      volume: v.volume,
+      muted: v.muted
+    }))
+  ).toEqual({ rate: 1.5, defaultRate: 1.5, volume: 0.4, muted: false })
+
+  await page.getByRole('button', { name: '下一集', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveAttribute('aria-label', '片段_0100.mp4')
+  await expect
+    .poll(() =>
+      media.evaluate((v: HTMLVideoElement) => ({ src: v.currentSrc, ready: v.readyState }))
+    )
+    .toEqual({ src: expect.not.stringMatching(firstSrc), ready: expect.any(Number) })
+  await expect
+    .poll(() => media.evaluate((v: HTMLVideoElement) => v.readyState))
+    .toBeGreaterThanOrEqual(2)
+  await expect(page.getByRole('button', { name: '播放速度 1.5×', exact: true })).toBeVisible()
+  await expect(page.getByRole('slider', { name: '音量', exact: true })).toHaveValue('0.4')
+  expect(
+    await media.evaluate((v: HTMLVideoElement) => ({
+      rate: v.playbackRate,
+      defaultRate: v.defaultPlaybackRate,
+      volume: v.volume,
+      muted: v.muted
+    }))
+  ).toEqual({ rate: 1.5, defaultRate: 1.5, volume: 0.4, muted: false })
+
+  await page.getByRole('button', { name: '静音', exact: true }).click()
+  await page.getByRole('button', { name: '上一集', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveAttribute('aria-label', '片段_0099.mp4')
+  await expect.poll(() => media.evaluate((v: HTMLVideoElement) => v.currentSrc)).toBe(firstSrc)
+  await expect
+    .poll(() => media.evaluate((v: HTMLVideoElement) => v.readyState))
+    .toBeGreaterThanOrEqual(2)
+  await expect(page.getByRole('button', { name: '播放速度 1.5×', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '取消静音', exact: true })).toBeVisible()
+  expect(
+    await media.evaluate((v: HTMLVideoElement) => ({
+      rate: v.playbackRate,
+      volume: v.volume,
+      muted: v.muted
+    }))
+  ).toEqual({ rate: 1.5, volume: 0.4, muted: true })
+  await page.getByRole('button', { name: '取消静音', exact: true }).click()
+  await expect(page.getByRole('slider', { name: '音量', exact: true })).toHaveValue('0.4')
+})
+
 test('首次进入目录后后台刷新不把阅读位置拉回顶部', async ({ page }) => {
   await login(page)
   let requests = 0

@@ -1,8 +1,8 @@
 <script setup lang="ts">
   import { nextTick, onMounted, onUnmounted, ref, useId } from 'vue';
   import { Check } from '@lucide/vue';
-  // Fastest on top so the list reads in the same direction it opens.
-  const speeds = [2, 1.5, 1.25, 1, 0.75, 0.5];
+  import { PLAYBACK_SPEEDS } from './video-preferences';
+  const speeds = PLAYBACK_SPEEDS;
   const speed = defineModel<number>({ required: true });
   const id = useId();
   const root = ref<HTMLElement>(),
