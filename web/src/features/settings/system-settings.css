@@ -10,6 +10,7 @@
   gap: var(--space-20);
 }
 .processing-card {
+  --processing-input-width: 240px;
   padding: var(--space-26);
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -24,7 +25,7 @@
   gap: var(--space-10);
 }
 .processing-card input {
-  max-width: 240px;
+  max-width: var(--processing-input-width);
 }
 .processing-card small {
   font-weight: var(--font-weight-400);

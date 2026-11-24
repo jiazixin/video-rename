@@ -663,7 +663,7 @@
   }
   .cache-duration > label {
     min-width: 0;
-    flex: 1;
+    flex: 0 1 var(--processing-input-width);
   }
   .cache-duration input {
     width: 100%;
@@ -671,6 +671,10 @@
   }
   .cache-duration > .select-field {
     min-width: 80px;
+    flex-shrink: 0;
+  }
+  .cache-duration :deep(.select-trigger) {
+    min-height: 39px;
   }
   .cache-actions {
     display: flex;

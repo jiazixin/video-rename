@@ -1,5 +1,16 @@
 import { defined, toasts } from './support'
-import { test, expect } from '@playwright/test'
+import { test, expect, type Locator } from '@playwright/test'
+
+async function expectDurationControlsAdjacent(input: Locator, unit: Locator) {
+  const inputBox = defined(await input.boundingBox())
+  const unitBox = defined(await unit.boundingBox())
+  const gap = unitBox.x - (inputBox.x + inputBox.width)
+  expect(gap).toBeGreaterThanOrEqual(8)
+  expect(gap).toBeLessThanOrEqual(20)
+  expect(Math.abs(inputBox.y + inputBox.height - (unitBox.y + unitBox.height))).toBeLessThanOrEqual(
+    2
+  )
+}
 test('系统设置聚合、处理参数持久化与窄屏', async ({ page }) => {
   await page.goto('/')
   await page.getByLabel('用户名', { exact: true }).fill('admin')
@@ -95,7 +106,21 @@ test('重试与缓存保留设置、清空确认和失败反馈', async ({ page 
   await expect(page.getByLabel('最大重试次数', { exact: true })).toHaveValue('3')
   await page.getByLabel('最大重试次数', { exact: true }).fill('2')
   await page.getByLabel('延时删除', { exact: true }).check()
-  await page.getByLabel('成功后保留时长', { exact: true }).fill('7')
+  const successInput = page.getByLabel('成功后保留时长', { exact: true })
+  const successUnit = page.getByRole('combobox', { name: '成功后保留时间单位', exact: true })
+  const idleInput = page.getByLabel('连续未使用时长', { exact: true })
+  const idleUnit = page.getByRole('combobox', { name: '闲置清理时间单位', exact: true })
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await expectDurationControlsAdjacent(successInput, successUnit)
+  await expectDurationControlsAdjacent(idleInput, idleUnit)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expectDurationControlsAdjacent(successInput, successUnit)
+  await expectDurationControlsAdjacent(idleInput, idleUnit)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true
+  )
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await successInput.fill('7')
   await page.getByLabel('按闲置时间自动清理', { exact: true }).uncheck()
   await page.getByRole('button', { name: '保存系统设置' }).click()
   await expect(toasts(page).first()).toContainText('设置已保存')
